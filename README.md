@@ -1,11 +1,11 @@
 
 # HermesX Firmware
 
-🎯 **HermesX** 是基於 [Meshtastic](https://github.com/meshtastic/Meshtastic-device) 開源韌體延伸開發的自訂分支，專為 LoRa 裝置打造具有互動表情顯示、旋鈕操作、訊息回覆與緊急應變的個人戰術通訊系統。
+**HermesX** 是基於 [Meshtastic](https://github.com/meshtastic/Meshtastic-device) 開源韌體延伸開發的自訂分支，專為 LoRa 裝置打造具有互動表情顯示、旋鈕操作、訊息回覆與緊急應變的個人戰術通訊系統。
 
 ---
 
-## ✨ 特色功能
+##  特色功能
 
 ### HermesXInterfaceModule
 
@@ -28,12 +28,12 @@
 
 ---
 
-## 🔧 建置方式（Build Instructions）
+##  置方式（Build Instructions）
 
 ### 1. 安裝 PlatformIO
 
 建議搭配 VSCode 使用  
-🔗 [https://platformio.org/install](https://platformio.org/install)
+ [https://platformio.org/install](https://platformio.org/install)
 
 ### 2. Clone 此專案
 
@@ -54,7 +54,7 @@ platformio run -e heltec-wireless-tracker-s3
 
 ---
 
-## 🗂 專案結構
+## 專案結構
 
 ```plaintext
 HermesX/
@@ -71,7 +71,7 @@ HermesX/
 
 ---
 
-## 📌 支援硬體
+## 支援硬體
 
 目前已於以下板子測試：
 
@@ -81,7 +81,7 @@ HermesX/
 
 ---
 
-## 🧠 計劃目標
+## 計劃目標
 
 HermesX 將成為一款適用於：
 
@@ -92,7 +92,7 @@ HermesX 將成為一款適用於：
 
 ---
 
-## 👤 作者 / Maintainer
+## 作者 / Maintainer
 
 > **OLDWAYS069**  
 > 台灣 Meshtastic 開發者｜HermesTrack 計畫發起人  
@@ -100,6 +100,6 @@ HermesX 將成為一款適用於：
 
 ---
 
-## 📜 License
+## License
 
 This project is licensed under the MIT License.
