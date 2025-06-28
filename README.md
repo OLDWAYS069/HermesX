@@ -32,7 +32,7 @@
 ### 1. 安裝 PlatformIO
 
 建議搭配 VSCode 使用  
-🔗 [https://platformio.org/install](https://platformio.org/install)
+ [https://platformio.org/install](https://platformio.org/install)
 
 ### 2. Clone 此專案
 
