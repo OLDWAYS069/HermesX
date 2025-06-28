@@ -98,6 +98,6 @@ HermesX 將成為一款適用於：
 
 ---
 
-## 📜 License
+##  License
 
 This project is licensed under the MIT License.
