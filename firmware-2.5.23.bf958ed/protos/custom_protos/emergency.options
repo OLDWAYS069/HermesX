@@ -1,0 +1,3 @@
+meshtastic.EmergencyConfig.whitelist_node_ids     max_count:10
+meshtastic.EmergencyConfig.whitelist_node_ids     max_length:16
+meshtastic.EmergencyConfig.trigger_string         max_length:32

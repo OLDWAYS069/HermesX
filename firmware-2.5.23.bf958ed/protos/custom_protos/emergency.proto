@@ -1,0 +1,31 @@
+// emergency.proto
+syntax = "proto3";
+package meshtastic;
+
+enum DeviceRole {
+  CLIENT = 0;
+  CLIENT_MUTE = 1;
+  ROUTER = 2;
+  ROUTER_CLIENT = 3;
+  REPEATER = 4;
+  TRACKER = 5;
+  SENSOR = 6;
+  TAK = 7;
+  CLIENT_HIDDEN = 8;
+  LOST_AND_FOUND = 9;
+  TAK_TRACKER = 10;
+  ROUTER_LATE = 11;
+}
+
+message EmergencyConfig {
+  bool emergency_mode_active = 1;
+  repeated string whitelist_node_ids = 2;
+  string trigger_string = 3;
+  bool allow_public_text_messages = 4;
+  uint32 lora_tx_power_override = 5;
+  float lora_freq_override = 6;
+  DeviceRole device_role = 7;
+  uint32 position_broadcast_secs = 8;
+}
+
+
