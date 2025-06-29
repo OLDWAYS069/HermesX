@@ -23,6 +23,7 @@ void EmergencyAdaptiveModule::loop() {
 
 void EmergencyAdaptiveModule::applyEmergencyConfig() {
     config.emergency_mode_active = true;
+    config.allow_public_text_messages = false;
     config.lora_tx_power_override = 20;
     config.lora_freq_override = 923.0f;
     config.device_role = meshtastic_DeviceRole_CLIENT;
