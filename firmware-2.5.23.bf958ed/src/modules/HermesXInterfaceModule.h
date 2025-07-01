@@ -5,6 +5,7 @@
 #include <Adafruit_NeoPixel.h>
 #include "meshtastic/mesh.pb.h"
 #include "TinyScheduler.h"
+#include "MusicModule.h"
 
 
 class HermesXInterfaceModule : public MeshModule {
@@ -15,22 +16,31 @@ public:
     void handleRotary();
     void handleButtonPress();  
     TinyScheduler scheduler = TinyScheduler::millis();
-    // ✅ ← 加這行        
+           
 
 private:
     void initDisplay();
     void initLED();
     void initRotary();
-    void initBuzzer();
+    
     void drawFace(const char* face, uint16_t color);
     void updateFace();
     void updateLED();
-    void playBuzzer();
+    
     void sendCannedMessage(const char* msg);
     void onPacketSent() ;
     void onPacketFailed() ;
     bool handleRadioPacket(meshtastic_MeshPacket* p) ;
-  
+    
+  void initBuzzer();
+    void playTone(float freq, uint32_t duration_ms);
+    void stopTone(); 
+
+    void playStartupTone();
+    void playReceiveTone();
+    void playSendTone();   
+    
+    MusicModule music; 
 
     SPIClass spi_st7789;
     Adafruit_ST7789 tft;
