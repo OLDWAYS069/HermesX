@@ -12,7 +12,7 @@
 #include "pb_encode.h"
 #include "HermesXPacketUtils.h"
 #include "TinyScheduler.h"
-#include "MusicModule.cpp"
+#include "MusicModule.h"
 
 
 //一直搞我的WS2812B的腳位(希望部會在搞我了)
@@ -204,7 +204,7 @@ void HermesXInterfaceModule::sendCannedMessage(const char* msg) {
         service->sendToMesh(p, RX_SRC_LOCAL, false);
     }
 
-    music.begin();
+    
     music.playSendSound();
     faceState = FACE_SENT;
     lastEventTime = millis();
@@ -228,7 +228,7 @@ void HermesXInterfaceModule::handleButtonPress() {
 
 bool HermesXInterfaceModule::handleRadioPacket(meshtastic_MeshPacket* p) {
     if (p->decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP) {
-        music.begin();
+        
         music.playReceiveSound();
         faceState = FACE_RECEIVED;
         lastEventTime = millis();
@@ -237,7 +237,7 @@ bool HermesXInterfaceModule::handleRadioPacket(meshtastic_MeshPacket* p) {
         
 
         scheduler.timeout(3000, [this]() {
-            music.begin();
+           
             music.playReceiveSound();
             faceState = FACE_IDLE;
             ledFlashActive = false;
@@ -253,7 +253,7 @@ void HermesXInterfaceModule::onPacketSent() {
     
 
     scheduler.timeout(3000, [this]() {
-        music.begin();
+       
         music.playSendSound();
         faceState = FACE_IDLE;
         ledFlashActive = false;
