@@ -11,7 +11,7 @@ void EmergencyAdaptiveModule::setup() {
 
 void EmergencyAdaptiveModule::loop() {
     if (!emergency_mode) {
-        // ⚠️ Replace this with actual message trigger logic in production
+    
         const char *msg = "@EmergencyActive";
         if (msg && strstr(msg, "@EmergencyActive")) {
             emergency_mode = true;
