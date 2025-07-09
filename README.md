@@ -9,7 +9,7 @@
 
 ### HermesXInterfaceModule
 
-> 讓裝置像「LoRa 寵物機」一樣具有互動表情與操作界面。
+> 讓裝置具有互動表情與操作界面。
 
 - 支援 ST7789 OLED 表情顯示（`drawFace()` / `updateFace()`）
 - 搭配 WS2812 RGB LED 指示燈、被動式蜂鳴器（GPIO 可設定）
@@ -76,7 +76,6 @@ HermesX/
 目前已於以下板子測試：
 
 - Heltec Wireless Tracker S3
-- HTIT LoRa Tracker V1 (ESP32-S2)
 - 其他自定板子請根據原腳位自行修改 `GPIO` 設定
 
 ---
@@ -95,7 +94,7 @@ HermesX 將成為一款適用於：
 ## 作者 / Maintainer
 
 > **OLDWAYS069**  
-> 台灣 Meshtastic 開發者｜HermesTrack 計畫發起人  
+> HermesTrack 計畫發起人  
 > GitHub: [github.com/OLDWAYS069](https://github.com/OLDWAYS069)
 
 ---
