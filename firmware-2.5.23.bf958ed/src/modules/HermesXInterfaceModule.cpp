@@ -13,17 +13,21 @@
 #include "HermesXPacketUtils.h"
 #include "TinyScheduler.h"
 #include "MusicModule.h"
+#include "freertos/FreeRTOS.h"    
+#include "freertos/task.h"
+#include <Arduino.h>            
+#include "RedirectablePrint.h"
+#include "DebugConfiguration.h"
+#include "meshtastic/portnums.pb.h"
+#include "HermesXLog.h"
+
+
+
 
 
 //一直搞我的WS2812B的腳位(希望部會在搞我了)
 #define PIN_LED 6
 #define NUM_LEDS 8
-//TFT
-#define TFT_SCL 7
-#define TFT_SDA 45
-#define TFT_DC 43
-#define TFT_RES 44
-#define TFT_BLK 46
 //旋轉控制器
 #define ROTARY_SW 4
 #define ROTARY_DT 26
@@ -31,11 +35,26 @@
 //蜂鳴器(無緣~沒緣~大給來做伙~)
 #define BUZZER_PIN 17
 
-extern TinyScheduler scheduler;  // 全域 scheduler 實例
+//TFT ST7789，另外加的那塊
+#define TFT_SCL 7
+#define TFT_SDA 45
+#define TFT_DC 43
+#define TFT_RES 44
+#define TFT_BLK 46 
 
 
 
-static HermesXInterfaceModule* globalHermes = nullptr;
+
+
+
+
+extern TinyScheduler scheduler;  // 全域 scheduler
+
+
+
+HermesXInterfaceModule* globalHermes = nullptr;
+
+
 
 extern HermesXInterfaceModule* globalHermes;
 void hermesSchedulerTask(void* pvParameters) {
@@ -49,28 +68,37 @@ void IRAM_ATTR rotaryISR() {
     if (globalHermes) globalHermes->handleRotary();
 }
 
+
+
 HermesXInterfaceModule::HermesXInterfaceModule()
-    : MeshModule("hermesx"), spi_st7789(SPI), tft(&spi_st7789, TFT_DC, TFT_RES, -1),
+    : SinglePortModule("hermesx", meshtastic_PortNum_PRIVATE_APP),
       rgb(NUM_LEDS, PIN_LED, NEO_GRB + NEO_KHZ800),
       music(BUZZER_PIN, scheduler) 
 {
     globalHermes = this;
-
 }
 
 void HermesXInterfaceModule::setup() {
-    initDisplay();
-    initLED();
-    initRotary();
-    music.begin();
-    music.playStartupSound();
-    drawFace("^_^", ST77XX_YELLOW);
+    HERMESX_LOG_INFO("HermesX", "建構 HermesXInterfaceModule\n");
+    tft.fillScreen(TFT_RED);
+    HERMESX_LOG_INFO("DEBUG", "HermesX", "LED 狀態 = %d\n", ledFlashActive);
 
-    if (cannedMessageModule && cannedMessageModule->hasMessages()) {
-        drawFace(cannedMessageModule->getCurrentMessage(), ST77XX_CYAN);
+    
+    scheduler.timeout(5, [this]() {
+     
+        initDisplay();
+        drawFace("^_^", TFT_GOLD);
+       if (cannedMessageModule && cannedMessageModule->hasMessages()) {
+            const char* msg = cannedMessageModule->getCurrentMessage();
+           
+            drawFace(msg, TFT_CYAN);
+        }
+    });
 
+   if (cannedMessageModule && cannedMessageModule->hasMessages()) {
+      
+        drawFace(cannedMessageModule->getCurrentMessage(), TFT_CYAN);
     }
-
     xTaskCreatePinnedToCore(
         hermesSchedulerTask,
         "hermes_sched_task",
@@ -80,24 +108,26 @@ void HermesXInterfaceModule::setup() {
         nullptr,
         1
     );
+
+    HERMESX_LOG_INFO("HermesX", "初始化完成\n");
 }
 
 
 void HermesXInterfaceModule::initDisplay() {
-    spi_st7789.begin(TFT_SCL, -1, TFT_SDA, -1);
-    tft.init(240, 240);
+    tft.init();
     tft.setRotation(0);
-    pinMode(TFT_BLK, OUTPUT);
-    digitalWrite(TFT_BLK, HIGH);
-    tft.fillScreen(ST77XX_BLACK);
-    tft.setTextSize(4);
-    tft.setTextColor(ST77XX_YELLOW, ST77XX_BLACK);
+
+    pinMode(TFT_BLK, OUTPUT);      // 背光控制腳（46）
+    HERMESX_LOG_INFO("開啟背光\n");
+    digitalWrite(TFT_BLK, HIGH);   // 開啟背光
+
+    tft.fillScreen(TFT_BLACK);
 }
 
 
 MusicModule::MusicModule(uint8_t buzzerPin, TinyScheduler& sched)
     : pin(buzzerPin), scheduler(sched) {
-
+    HERMESX_LOG_INFO("音樂模組初始化\n");
 }
 
 void HermesXInterfaceModule::initLED() {
@@ -105,6 +135,7 @@ void HermesXInterfaceModule::initLED() {
     rgb.setBrightness(60);
     rgb.fill(rgb.Color(0, 0, 20));
     rgb.show();
+    HERMESX_LOG_INFO("LED初始化\n");
 }
 
 void HermesXInterfaceModule::initRotary() {
@@ -112,13 +143,14 @@ void HermesXInterfaceModule::initRotary() {
     pinMode(ROTARY_DT, INPUT);
     pinMode(ROTARY_CLK, INPUT);
     attachInterrupt(digitalPinToInterrupt(ROTARY_DT), rotaryISR, CHANGE);
+    HERMESX_LOG_INFO("旋鈕初始化\n");
 }
 
 
 
 void HermesXInterfaceModule::drawFace(const char* face, uint16_t color) {
-    tft.fillScreen(ST77XX_BLACK);
-    tft.setTextColor(color, ST77XX_BLACK);
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(color, TFT_BLACK);
     tft.setTextSize(4);
     tft.setCursor(60, 100);
     tft.println(face);
@@ -133,13 +165,15 @@ void HermesXInterfaceModule::updateFace() {
     if (faceState != lastState) {
         lastState = faceState;
         switch (faceState) {
-            case FACE_RECEIVED: drawFace(">O<", ST77XX_BLUE); break;
-            case FACE_SENT: drawFace("^D^", ST77XX_GREEN); break;
+            case FACE_RECEIVED: drawFace(">O<", TFT_BLUE); break;
+            case FACE_SENT: drawFace("^D^", TFT_GREEN); break;
             case FACE_IDLE:
-            default: drawFace("^_^", ST77XX_YELLOW); break;
-            case FACE_ERROR:    drawFace("x_x", ST77XX_RED); break;
+            default: drawFace("^_^", TFT_YELLOW); break;
+            case FACE_ERROR:    drawFace("x_x", TFT_RED); break;
         }
     }
+
+    
 }
 
 void HermesXInterfaceModule::updateLED() {
@@ -210,6 +244,7 @@ void HermesXInterfaceModule::sendCannedMessage(const char* msg) {
     lastEventTime = millis();
     ledFlashActive = true;
     ledFlashColor = rgb.Color(0, 255, 0);
+    HERMESX_LOG_INFO("變臉(傳送)");
 }
 
 
@@ -236,7 +271,7 @@ bool HermesXInterfaceModule::handleRadioPacket(meshtastic_MeshPacket* p) {
         ledFlashColor = rgb.Color(0, 0, 255);
         
 
-        scheduler.timeout(3000, [this]() {
+        scheduler.timeout(3, [this]() {
            
             music.playReceiveSound();
             faceState = FACE_IDLE;
@@ -252,7 +287,7 @@ void HermesXInterfaceModule::onPacketSent() {
     ledFlashColor = rgb.Color(0, 255, 0);
     
 
-    scheduler.timeout(3000, [this]() {
+    scheduler.timeout(3, [this]() {
        
         music.playSendSound();
         faceState = FACE_IDLE;
@@ -267,7 +302,7 @@ void HermesXInterfaceModule::onPacketFailed() {
     ledFlashColor = rgb.Color(255, 0, 0);
     
 
-    scheduler.timeout(3000, [this]() {
+    scheduler.timeout(3, [this]() {
         faceState = FACE_IDLE;
         ledFlashActive = false;
     });
@@ -287,3 +322,14 @@ void HermesXInterfaceModule::playTone(float freq, uint32_t duration_ms) {
     }
 }
 
+
+bool HermesXInterfaceModule::wantPacket(const meshtastic_MeshPacket *p) {
+    // 目前不處理任何封包( 為了迎合Mesh官方架構，目前先保留
+    return false;
+}
+
+ProcessMessage HermesXInterfaceModule::handleReceived(const meshtastic_MeshPacket &packet) {
+    this->handleRadioPacket(const_cast<meshtastic_MeshPacket*>(&packet));
+    return ProcessMessage::CONTINUE;
+
+}

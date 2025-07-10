@@ -1,4 +1,6 @@
 #include "configuration.h"
+#include "HermesXLog.h"
+
 #if !MESHTASTIC_EXCLUDE_INPUTBROKER
 #include "input/ExpressLRSFiveWay.h"
 #include "input/InputBroker.h"
@@ -15,6 +17,10 @@
 #endif
 #if !MESHTASTIC_EXCLUDE_ATAK
 #include "modules/AtakPluginModule.h"
+#if !MESHTASTIC_EXCLUDE_HERMESX
+#include "modules/HermesXInterfaceModule.h"
+#endif
+
 #endif
 #if !MESHTASTIC_EXCLUDE_CANNEDMESSAGES
 #include "modules/CannedMessageModule.h"
@@ -90,11 +96,16 @@
 #include "modules/DropzoneModule.h"
 #endif
 
+HermesXInterfaceModule* hermesx = nullptr;
+
 /**
  * Create module instances here.  If you are adding a new module, you must 'new' it here (or somewhere else)
  */
 void setupModules()
 {
+
+
+
     if (config.device.role != meshtastic_Config_DeviceConfig_Role_REPEATER) {
 #if (HAS_BUTTON || ARCH_PORTDUINO) && !MESHTASTIC_EXCLUDE_INPUTBROKER
         inputBroker = new InputBroker();
@@ -107,6 +118,7 @@ void setupModules()
 #endif
 #if !MESHTASTIC_EXCLUDE_GPS
         positionModule = new PositionModule();
+        HERMESX_LOG_INFO("setupModules 中建立模組(GPS)...\n");
 #endif
 #if !MESHTASTIC_EXCLUDE_WAYPOINT
         waypointModule = new WaypointModule();
@@ -141,6 +153,12 @@ void setupModules()
 #endif
         // Example: Put your module here
         // new ReplyModule();
+
+#if !MESHTASTIC_EXCLUDE_HERMESX
+hermesx = new HermesXInterfaceModule();
+HERMESX_LOG_INFO("setupModules 中建立模組(INTERFACE)...\n");
+#endif
+
 #if (HAS_BUTTON || ARCH_PORTDUINO) && !MESHTASTIC_EXCLUDE_INPUTBROKER
         rotaryEncoderInterruptImpl1 = new RotaryEncoderInterruptImpl1();
         if (!rotaryEncoderInterruptImpl1->init()) {
@@ -240,6 +258,9 @@ void setupModules()
 #if HAS_TELEMETRY
         new DeviceTelemetryModule();
 #endif
+
+
+
 #if !MESHTASTIC_EXCLUDE_TRACEROUTE
         traceRouteModule = new TraceRouteModule();
 #endif
@@ -247,4 +268,6 @@ void setupModules()
     // NOTE! This module must be added LAST because it likes to check for replies from other modules and avoid sending extra
     // acks
     routingModule = new RoutingModule();
+
+
 }
