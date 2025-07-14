@@ -17,8 +17,13 @@
 #endif
 #if !MESHTASTIC_EXCLUDE_ATAK
 #include "modules/AtakPluginModule.h"
+
 #if !MESHTASTIC_EXCLUDE_HERMESX
 #include "modules/HermesXInterfaceModule.h"
+#endif
+
+#if !MESHTASTIC_EXCLUDE_TESTMODULE
+#include "modules/moudle_test.h"
 #endif
 
 #endif
@@ -120,6 +125,8 @@ void setupModules()
         positionModule = new PositionModule();
         HERMESX_LOG_INFO("setupModules 中建立模組(GPS)...\n");
 #endif
+
+
 #if !MESHTASTIC_EXCLUDE_WAYPOINT
         waypointModule = new WaypointModule();
 #endif
@@ -157,6 +164,11 @@ void setupModules()
 #if !MESHTASTIC_EXCLUDE_HERMESX
 hermesx = new HermesXInterfaceModule();
 HERMESX_LOG_INFO("setupModules 中建立模組(INTERFACE)...\n");
+#endif
+
+#if !MESHTASTIC_EXCLUDE_TESTMODULE
+globalTEST  = new ModuleTest();
+HERMESX_LOG_INFO("setupModules 中建立模組(TESTMODULE)...\n");
 #endif
 
 #if (HAS_BUTTON || ARCH_PORTDUINO) && !MESHTASTIC_EXCLUDE_INPUTBROKER
