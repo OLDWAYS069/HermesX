@@ -1,39 +1,122 @@
-<div align="center" markdown="1">
 
-<img src=".github/meshtastic_logo.png" alt="Meshtastic Logo" width="80"/>
-<h1>Meshtastic Firmware</h1>
+# HermesX Firmware
 
-![GitHub release downloads](https://img.shields.io/github/downloads/meshtastic/firmware/total)
-[![CI](https://img.shields.io/github/actions/workflow/status/meshtastic/firmware/main_matrix.yml?branch=master&label=actions&logo=github&color=yellow)](https://github.com/meshtastic/firmware/actions/workflows/ci.yml)
-[![CLA assistant](https://cla-assistant.io/readme/badge/meshtastic/firmware)](https://cla-assistant.io/meshtastic/firmware)
-[![Fiscal Contributors](https://opencollective.com/meshtastic/tiers/badge.svg?label=Fiscal%20Contributors&color=deeppink)](https://opencollective.com/meshtastic/)
-[![Vercel](https://img.shields.io/static/v1?label=Powered%20by&message=Vercel&style=flat&logo=vercel&color=000000)](https://vercel.com?utm_source=meshtastic&utm_campaign=oss)
+**HermesX** 是基於 [Meshtastic](https://github.com/meshtastic/Meshtastic-device) 開源韌體延伸開發的自訂分支，專為 LoRa 裝置打造具有互動表情顯示、旋鈕操作、訊息回覆與緊急應變的個人戰術通訊系統。
 
-<a href="https://trendshift.io/repositories/5524" target="_blank"><img src="https://trendshift.io/api/badge/repositories/5524" alt="meshtastic%2Ffirmware | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+---
 
-</div>
+##  特色功能
 
-</div>
+### HermesXInterfaceModule
 
-<div align="center">
-	<a href="https://meshtastic.org">Website</a>
-	-
-	<a href="https://meshtastic.org/docs/">Documentation</a>
-</div>
+> 讓裝置具有互動表情與操作界面。
 
-## Overview
+- 搭配 WS2812 RGB LED 指示燈、被動式蜂鳴器
+- Rotary Encoder 控制 canned messages 選單
+- 按鍵按壓觸發 canned message 發送
+- 整合 `sendCannedMessage()`，自訂訊息發送邏輯
+- 更酷的操作介面!
 
-This repository contains the official device firmware for Meshtastic, an open-source LoRa mesh networking project designed for long-range, low-power communication without relying on internet or cellular infrastructure. The firmware supports various hardware platforms, including ESP32, nRF52, RP2040/RP2350, and Linux-based devices.
 
-Meshtastic enables text messaging, location sharing, and telemetry over a decentralized mesh network, making it ideal for outdoor adventures, emergency preparedness, and remote operations.
 
-### Get Started
+### LighthouseModule
 
-- 🔧 **[Building Instructions](https://meshtastic.org/docs/development/firmware/build)** – Learn how to compile the firmware from source.
-- ⚡ **[Flashing Instructions](https://meshtastic.org/docs/getting-started/flashing-firmware/)** – Install or update the firmware on your device.
+> 建立動態自適應的 LoRa 緊急模式。
 
-Join our community and help improve Meshtastic! 🚀
+- 專門設計給中繼節點用
+- 在首次開機時，會自動進入省電模式
+- 當接收到 "@EmergencyActive" 時喚醒，並開始廣播及轉發
+- "@ResetLighthouse" 則回到省電模式
 
-## Stats
+> 專為花東緊急連線計畫開發
 
-![Alt](https://repobeats.axiom.co/api/embed/8025e56c482ec63541593cc5bd322c19d5c0bdcf.svg "Repobeats analytics image")
+
+
+
+### EmergencyAdaptiveModule
+
+> 將在HemresX Alpha版回歸。
+
+
+
+
+
+
+
+
+---
+
+##  置方式（Build Instructions）
+
+### 1. 安裝 PlatformIO
+
+建議搭配 VSCode 使用  
+ [https://platformio.org/install](https://platformio.org/install)
+
+### 2. Clone 此專案
+
+```bash
+git clone https://github.com/OLDWAYS069/HermesX.git
+cd HermesX
+```
+
+### 3. 開啟 VSCode 並選擇 `master` 分支
+
+（非預設的 `main`）
+
+### 4. 編譯
+
+```bash
+platformio run -e heltec-wireless-tracker-s3
+```
+
+---
+
+## 專案結構
+
+```plaintext
+HermesX/
+├── platformio.ini
+├── src/
+│   ├── modules/
+│   │   ├── HermesXInterfaceModule.cpp/h
+│   │   ├── EmergencyAdaptiveModule.cpp/h
+│   ├── HermesXPacketUtils.h
+├── protos/
+│   └── custom_protos/
+│       └── emergency.proto
+```
+
+---
+
+## 支援硬體
+
+目前已於以下板子測試：
+
+- Heltec Wireless Tracker S3
+- 其他自定板子請根據原腳位自行修改 `GPIO` 設定
+
+---
+
+## 計劃目標
+
+HermesX 將成為一款適用於：
+
+- 民防通訊（Disaster-Ready）
+- 搜救定位（Rescue Beacon）
+- 情感互動（LoRa Companion）
+- 自主緊急應變網路（Emergency LoRa Mesh）
+
+---
+
+## 作者 / Maintainer
+
+> **OLDWAYS069**  
+> HermesTrack 計畫發起人  
+> GitHub: [github.com/OLDWAYS069](https://github.com/OLDWAYS069)
+
+---
+
+## License
+
+This project is licensed under the MIT License.

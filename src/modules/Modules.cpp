@@ -21,7 +21,7 @@
 #if !MESHTASTIC_EXCLUDE_HERMESX
 #include "modules/HermesXInterfaceModule.h"
 #endif
-
+#include "modules/LighthouseModule.h"
 #if !MESHTASTIC_EXCLUDE_CANNEDMESSAGES
 #include "modules/CannedMessageModule.h"
 #endif
@@ -148,6 +148,7 @@ void setupModules()
 #endif
         // Example: Put your module here
         // new ReplyModule();
+        lighthouseModule = new LighthouseModule();
 
 #if !MESHTASTIC_EXCLUDE_HERMESX
      globalHermes = new HermesXInterfaceModule();
