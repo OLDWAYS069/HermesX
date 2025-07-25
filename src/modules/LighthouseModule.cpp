@@ -7,11 +7,16 @@
 #include "sleep.h"
 #include <cstring>
 #include "HermesXLog.h"
+#include "mesh/Channels.h"
+#include "mesh/Router.h"
+
 
 static const char *bootFile = "/prefs/lighthouse_boot.bin";
 static const char *modeFile = "/prefs/lighthouse_mode.bin";
-//////static const uint32_t WAIT_TIME_MS = 2UL * 24UL * 60UL * 60UL * 1000UL; // two days
-static const uint32_t WAIT_TIME_MS = 20UL * 60UL * 1000UL; // 20 minutes for test by oldways_20250724
+
+static const uint32_t WAIT_TIME_MS = 10UL * 1000UL;
+static const uint32_t POLLING_AWAKE_MS = 60000UL; // 醒來期間
+static const uint32_t POLLING_SLEEP_MS = 60000UL; // 睡覺時間
 
 LighthouseModule *lighthouseModule = nullptr;
 
@@ -22,9 +27,14 @@ LighthouseModule::LighthouseModule()
     lighthouseModule = this;
     loadBoot();
     loadState();
+
+    // 僅當 boot file 沒載入成功時才設為現在時間
     if (firstBootMillis == 0) {
+        HERMESX_LOG_INFO("首次開機或 bootFile 缺失，firstBootMillis 初始化");
         firstBootMillis = millis();
         saveBoot();
+    } else {
+        HERMESX_LOG_INFO("從 bootFile 載入 firstBootMillis = %lu", firstBootMillis);
     }
 }
 
@@ -36,8 +46,15 @@ void LighthouseModule::loadBoot()
     if (f) {
         if (f.available() >= (int)sizeof(firstBootMillis)) {
             f.read((uint8_t *)&firstBootMillis, sizeof(firstBootMillis));
+            HERMESX_LOG_INFO("boot loaded: firstBootMillis = %lu", firstBootMillis);
+        } else {
+            HERMESX_LOG_WARN("boot file too short, resetting firstBootMillis");
+            firstBootMillis = 0;
         }
         f.close();
+    } else {
+        HERMESX_LOG_INFO("boot file not found, initializing firstBootMillis = 0");
+        firstBootMillis = 0;
     }
 #endif
 }
@@ -46,14 +63,21 @@ void LighthouseModule::saveBoot()
 {
 #ifdef FSCom
     concurrency::LockGuard g(spiLock);
-    FSCom.mkdir("/prefs");
+
+    if (!FSCom.exists("/prefs"))
+        FSCom.mkdir("/prefs");
+
     if (FSCom.exists(bootFile))
         FSCom.remove(bootFile);
+
     auto f = FSCom.open(bootFile, FILE_O_WRITE);
     if (f) {
         f.write((uint8_t *)&firstBootMillis, sizeof(firstBootMillis));
         f.flush();
         f.close();
+        HERMESX_LOG_INFO("已儲存 firstBootMillis = %lu", firstBootMillis);
+    } else {
+        HERMESX_LOG_WARN("無法寫入 bootFile");
     }
 #endif
 }
@@ -65,14 +89,26 @@ void LighthouseModule::loadState()
     auto f = FSCom.open(modeFile, FILE_O_READ);
     if (f) {
         uint8_t v = 0;
-        if (f.available() > 0) {
-            f.read(&v, 1);
-            emergencyModeActive = v != 0;
-        }
+        if (f && f.available() >= 2) {
+        uint8_t flags[2];
+        f.read(flags, sizeof(flags));
+        emergencyModeActive = (flags[0] == 1);
+        pollingModeRequested = (flags[1] == 1);
         f.close();
+    }
+      
     }
 #endif
 }
+
+void flushDelaySleep(uint32_t extraDelay = 1000, uint32_t sleepMs = 60000)
+{
+    HERMESX_LOG_INFO("等待封包傳送完成（延遲 %ums）...", extraDelay);
+    delay(extraDelay);  // 模擬封包 flush 等待
+    HERMESX_LOG_INFO("進入 Deep Sleep（%lu ms）", sleepMs);
+    doDeepSleep(sleepMs, false, false);
+}
+
 
 void LighthouseModule::saveState()
 {
@@ -83,13 +119,65 @@ void LighthouseModule::saveState()
         FSCom.remove(modeFile);
     auto f = FSCom.open(modeFile, FILE_O_WRITE);
     if (f) {
-        uint8_t v = emergencyModeActive ? 1 : 0;
-        f.write(&v, 1);
+        uint8_t flags[2];
+        flags[0] = emergencyModeActive ? 1 : 0;
+        flags[1] = pollingModeRequested ? 1 : 0;
+
+        f.write(flags, sizeof(flags));
+
         f.flush();
         f.close();
     }
 #endif
 }
+
+
+
+
+void LighthouseModule::broadcastStatusMessage()
+{
+    
+    String msg;
+    uint32_t now = millis();
+    uint32_t elapsed = now - firstBootMillis;
+
+
+    if (emergencyModeActive) {
+        msg = u8"[HermeS]\n模式：Lighthouse Active\n緊急模式已啟動";
+    }
+       else if (pollingModeRequested) {
+        uint32_t awakeElapsed = now % POLLING_AWAKE_MS;
+        uint32_t remainingToSleep = (POLLING_AWAKE_MS - awakeElapsed) / 1000;
+        uint32_t nextWakeIn = POLLING_SLEEP_MS / 1000;
+
+        msg = u8"[HermeS]\n模式：Silent\n節能輪詢中，將於 ";
+        msg += String(remainingToSleep);
+        msg += u8" 秒後進入 Deep Sleep";
+
+        msg += u8"\n預計將在 ";
+        msg += String(nextWakeIn);
+        msg += u8" 秒後重新喚醒";
+    }
+    else if(!emergencyModeActive&&!pollingModeRequested){
+        msg = u8"[HermeS]\n模式：中繼站";
+    }
+
+   if (msg.length() == 0) return;
+
+    meshtastic_MeshPacket *p = allocDataPacket();
+    if (!p) return;
+
+    p->to = NODENUM_BROADCAST;
+    p->channel = 3;
+    p->decoded.portnum = meshtastic_PortNum_TEXT_MESSAGE_APP;
+    p->want_ack = false;
+    p->decoded.payload.size = strlen(msg.c_str());
+    memcpy(p->decoded.payload.bytes, msg.c_str(), p->decoded.payload.size);
+
+    service->sendToMesh(p, RX_SRC_LOCAL, false);
+    LOG_INFO("Broadcast status: %s", msg);
+}
+
 
 bool LighthouseModule::wantPacket(const meshtastic_MeshPacket *p)
 {
@@ -126,30 +214,19 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
 
     if (strcmp(txt, "@ResetLighthouse") == 0) {
         emergencyModeActive = false;
+        pollingModeRequested = false;
         firstBootMillis = millis();
         saveBoot();
         saveState();
-        config.device.role = meshtastic_Config_DeviceConfig_Role_CLIENT_HIDDEN;
+        config.device.role = meshtastic_Config_DeviceConfig_Role_ROUTER_LATE;
         nodeDB->saveToDisk(SEGMENT_CONFIG);
         saveState();
-       
-        const char *msg = "LightHouse啟動";
-        meshtastic_MeshPacket *p = allocDataPacket();
-        p->to = NODENUM_BROADCAST;
-        p->channel = 0;  // or 3, if channel 3 is configured correctly
-        p->decoded.portnum = meshtastic_PortNum_TEXT_MESSAGE_APP;
-        p->want_ack = true;
-        
-        p->decoded.portnum = meshtastic_PortNum_TEXT_MESSAGE_APP;
-        p->decoded.payload.size = strlen(msg);
-        memcpy(p->decoded.payload.bytes, msg, p->decoded.payload.size);
-        service->sendToMesh(p, RX_SRC_LOCAL, true);     
-
-   
+        roleCorrected = true;
+                     
         HERMESX_LOG_INFO("CLOSE LIGHTHOUSE,RESTARING");
         
 
-        delay(10000);  // 確保 log 有時間送出
+        delay(15000);  // 確保 log 有時間送出
         ESP.restart();
 
         return ProcessMessage::CONTINUE;
@@ -157,26 +234,43 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
 
     if (strcmp(txt, "@EmergencyActive") == 0 && !emergencyModeActive) {
     emergencyModeActive = true;
+    pollingModeRequested = false;
     config.has_device = true;
     config.device.role = meshtastic_Config_DeviceConfig_Role_ROUTER;
     config.power.is_power_saving = false;
+    
     roleCorrected = true;
 
     nodeDB->saveToDisk(SEGMENT_CONFIG);
     saveState();
 
-    const char *msg = "LightHouse將在10秒後啟動\xE5\x95\x9F\xE5\x8B\x95"; // "LightHouse啟動"（UTF-8）
-    meshtastic_MeshPacket *p = allocDataPacket();         // 分配新的封包
-    p->to = NODENUM_BROADCAST;                            // 廣播模式
-    p->channel = 0;                                       // 發送到 Channel 3
-    p->decoded.payload.size = strlen(msg);                // 設定 payload 長度
-    memcpy(p->decoded.payload.bytes, msg, p->decoded.payload.size); // 寫入內容
-    service->sendToMesh(p, RX_SRC_LOCAL, true);           // 本地來源，可靠傳輸（ack）
+
 
     HERMESX_LOG_INFO("LIGHTHOUSE ACTIVE. Restarting...");
-    delay(10000);  
+    delay(15000);  
     ESP.restart();
 
+    return ProcessMessage::CONTINUE;
+}
+
+if (strcmp(txt, "@GoToSleep") == 0) {
+    emergencyModeActive = false;
+    pollingModeRequested = true;
+    firstBootMillis = millis();
+    config.device.role = meshtastic_Config_DeviceConfig_Role_ROUTER_LATE;
+
+    saveBoot();
+    saveState();
+   
+   
+    delay(15000);  // 確保 log 有時間送出
+    ESP.restart();
+
+    return ProcessMessage::CONTINUE;
+}
+
+if (strcmp(txt, "@Status") == 0) {
+    broadcastStatusMessage();
     return ProcessMessage::CONTINUE;
 }
         
@@ -184,22 +278,39 @@ return ProcessMessage::CONTINUE;
 
 }
 
+bool firstTime = true;
+
 int32_t LighthouseModule::runOnce()
 {
-    if (!emergencyModeActive && (millis() - firstBootMillis) < WAIT_TIME_MS) {
-#ifdef LIGHTHOUSE_DEBUG
-        HERMESX_LOG_INFO("⚠️ DEBUG MODE: Skipping deep sleep, using delay instead");
-        delay(1000);  // 偵錯時保持運作方便監看 Serial
-#else
-    #ifdef ARCH_ESP32
-        const uint32_t sleepIntervalMs = 10UL * 60UL * 1000UL; // 10分鐘
-        doDeepSleep(sleepIntervalMs, false, false);
-    #else
-        delay(1000);
-    #endif
-#endif
-        return 0;
+    static const uint32_t POLLING_AWAKE_MS = 60000UL;  // 醒來運作 60 秒
+    static const uint32_t POLLING_SLEEP_MS = 60000UL;  // 睡眠 60 秒
+    static uint32_t awakeStart = 0;
+
+    if (firstTime) {
+        firstTime = false;
+        awakeStart = millis();
+        broadcastStatusMessage();
+        HERMESX_LOG_INFO("broadcasting...");
     }
 
-    return 500;
+    if (pollingModeRequested && !emergencyModeActive) {
+        uint32_t now = millis();
+        uint32_t awakeElapsed = now - awakeStart;
+
+#ifdef LIGHTHOUSE_DEBUG
+        HERMESX_LOG_INFO("DEBUG 模式，延遲中...");
+        delay(1000);
+#else
+        if (awakeElapsed >= POLLING_AWAKE_MS) {
+            HERMESX_LOG_INFO("醒來時間結束，延遲等待封包送出...");
+            delay(1000);  // 模擬 Radio Flush
+
+            HERMESX_LOG_INFO("進入 Deep Sleep %lu ms", POLLING_SLEEP_MS);
+            doDeepSleep(POLLING_SLEEP_MS, false, false);
+        }
+#endif
+        return 100;  // 醒來時每 100ms 檢查一次
+    }
+
+    return 1000;  // 非輪詢模式，每 1 秒檢查一次
 }

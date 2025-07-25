@@ -19,10 +19,14 @@ class LighthouseModule : public SinglePortModule, private concurrency::OSThread
     void saveBoot();
     void loadState();
     void saveState();
+ 
+    void broadcastStatusMessage();
 
     bool emergencyModeActive = false;
     bool roleCorrected = false;
+    bool pollingModeRequested = false;
     uint32_t firstBootMillis = 0;
+
 };
 
 extern LighthouseModule *lighthouseModule;
