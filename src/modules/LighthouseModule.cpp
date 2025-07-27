@@ -30,11 +30,11 @@ LighthouseModule::LighthouseModule()
 
     // 僅當 boot file 沒載入成功時才設為現在時間
     if (firstBootMillis == 0) {
-        HERMESX_LOG_INFO("首次開機或 bootFile 缺失，firstBootMillis 初始化");
+        HERMESX_LOG_INFO("first startup or lost bootFile ， building firstBootMillis");
         firstBootMillis = millis();
         saveBoot();
     } else {
-        HERMESX_LOG_INFO("從 bootFile 載入 firstBootMillis = %lu", firstBootMillis);
+        HERMESX_LOG_INFO(" load firstBootMillis = %lu from bootfile", firstBootMillis);
     }
 }
 
@@ -75,9 +75,9 @@ void LighthouseModule::saveBoot()
         f.write((uint8_t *)&firstBootMillis, sizeof(firstBootMillis));
         f.flush();
         f.close();
-        HERMESX_LOG_INFO("已儲存 firstBootMillis = %lu", firstBootMillis);
+        HERMESX_LOG_INFO("save firstBootMillis = %lu", firstBootMillis);
     } else {
-        HERMESX_LOG_WARN("無法寫入 bootFile");
+        HERMESX_LOG_WARN("can`t rite bootFile");
     }
 #endif
 }
@@ -103,9 +103,9 @@ void LighthouseModule::loadState()
 
 void flushDelaySleep(uint32_t extraDelay = 1000, uint32_t sleepMs = 1800000UL)
 {
-    HERMESX_LOG_INFO("等待封包傳送完成（延遲 %ums）...", extraDelay);
+    HERMESX_LOG_INFO("wait fo pak（delay %ums）...", extraDelay);
     delay(extraDelay);  // 模擬封包 flush 等待
-    HERMESX_LOG_INFO("進入 Deep Sleep（%lu ms）", sleepMs);
+    HERMESX_LOG_INFO("go Deep Sleep（%lu ms）", sleepMs);
     doDeepSleep(sleepMs, false, false);
 }
 
@@ -322,8 +322,8 @@ bool firstTime = true;
 
 int32_t LighthouseModule::runOnce()
 {
-    static const uint32_t POLLING_AWAKE_MS = 300000UL;  // 醒來運作 60 秒
-    static const uint32_t POLLING_SLEEP_MS = 1800000UL;  // 睡眠 60 秒
+    static const uint32_t POLLING_AWAKE_MS = 300000UL;  // 醒來運作 300 秒
+    static const uint32_t POLLING_SLEEP_MS = 1800000UL;  // deep sleep 30分鐘
     static uint32_t awakeStart = 0;
 
     if (firstTime) {
@@ -342,10 +342,10 @@ int32_t LighthouseModule::runOnce()
         delay(1000);
 #else
         if (awakeElapsed >= POLLING_AWAKE_MS) {
-            HERMESX_LOG_INFO("醒來時間結束，延遲等待封包送出...");
+            HERMESX_LOG_INFO("awake is out,wait fo broadcast");
             delay(1000);  // 模擬 Radio Flush
 
-            HERMESX_LOG_INFO("進入 Deep Sleep %lu ms", POLLING_SLEEP_MS);
+            HERMESX_LOG_INFO("Starting Deep Sleep %lu ms", POLLING_SLEEP_MS);
             doDeepSleep(POLLING_SLEEP_MS, false, false);
         }
 #endif
