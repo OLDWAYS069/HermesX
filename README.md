@@ -21,15 +21,19 @@
 
 ### LighthouseModule
 
-> 建立動態自適應的 LoRa 緊急模式。
+> 建立可遠端一鍵調整節點的模組。
 
 - 專門設計給中繼節點用
 - 在首次開機時，會自動進入省電模式
-- 當接收到 "@EmergencyActive" 時喚醒，並開始廣播及轉發
-- "@ResetLighthouse" 則回到省電模式
-
-> 專為花東緊急連線計畫開發
-
+- 允許用戶使用 @指令 來修改廣播模式
+指令表：
+-"@EmergencyActive"  將裝置更改到Router
+  最大化使用Lora廣播、最大化條數限制（7跳）
+-"@ResetLighthouse" 將裝置修改到Router_late，將作為一般中繼節點
+-“@GoToSleep" 將裝置進入節能省電模式，該模式下會以每30分鐘為循環進入深度睡眠模式
+（Deep_Sleep)該狀態將會最大化節省裝置耗能
+-"@Status" 輸入後將會在公用頻道（ch:0，未加密頻道）告知目前節點模式
+-"@HiHermes" 自我介紹，不做任何修改
 
 
 
@@ -40,13 +44,9 @@
 
 
 
-
-
-
-
 ---
 
-##  置方式（Build Instructions）
+##  （Build Instructions）
 
 ### 1. 安裝 PlatformIO
 
