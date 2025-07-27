@@ -21,10 +21,12 @@ class LighthouseModule : public SinglePortModule, private concurrency::OSThread
     void saveState();
  
     void broadcastStatusMessage();
+    void IntroduceMessage();
 
     bool emergencyModeActive = false;
     bool roleCorrected = false;
     bool pollingModeRequested = false;
+    bool hihermes = false;
     uint32_t firstBootMillis = 0;
 
 };

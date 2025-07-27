@@ -15,8 +15,8 @@ static const char *bootFile = "/prefs/lighthouse_boot.bin";
 static const char *modeFile = "/prefs/lighthouse_mode.bin";
 
 static const uint32_t WAIT_TIME_MS = 10UL * 1000UL;
-static const uint32_t POLLING_AWAKE_MS = 60000UL; // 醒來期間
-static const uint32_t POLLING_SLEEP_MS = 60000UL; // 睡覺時間
+static const uint32_t POLLING_AWAKE_MS = 300000UL; // 醒來期間
+static const uint32_t POLLING_SLEEP_MS = 1800000UL; // 睡覺時間
 
 LighthouseModule *lighthouseModule = nullptr;
 
@@ -101,7 +101,7 @@ void LighthouseModule::loadState()
 #endif
 }
 
-void flushDelaySleep(uint32_t extraDelay = 1000, uint32_t sleepMs = 60000)
+void flushDelaySleep(uint32_t extraDelay = 1000, uint32_t sleepMs = 1800000UL)
 {
     HERMESX_LOG_INFO("等待封包傳送完成（延遲 %ums）...", extraDelay);
     delay(extraDelay);  // 模擬封包 flush 等待
@@ -158,9 +158,38 @@ void LighthouseModule::broadcastStatusMessage()
         msg += String(nextWakeIn);
         msg += u8" 秒後重新喚醒";
     }
-    else if(!emergencyModeActive&&!pollingModeRequested){
-        msg = u8"[HermeS]\n模式：中繼站";
-    }
+
+    else if (!emergencyModeActive && !pollingModeRequested) {
+    msg = u8"[HermeS]\n模式：中繼站";
+    }   
+
+    if (msg.length() == 0) return;
+
+    meshtastic_MeshPacket *p = allocDataPacket();
+    if (!p) return;
+
+    p->to = NODENUM_BROADCAST;
+    p->channel = 2;
+    p->decoded.portnum = meshtastic_PortNum_TEXT_MESSAGE_APP;
+    p->want_ack = false;
+    p->decoded.payload.size = strlen(msg.c_str());
+    memcpy(p->decoded.payload.bytes, msg.c_str(), p->decoded.payload.size);
+
+    service->sendToMesh(p, RX_SRC_LOCAL, false);
+    HERMESX_LOG_INFO("Broadcast status: %s", msg);
+}
+
+void LighthouseModule::IntroduceMessage()
+{
+    
+    String msg;
+    uint32_t now = millis();
+    uint32_t elapsed = now - firstBootMillis;
+    
+    msg = u8"[HermeS]\n大家好，我是 HermeS Shine1，一台可以遠端控制的無人管理站點\n"
+              u8"使用說明：https://www.facebook.com/share/p/1EEThBhZeR/";
+
+   
 
    if (msg.length() == 0) return;
 
@@ -168,7 +197,7 @@ void LighthouseModule::broadcastStatusMessage()
     if (!p) return;
 
     p->to = NODENUM_BROADCAST;
-    p->channel = 3;
+    p->channel = 2;
     p->decoded.portnum = meshtastic_PortNum_TEXT_MESSAGE_APP;
     p->want_ack = false;
     p->decoded.payload.size = strlen(msg.c_str());
@@ -177,6 +206,7 @@ void LighthouseModule::broadcastStatusMessage()
     service->sendToMesh(p, RX_SRC_LOCAL, false);
     LOG_INFO("Broadcast status: %s", msg);
 }
+
 
 
 bool LighthouseModule::wantPacket(const meshtastic_MeshPacket *p)
@@ -273,6 +303,16 @@ if (strcmp(txt, "@Status") == 0) {
     broadcastStatusMessage();
     return ProcessMessage::CONTINUE;
 }
+
+if (strcmp(txt, "@HiHermes") == 0) {
+    hihermes = true;
+    emergencyModeActive = false;
+    pollingModeRequested = false;
+    IntroduceMessage();
+    HERMESX_LOG_INFO("@HiHermes INTRODUCING");
+
+    return ProcessMessage::CONTINUE;
+}
         
 return ProcessMessage::CONTINUE;
 
@@ -282,8 +322,8 @@ bool firstTime = true;
 
 int32_t LighthouseModule::runOnce()
 {
-    static const uint32_t POLLING_AWAKE_MS = 60000UL;  // 醒來運作 60 秒
-    static const uint32_t POLLING_SLEEP_MS = 60000UL;  // 睡眠 60 秒
+    static const uint32_t POLLING_AWAKE_MS = 300000UL;  // 醒來運作 60 秒
+    static const uint32_t POLLING_SLEEP_MS = 1800000UL;  // 睡眠 60 秒
     static uint32_t awakeStart = 0;
 
     if (firstTime) {
