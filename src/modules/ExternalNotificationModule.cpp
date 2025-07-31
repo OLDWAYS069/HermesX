@@ -23,6 +23,8 @@
 #include "main.h"
 #include "mesh/generated/meshtastic/rtttl.pb.h"
 #include <Arduino.h>
+#include "modules/HermesXInterfaceModule.h"
+
 
 #ifdef HAS_NCP5623
 #include <graphics/RAKled.h>
@@ -77,6 +79,8 @@ bool externalCurrentState[3] = {};
 uint32_t externalTurnedOn[3] = {};
 
 static const char *rtttlConfigFile = "/prefs/ringtone.proto";
+
+
 
 int32_t ExternalNotificationModule::runOnce()
 {
@@ -269,6 +273,11 @@ void ExternalNotificationModule::setExternalState(uint8_t index, bool on)
         drv.stop();
     }
 #endif
+
+if (hermesXCallback) {
+    hermesXCallback(index, on);
+}
+
 }
 
 bool ExternalNotificationModule::getExternal(uint8_t index)

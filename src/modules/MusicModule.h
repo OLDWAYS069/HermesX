@@ -19,6 +19,8 @@ public:
     void playReceiveSound();
     void playSendSound();
     void playFailedSound();
+    void playSuccessSound();
+    void playNodeInfoSound();
 
 private:
     uint8_t pin;

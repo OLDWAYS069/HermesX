@@ -406,6 +406,7 @@ void CannedMessageModule::sendText(NodeNum dest, ChannelIndex channel, const cha
 {
     meshtastic_MeshPacket *p = allocDataPacket();
     p->to = dest;
+    
     p->channel = channel;
     p->want_ack = true;
     p->decoded.payload.size = strlen(message);
@@ -424,7 +425,7 @@ void CannedMessageModule::sendText(NodeNum dest, ChannelIndex channel, const cha
     LOG_INFO("Send message id=%d, dest=%x, msg=%.*s", p->id, p->to, p->decoded.payload.size, p->decoded.payload.bytes);
 
     service->sendToMesh(
-        p, RX_SRC_LOCAL,
+        p, RX_SRC_USER,
         true); // send to mesh, cc to phone. Even if there's no phone connected, this stores the message to match ACKs
 }
 
