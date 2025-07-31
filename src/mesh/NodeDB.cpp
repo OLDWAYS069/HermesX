@@ -684,7 +684,23 @@ void NodeDB::installDefaultModuleConfig()
     strcpy(moduleConfig.canned_message.allow_input_source, "scanAndSelect");
 #endif
 
+    // Default rotary encoder input for canned messages
+    // Allows browsing and selecting canned messages without additional setup
+    moduleConfig.canned_message.rotary1_enabled = true;
+    moduleConfig.canned_message.inputbroker_pin_a = 37;   // CLK
+    moduleConfig.canned_message.inputbroker_pin_b = 26;   // DT
+    moduleConfig.canned_message.inputbroker_pin_press = 4; // SW
+    moduleConfig.canned_message.inputbroker_event_cw =
+        meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP;
+    moduleConfig.canned_message.inputbroker_event_ccw =
+        meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN;
+    moduleConfig.canned_message.inputbroker_event_press =
+        meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT;
+
     moduleConfig.has_canned_message = true;
+
+
+
 
     strncpy(moduleConfig.mqtt.address, default_mqtt_address, sizeof(moduleConfig.mqtt.address));
     strncpy(moduleConfig.mqtt.username, default_mqtt_username, sizeof(moduleConfig.mqtt.username));
