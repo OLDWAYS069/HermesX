@@ -21,6 +21,7 @@
 #include "meshtastic/portnums.pb.h"
 #include "HermesXLog.h"
 
+
 #include "ReliableRouter.h"
 #include "Default.h"
 #include "MeshTypes.h"
@@ -30,13 +31,11 @@
 #include "modules/RoutingModule.h"
 
 #include "pb_decode.h"
-
+#include "mesh/mesh-pb-constants.h"
 
 #define PIN_LED 6
 #define NUM_LEDS 8
-#define ROTARY_SW 4
-#define ROTARY_DT 26
-#define ROTARY_CLK 37
+
 #define BUZZER_PIN 17
 
 HermesXInterfaceModule* globalHermes = nullptr;
@@ -46,9 +45,9 @@ uint32_t safeTimeout = 5000;
 HermesXFeedbackCallback hermesXCallback = nullptr;
 
 
-void IRAM_ATTR rotaryISR() {
-    if (globalHermes) globalHermes->handleRotary();
-}
+
+
+
 
 HermesXInterfaceModule::HermesXInterfaceModule()
   : SinglePortModule("hermesx", meshtastic_PortNum_PRIVATE_APP),
@@ -61,7 +60,7 @@ HermesXInterfaceModule::HermesXInterfaceModule()
     observe(&service->fromNumChanged);
     isPromiscuous = true;
     initLED();
-    initRotary();
+    
     HERMESX_LOG_DEBUG("constroct");
     playStartupLEDAnimation(currentTheme.colorIdleBreathBase);
 }
@@ -85,13 +84,7 @@ void HermesXInterfaceModule::initLED() {
     HERMESX_LOG_INFO("LED setup\n");
 }
 
-void HermesXInterfaceModule::initRotary() {
-    pinMode(ROTARY_SW, INPUT_PULLUP);
-    pinMode(ROTARY_DT, INPUT);
-    pinMode(ROTARY_CLK, INPUT);
-    attachInterrupt(digitalPinToInterrupt(ROTARY_DT), rotaryISR, CHANGE);
-    HERMESX_LOG_INFO("rotary setup\n");
-}
+
 
 void HermesXInterfaceModule::updateLED() {
     uint32_t now = millis();
@@ -208,35 +201,58 @@ bool HermesXInterfaceModule::wantPacket(const meshtastic_MeshPacket *p)
 
 ProcessMessage HermesXInterfaceModule::handleReceived(const meshtastic_MeshPacket &packet)
 {
-    // Text Message：只處理來自別人的
+    // === ROUTING ACK/NACK 處理 ===
+    if (packet.decoded.portnum == meshtastic_PortNum_ROUTING_APP && waitingForAck) {
+        if (packet.decoded.request_id != 0) {
+            meshtastic_Routing decoded = meshtastic_Routing_init_default;
+
+            bool ok = pb_decode_from_bytes(
+                packet.decoded.payload.bytes,
+                packet.decoded.payload.size,
+                meshtastic_Routing_fields,
+                &decoded);
+
+            if (ok) {
+                ackReceived = (decoded.error_reason == meshtastic_Routing_Error_NONE);
+                waitingForAck = false;
+
+                if (ackReceived) {
+                    pendingSuccessFeedback = true;
+                    successFeedbackTime = millis() + 300;
+
+                    HERMESX_LOG_INFO("Routing ACK received, no error. request_id=0x%08x", packet.decoded.request_id);
+                } else {
+                    playSendFailedFeedback();
+                    HERMESX_LOG_WARN("Routing NACK (error_reason=%d) for request_id=0x%08x",
+                        decoded.error_reason,
+                        packet.decoded.request_id);
+                }
+            } else {
+                HERMESX_LOG_ERROR("Failed to decode Routing payload.");
+            }
+        }
+    }
+
+    // === Text Message：收到別人傳的
     if (packet.decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP &&
         !isFromUs(&packet)) {
         playReceiveFeedback();
     }
 
-    // NodeInfo：只處理來自別人的（如 discovery reply）
+    // === NodeInfo：收到別人傳的
     if (packet.decoded.portnum == meshtastic_PortNum_NODEINFO_APP &&
         !isFromUs(&packet)) {
         playNodeInfoFeedback();
     }
-    
-    
-    //送出訊息
+
+    // === Text Message：自己送出
     if (packet.decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP &&
-    isFromUs(&packet)) {
-    playSendFeedback();  
+        isFromUs(&packet)) {
+        playSendFeedback();
     }
-    
-    //有ack
-    if (packet.decoded.request_id == lastSentId || packet.id == lastSentId) {
-    waitingForAck = false;
-    ackReceived = true;
-    playSendSuccessFeedback();
-    HERMESX_LOG_INFO("ACK matched! packet.id=0x%08x request_id=0x%08x", packet.id, packet.decoded.request_id);
-    }
+
     return ProcessMessage::CONTINUE;
 }
-
 
 void hermesXFeedbackHandler(int index, bool state) {
     if (index == 0 && state) {
@@ -252,69 +268,71 @@ void hermesXFeedbackHandler(int index, bool state) {
 
 int32_t HermesXInterfaceModule::runOnce() {
     static bool firstTime = true;
+    static bool testPlayed = false;
+    uint32_t now = millis();
 
+    // === 初始化階段，只執行一次 ===
     if (firstTime) {
         firstTime = false;
         music.begin(); 
         music.playStartupSound();
         HERMESX_LOG_INFO("first runOnce() call");
 
+        // 建立 feedback 回呼
         hermesXCallback = [](int index, bool state) {
-        if (HermesXInterfaceModule::instance) {
-            HermesXInterfaceModule::instance->handleExternalNotification(index, state);
-            HERMESX_LOG_INFO("callbacksetup");
-        }
-    };
+            if (HermesXInterfaceModule::instance) {
+                HermesXInterfaceModule::instance->handleExternalNotification(index, state);
+                HERMESX_LOG_INFO("callbacksetup");
+            }
+        };
     }
 
-    static bool testPlayed = false;
-
+    // === 測試音效（僅一次）===
     if (!testPlayed) {
         testPlayed = true;
         music.playSendSound();
     }
 
-    uint32_t now = millis();
-
-    
+    // === 停止 tone 播放 ===
     if (toneStopTime && now >= toneStopTime) {
         stopTone();
         toneStopTime = 0;
     }
 
-    
+    // === 停止閃燈（例如 Send/Receive Feedback 結束）===
     if (ledFlashActive && (now - lastEventTime > 300)) {
         ledFlashActive = false;
     }
-    
-if (waitingForAck && (millis() - lastSentTime > 3000)) {
-    waitingForAck = false;
-    ackReceived = false;
-    playSendFailedFeedback();
-    HERMESX_LOG_DEBUG("FAILED");
-}
 
-if (pendingSuccessFeedback && millis() >= successFeedbackTime) {
-    music.playSuccessSound();
-    lastEventTime = millis();
-    pendingSuccessFeedback = false;
+    // === Timeout: 等待 ACK 超過 3 秒，視為失敗 ===
+    if (waitingForAck && (now - lastSentTime > 3000)) {
+        waitingForAck = false;
+        ackReceived = false;
+        playSendFailedFeedback();
+        HERMESX_LOG_WARN("ACK Timeout: Delivery failed");
+    }
 
-    triggerAckPulse();  //  改成觸發動畫而非閃爍
-    HERMESX_LOG_INFO("Success feedback triggered (ACK animation)");
-}
+    // === ACK 成功動畫與音效觸發 ===
+    if (pendingSuccessFeedback && now >= successFeedbackTime) {
+        pendingSuccessFeedback = false;
+        music.playSuccessSound();
+        lastEventTime = now;
 
+        triggerAckPulse();  // 啟動 LED 成功動畫
+        HERMESX_LOG_INFO("Success feedback triggered (ACK animation)");
+    }
+
+    // === 更新 LED 狀態 ===
     updateLED();
 
-    return 100;
+    return 100;  // 執行間隔：100ms
 }
 
 void HermesXInterfaceModule::stopTone() {
     ledcWriteTone(0, 0);
 }
 
-void HermesXInterfaceModule::handleRotary() {
- 
-}
+
 
 
 int HermesXInterfaceModule::onNotify(uint32_t fromNum)

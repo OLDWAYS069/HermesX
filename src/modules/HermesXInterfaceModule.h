@@ -10,6 +10,8 @@ typedef void (*HermesXFeedbackCallback)(int index, bool state);
 
 extern HermesXFeedbackCallback hermesXCallback;
 
+
+
 struct LedTheme {
     uint32_t colorSendPrimary;
     uint32_t colorSendSecondary;
@@ -28,7 +30,7 @@ public:
     HermesXInterfaceModule();
     void setup();
 
-    void handleRotary();
+  
     void handleButtonPress();  
 
     Adafruit_NeoPixel rgb;
@@ -52,6 +54,8 @@ public:
     void playStartupLEDAnimation(uint32_t color);
 
     void setLedTheme(const LedTheme& theme) { currentTheme = theme; }
+    void onCannedMessageResult(bool ack, const String& nodeName);
+
 
 private:
     void initDisplay();

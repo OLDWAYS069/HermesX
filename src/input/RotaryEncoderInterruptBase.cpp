@@ -22,7 +22,7 @@ void RotaryEncoderInterruptBase::init(
     pinMode(this->_pinB, INPUT_PULLUP);
 
     //    attachInterrupt(pinPress, onIntPress, RISING);
-    attachInterrupt(pinPress, onIntPress, RISING);
+    attachInterrupt(pinPress, onIntPress, FALLING);
     attachInterrupt(this->_pinA, onIntA, CHANGE);
     attachInterrupt(this->_pinB, onIntB, CHANGE);
 
@@ -65,7 +65,7 @@ void RotaryEncoderInterruptBase::intPressHandler()
 
 void RotaryEncoderInterruptBase::intAHandler()
 {
-    // CW rotation (at least on most common rotary encoders)
+   
     int currentLevelA = digitalRead(this->_pinA);
     if (this->rotaryLevelA == currentLevelA) {
         return;
@@ -76,7 +76,7 @@ void RotaryEncoderInterruptBase::intAHandler()
 
 void RotaryEncoderInterruptBase::intBHandler()
 {
-    // CW rotation (at least on most common rotary encoders)
+    
     int currentLevelB = digitalRead(this->_pinB);
     if (this->rotaryLevelB == currentLevelB) {
         return;

@@ -146,9 +146,9 @@ void setupModules()
 #if !MESHTASTIC_EXCLUDE_POWERSTRESS
         new PowerStressModule();
 #endif
-        // Example: Put your module here
-        // new ReplyModule();
-        lighthouseModule = new LighthouseModule();
+#if !MESHTASTIC_EXCLUDE_LIGHTHOUSE       
+     lighthouseModule = new LighthouseModule();
+#endif 
 
 #if !MESHTASTIC_EXCLUDE_HERMESX
      globalHermes = new HermesXInterfaceModule();

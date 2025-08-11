@@ -38,4 +38,6 @@ class RotaryEncoderInterruptBase : public Observable<const InputEvent *>, public
     char _eventCcw = meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_NONE;
     char _eventPressed = meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_NONE;
     const char *_originName;
+    uint8_t _pinPress = 0;
+
 };
