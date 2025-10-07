@@ -1,0 +1,3493 @@
+diff --git a/HermesX/src/modules/CannedMessageModule.cpp b/HermesX/src/modules/CannedMessageModule.cpp
+new file mode 100644
+index 0000000..41b4f6d
+--- a/HermesX/src/modules/CannedMessageModule.cpp
++++ b/HermesX/src/modules/CannedMessageModule.cpp
+@@ -0,0 +1,1533 @@
++#include "configuration.h"
++#if ARCH_PORTDUINO
++#include "PortduinoGlue.h"
++#endif
++#if HAS_SCREEN
++#include "CannedMessageModule.h"
++#include "Channels.h"
++#include "FSCommon.h"
++#include "MeshService.h"
++#include "NodeDB.h"
++#include "PowerFSM.h" // needed for button bypass
++#include "SPILock.h"
++#include "detect/ScanI2C.h"
++#include "input/ScanAndSelect.h"
++#include "mesh/generated/meshtastic/cannedmessages.pb.h"
++#include "modules/AdminModule.h"
++
++#include "main.h"                               // for cardkb_found
++#include "modules/ExternalNotificationModule.h" // for buzzer control
++#if !MESHTASTIC_EXCLUDE_HERMESX
++#include "modules/EmergencyAdaptiveModule.h"
++#endif
++#if !MESHTASTIC_EXCLUDE_HERMESX
++#include "modules/HermesXInterfaceModule.h"
++#endif
++#if !MESHTASTIC_EXCLUDE_HERMESX
++#include "HermesFace.h"
++#endif
++#if !MESHTASTIC_EXCLUDE_GPS
++#include "GPS.h"
++#endif
++#if defined(USE_EINK) && defined(USE_EINK_DYNAMICDISPLAY)
++#include "graphics/EInkDynamicDisplay.h" // To select between full and fast refresh on E-Ink displays
++#endif
++
++#ifndef INPUTBROKER_MATRIX_TYPE
++#define INPUTBROKER_MATRIX_TYPE 0
++#endif
++
++#include "graphics/ScreenFonts.h"
++#include <Throttle.h>
++#include <algorithm>
++#include <cstring>
++
++// Remove Canned message screen if no action is taken for some milliseconds
++#define INACTIVATE_AFTER_MS 20000
++
++extern ScanI2C::DeviceAddress cardkb_found;
++
++static const char *cannedMessagesConfigFile = "/prefs/cannedConf.proto";
++
++meshtastic_CannedMessageModuleConfig cannedMessageModuleConfig;
++
++CannedMessageModule *cannedMessageModule;
++
++CannedMessageModule::CannedMessageModule()
++    : SinglePortModule("canned", meshtastic_PortNum_TEXT_MESSAGE_APP), concurrency::OSThread("CannedMessage")
++{
++    std::fill_n(normalMessages, CANNED_MESSAGE_MODULE_MESSAGE_MAX_COUNT, nullptr);
++    normalMessagesCount = 0;
++    if (moduleConfig.canned_message.enabled || CANNED_MESSAGE_MODULE_ENABLE) {
++        this->loadProtoForModule();
++        if ((this->splitConfiguredMessages() <= 0) && (cardkb_found.address == 0x00) && !INPUTBROKER_MATRIX_TYPE &&
++            !CANNED_MESSAGE_MODULE_ENABLE) {
++            LOG_INFO("CannedMessageModule: No messages are configured. Module is disabled");
++            this->runState = CANNED_MESSAGE_RUN_STATE_DISABLED;
++            disable();
++        } else {
++            LOG_INFO("CannedMessageModule is enabled");
++
++            // T-Watch interface currently has no way to select destination type, so default to 'node'
++#if defined(USE_VIRTUAL_KEYBOARD)
++            this->destSelect = CANNED_MESSAGE_DESTINATION_TYPE_NODE;
++#endif
++
++            this->inputObserver.observe(inputBroker);
++        }
++    } else {
++        this->runState = CANNED_MESSAGE_RUN_STATE_DISABLED;
++        disable();
++    }
++}
++
++/**
++ * @brief Items in array this->messages will be set to be pointing on the right
++ *     starting points of the string this->messageStore
++ *
++ * @return int Returns the number of messages found.
++ */
++// FIXME: This is just one set of messages now
++int CannedMessageModule::splitConfiguredMessages()
++{
++    int messageIndex = 0;
++    int i = 0;
++
++    std::fill_n(normalMessages, CANNED_MESSAGE_MODULE_MESSAGE_MAX_COUNT, nullptr);
++    normalMessagesCount = 0;
++
++    String canned_messages = cannedMessageModuleConfig.messages;
++
++#if defined(USE_VIRTUAL_KEYBOARD)
++    String separator = canned_messages.length() ? "|" : "";
++
++    canned_messages = "[---- Free Text ----]" + separator + canned_messages;
++#endif
++
++    // collect all the message parts
++    strncpy(this->messageStore, canned_messages.c_str(), sizeof(this->messageStore));
++
++    // The first message points to the beginning of the store.
++    this->messages[messageIndex++] = this->messageStore;
++    int upTo = strlen(this->messageStore) - 1;
++
++    while (i < upTo) {
++        if (this->messageStore[i] == '|') {
++            // Message ending found, replace it with string-end character.
++            this->messageStore[i] = '\0';
++
++            // hit our max messages, bail
++            if (messageIndex >= CANNED_MESSAGE_MODULE_MESSAGE_MAX_COUNT) {
++                this->messagesCount = messageIndex;
++                return this->messagesCount;
++            }
++
++            // Next message starts after pipe (|) just found.
++            this->messages[messageIndex++] = (this->messageStore + i + 1);
++        }
++        i += 1;
++    }
++    if (strlen(this->messages[messageIndex - 1]) > 0) {
++        // We have a last message.
++        LOG_DEBUG("CannedMessage %d is: '%s'", messageIndex - 1, this->messages[messageIndex - 1]);
++        this->messagesCount = messageIndex;
++    } else {
++        this->messagesCount = messageIndex - 1;
++    }
++
++    normalMessagesCount = messagesCount;
++    for (int idx = 0; idx < normalMessagesCount && idx < CANNED_MESSAGE_MODULE_MESSAGE_MAX_COUNT; ++idx) {
++        normalMessages[idx] = messages[idx];
++    }
++
++    return this->messagesCount;
++}
++
++int CannedMessageModule::handleInputEvent(const InputEvent *event)
++{
++#if !MESHTASTIC_EXCLUDE_HERMESX
++    if (emergencyModule && emergencyModule->isEmergencyActive()) {
++        return 0;
++    }
++#endif
++    if ((strlen(moduleConfig.canned_message.allow_input_source) > 0) &&
++        (strcasecmp(moduleConfig.canned_message.allow_input_source, event->source) != 0) &&
++        (strcasecmp(moduleConfig.canned_message.allow_input_source, "_any") != 0)) {
++        // Event source is not accepted.
++        // Event only accepted if source matches the configured one, or
++        //   the configured one is "_any" (or if there is no configured
++        //   source at all)
++        return 0;
++    }
++    if (this->runState == CANNED_MESSAGE_RUN_STATE_SENDING_ACTIVE) {
++        return 0; // Ignore input while sending
++    }
++    bool validEvent = false;
++    if (event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP)) {
++        if (this->messagesCount > 0) {
++            this->runState = CANNED_MESSAGE_RUN_STATE_ACTION_UP;
++            validEvent = true;
++        }
++    }
++    if (event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN)) {
++        if (this->messagesCount > 0) {
++            this->runState = CANNED_MESSAGE_RUN_STATE_ACTION_DOWN;
++            validEvent = true;
++        }
++    }
++    if (event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT)) {
++
++#if defined(USE_VIRTUAL_KEYBOARD)
++        if (this->currentMessageIndex == 0) {
++            this->runState = CANNED_MESSAGE_RUN_STATE_FREETEXT;
++
++            requestFocus(); // Tell Screen::setFrames to move to our module's frame, next time it runs
++            UIFrameEvent e;
++            e.action = UIFrameEvent::Action::REGENERATE_FRAMESET; // We want to change the list of frames shown on-screen
++            this->notifyObservers(&e);
++
++            return 0;
++        }
++#endif
++
++        // when inactive, call the onebutton shortpress instead. Activate Module only on up/down
++        if ((this->runState == CANNED_MESSAGE_RUN_STATE_INACTIVE) || (this->runState == CANNED_MESSAGE_RUN_STATE_DISABLED)) {
++            powerFSM.trigger(EVENT_PRESS);
++        } else {
++            this->payload = this->runState;
++            this->runState = CANNED_MESSAGE_RUN_STATE_ACTION_SELECT;
++            validEvent = true;
++        }
++    }
++    if (event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL)) {
++        UIFrameEvent e;
++        e.action = UIFrameEvent::Action::REGENERATE_FRAMESET; // We want to change the list of frames shown on-screen
++        this->currentMessageIndex = -1;
++
++#if !defined(T_WATCH_S3) && !defined(RAK14014) && !defined(USE_VIRTUAL_KEYBOARD)
++        this->freetext = ""; // clear freetext
++        this->cursor = 0;
++        this->destSelect = CANNED_MESSAGE_DESTINATION_TYPE_NONE;
++#endif
++
++        this->runState = CANNED_MESSAGE_RUN_STATE_INACTIVE;
++        this->notifyObservers(&e);
++    }
++    if ((event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK)) ||
++        (event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT)) ||
++        (event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT))) {
++
++#if defined(USE_VIRTUAL_KEYBOARD)
++        if (event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT)) {
++            this->payload = INPUT_BROKER_MSG_LEFT;
++        } else if (event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT)) {
++            this->payload = INPUT_BROKER_MSG_RIGHT;
++        }
++#else
++        // tweak for left/right events generated via trackball/touch with empty kbchar
++        if (!event->kbchar) {
++            if (event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT)) {
++                this->payload = INPUT_BROKER_MSG_LEFT;
++            } else if (event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT)) {
++                this->payload = INPUT_BROKER_MSG_RIGHT;
++            }
++        } else {
++            // pass the pressed key
++            this->payload = event->kbchar;
++        }
++#endif
++
++        this->lastTouchMillis = millis();
++        validEvent = true;
++    }
++    if (event->inputEvent == static_cast<char>(ANYKEY)) {
++        // when inactive, this will switch to the freetext mode
++        if ((this->runState == CANNED_MESSAGE_RUN_STATE_INACTIVE) || (this->runState == CANNED_MESSAGE_RUN_STATE_ACTIVE) ||
++            (this->runState == CANNED_MESSAGE_RUN_STATE_DISABLED)) {
++            this->runState = CANNED_MESSAGE_RUN_STATE_FREETEXT;
++        }
++
++        validEvent = false; // If key is normal than it will be set to true.
++
++        // Run modifier key code below, (doesnt inturrupt typing or reset to start screen page)
++        switch (event->kbchar) {
++        case INPUT_BROKER_MSG_BRIGHTNESS_UP: // make screen brighter
++            if (screen)
++                screen->increaseBrightness();
++            LOG_DEBUG("Increase Screen Brightness");
++            break;
++        case INPUT_BROKER_MSG_BRIGHTNESS_DOWN: // make screen dimmer
++            if (screen)
++                screen->decreaseBrightness();
++            LOG_DEBUG("Decrease Screen Brightness");
++            break;
++        case INPUT_BROKER_MSG_FN_SYMBOL_ON: // draw modifier (function) symbol
++            if (screen)
++                screen->setFunctionSymbol("Fn");
++            break;
++        case INPUT_BROKER_MSG_FN_SYMBOL_OFF: // remove modifier (function) symbol
++            if (screen)
++                screen->removeFunctionSymbol("Fn");
++            break;
++        // mute (switch off/toggle) external notifications on fn+m
++        case INPUT_BROKER_MSG_MUTE_TOGGLE:
++            if (moduleConfig.external_notification.enabled == true) {
++                if (externalNotificationModule->getMute()) {
++                    externalNotificationModule->setMute(false);
++                    showTemporaryMessage("Notifications \nEnabled");
++                    if (screen)
++                        screen->removeFunctionSymbol("M"); // remove the mute symbol from the bottom right corner
++                } else {
++                    externalNotificationModule->stopNow(); // this will turn off all GPIO and sounds and idle the loop
++                    externalNotificationModule->setMute(true);
++                    showTemporaryMessage("Notifications \nDisabled");
++                    if (screen)
++                        screen->setFunctionSymbol("M"); // add the mute symbol to the bottom right corner
++                }
++            }
++            break;
++        case INPUT_BROKER_MSG_GPS_TOGGLE: // toggle GPS like triple press does
++#if !MESHTASTIC_EXCLUDE_GPS
++            if (gps != nullptr) {
++                gps->toggleGpsMode();
++            }
++            if (screen)
++                screen->forceDisplay();
++            showTemporaryMessage("GPS Toggled");
++#endif
++            break;
++        case INPUT_BROKER_MSG_BLUETOOTH_TOGGLE: // toggle Bluetooth on/off
++            if (config.bluetooth.enabled == true) {
++                config.bluetooth.enabled = false;
++                LOG_INFO("User toggled Bluetooth");
++                nodeDB->saveToDisk();
++                disableBluetooth();
++                showTemporaryMessage("Bluetooth OFF");
++            } else if (config.bluetooth.enabled == false) {
++                config.bluetooth.enabled = true;
++                LOG_INFO("User toggled Bluetooth");
++                nodeDB->saveToDisk();
++                rebootAtMsec = millis() + 2000;
++                showTemporaryMessage("Bluetooth ON\nReboot");
++            }
++            break;
++        case INPUT_BROKER_MSG_SEND_PING: // fn+space send network ping like double press does
++            service->refreshLocalMeshNode();
++            if (service->trySendPosition(NODENUM_BROADCAST, true)) {
++                showTemporaryMessage("Position \nUpdate Sent");
++            } else {
++                showTemporaryMessage("Node Info \nUpdate Sent");
++            }
++            break;
++        case INPUT_BROKER_MSG_DISMISS_FRAME: // fn+del: dismiss screen frames like text or waypoint
++            // Avoid opening the canned message screen frame
++            // We're only handling the keypress here by convention, this has nothing to do with canned messages
++            this->runState = CANNED_MESSAGE_RUN_STATE_INACTIVE;
++            // Attempt to close whatever frame is currently shown on display
++            screen->dismissCurrentFrame();
++            return 0;
++        default:
++            // pass the pressed key
++            // LOG_DEBUG("Canned message ANYKEY (%x)", event->kbchar);
++            this->payload = event->kbchar;
++            this->lastTouchMillis = millis();
++            validEvent = true;
++            break;
++        }
++        if (screen && (event->kbchar != INPUT_BROKER_MSG_FN_SYMBOL_ON)) {
++            screen->removeFunctionSymbol("Fn"); // remove modifier (function) symbol
++        }
++    }
++
++#if defined(USE_VIRTUAL_KEYBOARD)
++    if (this->runState == CANNED_MESSAGE_RUN_STATE_FREETEXT) {
++        String keyTapped = keyForCoordinates(event->touchX, event->touchY);
++
++        if (keyTapped == "SHIFT") {
++            this->highlight = -1;
++
++            this->payload = 0x00;
++
++            validEvent = true;
++
++            this->shift = !this->shift;
++        } else if (keyTapped == "BKSP") {
++#ifndef RAK14014
++            this->highlight = keyTapped[0];
++#endif
++
++            this->payload = 0x08;
++
++            validEvent = true;
++
++            this->shift = false;
++        } else if (keyTapped == "123" || keyTapped == "ABC") {
++            this->highlight = -1;
++
++            this->payload = 0x00;
++
++            this->charSet = this->charSet == 0 ? 1 : 0;
++
++            validEvent = true;
++        } else if (keyTapped == " ") {
++#ifndef RAK14014
++            this->highlight = keyTapped[0];
++#endif
++
++            this->payload = keyTapped[0];
++
++            validEvent = true;
++
++            this->shift = false;
++        } else if (keyTapped == "ENTER") {
++            this->highlight = 0x00;
++
++            this->runState = CANNED_MESSAGE_RUN_STATE_ACTION_SELECT;
++
++            this->payload = CANNED_MESSAGE_RUN_STATE_FREETEXT;
++
++            this->currentMessageIndex = event->kbchar - 1;
++
++            validEvent = true;
++
++            this->shift = false;
++        } else if (keyTapped != "") {
++#ifndef RAK14014
++            this->highlight = keyTapped[0];
++#endif
++
++            this->payload = this->shift ? keyTapped[0] : std::tolower(keyTapped[0]);
++
++            validEvent = true;
++
++            this->shift = false;
++        }
++    }
++#endif
++
++    if (event->inputEvent == static_cast<char>(MATRIXKEY)) {
++        // this will send the text immediately on matrix press
++        this->runState = CANNED_MESSAGE_RUN_STATE_ACTION_SELECT;
++        this->payload = MATRIXKEY;
++        this->currentMessageIndex = event->kbchar - 1;
++        this->lastTouchMillis = millis();
++        validEvent = true;
++    }
++
++    if (validEvent) {
++        requestFocus(); // Tell Screen::setFrames to move to our module's frame, next time it runs
++
++        // Let runOnce to be called immediately.
++        if (this->runState == CANNED_MESSAGE_RUN_STATE_ACTION_SELECT) {
++            setIntervalFromNow(0); // on fast keypresses, this isn't fast enough.
++        } else {
++            runOnce();
++        }
++    }
++
++    return 0;
++}
++
++void CannedMessageModule::sendText(NodeNum dest, ChannelIndex channel, const char *message, bool wantReplies)
++{
++    meshtastic_MeshPacket *p = allocDataPacket();
++    p->to = dest;
++    p->channel = channel;
++    p->want_ack = true;
++    p->decoded.payload.size = strlen(message);
++    memcpy(p->decoded.payload.bytes, message, p->decoded.payload.size);
++    if (moduleConfig.canned_message.send_bell && p->decoded.payload.size < meshtastic_Constants_DATA_PAYLOAD_LEN) {
++        p->decoded.payload.bytes[p->decoded.payload.size] = 7;        // Bell character
++        p->decoded.payload.bytes[p->decoded.payload.size + 1] = '\0'; // Bell character
++        p->decoded.payload.size++;
++    }
++
++    // Only receive routing messages when expecting ACK for a canned message
++    // Prevents the canned message module from regenerating the screen's frameset at unexpected times,
++    // or raising a UIFrameEvent before another module has the chance
++    this->waitingForAck = true;
++
++    LOG_INFO("Send message id=%d, dest=%x, msg=%.*s", p->id, p->to, p->decoded.payload.size, p->decoded.payload.bytes);
++
++    service->sendToMesh(
++        p, RX_SRC_LOCAL,
++        true); // send to mesh, cc to phone. Even if there's no phone connected, this stores the message to match ACKs
++}
++
++int32_t CannedMessageModule::runOnce()
++{
++    if (((!moduleConfig.canned_message.enabled) && !CANNED_MESSAGE_MODULE_ENABLE) ||
++        (this->runState == CANNED_MESSAGE_RUN_STATE_DISABLED) || (this->runState == CANNED_MESSAGE_RUN_STATE_INACTIVE)) {
++        temporaryMessage = "";
++        return INT32_MAX;
++    }
++    // LOG_DEBUG("Check status");
++    UIFrameEvent e;
++    if ((this->runState == CANNED_MESSAGE_RUN_STATE_SENDING_ACTIVE) ||
++        (this->runState == CANNED_MESSAGE_RUN_STATE_ACK_NACK_RECEIVED) || (this->runState == CANNED_MESSAGE_RUN_STATE_MESSAGE)) {
++        // TODO: might have some feedback of sending state
++        this->runState = CANNED_MESSAGE_RUN_STATE_INACTIVE;
++        temporaryMessage = "";
++        e.action = UIFrameEvent::Action::REGENERATE_FRAMESET; // We want to change the list of frames shown on-screen
++        this->currentMessageIndex = -1;
++        this->freetext = ""; // clear freetext
++        this->cursor = 0;
++
++#if !defined(T_WATCH_S3) && !defined(RAK14014) && !defined(SENSECAP_INDICATOR)
++        this->destSelect = CANNED_MESSAGE_DESTINATION_TYPE_NONE;
++#endif
++
++        this->notifyObservers(&e);
++    } else if (((this->runState == CANNED_MESSAGE_RUN_STATE_ACTIVE) || (this->runState == CANNED_MESSAGE_RUN_STATE_FREETEXT)) &&
++               !Throttle::isWithinTimespanMs(this->lastTouchMillis, INACTIVATE_AFTER_MS)) {
++        // Reset module
++        e.action = UIFrameEvent::Action::REGENERATE_FRAMESET; // We want to change the list of frames shown on-screen
++        this->currentMessageIndex = -1;
++        this->freetext = ""; // clear freetext
++        this->cursor = 0;
++
++#if !defined(T_WATCH_S3) && !defined(RAK14014) && !defined(USE_VIRTUAL_KEYBOARD)
++        this->destSelect = CANNED_MESSAGE_DESTINATION_TYPE_NONE;
++#endif
++
++        this->runState = CANNED_MESSAGE_RUN_STATE_INACTIVE;
++        this->notifyObservers(&e);
++    } else if (this->runState == CANNED_MESSAGE_RUN_STATE_ACTION_SELECT) {
++        if (this->payload == CANNED_MESSAGE_RUN_STATE_FREETEXT) {
++            if (this->freetext.length() > 0) {
++                sendText(this->dest, indexChannels[this->channel], this->freetext.c_str(), true);
++                this->runState = CANNED_MESSAGE_RUN_STATE_SENDING_ACTIVE;
++            } else {
++                this->runState = CANNED_MESSAGE_RUN_STATE_INACTIVE;
++            }
++        } else {
++            if ((this->messagesCount > this->currentMessageIndex) && (strlen(this->messages[this->currentMessageIndex]) > 0)) {
++                if (strcmp(this->messages[this->currentMessageIndex], "~") == 0) {
++                    powerFSM.trigger(EVENT_PRESS);
++                    return INT32_MAX;
++                } else {
++#if defined(USE_VIRTUAL_KEYBOARD)
++                    sendText(this->dest, indexChannels[this->channel], this->messages[this->currentMessageIndex], true);
++#else
++                    sendText(this->dest, indexChannels[this->channel], this->messages[this->currentMessageIndex], true);
++#endif
++                }
++                this->runState = CANNED_MESSAGE_RUN_STATE_SENDING_ACTIVE;
++            } else {
++                // LOG_DEBUG("Reset message is empty");
++                this->runState = CANNED_MESSAGE_RUN_STATE_INACTIVE;
++            }
++        }
++        e.action = UIFrameEvent::Action::REGENERATE_FRAMESET; // We want to change the list of frames shown on-screen
++        this->currentMessageIndex = -1;
++        this->freetext = ""; // clear freetext
++        this->cursor = 0;
++
++#if !defined(T_WATCH_S3) && !defined(RAK14014) && !defined(USE_VIRTUAL_KEYBOARD)
++        this->destSelect = CANNED_MESSAGE_DESTINATION_TYPE_NONE;
++#endif
++
++        this->notifyObservers(&e);
++        return 2000;
++    } else if ((this->runState != CANNED_MESSAGE_RUN_STATE_FREETEXT) && (this->currentMessageIndex == -1)) {
++        this->currentMessageIndex = 0;
++        LOG_DEBUG("First touch (%d):%s", this->currentMessageIndex, this->getCurrentMessage());
++        e.action = UIFrameEvent::Action::REGENERATE_FRAMESET; // We want to change the list of frames shown on-screen
++        this->runState = CANNED_MESSAGE_RUN_STATE_ACTIVE;
++    } else if (this->runState == CANNED_MESSAGE_RUN_STATE_ACTION_UP) {
++        if (this->messagesCount > 0) {
++            this->currentMessageIndex = getPrevIndex();
++            this->freetext = ""; // clear freetext
++            this->cursor = 0;
++
++#if !defined(T_WATCH_S3) && !defined(RAK14014) && !defined(USE_VIRTUAL_KEYBOARD)
++            this->destSelect = CANNED_MESSAGE_DESTINATION_TYPE_NONE;
++#endif
++
++            this->runState = CANNED_MESSAGE_RUN_STATE_ACTIVE;
++            LOG_DEBUG("MOVE UP (%d):%s", this->currentMessageIndex, this->getCurrentMessage());
++        }
++    } else if (this->runState == CANNED_MESSAGE_RUN_STATE_ACTION_DOWN) {
++        if (this->messagesCount > 0) {
++            this->currentMessageIndex = this->getNextIndex();
++            this->freetext = ""; // clear freetext
++            this->cursor = 0;
++
++#if !defined(T_WATCH_S3) && !defined(RAK14014) && !defined(USE_VIRTUAL_KEYBOARD)
++            this->destSelect = CANNED_MESSAGE_DESTINATION_TYPE_NONE;
++#endif
++
++            this->runState = CANNED_MESSAGE_RUN_STATE_ACTIVE;
++            LOG_DEBUG("MOVE DOWN (%d):%s", this->currentMessageIndex, this->getCurrentMessage());
++        }
++    } else if (this->runState == CANNED_MESSAGE_RUN_STATE_FREETEXT || this->runState == CANNED_MESSAGE_RUN_STATE_ACTIVE) {
++        switch (this->payload) {
++        case INPUT_BROKER_MSG_LEFT:
++            if (this->destSelect == CANNED_MESSAGE_DESTINATION_TYPE_NODE) {
++                size_t numMeshNodes = nodeDB->getNumMeshNodes();
++                if (this->dest == NODENUM_BROADCAST) {
++                    this->dest = nodeDB->getNodeNum();
++                }
++                for (unsigned int i = 0; i < numMeshNodes; i++) {
++                    if (nodeDB->getMeshNodeByIndex(i)->num == this->dest) {
++                        this->dest =
++                            (i > 0) ? nodeDB->getMeshNodeByIndex(i - 1)->num : nodeDB->getMeshNodeByIndex(numMeshNodes - 1)->num;
++                        break;
++                    }
++                }
++                if (this->dest == nodeDB->getNodeNum()) {
++                    this->dest = NODENUM_BROADCAST;
++                }
++            } else if (this->destSelect == CANNED_MESSAGE_DESTINATION_TYPE_CHANNEL) {
++                for (unsigned int i = 0; i < channels.getNumChannels(); i++) {
++                    if ((channels.getByIndex(i).role == meshtastic_Channel_Role_SECONDARY) ||
++                        (channels.getByIndex(i).role == meshtastic_Channel_Role_PRIMARY)) {
++                        indexChannels[numChannels] = i;
++                        numChannels++;
++                    }
++                }
++                if (this->channel == 0) {
++                    this->channel = numChannels - 1;
++                } else {
++                    this->channel--;
++                }
++            } else {
++                if (this->cursor > 0) {
++                    this->cursor--;
++                }
++            }
++            break;
++        case INPUT_BROKER_MSG_RIGHT:
++            if (this->destSelect == CANNED_MESSAGE_DESTINATION_TYPE_NODE) {
++                size_t numMeshNodes = nodeDB->getNumMeshNodes();
++                if (this->dest == NODENUM_BROADCAST) {
++                    this->dest = nodeDB->getNodeNum();
++                }
++                for (unsigned int i = 0; i < numMeshNodes; i++) {
++                    if (nodeDB->getMeshNodeByIndex(i)->num == this->dest) {
++                        this->dest =
++                            (i < numMeshNodes - 1) ? nodeDB->getMeshNodeByIndex(i + 1)->num : nodeDB->getMeshNodeByIndex(0)->num;
++                        break;
++                    }
++                }
++                if (this->dest == nodeDB->getNodeNum()) {
++                    this->dest = NODENUM_BROADCAST;
++                }
++            } else if (this->destSelect == CANNED_MESSAGE_DESTINATION_TYPE_CHANNEL) {
++                for (unsigned int i = 0; i < channels.getNumChannels(); i++) {
++                    if ((channels.getByIndex(i).role == meshtastic_Channel_Role_SECONDARY) ||
++                        (channels.getByIndex(i).role == meshtastic_Channel_Role_PRIMARY)) {
++                        indexChannels[numChannels] = i;
++                        numChannels++;
++                    }
++                }
++                if (this->channel == numChannels - 1) {
++                    this->channel = 0;
++                } else {
++                    this->channel++;
++                }
++            } else {
++                if (this->cursor < this->freetext.length()) {
++                    this->cursor++;
++                }
++            }
++            break;
++        default:
++            break;
++        }
++        if (this->runState == CANNED_MESSAGE_RUN_STATE_FREETEXT) {
++            e.action = UIFrameEvent::Action::REGENERATE_FRAMESET; // We want to change the list of frames shown on-screen
++            switch (this->payload) { // code below all trigger the freetext window (where you type to send a message) or reset the
++                                     // display back to the default window
++            case 0x08:               // backspace
++                if (this->freetext.length() > 0 && this->highlight == 0x00) {
++                    if (this->cursor == this->freetext.length()) {
++                        this->freetext = this->freetext.substring(0, this->freetext.length() - 1);
++                    } else {
++                        this->freetext = this->freetext.substring(0, this->cursor - 1) +
++                                         this->freetext.substring(this->cursor, this->freetext.length());
++                    }
++                    this->cursor--;
++                }
++                break;
++            case 0x09: // tab
++                if (this->destSelect == CANNED_MESSAGE_DESTINATION_TYPE_CHANNEL) {
++                    this->destSelect = CANNED_MESSAGE_DESTINATION_TYPE_NONE;
++                } else if (this->destSelect == CANNED_MESSAGE_DESTINATION_TYPE_NODE) {
++                    this->destSelect = CANNED_MESSAGE_DESTINATION_TYPE_CHANNEL;
++                } else {
++                    this->destSelect = CANNED_MESSAGE_DESTINATION_TYPE_NODE;
++                }
++                break;
++            case INPUT_BROKER_MSG_LEFT:
++            case INPUT_BROKER_MSG_RIGHT:
++                // already handled above
++                break;
++                // handle fn+s for shutdown
++            case INPUT_BROKER_MSG_SHUTDOWN:
++                if (screen)
++                    screen->startAlert("Shutting down...");
++                shutdownAtMsec = millis() + DEFAULT_SHUTDOWN_SECONDS * 1000;
++                runState = CANNED_MESSAGE_RUN_STATE_INACTIVE;
++                break;
++            // and fn+r for reboot
++            case INPUT_BROKER_MSG_REBOOT:
++                if (screen)
++                    screen->startAlert("Rebooting...");
++                rebootAtMsec = millis() + DEFAULT_REBOOT_SECONDS * 1000;
++                runState = CANNED_MESSAGE_RUN_STATE_INACTIVE;
++                break;
++            default:
++                if (this->highlight != 0x00) {
++                    break;
++                }
++
++                if (this->cursor == this->freetext.length()) {
++                    this->freetext += this->payload;
++                } else {
++                    this->freetext =
++                        this->freetext.substring(0, this->cursor) + this->payload + this->freetext.substring(this->cursor);
++                }
++
++                this->cursor += 1;
++
++                uint16_t maxChars = meshtastic_Constants_DATA_PAYLOAD_LEN - (moduleConfig.canned_message.send_bell ? 1 : 0);
++                if (this->freetext.length() > maxChars) {
++                    this->cursor = maxChars;
++                    this->freetext = this->freetext.substring(0, maxChars);
++                }
++                break;
++            }
++            if (screen)
++                screen->removeFunctionSymbol("Fn");
++        }
++
++        this->lastTouchMillis = millis();
++        this->notifyObservers(&e);
++        return INACTIVATE_AFTER_MS;
++    }
++
++    if (this->runState == CANNED_MESSAGE_RUN_STATE_ACTIVE) {
++        this->lastTouchMillis = millis();
++        this->notifyObservers(&e);
++        return INACTIVATE_AFTER_MS;
++    }
++
++    return INT32_MAX;
++}
++
++const char *CannedMessageModule::getCurrentMessage()
++{
++    if (currentMessageIndex < 0) {
++        return "";
++    }
++    return getMessageLabel(static_cast<size_t>(currentMessageIndex));
++}
++
++const char *CannedMessageModule::getPrevMessage()
++{
++    return getMessageLabel(static_cast<size_t>(getPrevIndex()));
++}
++
++const char *CannedMessageModule::getNextMessage()
++{
++    return getMessageLabel(static_cast<size_t>(getNextIndex()));
++}
++
++const char *CannedMessageModule::getMessageByIndex(int index)
++{
++    if (index < 0) {
++        return "";
++    }
++    return getMessageLabel(static_cast<size_t>(index));
++}
++
++
++const char *CannedMessageModule::getNodeName(NodeNum node)
++{
++    if (node == NODENUM_BROADCAST) {
++        return "Broadcast";
++    } else {
++        meshtastic_NodeInfoLite *info = nodeDB->getMeshNode(node);
++        if (info != NULL) {
++            return info->user.long_name;
++        } else {
++            return "Unknown";
++        }
++    }
++}
++
++bool CannedMessageModule::shouldDraw()
++{
++    if (!moduleConfig.canned_message.enabled && !CANNED_MESSAGE_MODULE_ENABLE) {
++        return false;
++    }
++
++#if !MESHTASTIC_EXCLUDE_HERMESX
++    if (emergencyModule && emergencyModule->isEmergencyActive()) {
++        return false;
++    }
++#endif
++
++    // If using "scan and select" input, don't draw the module frame just to say "disabled"
++    // The scanAndSelectInput class will draw its own temporary alert for user, when the input button is pressed
++    else if (scanAndSelectInput != nullptr && !hasMessages())
++        return false;
++
++    return (currentMessageIndex != -1) || (this->runState != CANNED_MESSAGE_RUN_STATE_INACTIVE);
++}
++
++// Has the user defined any canned messages?
++// Expose publicly whether canned message module is ready for use
++bool CannedMessageModule::hasMessages()
++{
++    return getMessageCount() > 0;
++}
++
++
++int CannedMessageModule::getNextIndex()
++{
++    if (messagesCount <= 0) {
++        return 0;
++    }
++    if (currentMessageIndex >= (messagesCount - 1)) {
++        return 0;
++    }
++    return currentMessageIndex + 1;
++}
++
++
++int CannedMessageModule::getPrevIndex()
++{
++    if (messagesCount <= 0) {
++        LOG_DEBUG("No messages found");
++        return 0;
++    }
++    if (currentMessageIndex == 0) {
++        return messagesCount - 1;
++    }
++    return currentMessageIndex - 1;
++}
++
++void CannedMessageModule::showTemporaryMessage(const String &message)
++{
++    temporaryMessage = message;
++    UIFrameEvent e;
++    e.action = UIFrameEvent::Action::REGENERATE_FRAMESET; // We want to change the list of frames shown on-screen
++    notifyObservers(&e);
++    runState = CANNED_MESSAGE_RUN_STATE_MESSAGE;
++    // run this loop again in 2 seconds, next iteration will clear the display
++    setIntervalFromNow(2000);
++}
++
++#if defined(USE_VIRTUAL_KEYBOARD)
++
++String CannedMessageModule::keyForCoordinates(uint x, uint y)
++{
++    int outerSize = *(&this->keyboard[this->charSet] + 1) - this->keyboard[this->charSet];
++
++    for (int8_t outerIndex = 0; outerIndex < outerSize; outerIndex++) {
++        int innerSize = *(&this->keyboard[this->charSet][outerIndex] + 1) - this->keyboard[this->charSet][outerIndex];
++
++        for (int8_t innerIndex = 0; innerIndex < innerSize; innerIndex++) {
++            Letter letter = this->keyboard[this->charSet][outerIndex][innerIndex];
++
++            if (x > letter.rectX && x < (letter.rectX + letter.rectWidth) && y > letter.rectY &&
++                y < (letter.rectY + letter.rectHeight)) {
++                return letter.character;
++            }
++        }
++    }
++
++    return "";
++}
++
++void CannedMessageModule::drawKeyboard(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
++{
++    int outerSize = *(&this->keyboard[this->charSet] + 1) - this->keyboard[this->charSet];
++
++    int xOffset = 0;
++
++    int yOffset = 56;
++
++    display->setTextAlignment(TEXT_ALIGN_LEFT);
++
++    display->setFont(FONT_SMALL);
++
++    display->setColor(OLEDDISPLAY_COLOR::WHITE);
++
++    display->drawStringMaxWidth(0, 0, display->getWidth(),
++                                cannedMessageModule->drawWithCursor(cannedMessageModule->freetext, cannedMessageModule->cursor));
++
++    display->setFont(FONT_MEDIUM);
++
++    int cellHeight = round((display->height() - 64) / outerSize);
++
++    int yCorrection = 8;
++
++    for (int8_t outerIndex = 0; outerIndex < outerSize; outerIndex++) {
++        yOffset += outerIndex > 0 ? cellHeight : 0;
++
++        int innerSizeBound = *(&this->keyboard[this->charSet][outerIndex] + 1) - this->keyboard[this->charSet][outerIndex];
++
++        int innerSize = 0;
++
++        for (int8_t innerIndex = 0; innerIndex < innerSizeBound; innerIndex++) {
++            if (this->keyboard[this->charSet][outerIndex][innerIndex].character != "") {
++                innerSize++;
++            }
++        }
++
++        int cellWidth = display->width() / innerSize;
++
++        for (int8_t innerIndex = 0; innerIndex < innerSize; innerIndex++) {
++            xOffset += innerIndex > 0 ? cellWidth : 0;
++
++            Letter letter = this->keyboard[this->charSet][outerIndex][innerIndex];
++
++            Letter updatedLetter = {letter.character, letter.width, xOffset, yOffset, cellWidth, cellHeight};
++
++#ifdef RAK14014 // Optimize the touch range of the virtual keyboard in the bottom row
++            if (outerIndex == outerSize - 1) {
++                updatedLetter.rectHeight = 240 - yOffset;
++            }
++#endif
++            this->keyboard[this->charSet][outerIndex][innerIndex] = updatedLetter;
++
++            float characterOffset = ((cellWidth / 2) - (letter.width / 2));
++
++            if (letter.character == "SHIFT") {
++                if (this->shift) {
++                    display->fillRect(xOffset, yOffset, cellWidth, cellHeight);
++
++                    display->setColor(OLEDDISPLAY_COLOR::BLACK);
++
++                    drawShiftIcon(display, xOffset + characterOffset, yOffset + yCorrection + 5, 1.2);
++
++                    display->setColor(OLEDDISPLAY_COLOR::WHITE);
++                } else {
++                    display->drawRect(xOffset, yOffset, cellWidth, cellHeight);
++
++                    drawShiftIcon(display, xOffset + characterOffset, yOffset + yCorrection + 5, 1.2);
++                }
++            } else if (letter.character == "BKSP") {
++                if (this->highlight == letter.character[0]) {
++                    display->fillRect(xOffset, yOffset, cellWidth, cellHeight);
++
++                    display->setColor(OLEDDISPLAY_COLOR::BLACK);
++
++                    drawBackspaceIcon(display, xOffset + characterOffset, yOffset + yCorrection + 5, 1.2);
++
++                    display->setColor(OLEDDISPLAY_COLOR::WHITE);
++
++                    setIntervalFromNow(0);
++                } else {
++                    display->drawRect(xOffset, yOffset, cellWidth, cellHeight);
++
++                    drawBackspaceIcon(display, xOffset + characterOffset, yOffset + yCorrection + 5, 1.2);
++                }
++            } else if (letter.character == "ENTER") {
++                display->drawRect(xOffset, yOffset, cellWidth, cellHeight);
++
++                drawEnterIcon(display, xOffset + characterOffset, yOffset + yCorrection + 5, 1.7);
++            } else {
++                if (this->highlight == letter.character[0]) {
++                    display->fillRect(xOffset, yOffset, cellWidth, cellHeight);
++
++                    display->setColor(OLEDDISPLAY_COLOR::BLACK);
++
++                    display->drawString(xOffset + characterOffset, yOffset + yCorrection,
++                                        letter.character == " " ? "space" : letter.character);
++
++                    display->setColor(OLEDDISPLAY_COLOR::WHITE);
++
++                    setIntervalFromNow(0);
++                } else {
++                    display->drawRect(xOffset, yOffset, cellWidth, cellHeight);
++
++                    display->drawString(xOffset + characterOffset, yOffset + yCorrection,
++                                        letter.character == " " ? "space" : letter.character);
++                }
++            }
++        }
++
++        xOffset = 0;
++    }
++
++    this->highlight = 0x00;
++}
++
++void CannedMessageModule::drawShiftIcon(OLEDDisplay *display, int x, int y, float scale)
++{
++    PointStruct shiftIcon[10] = {{8, 0}, {15, 7}, {15, 8}, {12, 8}, {12, 12}, {4, 12}, {4, 8}, {1, 8}, {1, 7}, {8, 0}};
++
++    int size = 10;
++
++    for (int i = 0; i < size - 1; i++) {
++        int x0 = x + (shiftIcon[i].x * scale);
++        int y0 = y + (shiftIcon[i].y * scale);
++        int x1 = x + (shiftIcon[i + 1].x * scale);
++        int y1 = y + (shiftIcon[i + 1].y * scale);
++
++        display->drawLine(x0, y0, x1, y1);
++    }
++}
++
++void CannedMessageModule::drawBackspaceIcon(OLEDDisplay *display, int x, int y, float scale)
++{
++    PointStruct backspaceIcon[6] = {{0, 7}, {5, 2}, {15, 2}, {15, 12}, {5, 12}, {0, 7}};
++
++    int size = 6;
++
++    for (int i = 0; i < size - 1; i++) {
++        int x0 = x + (backspaceIcon[i].x * scale);
++        int y0 = y + (backspaceIcon[i].y * scale);
++        int x1 = x + (backspaceIcon[i + 1].x * scale);
++        int y1 = y + (backspaceIcon[i + 1].y * scale);
++
++        display->drawLine(x0, y0, x1, y1);
++    }
++
++    PointStruct backspaceIconX[4] = {{7, 4}, {13, 10}, {7, 10}, {13, 4}};
++
++    size = 4;
++
++    for (int i = 0; i < size - 1; i++) {
++        int x0 = x + (backspaceIconX[i].x * scale);
++        int y0 = y + (backspaceIconX[i].y * scale);
++        int x1 = x + (backspaceIconX[i + 1].x * scale);
++        int y1 = y + (backspaceIconX[i + 1].y * scale);
++
++        display->drawLine(x0, y0, x1, y1);
++    }
++}
++
++void CannedMessageModule::drawEnterIcon(OLEDDisplay *display, int x, int y, float scale)
++{
++    PointStruct enterIcon[6] = {{0, 7}, {4, 3}, {4, 11}, {0, 7}, {15, 7}, {15, 0}};
++
++    int size = 6;
++
++    for (int i = 0; i < size - 1; i++) {
++        int x0 = x + (enterIcon[i].x * scale);
++        int y0 = y + (enterIcon[i].y * scale);
++        int x1 = x + (enterIcon[i + 1].x * scale);
++        int y1 = y + (enterIcon[i + 1].y * scale);
++
++        display->drawLine(x0, y0, x1, y1);
++    }
++}
++
++#endif
++
++// Indicate to screen class that module is handling keyboard input specially (at certain times)
++// This prevents the left & right keys being used for nav. between screen frames during text entry.
++bool CannedMessageModule::interceptingKeyboardInput()
++{
++    switch (runState) {
++    case CANNED_MESSAGE_RUN_STATE_DISABLED:
++    case CANNED_MESSAGE_RUN_STATE_INACTIVE:
++        return false;
++    default:
++        return true;
++    }
++}
++
++#if !HAS_TFT
++void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
++{
++    char buffer[50];
++
++#if !MESHTASTIC_EXCLUDE_HERMESX
++    const bool hermesActive = (HermesXInterfaceModule::instance != nullptr);
++#endif
++
++    if (temporaryMessage.length() != 0) {
++#if !MESHTASTIC_EXCLUDE_HERMESX
++        if (hermesActive) {
++            requestFocus(); // Tell Screen::setFrames to move to our module's frame
++            HermesX_DrawFace(display, x, y, HermesFaceMode::Thinking);
++        } else
++#endif
++        {
++            requestFocus(); // Tell Screen::setFrames to move to our module's frame
++            LOG_DEBUG("Draw temporary message: %s", temporaryMessage.c_str());
++            display->setTextAlignment(TEXT_ALIGN_CENTER);
++            display->setFont(FONT_MEDIUM);
++            display->drawString(display->getWidth() / 2 + x, 0 + y + 12, temporaryMessage);
++        }
++    } else if (cannedMessageModule->runState == CANNED_MESSAGE_RUN_STATE_ACK_NACK_RECEIVED) {
++#if !MESHTASTIC_EXCLUDE_HERMESX
++        if (hermesActive) {
++            requestFocus();                        // Tell Screen::setFrames to move to our module's frame
++            EINK_ADD_FRAMEFLAG(display, COSMETIC); // Clean after this popup. Layout makes ghosting particularly obvious
++            const HermesFaceMode faceMode = this->ack ? HermesFaceMode::AckSuccess : HermesFaceMode::AckFailed;
++            HermesX_DrawFace(display, x, y, faceMode);
++        } else
++#endif
++        {
++            requestFocus();                        // Tell Screen::setFrames to move to our module's frame
++            EINK_ADD_FRAMEFLAG(display, COSMETIC); // Clean after this popup. Layout makes ghosting particularly obvious
++
++#ifdef USE_EINK
++            display->setFont(FONT_SMALL); // No chunky text
++#else
++            display->setFont(FONT_MEDIUM); // Chunky text
++#endif
++
++            String displayString;
++            display->setTextAlignment(TEXT_ALIGN_CENTER);
++            if (this->ack) {
++                displayString = "Delivered to\n%s";
++            } else {
++                displayString = "Delivery failed\nto %s";
++            }
++            display->drawStringf(display->getWidth() / 2 + x, 0 + y + 12, buffer, displayString,
++                                 cannedMessageModule->getNodeName(this->incoming));
++
++            display->setFont(FONT_SMALL);
++
++            String snrString = "Last Rx SNR: %f";
++            String rssiString = "Last Rx RSSI: %d";
++
++            // Don't bother drawing snr and rssi for tiny displays
++            if (display->getHeight() > 100) {
++
++                // Original implementation used constants of y = 100 and y = 130. Shrink this if screen is *slightly* small
++                int16_t snrY = 100;
++                int16_t rssiY = 130;
++
++                // If dislay is *slighly* too small for the original consants, squish up a bit
++                if (display->getHeight() < rssiY + FONT_HEIGHT_SMALL) {
++                    snrY = display->getHeight() - ((1.5) * FONT_HEIGHT_SMALL);
++                    rssiY = display->getHeight() - ((2.5) * FONT_HEIGHT_SMALL);
++                }
++
++                if (this->ack) {
++                    display->drawStringf(display->getWidth() / 2 + x, snrY + y, buffer, snrString, this->lastRxSnr);
++                    display->drawStringf(display->getWidth() / 2 + x, rssiY + y, buffer, rssiString, this->lastRxRssi);
++                }
++            }
++        }
++    } else if (cannedMessageModule->runState == CANNED_MESSAGE_RUN_STATE_SENDING_ACTIVE) {
++#if !MESHTASTIC_EXCLUDE_HERMESX
++        if (hermesActive) {
++            EINK_ADD_FRAMEFLAG(display, COSMETIC);
++            requestFocus(); // Tell Screen::setFrames to move to our module's frame
++            HermesX_DrawFace(display, x, y, HermesFaceMode::Sending);
++        } else
++#endif
++        {
++            // E-Ink: clean the screen *after* this pop-up
++            EINK_ADD_FRAMEFLAG(display, COSMETIC);
++
++            requestFocus(); // Tell Screen::setFrames to move to our module's frame
++
++#ifdef USE_EINK
++            display->setFont(FONT_SMALL); // No chunky text
++#else
++            display->setFont(FONT_MEDIUM); // Chunky text
++#endif
++
++            display->setTextAlignment(TEXT_ALIGN_CENTER);
++            display->drawString(display->getWidth() / 2 + x, 0 + y + 12, "Sending...");
++        }
++    } else if (cannedMessageModule->runState == CANNED_MESSAGE_RUN_STATE_DISABLED) {
++#if !MESHTASTIC_EXCLUDE_HERMESX
++        if (hermesActive) {
++            requestFocus();
++            HermesX_DrawFace(display, x, y, HermesFaceMode::Disabled);
++        } else
++#endif
++        {
++            display->setTextAlignment(TEXT_ALIGN_LEFT);
++            display->setFont(FONT_SMALL);
++            display->drawString(10 + x, 0 + y + FONT_HEIGHT_SMALL, "Canned Message\nModule disabled.");
++        }
++    } else if (cannedMessageModule->runState == CANNED_MESSAGE_RUN_STATE_FREETEXT) {
++        requestFocus(); // Tell Screen::setFrames to move to our module's frame
++#if defined(USE_EINK) && defined(USE_EINK_DYNAMICDISPLAY)
++        EInkDynamicDisplay *einkDisplay = static_cast<EInkDynamicDisplay *>(display);
++        einkDisplay->enableUnlimitedFastMode(); // Enable unlimited fast refresh while typing
++#endif
++
++#if defined(USE_VIRTUAL_KEYBOARD)
++        drawKeyboard(display, state, 0, 0);
++#else
++
++        display->setTextAlignment(TEXT_ALIGN_LEFT);
++        display->setFont(FONT_SMALL);
++        if (this->destSelect != CANNED_MESSAGE_DESTINATION_TYPE_NONE) {
++            display->fillRect(0 + x, 0 + y, x + display->getWidth(), y + FONT_HEIGHT_SMALL);
++            display->setColor(BLACK);
++        }
++        switch (this->destSelect) {
++        case CANNED_MESSAGE_DESTINATION_TYPE_NODE:
++            display->drawStringf(1 + x, 0 + y, buffer, "To: >%s<@%s", cannedMessageModule->getNodeName(this->dest),
++                                 channels.getName(indexChannels[this->channel]));
++            display->drawStringf(0 + x, 0 + y, buffer, "To: >%s<@%s", cannedMessageModule->getNodeName(this->dest),
++                                 channels.getName(indexChannels[this->channel]));
++            break;
++        case CANNED_MESSAGE_DESTINATION_TYPE_CHANNEL:
++            display->drawStringf(1 + x, 0 + y, buffer, "To: %s@>%s<", cannedMessageModule->getNodeName(this->dest),
++                                 channels.getName(indexChannels[this->channel]));
++            display->drawStringf(0 + x, 0 + y, buffer, "To: %s@>%s<", cannedMessageModule->getNodeName(this->dest),
++                                 channels.getName(indexChannels[this->channel]));
++            break;
++        default:
++            if (display->getWidth() > 128) {
++                display->drawStringf(0 + x, 0 + y, buffer, "To: %s@%s", cannedMessageModule->getNodeName(this->dest),
++                                     channels.getName(indexChannels[this->channel]));
++            } else {
++                display->drawStringf(0 + x, 0 + y, buffer, "To: %.5s@%.5s", cannedMessageModule->getNodeName(this->dest),
++                                     channels.getName(indexChannels[this->channel]));
++            }
++            break;
++        }
++        // used chars right aligned, only when not editing the destination
++        if (this->destSelect == CANNED_MESSAGE_DESTINATION_TYPE_NONE) {
++            uint16_t charsLeft =
++                meshtastic_Constants_DATA_PAYLOAD_LEN - this->freetext.length() - (moduleConfig.canned_message.send_bell ? 1 : 0);
++            snprintf(buffer, sizeof(buffer), "%d left", charsLeft);
++            display->drawString(x + display->getWidth() - display->getStringWidth(buffer), y + 0, buffer);
++        }
++        display->setColor(WHITE);
++        display->drawStringMaxWidth(
++            0 + x, 0 + y + FONT_HEIGHT_SMALL, x + display->getWidth(),
++            cannedMessageModule->drawWithCursor(cannedMessageModule->freetext, cannedMessageModule->cursor));
++#endif
++    } else {
++        if (this->messagesCount > 0) {
++            display->setTextAlignment(TEXT_ALIGN_LEFT);
++            display->setFont(FONT_SMALL);
++            display->drawStringf(0 + x, 0 + y, buffer, "To: %s", cannedMessageModule->getNodeName(this->dest));
++            int lines = (display->getHeight() / FONT_HEIGHT_SMALL) - 1;
++            if (lines == 3) {
++                display->fillRect(0 + x, 0 + y + FONT_HEIGHT_SMALL * 2, x + display->getWidth(), y + FONT_HEIGHT_SMALL);
++                display->setColor(BLACK);
++                display->drawString(0 + x, 0 + y + FONT_HEIGHT_SMALL * 2, cannedMessageModule->getCurrentMessage());
++                display->setColor(WHITE);
++                if (this->messagesCount > 1) {
++                    display->drawString(0 + x, 0 + y + FONT_HEIGHT_SMALL, cannedMessageModule->getPrevMessage());
++                    display->drawString(0 + x, 0 + y + FONT_HEIGHT_SMALL * 3, cannedMessageModule->getNextMessage());
++                }
++            } else {
++                int topMsg = (messagesCount > lines && currentMessageIndex >= lines - 1) ? currentMessageIndex - lines + 2 : 0;
++                for (int i = 0; i < std::min(messagesCount, lines); i++) {
++                    if (i == currentMessageIndex - topMsg) {
++#ifdef USE_EINK
++                        display->drawString(0 + x, 0 + y + FONT_HEIGHT_SMALL * (i + 1), ">");
++                        display->drawString(12 + x, 0 + y + FONT_HEIGHT_SMALL * (i + 1),
++                                            cannedMessageModule->getCurrentMessage());
++#else
++                        display->fillRect(0 + x, 0 + y + FONT_HEIGHT_SMALL * (i + 1), x + display->getWidth(),
++                                          y + FONT_HEIGHT_SMALL);
++                        display->setColor(BLACK);
++                        display->drawString(0 + x, 0 + y + FONT_HEIGHT_SMALL * (i + 1), cannedMessageModule->getCurrentMessage());
++                        display->setColor(WHITE);
++#endif
++                    } else if (messagesCount > 1) { // Only draw others if there are multiple messages
++                        display->drawString(0 + x, 0 + y + FONT_HEIGHT_SMALL * (i + 1),
++                                            cannedMessageModule->getMessageByIndex(topMsg + i));
++                    }
++                }
++            }
++        }
++    }
++}
++#endif //! HAS_TFT
++
++ProcessMessage CannedMessageModule::handleReceived(const meshtastic_MeshPacket &mp)
++{
++    if (mp.decoded.portnum == meshtastic_PortNum_ROUTING_APP && waitingForAck) {
++        // look for a request_id
++        if (mp.decoded.request_id != 0) {
++            UIFrameEvent e;
++            e.action = UIFrameEvent::Action::REGENERATE_FRAMESET; // We want to change the list of frames shown on-screen
++            requestFocus(); // Tell Screen::setFrames that our module's frame should be shown, even if not "first" in the frameset
++            this->runState = CANNED_MESSAGE_RUN_STATE_ACK_NACK_RECEIVED;
++            this->incoming = service->getNodenumFromRequestId(mp.decoded.request_id);
++            meshtastic_Routing decoded = meshtastic_Routing_init_default;
++            pb_decode_from_bytes(mp.decoded.payload.bytes, mp.decoded.payload.size, meshtastic_Routing_fields, &decoded);
++            this->ack = decoded.error_reason == meshtastic_Routing_Error_NONE;
++            waitingForAck = false; // No longer want routing packets
++            this->notifyObservers(&e);
++            // run the next time 2 seconds later
++            setIntervalFromNow(2000);
++        }
++    }
++
++    return ProcessMessage::CONTINUE;
++}
++
++void CannedMessageModule::loadProtoForModule()
++{
++    if (nodeDB->loadProto(cannedMessagesConfigFile, meshtastic_CannedMessageModuleConfig_size,
++                          sizeof(meshtastic_CannedMessageModuleConfig), &meshtastic_CannedMessageModuleConfig_msg,
++                          &cannedMessageModuleConfig) != LoadFileResult::LOAD_SUCCESS) {
++        installDefaultCannedMessageModuleConfig();
++    }
++}
++/**
++ * @brief Save the module config to file.
++ *
++ * @return true On success.
++ * @return false On error.
++ */
++bool CannedMessageModule::saveProtoForModule()
++{
++    bool okay = true;
++
++#ifdef FSCom
++    spiLock->lock();
++    FSCom.mkdir("/prefs");
++    spiLock->unlock();
++#endif
++
++    okay &= nodeDB->saveProto(cannedMessagesConfigFile, meshtastic_CannedMessageModuleConfig_size,
++                              &meshtastic_CannedMessageModuleConfig_msg, &cannedMessageModuleConfig);
++
++    return okay;
++}
++
++/**
++ * @brief Fill configuration with default values.
++ */
++void CannedMessageModule::installDefaultCannedMessageModuleConfig()
++{
++    memset(cannedMessageModuleConfig.messages, 0, sizeof(cannedMessageModuleConfig.messages));
++}
++
++/**
++ * @brief An admin message arrived to AdminModule. We are asked whether we want to handle that.
++ *
++ * @param mp The mesh packet arrived.
++ * @param request The AdminMessage request extracted from the packet.
++ * @param response The prepared response
++ * @return AdminMessageHandleResult HANDLED if message was handled
++ *   HANDLED_WITH_RESULT if a result is also prepared.
++ */
++AdminMessageHandleResult CannedMessageModule::handleAdminMessageForModule(const meshtastic_MeshPacket &mp,
++                                                                          meshtastic_AdminMessage *request,
++                                                                          meshtastic_AdminMessage *response)
++{
++    AdminMessageHandleResult result;
++
++    switch (request->which_payload_variant) {
++    case meshtastic_AdminMessage_get_canned_message_module_messages_request_tag:
++        LOG_DEBUG("Client getting radio canned messages");
++        this->handleGetCannedMessageModuleMessages(mp, response);
++        result = AdminMessageHandleResult::HANDLED_WITH_RESPONSE;
++        break;
++
++    case meshtastic_AdminMessage_set_canned_message_module_messages_tag:
++        LOG_DEBUG("Client getting radio canned messages");
++        this->handleSetCannedMessageModuleMessages(request->set_canned_message_module_messages);
++        result = AdminMessageHandleResult::HANDLED;
++        break;
++
++    default:
++        result = AdminMessageHandleResult::NOT_HANDLED;
++    }
++
++    return result;
++}
++
++void CannedMessageModule::handleGetCannedMessageModuleMessages(const meshtastic_MeshPacket &req,
++                                                               meshtastic_AdminMessage *response)
++{
++    LOG_DEBUG("*** handleGetCannedMessageModuleMessages");
++    if (req.decoded.want_response) {
++        response->which_payload_variant = meshtastic_AdminMessage_get_canned_message_module_messages_response_tag;
++        strncpy(response->get_canned_message_module_messages_response, cannedMessageModuleConfig.messages,
++                sizeof(response->get_canned_message_module_messages_response));
++    } // Don't send anything if not instructed to. Better than asserting.
++}
++
++void CannedMessageModule::handleSetCannedMessageModuleMessages(const char *from_msg)
++{
++    int changed = 0;
++
++    if (*from_msg) {
++        changed |= strcmp(cannedMessageModuleConfig.messages, from_msg);
++        strncpy(cannedMessageModuleConfig.messages, from_msg, sizeof(cannedMessageModuleConfig.messages));
++        LOG_DEBUG("*** from_msg.text:%s", from_msg);
++    }
++
++    if (changed) {
++        this->saveProtoForModule();
++    }
++}
++
++String CannedMessageModule::drawWithCursor(String text, int cursor)
++{
++    String result = text.substring(0, cursor) + "_" + text.substring(cursor);
++    return result;
++}
++
++void CannedMessageModule::setActiveList(CannedListKind kind)
++{
++    if (activeList == kind && kind == CannedListKind::NORMAL) {
++        return;
++    }
++
++    activeList = kind;
++
++    if (activeList == CannedListKind::NORMAL) {
++        messagesCount = normalMessagesCount;
++        for (int i = 0; i < normalMessagesCount && i < CANNED_MESSAGE_MODULE_MESSAGE_MAX_COUNT; ++i) {
++            messages[i] = normalMessages[i];
++        }
++    } else {
++        rebuildEmergencyMenu(kind);
++        messagesCount = emergencyMenu.size();
++        for (size_t i = 0; i < emergencyMenu.size() && i < CANNED_MESSAGE_MODULE_MESSAGE_MAX_COUNT; ++i) {
++            messages[i] = emergencyMenu[i].label.c_str();
++        }
++    }
++
++    currentMessageIndex = (messagesCount > 0) ? 0 : -1;
++    freetext = "";
++    cursor = 0;
++    destSelect = CANNED_MESSAGE_DESTINATION_TYPE_NONE;
++    dest = NODENUM_BROADCAST;
++
++    if (runState != CANNED_MESSAGE_RUN_STATE_DISABLED) {
++        runState = CANNED_MESSAGE_RUN_STATE_INACTIVE;
++    }
++
++    UIFrameEvent evt;
++    evt.action = UIFrameEvent::Action::REGENERATE_FRAMESET;
++    notifyObservers(&evt);
++}
++
++size_t CannedMessageModule::getMessageCount() const
++{
++    return static_cast<size_t>(messagesCount);
++}
++
++const char *CannedMessageModule::getMessageLabel(size_t index) const
++{
++    if (index >= getMessageCount()) {
++        return "";
++    }
++    return messages[index] ? messages[index] : "";
++}
++
++void CannedMessageModule::rebuildEmergencyMenu(CannedListKind kind)
++{
++#if !MESHTASTIC_EXCLUDE_HERMESX
++    emergencyMenu.clear();
++
++    auto language = moduleConfig.emergency.lang;
++    auto localize = [&](const char *en, const char *zh) {
++        if (language == meshtastic_ModuleConfig_EmergencyConfig_Language_ZH) {
++            return String(zh);
++        }
++        return String(en);
++    };
++
++    auto addNeed = [&](uint32_t code, const char *en, const char *zh) {
++        EmergencyMenuOption option;
++        option.label = localize(en, zh);
++        option.action = EmergencyMenuOption::Action::NEED;
++        option.codes[0] = code;
++        option.codeCount = 1;
++        emergencyMenu.push_back(option);
++    };
++
++    auto addResource = [&](uint32_t code, const char *en, const char *zh) {
++        EmergencyMenuOption option;
++        option.label = localize(en, zh);
++        option.action = EmergencyMenuOption::Action::RESOURCE;
++        option.codes[0] = code;
++        option.codeCount = 1;
++        emergencyMenu.push_back(option);
++    };
++
++    EmergencyMenuOption sos;
++    sos.label = localize("Send SOS", "嚙緻嚙碼嚙瘩嚙踝蕭");
++    if (kind == CannedListKind::DRILL) {
++        sos.label += " (DRILL)";
++    }
++    sos.action = EmergencyMenuOption::Action::SOS;
++    sos.codeCount = 0;
++    emergencyMenu.push_back(sos);
++
++    EmergencyMenuOption safe;
++    safe.label = localize("Send SAFE", "嚙踝蕭嚙箠嚙緩嚙踝蕭");
++    safe.action = EmergencyMenuOption::Action::SAFE;
++    safe.codeCount = 0;
++    emergencyMenu.push_back(safe);
++
++    addNeed(1, "Need Medical", "嚙豎要嚙踝蕭嚙踝蕭");
++    addNeed(2, "Need Water", "嚙豎要嚙踝蕭嚙踝蕭");
++    addNeed(3, "Need Power", "嚙豎要嚙緬嚙瞌");
++    addNeed(4, "Need Food", "嚙豎要嚙踝蕭嚙踝蕭");
++    addNeed(5, "Need Evac", "嚙豎要嚙瞎嚙踝蕭");
++
++    if (moduleConfig.emergency.role == meshtastic_ModuleConfig_EmergencyConfig_Role_SHELTER) {
++        addResource(1, "Offer Medical", "嚙踝蕭嚙踝蕭嚙踝蕭嚙踝蕭");
++        addResource(2, "Offer Water", "嚙踝蕭嚙諸塚蕭嚙踝蕭");
++        addResource(3, "Offer Power", "嚙踝蕭嚙諸電嚙瞌");
++        addResource(4, "Offer Food", "嚙踝蕭嚙諸哨蕭嚙踝蕭");
++        addResource(5, "Offer Evac", "嚙踝蕭嚙諸改蕭嚙瑾");
++    }
++#else
++    (void)kind;
++    emergencyMenu.clear();
++#endif
++}
++
++bool CannedMessageModule::handleEmergencySelection(size_t index)
++{
++#if !MESHTASTIC_EXCLUDE_HERMESX
++    if (!emergencyModule || index >= emergencyMenu.size()) {
++        return false;
++    }
++
++    const auto &entry = emergencyMenu[index];
++    bool ok = false;
++    switch (entry.action) {
++    case EmergencyMenuOption::Action::SOS:
++        ok = emergencyModule->sendSOS();
++        if (ok && HermesXInterfaceModule::instance) {
++            HermesXInterfaceModule::instance->playSOSFeedback();
++        }
++        break;
++    case EmergencyMenuOption::Action::SAFE:
++        ok = emergencyModule->sendSafe();
++        break;
++    case EmergencyMenuOption::Action::NEED:
++        ok = emergencyModule->sendNeed(entry.codes[0]);
++        break;
++    case EmergencyMenuOption::Action::RESOURCE:
++        ok = emergencyModule->broadcastResource(entry.codes.data(), entry.codeCount);
++        break;
++    }
++    return ok;
++#else
++    (void)index;
++    return false;
++#endif
++}
++
++void CannedMessageModule::setup()
++{
++    SinglePortModule::setup();
++#if !MESHTASTIC_EXCLUDE_HERMESX
++    if (emergencyModule) {
++        emergencyModule->addModeListener([this](bool active) {
++            CannedListKind target = active ?
++                ((moduleConfig.emergency.mode == meshtastic_ModuleConfig_EmergencyConfig_Mode_DRILL)
++                     ? CannedListKind::DRILL
++                     : CannedListKind::EMERGENCY)
++                : CannedListKind::NORMAL;
++            setActiveList(target);
++        });
++    }
++#endif
++}
++
++#endif
++
+diff --git a/HermesX/src/modules/EmUiModule.cpp b/HermesX/src/modules/EmUiModule.cpp
+new file mode 100644
+index 0000000..fac2d57
+--- a/HermesX/src/modules/EmUiModule.cpp
++++ b/HermesX/src/modules/EmUiModule.cpp
+@@ -0,0 +1,280 @@
++#include "EmUiModule.h"
++
++#if HAS_SCREEN && !MESHTASTIC_EXCLUDE_HERMESX
++
++#include "EmergencyAdaptiveModule.h"
++#include "HermesXInterfaceModule.h"
++#include "configuration.h"
++#include "graphics/ScreenFonts.h"
++#include "mesh/NodeDB.h"
++#include "mesh/generated/meshtastic/module_config.pb.h"
++#include <OLEDDisplay.h>
++#include <OLEDDisplayUi.h>
++
++EmUiModule *emUiModule = nullptr;
++
++namespace {
++constexpr uint16_t kHighlightPadding = 2;
++constexpr uint32_t kStatusDisplayMs = 3000;
++} // namespace
++
++EmUiModule::EmUiModule() : MeshModule("em_ui")
++{
++    emUiModule = this;
++}
++
++void EmUiModule::setup()
++{
++    MeshModule::setup();
++
++    if (inputBroker) {
++        inputObserver.observe(inputBroker);
++    }
++
++    if (emergencyModule) {
++        emergencyModule->addModeListener([this](bool active) { handleModeChanged(active); });
++        isActive = emergencyModule->isEmergencyActive();
++    }
++
++    rebuildMenu();
++}
++
++#if HAS_SCREEN
++bool EmUiModule::wantUIFrame()
++{
++    return isActive && !menu.empty();
++}
++
++void EmUiModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
++{
++    (void)state;
++
++    if (!display) {
++        return;
++    }
++
++    if (!isActive) {
++        return;
++    }
++
++    const int16_t width = display->getWidth();
++    const int16_t height = display->getHeight();
++
++    display->setColor(OLEDDISPLAY_COLOR::WHITE);
++    display->setTextAlignment(TEXT_ALIGN_LEFT);
++    display->setFont(FONT_MEDIUM);
++
++    const String title = localize("Emergency Mode", "蝺交芋撘?);
++    display->drawString(x, y, title);
++
++    int16_t cursorY = y + FONT_HEIGHT_MEDIUM + 2;
++
++    display->setFont(FONT_SMALL);
++    const String hint = localize("Rotate to choose, press to send", "???豢?嚗?銝");
++    display->drawString(x, cursorY, hint);
++    cursorY += FONT_HEIGHT_SMALL + 4;
++
++    display->setFont(FONT_MEDIUM);
++
++    const int16_t optionWidth = width - (x + 4);
++    for (size_t idx = 0; idx < menu.size(); ++idx) {
++        const bool selected = (idx == selectedIndex);
++        const String &label = menu[idx].label;
++        const int16_t drawY = cursorY + static_cast<int16_t>(idx) * (FONT_HEIGHT_MEDIUM + 2);
++
++        if (selected) {
++            display->setColor(OLEDDISPLAY_COLOR::WHITE);
++            display->fillRect(x, drawY - kHighlightPadding, optionWidth, FONT_HEIGHT_MEDIUM + kHighlightPadding * 2);
++            display->setColor(OLEDDISPLAY_COLOR::BLACK);
++        } else {
++            display->setColor(OLEDDISPLAY_COLOR::WHITE);
++            display->drawRect(x, drawY - kHighlightPadding, optionWidth, FONT_HEIGHT_MEDIUM + kHighlightPadding * 2);
++        }
++
++        display->drawString(x + 3, drawY, label);
++
++        if (selected) {
++            display->setColor(OLEDDISPLAY_COLOR::WHITE);
++        }
++    }
++
++    if (!statusMessage.isEmpty()) {
++        if (statusDeadlineMs && millis() > statusDeadlineMs) {
++            statusMessage = "";
++            statusDeadlineMs = 0;
++        } else {
++            display->setColor(OLEDDISPLAY_COLOR::WHITE);
++            display->setFont(FONT_SMALL);
++            const int16_t statusY = height - FONT_HEIGHT_SMALL - 2;
++            display->drawString(x, statusY, statusMessage);
++        }
++    }
++}
++#endif
++
++void EmUiModule::rebuildMenu()
++{
++    menu.clear();
++
++    if (!emergencyModule) {
++        return;
++    }
++
++    const bool drillMode = (moduleConfig.emergency.mode == meshtastic_ModuleConfig_EmergencyConfig_Mode_DRILL);
++
++    auto addOption = [&](const String &label, Action action, std::initializer_list<uint32_t> codes = {}) {
++        Option opt;
++        opt.label = label;
++        opt.action = action;
++        opt.codes.assign(codes);
++        menu.push_back(opt);
++    };
++
++    String sosLabel = localize("Send SOS", "?潮???);
++    if (drillMode) {
++        sosLabel += " (DRILL)";
++    }
++    addOption(sosLabel, Action::SOS);
++
++    addOption(localize("Send SAFE", "?摰"), Action::SAFE);
++
++    addOption(localize("Need Medical", "?閬??), Action::NEED, {1});
++    addOption(localize("Need Water", "?閬ㄡ瘞?), Action::NEED, {2});
++    addOption(localize("Need Power", "?閬??), Action::NEED, {3});
++    addOption(localize("Need Food", "?閬???), Action::NEED, {4});
++    addOption(localize("Need Evac", "?閬??), Action::NEED, {5});
++
++    if (moduleConfig.emergency.role == meshtastic_ModuleConfig_EmergencyConfig_Role_SHELTER) {
++        addOption(localize("Offer Medical", "???怎?"), Action::RESOURCE, {1});
++        addOption(localize("Offer Water", "??憌脫偌"), Action::RESOURCE, {2});
++        addOption(localize("Offer Power", "???餃?"), Action::RESOURCE, {3});
++        addOption(localize("Offer Food", "??憌"), Action::RESOURCE, {4});
++        addOption(localize("Offer Evac", "???日"), Action::RESOURCE, {5});
++    }
++
++    if (selectedIndex >= menu.size()) {
++        selectedIndex = 0;
++    }
++}
++
++void EmUiModule::handleModeChanged(bool active)
++{
++    const bool changed = (isActive != active);
++    isActive = active;
++
++    if (isActive) {
++        rebuildMenu();
++        requestFocus();
++    }
++
++    if (changed) {
++        requestUiUpdate(UIFrameEvent::Action::REGENERATE_FRAMESET);
++    } else if (isActive) {
++        requestUiUpdate(UIFrameEvent::Action::REDRAW_ONLY);
++    }
++}
++
++void EmUiModule::showStatus(const String &message, uint32_t durationMs)
++{
++    statusMessage = message;
++    statusDeadlineMs = durationMs ? millis() + durationMs : 0;
++    requestUiUpdate(UIFrameEvent::Action::REDRAW_ONLY);
++}
++
++void EmUiModule::requestUiUpdate(UIFrameEvent::Action action)
++{
++    UIFrameEvent evt;
++    evt.action = action;
++    notifyObservers(&evt);
++}
++
++bool EmUiModule::triggerAction(const Option &opt)
++{
++    if (!emergencyModule) {
++        return false;
++    }
++
++    bool ok = false;
++
++    switch (opt.action) {
++    case Action::SOS:
++        ok = emergencyModule->sendSOS();
++        if (ok && HermesXInterfaceModule::instance) {
++            HermesXInterfaceModule::instance->playSOSFeedback();
++        }
++        break;
++    case Action::SAFE:
++        ok = emergencyModule->sendSafe();
++        break;
++    case Action::NEED:
++        if (!opt.codes.empty()) {
++            ok = emergencyModule->sendNeed(opt.codes.front());
++        }
++        break;
++    case Action::RESOURCE:
++        if (!opt.codes.empty()) {
++            ok = emergencyModule->broadcastResource(opt.codes.data(), opt.codes.size());
++        }
++        break;
++    }
++
++    const String successText = localize("Request sent", "撌脤?瘙?);
++    const String failureText = localize("Failed to send", "?潮仃??);
++
++    showStatus(ok ? successText : failureText, kStatusDisplayMs);
++
++    return ok;
++}
++
++String EmUiModule::localize(const char *en, const char *zh) const
++{
++    if (moduleConfig.emergency.lang == meshtastic_ModuleConfig_EmergencyConfig_Language_ZH) {
++        return String(zh);
++    }
++    return String(en);
++}
++
++int EmUiModule::handleInputEvent(const InputEvent *event)
++{
++    if (!isActive || !event) {
++        return 0;
++    }
++
++    if (!emergencyModule || !emergencyModule->isEmergencyActive()) {
++        return 0;
++    }
++
++    bool handled = false;
++    const char input = event->inputEvent;
++
++    const char up = static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
++    const char down = static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
++    const char select = static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
++    const char cancel = static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL);
++
++    if (input == up && !menu.empty()) {
++        if (selectedIndex == 0) {
++            selectedIndex = menu.size() - 1;
++        } else {
++            --selectedIndex;
++        }
++        handled = true;
++    } else if (input == down && !menu.empty()) {
++        selectedIndex = (selectedIndex + 1) % menu.size();
++        handled = true;
++    } else if (input == select && selectedIndex < menu.size()) {
++        handled = triggerAction(menu[selectedIndex]);
++    } else if (input == cancel) {
++        showStatus(localize("Hold SAFE to cancel", "隢摰隞亦???), kStatusDisplayMs);
++        handled = true;
++    }
++
++    if (handled) {
++        requestUiUpdate(UIFrameEvent::Action::REDRAW_ONLY);
++    }
++
++    return handled ? 1 : 0;
++}
++
++#endif
++
+diff --git a/HermesX/src/modules/EmUiModule.h b/HermesX/src/modules/EmUiModule.h
+new file mode 100644
+index 0000000..fa6e38e
+--- a/HermesX/src/modules/EmUiModule.h
++++ b/HermesX/src/modules/EmUiModule.h
+@@ -0,0 +1,60 @@
++#pragma once
++
++#if HAS_SCREEN && !MESHTASTIC_EXCLUDE_HERMESX
++
++#include "Observer.h"
++#include "input/InputBroker.h"
++#include "mesh/MeshModule.h"
++#include <Arduino.h>
++#include <initializer_list>
++#include <vector>
++
++class EmergencyAdaptiveModule;
++class HermesXInterfaceModule;
++
++class EmUiModule : public MeshModule, public Observable<const UIFrameEvent *>
++{
++  public:
++    EmUiModule();
++
++    void setup() override;
++
++#if HAS_SCREEN
++    bool wantUIFrame() override;
++    Observable<const UIFrameEvent *> *getUIFrameObservable() override { return this; }
++    void drawFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y) override;
++    bool interceptingKeyboardInput() override { return isActive; }
++#endif
++
++  private:
++    enum class Action { SOS, SAFE, NEED, RESOURCE };
++
++    struct Option {
++        String label;
++        Action action;
++        std::vector<uint32_t> codes;
++    };
++
++    CallbackObserver<EmUiModule, const InputEvent *> inputObserver =
++        CallbackObserver<EmUiModule, const InputEvent *>(this, &EmUiModule::handleInputEvent);
++
++    bool isActive = false;
++    std::vector<Option> menu;
++    size_t selectedIndex = 0;
++    String statusMessage;
++    uint32_t statusDeadlineMs = 0;
++
++    void rebuildMenu();
++    void handleModeChanged(bool active);
++    void showStatus(const String &message, uint32_t durationMs);
++    void requestUiUpdate(UIFrameEvent::Action action);
++    bool triggerAction(const Option &opt);
++    String localize(const char *en, const char *zh) const;
++
++    int handleInputEvent(const InputEvent *event);
++};
++
++extern EmUiModule *emUiModule;
++
++#endif
++
+diff --git a/HermesX/src/modules/EmergencyAdaptiveModule.h b/HermesX/src/modules/EmergencyAdaptiveModule.h
+new file mode 100644
+index 0000000..06b18fe
+--- a/HermesX/src/modules/EmergencyAdaptiveModule.h
++++ b/HermesX/src/modules/EmergencyAdaptiveModule.h
+@@ -0,0 +1,60 @@
++#pragma once
++
++#include <functional>
++#include <unordered_map>
++#include <vector>
++
++#include "ProtobufModule.h"
++#include "mesh/MeshTypes.h"
++#include "mesh/mesh-pb-constants.h"
++#include "mesh/HermesPortnums.h"
++#include "mesh/generated/meshtastic/emergency.pb.h"
++
++class EmergencyAdaptiveModule : public ProtobufModule<meshtastic_EmergencyMsg>
++{
++  public:
++    using ModeChangedHandler = std::function<void(bool)>;
++    using TxResultHandler = std::function<void(uint8_t, bool)>;
++
++
++    static EmergencyAdaptiveModule *instance;
++
++    EmergencyAdaptiveModule();
++
++    bool setEmergencyActive(bool on, uint32_t senderNodeId);
++    bool sendSOS();
++    bool sendSafe();
++    bool sendNeed(uint32_t needCode);
++    bool broadcastResource(const uint32_t *codes, size_t count);
++    bool isEmergencyActive() const { return emergencyActive; }
++    uint32_t getLastActivatingNode() const { return lastActivatingNode; }
++
++    void addModeListener(const ModeChangedHandler &cb);
++    void addTxResultListener(const TxResultHandler &cb);
++
++    void handleTxCompletion(PacketId id, bool ok);
++
++  protected:
++    bool handleReceivedProtobuf(const meshtastic_MeshPacket &mp, meshtastic_EmergencyMsg *msg) override;
++    void setup() override;
++
++  private:
++    bool emergencyActive = false;
++    uint32_t lastActivatingNode = 0;
++    std::vector<ModeChangedHandler> modeListeners;
++    std::vector<TxResultHandler> txListeners;
++    std::unordered_map<uint32_t, meshtastic_EmergencyType> pendingByPacketId;
++    uint32_t lastPositionRequestMs = 0;
++
++    bool isWhitelisted(uint32_t nodeId) const;
++    void notifyModeChanged(bool active);
++    void notifyTxResult(uint8_t type, bool ok);
++    bool sendEmergencyMessage(meshtastic_EmergencyType type, const meshtastic_EmergencyPayload *payload = nullptr,
++                              bool requireAck = false);
++    void fillCommonFields(meshtastic_EmergencyMsg &msg);
++    void maybeQueuePositionRequest(meshtastic_EmergencyType type);
++};
++
++extern EmergencyAdaptiveModule *emergencyModule;
++
++
+diff --git a/HermesX/src/modules/HermesXInterfaceModule.cpp b/HermesX/src/modules/HermesXInterfaceModule.cpp
+new file mode 100644
+index 0000000..1c5b4d0
+--- a/HermesX/src/modules/HermesXInterfaceModule.cpp
++++ b/HermesX/src/modules/HermesXInterfaceModule.cpp
+@@ -0,0 +1,1020 @@
++// HermesXInterfaceModule.cpp - Refactored without TinyScheduler
++
++#include "HermesXInterfaceModule.h"
++#include "EmergencyAdaptiveModule.h"
++#include "mesh/MeshService.h"
++#include "mesh/NodeDB.h"
++#include "mesh/Channels.h"
++#include "mesh/Router.h"
++#include "meshtastic/mesh.pb.h"
++#include "modules/CannedMessageModule.h"
++#include "SinglePortModule.h"
++#include "pb.h"
++#include "pb_encode.h"
++#include "HermesXPacketUtils.h"
++
++#include "MusicModule.h"
++#include "sleep_hooks.h"
++#include "Led.h"
++#include "buzz/buzz.h"
++#include "graphics/Screen.h"
++#include "main.h"
++#ifdef ARCH_ESP32
++#include <driver/rtc_io.h>
++#endif
++#include "freertos/FreeRTOS.h"
++#include "freertos/task.h"
++#include <Arduino.h>
++#include "RedirectablePrint.h"
++#include "DebugConfiguration.h"
++#include "meshtastic/portnums.pb.h"
++#include "HermesXLog.h"
++#include "HermesFace.h"
++#include "graphics/ScreenFonts.h"
++
++
++#include "ReliableRouter.h"
++#include "Default.h"
++#include "MeshTypes.h"
++#include "configuration.h"
++#include "mesh-pb-constants.h"
++#include "modules/NodeInfoModule.h"
++#include "modules/RoutingModule.h"
++
++#include "pb_decode.h"
++#include "mesh/mesh-pb-constants.h"
++#include "mesh/generated/meshtastic/module_config.pb.h"
++
++#define PIN_LED 6
++#define NUM_LEDS 8
++
++#define BUZZER_PIN 17
++
++#ifndef TFT_BACKLIGHT_ON
++#define TFT_BACKLIGHT_ON HIGH
++#endif
++
++extern graphics::Screen *screen;
++
++namespace {
++constexpr uint32_t kDefaultShutdownDurationMs = 700;
++constexpr uint32_t kShutdownAnimationStepMs = 20;
++
++constexpr uint32_t kPowerHoldFadeDurationMs = 1200;
++constexpr uint32_t kPowerHoldRedColor = 0xFF0000;
++
++struct ShutdownToneSegment {
++    float freq;
++    uint16_t duration;
++};
++
++constexpr ShutdownToneSegment kShutdownToneSegments[] = {
++    {523.0f, 160}, // C5
++    {415.0f, 150}, // G#4
++    {349.0f, 180}, // F4
++    {0.0f, 0}
++};
++
++void disableVisibleOutputsCommon()
++{
++    ledForceOn.set(false);
++    ledBlink.set(false);
++
++#ifdef TFT_BL
++    pinMode(TFT_BL, OUTPUT);
++    digitalWrite(TFT_BL, !TFT_BACKLIGHT_ON);
++#ifdef ARCH_ESP32
++    if (rtc_gpio_is_valid_gpio((gpio_num_t)TFT_BL)) {
++        rtc_gpio_hold_en((gpio_num_t)TFT_BL);
++    }
++#endif
++#endif
++#ifdef ST7701_BACKLIGHT_EN
++    pinMode(ST7701_BACKLIGHT_EN, OUTPUT);
++    digitalWrite(ST7701_BACKLIGHT_EN, LOW);
++#endif
++#ifdef ILI9341_BACKLIGHT_EN
++    pinMode(ILI9341_BACKLIGHT_EN, OUTPUT);
++    digitalWrite(ILI9341_BACKLIGHT_EN, LOW);
++#endif
++#ifdef PIN_EINK_EN
++    pinMode(PIN_EINK_EN, OUTPUT);
++    digitalWrite(PIN_EINK_EN, LOW);
++#endif
++#ifdef VEXT_ENABLE
++    pinMode(VEXT_ENABLE, OUTPUT);
++    digitalWrite(VEXT_ENABLE, !VEXT_ON_VALUE);
++#endif
++    if (screen) {
++        screen->setOn(false);
++        screen->doDeepSleep();
++    }
++}
++
++void performShutdownAnimation(uint32_t durationMs, Adafruit_NeoPixel &strip, uint32_t baseColor, MusicModule *music)
++{
++    if (durationMs == 0) {
++        durationMs = kDefaultShutdownDurationMs;
++    }
++
++    if (music) {
++        music->stopTone();
++    }
++
++    size_t toneIndex = 0;
++    uint32_t toneDeadline = 0;
++
++    auto scheduleTone = [&](size_t index) -> bool {
++        const auto &segment = kShutdownToneSegments[index];
++        if (segment.duration == 0) {
++            return false;
++        }
++        toneDeadline = millis() + segment.duration;
++        if (music) {
++            if (segment.freq > 0.0f) {
++                music->playTone(segment.freq, segment.duration);
++            } else {
++                music->stopTone();
++            }
++        }
++        return true;
++    };
++
++    bool hasTone = scheduleTone(toneIndex);
++    uint32_t start = millis();
++    while (millis() - start < durationMs) {
++        float progress = static_cast<float>(millis() - start) / static_cast<float>(durationMs);
++        if (progress > 1.0f)
++            progress = 1.0f;
++        float brightness = 1.0f - progress;
++        brightness = constrain(brightness, 0.0f, 1.0f);
++        uint8_t r = ((baseColor >> 16) & 0xFF) * brightness;
++        uint8_t g = ((baseColor >> 8) & 0xFF) * brightness;
++        uint8_t b = (baseColor & 0xFF) * brightness;
++        strip.fill(strip.Color(r, g, b));
++        strip.show();
++
++        if (hasTone && millis() >= toneDeadline) {
++            if (music) {
++                music->stopTone();
++            }
++            toneIndex++;
++            hasTone = scheduleTone(toneIndex);
++        }
++
++        delay(kShutdownAnimationStepMs);
++    }
++
++    if (music) {
++        music->stopTone();
++    }
++    strip.clear();
++    strip.show();
++}
++
++void fallbackShutdownEffect(uint32_t durationMs)
++{
++    static Adafruit_NeoPixel fallbackStrip(NUM_LEDS, PIN_LED, NEO_GRB + NEO_KHZ800);
++    static bool fallbackStripInit = false;
++    if (!fallbackStripInit) {
++        fallbackStrip.begin();
++        fallbackStrip.setBrightness(60);
++        fallbackStripInit = true;
++    }
++
++    static MusicModule fallbackMusic(BUZZER_PIN);
++    static bool fallbackMusicInit = false;
++    if (!fallbackMusicInit) {
++        fallbackMusic.begin();
++        fallbackMusicInit = true;
++    }
++
++    performShutdownAnimation(durationMs, fallbackStrip, kPowerHoldRedColor, &fallbackMusic);
++    disableVisibleOutputsCommon();
++}
++}
++
++
++
++HermesXInterfaceModule* globalHermes = nullptr;
++HermesXInterfaceModule *HermesXInterfaceModule::instance = nullptr;
++uint32_t safeTimeout = 5000;
++
++HermesXFeedbackCallback hermesXCallback = nullptr;
++
++HermesXInterfaceModule::HermesXInterfaceModule()
++  : SinglePortModule("hermesx", meshtastic_PortNum_PRIVATE_APP),
++    OSThread("hermesTask", 500),
++    rgb(NUM_LEDS, PIN_LED, NEO_GRB + NEO_KHZ800),
++    music(BUZZER_PIN)
++{
++    globalHermes = this;
++    HermesXInterfaceModule::instance = this;
++    observe(&service->fromNumChanged);
++    isPromiscuous = true;
++    loopbackOk = true;
++    initLED();
++
++    HERMESX_LOG_DEBUG("constroct");
++    playStartupLEDAnimation(currentTheme.colorIdleBreathBase);
++}
++
++void HermesXInterfaceModule::setup()
++{
++    if (emergencyModule) {
++        emergencyModule->addModeListener([this](bool active) { onEmergencyModeChanged(active); });
++        emergencyModule->addTxResultListener([this](uint8_t /*type*/, bool ok) {
++            if (ok) {
++                playAckSuccess();
++            } else {
++                playNackFail();
++            }
++        });
++        onEmergencyModeChanged(emergencyModule->isEmergencyActive());
++    }
++}
++
++
++void HermesXInterfaceModule::handleButtonPress()
++{
++
++}
++
++
++void HermesXInterfaceModule::drawFace(const char* face, uint16_t color) {
++    const char *faceText = face;
++    uint16_t faceColor = color;
++    if (emergencyBannerVisible) {
++        faceText = emergencyBannerText.length() ? emergencyBannerText.c_str() : "SOS";
++        if (emergencyBannerColor) {
++            faceColor = emergencyBannerColor;
++        }
++    }
++
++    if (!faceText || !*faceText) {
++        return;
++    }
++
++    HermesFaceRenderContext ctx{};
++    if (!HermesX_TryGetFaceRenderContext(ctx) || ctx.display == nullptr) {
++        HERMESX_LOG_INFO("HermesXInterfaceModule drawFace fallback; no display ctx for face=%s", faceText);
++        return;
++    }
++
++    OLEDDisplay *display = ctx.display;
++    const int16_t width = display->getWidth();
++    const int16_t height = display->getHeight();
++
++    auto applyFaceFont = [&](const char *text, int16_t &faceWidth, int16_t &faceHeight) {
++        const int16_t availableWidth = width > 8 ? width - 8 : width;
++        const int16_t availableHeight = height > 8 ? height - 8 : height;
++
++        display->setFont(FONT_LARGE);
++        faceWidth = display->getStringWidth(text);
++        faceHeight = FONT_HEIGHT_LARGE;
++        if (faceWidth > availableWidth || faceHeight > availableHeight) {
++            display->setFont(FONT_MEDIUM);
++            faceWidth = display->getStringWidth(text);
++            faceHeight = FONT_HEIGHT_MEDIUM;
++        }
++        if (faceWidth > availableWidth || faceHeight > availableHeight) {
++            display->setFont(FONT_SMALL);
++            faceWidth = display->getStringWidth(text);
++            faceHeight = FONT_HEIGHT_SMALL;
++        }
++    };
++
++    int16_t faceWidth = 0;
++    int16_t faceHeight = 0;
++    applyFaceFont(faceText, faceWidth, faceHeight);
++
++    display->setTextAlignment(TEXT_ALIGN_CENTER);
++
++    const int16_t drawX = ctx.originX + width / 2;
++    int16_t drawY = ctx.originY + (height - faceHeight) / 2;
++    if (drawY < ctx.originY) {
++        drawY = ctx.originY;
++    }
++
++    const int16_t centerX = ctx.originX + width / 2;
++    const int16_t centerY = ctx.originY + height / 2;
++    const int16_t faceMaxDimension = faceWidth > faceHeight ? faceWidth : faceHeight;
++    constexpr int16_t kCirclePadding = 6;
++    int16_t circleRadius = faceMaxDimension / 2 + kCirclePadding;
++    const int16_t minDisplayDimension = width < height ? width : height;
++    int16_t availableRadius = minDisplayDimension / 2;
++    if (availableRadius > 2) {
++        availableRadius -= 2;
++    } else if (availableRadius < 0) {
++        availableRadius = 0;
++    }
++    if (circleRadius > availableRadius) {
++        circleRadius = availableRadius;
++    }
++    if (circleRadius < 0) {
++        circleRadius = 0;
++    }
++
++#if defined(USE_EINK)
++    display->setColor(EINK_BLACK);
++#else
++    display->setColor(faceColor ? OLEDDISPLAY_COLOR::WHITE : OLEDDISPLAY_COLOR::BLACK);
++#endif
++
++#if defined(USE_EINK)
++    const int16_t padding = 6;
++    const int16_t rectWidth = faceWidth + padding * 2;
++    const int16_t rectHeight = faceHeight + padding * 2;
++    const int16_t rectX = ctx.originX + (width - rectWidth) / 2;
++    const int16_t rectY = ctx.originY + (height - rectHeight) / 2;
++
++    display->fillRect(rectX, rectY, rectWidth, rectHeight);
++    display->setColor(EINK_WHITE);
++#endif
++
++    if (circleRadius > 0) {
++        display->drawCircle(centerX, centerY, circleRadius);
++    }
++
++    display->drawString(drawX, drawY, faceText);
++
++    display->setTextAlignment(TEXT_ALIGN_LEFT);
++#if defined(USE_EINK)
++    display->setColor(EINK_BLACK);
++#else
++    display->setColor(faceColor ? OLEDDISPLAY_COLOR::WHITE : OLEDDISPLAY_COLOR::BLACK);
++#endif
++}
++
++void HermesXInterfaceModule::initLED() {
++    rgb.begin();
++    rgb.setBrightness(60);
++    rgb.fill(rgb.Color(0, 0, 20));
++    rgb.show();
++    HERMESX_LOG_INFO("LED setup\n");
++}
++
++
++void HermesXInterfaceModule::updateLED() {
++    uint32_t now = millis();
++
++    if (powerHoldActive) {
++        float progress = 0.0f;
++        if (powerHoldDurationMs > 0) {
++            progress = static_cast<float>(powerHoldElapsedMs) / static_cast<float>(powerHoldDurationMs);
++        }
++
++        if (progress < 0.0f) progress = 0.0f;
++        if (progress > 1.0f) progress = 1.0f;
++
++        rgb.clear();
++        uint32_t segmentColor = currentTheme.colorIdleBreathBase;
++
++        for (int step = 0; step < NUM_LEDS; ++step) {
++            const int ledIndex = (NUM_LEDS - 1) - step;
++            const float threshold = static_cast<float>(step + 1) / static_cast<float>(NUM_LEDS);
++            bool segmentOn = false;
++
++            switch (powerHoldMode) {
++            case PowerHoldMode::PowerOn:
++                segmentOn = progress >= threshold;
++                break;
++            case PowerHoldMode::PowerOff:
++                segmentOn = progress < threshold;
++                break;
++            default:
++                segmentOn = false;
++                break;
++            }
++
++            if (segmentOn) {
++                rgb.setPixelColor(ledIndex, segmentColor);
++            }
++        }
++
++        rgb.show();
++
++        if (progress >= 1.0f) {
++            startPowerHoldFade(now);
++        }
++        return;
++    }
++
++    if (powerHoldFadeActive) {
++        float fadeProgress = 0.0f;
++        if (kPowerHoldFadeDurationMs > 0) {
++            fadeProgress = static_cast<float>(now - powerHoldFadeStartMs) / static_cast<float>(kPowerHoldFadeDurationMs);
++        }
++        if (fadeProgress < 0.0f) fadeProgress = 0.0f;
++        if (fadeProgress > 1.0f) fadeProgress = 1.0f;
++
++        uint32_t color = scaleColor(kPowerHoldRedColor, fadeProgress);
++        rgb.fill(color);
++        rgb.show();
++
++        if (fadeProgress >= 1.0f) {
++            powerHoldFadeActive = false;
++            powerHoldLatchedRed = true;
++        }
++        return;
++    }
++
++    if (powerHoldLatchedRed) {
++        rgb.fill(kPowerHoldRedColor);
++        rgb.show();
++        return;
++    }
++
++
++    // === ?嚙踝蕭???ACK/NACK ?嚙踝蕭? ===
++    if (animState == LedAnimState::ACK_FLASH || animState == LedAnimState::NACK_FLASH) {
++        uint32_t color = (animState == LedAnimState::ACK_FLASH) ? currentTheme.colorAck : currentTheme.colorFailed;
++
++        if (now - lastFlashToggle >= 120) {
++            lastFlashToggle = now;
++            flashOn = !flashOn;
++            if (!flashOn) {
++                flashCount++;
++            }
++        }
++        if (flashCount >= 4) {
++            flashCount = 0;
++            flashOn = false;
++            animState = LedAnimState::IDLE;
++        }
++
++        rgb.fill(flashOn ? color : 0);
++        rgb.show();
++        return;
++    }
++
++    // === ?嚙賣?嚙賢?嚙踝蕭? ===
++    if (now - lastBreathUpdate > 30) {
++        lastBreathUpdate = now;
++        breathPhase += breathDelta;
++        if (breathPhase >= 1.0f) {
++            breathPhase = 1.0f;
++            breathDelta = -breathDelta;
++        } else if (breathPhase <= 0.0f) {
++            breathPhase = 0.0f;
++            breathDelta = -breathDelta;
++        }
++    }
++
++    // === ?嚙賢?嚙賣??===
++    float bgScale = lerp(currentTheme.breathBrightnessMin, currentTheme.breathBrightnessMax, breathPhase);
++    uint32_t bgColor = scaleColor(currentTheme.colorIdleBreathBase, bgScale);
++    rgb.fill(bgColor);
++
++    // === 鈭辣?嚙賜嚗/?嚙賣/?嚙踝蕭?鞈蕭?嚙?==
++    if (animState == LedAnimState::SEND_R2L || animState == LedAnimState::RECV_L2R || animState == LedAnimState::INFO2_L2R) {
++        const uint16_t stepInterval = 80;
++        if (now - lastAnimStep >= stepInterval) {
++            lastAnimStep = now;
++            int next = animPos + animDir;
++            if (next < 0 || next >= NUM_LEDS) {
++                // ?嚙踝蕭??嚙踝蕭? idle runner ?嚙質絲暺?嚙質身嚙?
++                if (animState == LedAnimState::SEND_R2L) {
++                    idlePos = 0;
++                    idleDir = 1;
++                } else {
++                    idlePos = NUM_LEDS - 1;
++                    idleDir = -1;
++                }
++                animState = LedAnimState::IDLE;
++            } else {
++                animPos = next;
++            }
++        }
++
++        if (animState != LedAnimState::IDLE) {
++            rgb.setPixelColor(animPos, eventColor);
++            if (animState == LedAnimState::INFO2_L2R && animPos + 1 < NUM_LEDS) {
++                rgb.setPixelColor(animPos + 1, eventColor);
++            }
++        }
++
++        rgb.show();
++        return;
++    }
++
++    // === 敺蕭? runner嚗霈蕭??嚙踝蕭??嚙踝蕭?===
++    if (animState == LedAnimState::IDLE && idleRunnerEnabled) {
++        uint16_t interval = idleRunnerInterval;
++        if (idleRunnerVarSpeed) {
++            interval = (uint16_t)lerp((float)idleRunnerMaxInterval, (float)idleRunnerMinInterval, breathPhase);
++        }
++
++        bool atEdge = (idlePos == 0 && idleDir < 0) || (idlePos == NUM_LEDS - 1 && idleDir > 0);
++        uint16_t wait = atEdge ? idleRunnerEdgeDwell : interval;
++
++        if (now - lastIdleMove >= wait) {
++            lastIdleMove = now;
++            if (atEdge) {
++                idleDir = -idleDir;
++            }
++            idlePos += idleDir;
++        }
++
++        uint32_t dotColor = scaleColor(currentTheme.colorIdleBreathBase, bgScale * 2.2f);
++        rgb.setPixelColor(idlePos, dotColor);
++    }
++
++    rgb.show();
++}
++
++
++void HermesXInterfaceModule::onPacketSent() {
++    music.playSendSound();        // ?嚙賢?嚙踝蕭?
++    startSendAnim();              // ?嚙賢?嚙賜嚗?嚙盤嚗蕭?鈭斤策 updateLED()/animState 瘚蕭???
++    HERMESX_LOG_DEBUG("Sent MSG");
++}
++
++
++void HermesXInterfaceModule::playTone(float freq, uint32_t duration_ms) {
++    if (freq > 0) {
++        ledcWriteTone(0, freq);
++        toneStopTime = millis() + duration_ms;
++    }
++}
++
++bool HermesXInterfaceModule::wantPacket(const meshtastic_MeshPacket *p)
++{
++    // ?嚙踝蕭? Routing 撠蕭???Text Message 撠蕭??嚙踝蕭?嚙?
++    return p->decoded.portnum == meshtastic_PortNum_ROUTING_APP ||
++       p->decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP ||
++       p->decoded.portnum == meshtastic_PortNum_NODEINFO_APP;
++}
++
++ProcessMessage HermesXInterfaceModule::handleReceived(const meshtastic_MeshPacket &packet)
++{
++    if (packet.decoded.portnum == meshtastic_PortNum_ROUTING_APP) {
++        HERMESX_LOG_DEBUG("Received routing: wait=%d, req_id=0x%08x, id=%u, from=%x, to=%x, len=%u",
++            waitingForAck,
++            packet.decoded.request_id,
++            packet.id,
++            packet.from,
++            packet.to,
++            packet.decoded.payload.size);
++
++        meshtastic_Routing decoded = meshtastic_Routing_init_default;
++        bool ok = pb_decode_from_bytes(
++            packet.decoded.payload.bytes,
++            packet.decoded.payload.size,
++            meshtastic_Routing_fields,
++            &decoded);
++
++        if (ok) {
++            if (decoded.error_reason != meshtastic_Routing_Error_NONE) {
++                playSendFailedFeedback();
++                waitingForAck = false;
++                HERMESX_LOG_WARN("Routing NAK error=%d req_id=0x%08x id=%u from=%x to=%x",
++                    decoded.error_reason,
++                    packet.decoded.request_id,
++                    packet.id,
++                    packet.from,
++                    packet.to);
++            } else {
++                bool ours = waitingForAck ||
++                    packet.decoded.request_id == lastSentRequestId ||
++                    packet.id == lastSentId ||
++                    isFromUs(&packet);
++                if (ours) {
++                    ackReceived = true;
++                    waitingForAck = false;
++                    pendingSuccessFeedback = true;
++                    successFeedbackTime = millis() + 300;
++                    HERMESX_LOG_INFO("Routing ACK req_id=0x%08x id=%u", packet.decoded.request_id, packet.id);
++                }
++            }
++        } else {
++            HERMESX_LOG_ERROR("Failed to decode Routing payload.");
++        }
++    }
++
++    const bool fromUs = isFromUs(&packet);
++
++    if (packet.decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP) {
++        if (fromUs) {
++            const bool isFirstLocalSend = (lastSentTime == 0);
++            if (isFirstLocalSend || packet.id != lastSentId) {
++                lastSentId = packet.id;
++                lastSentRequestId = packet.id;
++                lastSentTime = millis();
++                waitingForAck = packet.want_ack;
++                ackReceived = false;
++                pendingSuccessFeedback = false;
++                playSendFeedback();
++            }
++        } else {
++            playReceiveFeedback();
++        }
++    }
++
++    if (packet.decoded.portnum == meshtastic_PortNum_NODEINFO_APP &&
++        !fromUs) {
++        playNodeInfoFeedback();
++    }
++
++    return ProcessMessage::CONTINUE;
++}
++
++void hermesXFeedbackHandler(int index, bool state) {
++    if (index == 0 && state) {
++
++        HermesXInterfaceModule::instance->playReceiveFeedback();
++    } else if (index == 2 && state) {
++
++        HermesXInterfaceModule::instance->playSendFeedback();
++    }
++}
++
++
++
++int32_t HermesXInterfaceModule::runOnce() {
++    static bool firstTime = true;
++    static bool testPlayed = false;
++    uint32_t now = millis();
++
++    // === ?嚙踝蕭??嚙踝蕭?畾蛛蕭??嚙賢銵蕭?嚙?===
++    if (firstTime) {
++        firstTime = false;
++        music.begin();
++        music.playStartupSound();
++        HERMESX_LOG_INFO("first runOnce() call");
++
++        // 撱綽蕭? feedback ?嚙賢
++        hermesXCallback = [](int index, bool state) {
++            if (HermesXInterfaceModule::instance) {
++                HermesXInterfaceModule::instance->handleExternalNotification(index, state);
++                HERMESX_LOG_INFO("callbacksetup");
++            }
++        };
++    }
++
++    // === 皜祈岫?嚙踝蕭?嚗蕭?銝甈∴蕭?===
++    if (!testPlayed) {
++        testPlayed = true;
++        music.playSendSound();
++    }
++
++    // === ?嚙賣迫 tone ?嚙賣 ===
++    if (toneStopTime && now >= toneStopTime) {
++        stopTone();
++        toneStopTime = 0;
++    }
++
++    // === Timeout: 蝑蕭? ACK 頞蕭? 3 蝘蕭?閬憭梧蕭? ===
++    if (waitingForAck && (now - lastSentTime > 30000)) {
++        waitingForAck = false;
++        ackReceived = false;
++        playSendFailedFeedback();
++        HERMESX_LOG_WARN("ACK Timeout: Delivery failed");
++    }
++
++    // === ACK ?嚙踝蕭??嚙賜?嚙賡?嚙質孛??===
++    if (pendingSuccessFeedback && now >= successFeedbackTime) {
++        pendingSuccessFeedback = false;
++        music.playSuccessSound();
++        startAckFlash();
++        HERMESX_LOG_INFO("Success feedback triggered (ACK animation)");
++    }
++
++    if (emergencyBannerVisible && emergencyBannerHideDeadline && now >= emergencyBannerHideDeadline) {
++        showEmergencyBanner(false);
++    }
++
++    renderLEDs();
++
++    return 100;  // ?嚙踝蕭??嚙踝蕭?嚙?00ms
++}
++
++void HermesXInterfaceModule::stopTone() {
++    ledcWriteTone(0, 0);
++}
++
++
++
++
++
++int HermesXInterfaceModule::onNotify(uint32_t fromNum)
++ {
++    HERMESX_LOG_INFO("onNotify fromNum=%u", fromNum);
++
++    return 0;
++}
++
++void HermesXInterfaceModule::handleExternalNotification(int index, bool state) {
++    if (index == 0 && state) playReceiveFeedback();
++    if (index == 2 && state) playSendFeedback();
++    if (index == 3 && state) playAckSuccess();
++    if (index == 4 && state) playNackFail();
++    HERMESX_LOG_DEBUG("handleExternalNotification!");
++}
++
++
++
++void HermesXInterfaceModule::playSendFeedback() {
++    music.playSendSound();
++    startSendAnim();
++    HERMESX_LOG_INFO("Send feedback triggered");
++}
++
++void HermesXInterfaceModule::playReceiveFeedback() {
++    music.playReceiveSound();
++    startReceiveAnim();
++    HERMESX_LOG_INFO("Receive feedback triggered");
++}
++
++void HermesXInterfaceModule::playSendSuccessFeedback() {
++    pendingSuccessFeedback = true;
++    successFeedbackTime = millis() + 1000;
++    HERMESX_LOG_INFO("Success feedback scheduled");
++}
++
++void HermesXInterfaceModule::playNodeInfoFeedback() {
++    music.playNodeInfoSound();
++    startInfoReceiveAnimTwoDots();
++    HERMESX_LOG_INFO("NodeInfo feedback triggered");
++}
++
++void HermesXInterfaceModule::playSendFailedFeedback() {
++    music.playFailedSound();
++    startNackFlash();
++    HERMESX_LOG_INFO("Failed feedback triggered");
++}
++
++void HermesXInterfaceModule::onTripleClick()
++{
++    if (!emergencyModule) {
++        playSendFailedFeedback();
++        return;
++    }
++
++    if (emergencyModule->sendSOS()) {
++        playSOSFeedback();
++    } else {
++        playSendFailedFeedback();
++    }
++}
++
++void HermesXInterfaceModule::onDoubleClickWithin3s()
++{
++    if (!emergencyModule) {
++        playSendFailedFeedback();
++        return;
++    }
++
++    if (emergencyModule->sendSafe()) {
++        playAckSuccess();
++    } else {
++        playSendFailedFeedback();
++    }
++}
++
++void HermesXInterfaceModule::onEmergencyModeChanged(bool active)
++{
++    if (!emergencyModule) {
++        showEmergencyBanner(false);
++        return;
++    }
++
++    const uint32_t lastNode = emergencyModule->getLastActivatingNode();
++    const bool triggeredByRemote = (nodeDB && lastNode != nodeDB->getNodeNum());
++
++    if (active && triggeredByRemote) {
++        const __FlashStringHelper *text =
++            (moduleConfig.emergency.lang == meshtastic_ModuleConfig_EmergencyConfig_Language_ZH) ? F("EM ??") : F("EM Active");
++        showEmergencyBanner(true, text, 0xF800, 4000);
++    } else {
++        showEmergencyBanner(false);
++    }
++}
++
++
++void HermesXInterfaceModule::playSOSFeedback()
++{
++    music.playSendSound();
++    startSendAnim();
++}
++
++void HermesXInterfaceModule::playAckSuccess()
++{
++    music.playSuccessSound();
++    startAckFlash();
++}
++
++void HermesXInterfaceModule::playNackFail()
++{
++    music.playFailedSound();
++    startNackFlash();
++}
++
++void HermesXInterfaceModule::showEmergencyBanner(bool on, const __FlashStringHelper *text, uint16_t color,
++                                                 uint32_t durationMs)
++{
++    emergencyBannerVisible = on;
++    if (on) {
++        if (text) {
++            emergencyBannerText = String(text);
++        } else {
++            emergencyBannerText = F("EM Active");
++        }
++        emergencyBannerColor = color ? color : 0xF800;
++        emergencyBannerHideDeadline = durationMs ? millis() + durationMs : 0;
++    } else {
++        emergencyBannerText = "";
++        emergencyBannerColor = 0;
++        emergencyBannerHideDeadline = 0;
++    }
++}
++
++void HermesXInterfaceModule::startSendAnim() {
++    animState = LedAnimState::SEND_R2L;
++    animPos = NUM_LEDS - 1;
++    animDir = -1;
++    eventColor = currentTheme.colorSendPrimary;
++    lastAnimStep = millis();
++}
++
++void HermesXInterfaceModule::startReceiveAnim() {
++    animState = LedAnimState::RECV_L2R;
++    animPos = 0;
++    animDir = 1;
++    eventColor = currentTheme.colorReceivePrimary;
++    lastAnimStep = millis();
++}
++
++void HermesXInterfaceModule::startInfoReceiveAnimTwoDots() {
++    animState = LedAnimState::INFO2_L2R;
++    animPos = 0;
++    animDir = 1;
++    eventColor = currentTheme.colorAck;
++    lastAnimStep = millis();
++}
++
++void HermesXInterfaceModule::startAckFlash() {
++    animState = LedAnimState::ACK_FLASH;
++    flashCount = 0;
++    flashOn = true;
++    lastFlashToggle = millis();
++}
++
++void HermesXInterfaceModule::startNackFlash() {
++    animState = LedAnimState::NACK_FLASH;
++    flashCount = 0;
++    flashOn = true;
++    lastFlashToggle = millis();
++}
++
++void HermesXInterfaceModule::startPowerHoldAnimation(PowerHoldMode mode, uint32_t holdDurationMs) {
++    if (mode == PowerHoldMode::None || holdDurationMs == 0) {
++        stopPowerHoldAnimation(false);
++        return;
++    }
++
++    powerHoldActive = true;
++    powerHoldMode = mode;
++    powerHoldDurationMs = holdDurationMs;
++    powerHoldElapsedMs = 0;
++    powerHoldReady = false;
++    powerHoldFadeActive = false;
++    powerHoldLatchedRed = false;
++    powerHoldFadeStartMs = 0;
++
++    // Reset other LED effects while the hold animation runs
++    animState = LedAnimState::IDLE;
++    flashOn = false;
++    flashCount = 0;
++}
++
++void HermesXInterfaceModule::updatePowerHoldAnimation(uint32_t elapsedMs) {
++    if (powerHoldMode == PowerHoldMode::None) {
++        return;
++    }
++    powerHoldElapsedMs = elapsedMs;
++    if (powerHoldDurationMs > 0 && powerHoldElapsedMs > powerHoldDurationMs) {
++        powerHoldElapsedMs = powerHoldDurationMs;
++    }
++
++    if (powerHoldActive && powerHoldDurationMs > 0 && powerHoldElapsedMs >= powerHoldDurationMs) {
++        startPowerHoldFade(millis());
++    }
++}
++
++void HermesXInterfaceModule::stopPowerHoldAnimation(bool completed) {
++    if (completed) {
++        startPowerHoldFade(millis());
++        return;
++    }
++
++    powerHoldActive = false;
++    powerHoldReady = false;
++    powerHoldFadeActive = false;
++    powerHoldLatchedRed = false;
++    powerHoldMode = PowerHoldMode::None;
++    powerHoldDurationMs = 0;
++    powerHoldElapsedMs = 0;
++}
++
++void HermesXInterfaceModule::startPowerHoldFade(uint32_t now) {
++    if (powerHoldFadeActive || powerHoldLatchedRed) {
++        return;
++    }
++
++    powerHoldActive = false;
++    powerHoldReady = true;
++    powerHoldFadeActive = true;
++    powerHoldLatchedRed = false;
++    powerHoldFadeStartMs = now;
++    if (powerHoldDurationMs > 0 && powerHoldElapsedMs < powerHoldDurationMs) {
++        powerHoldElapsedMs = powerHoldDurationMs;
++    }
++
++    animState = LedAnimState::IDLE;
++    flashOn = false;
++    flashCount = 0;
++}
++
++void HermesXInterfaceModule::playStartupLEDAnimation(uint32_t color) {
++    rgb.clear();
++    rgb.show();
++    delay(100);
++
++    int center = NUM_LEDS / 2;
++
++    for (int i = 0; i <= center; ++i) {
++        if (center - i >= 0) rgb.setPixelColor(center - i, color);
++        if (center + i < NUM_LEDS) rgb.setPixelColor(center + i, color);
++        rgb.show();
++        delay(80);
++    }
++
++    delay(300);
++
++    for (int i = 0; i <= center; ++i) {
++        if (center - i >= 0) rgb.setPixelColor(center - i, 0);
++        if (center + i < NUM_LEDS) rgb.setPixelColor(center + i, 0);
++        rgb.show();
++        delay(60);
++    }
++}
++
++void HermesXInterfaceModule::playShutdownEffect(uint32_t durationMs)
++{
++    const uint32_t effectiveDuration = durationMs ? durationMs : 700;
++
++    pendingSuccessFeedback = false;
++    animState = LedAnimState::IDLE;
++    flashOn = false;
++    flashCount = 0;
++
++    powerHoldActive = false;
++    powerHoldReady = false;
++    powerHoldFadeActive = false;
++    powerHoldLatchedRed = false;
++    powerHoldMode = PowerHoldMode::None;
++    powerHoldDurationMs = 0;
++    powerHoldElapsedMs = 0;
++
++    rgb.setBrightness(80);
++    rgb.clear();
++    rgb.show();
++
++    music.stopTone();
++    stopTone();
++
++    performShutdownAnimation(effectiveDuration, rgb, kPowerHoldRedColor, &music);
++
++    rgb.clear();
++    rgb.show();
++
++    disableVisibleOutputsCommon();
++}
++
++void HermesXInterfaceModule::renderLEDs()
++{
++    // 靽蕭?雿?嚙踝蕭?撠蕭?隞嚗?嚙賜 updateLED() 撖佗蕭?嚗歇?嚙踝蕭? animState 瘚蕭?
++    updateLED();
++}
++
++void runPreDeepSleepHook(const SleepPreHookParams &params)
++{
++    uint32_t ms = params.suggested_duration_ms ? params.suggested_duration_ms : 700;
++    if (HermesXInterfaceModule::instance) {
++        HermesXInterfaceModule::instance->playShutdownEffect(ms);
++    } else {
++        // 瘝蕭? HermesX ?嚙賜憓蕭??嚙踝蕭?摨嚙?
++        fallbackShutdownEffect(ms);
++    }
++}
++
++
++
++
++
++
++
++
++
++
+diff --git a/HermesX/src/modules/HermesXInterfaceModule.h b/HermesX/src/modules/HermesXInterfaceModule.h
+new file mode 100644
+index 0000000..10de942
+--- a/HermesX/src/modules/HermesXInterfaceModule.h
++++ b/HermesX/src/modules/HermesXInterfaceModule.h
+@@ -0,0 +1,206 @@
++#pragma once
++#ifndef MESHTASTIC_EXCLUDE_HERMESX
++#define MESHTASTIC_EXCLUDE_HERMESX 0
++#endif
++#include "SinglePortModule.h"
++#include <Arduino.h>
++#include <Adafruit_GFX.h>
++#include <Adafruit_NeoPixel.h>
++#include <stdint.h>
++#include "meshtastic/mesh.pb.h"
++#include "MusicModule.h"
++#include "concurrency/OSThread.h"
++
++class OLEDDisplay;
++enum class HermesFaceMode : uint8_t;
++
++typedef void (*HermesXFeedbackCallback)(int index, bool state);
++
++extern HermesXFeedbackCallback hermesXCallback;
++
++struct LedTheme {
++    uint32_t colorSendPrimary;
++    uint32_t colorSendSecondary;
++    uint32_t colorReceivePrimary;
++    uint32_t colorReceiveSecondary;
++    uint32_t colorAck;
++    uint32_t colorFailed;
++    uint32_t colorIdleBreathBase;
++    float breathBrightnessMin;
++    float breathBrightnessMax;
++};
++
++enum class LedAnimState { IDLE, SEND_R2L, RECV_L2R, INFO2_L2R, ACK_FLASH, NACK_FLASH };
++
++class HermesXInterfaceModule : public SinglePortModule, public concurrency::OSThread, public Observer<uint32_t> {
++public:
++    enum class HermesButtonSource { Primary, Alt };
++    enum class PowerHoldMode { None, PowerOn, PowerOff };
++
++    HermesXInterfaceModule();
++    void setup();
++
++    void handleButtonPress();
++
++    Adafruit_NeoPixel rgb;
++    MusicModule music;
++
++    static HermesXInterfaceModule *instance;
++    static void onLocalTextMessageSent();
++
++    friend void HermesX_DrawFace(OLEDDisplay *display, int16_t x, int16_t y, HermesFaceMode mode);
++
++    int onNotify(uint32_t fromNum) override;
++    void handleExternalNotification(int index, bool state);
++    void onTripleClick();
++    void onDoubleClickWithin3s();
++    void onEmergencyModeChanged(bool active);
++    void registerRawButtonPress(HermesButtonSource source);
++    void playSOSFeedback();
++    void playAckSuccess();
++    void playNackFail();
++    void showEmergencyBanner(bool on, const __FlashStringHelper *text = nullptr, uint16_t color = 0,
++                             uint32_t durationMs = 0);
++
++    void playSendFeedback();
++    void playReceiveFeedback();
++    void playSendFailedFeedback();
++    void playSendSuccessFeedback();
++    void playNodeInfoFeedback();
++
++    void playStartupLEDAnimation(uint32_t color);
++    void playShutdownEffect(uint32_t durationMs);   // << ?嚙踝蕭???
++
++    void renderLEDs();
++    void updateLED();  // << ?嚙踝蕭???
++
++    void startSendAnim();
++    void startReceiveAnim();
++    void startInfoReceiveAnimTwoDots();
++    void startAckFlash();
++    void startNackFlash();
++    void startPowerHoldAnimation(PowerHoldMode mode, uint32_t holdDurationMs);
++    void updatePowerHoldAnimation(uint32_t elapsedMs);
++    void stopPowerHoldAnimation(bool completed);
++    void startPowerHoldFade(uint32_t now);
++
++    void setLedTheme(const LedTheme& theme) { currentTheme = theme; }
++    void onCannedMessageResult(bool ack, const String& nodeName);
++
++    static inline uint8_t clamp8(int v) {
++        return v < 0 ? 0 : (v > 255 ? 255 : v);
++    }
++    static inline float lerp(float a, float b, float t) {
++        return a + (b - a) * t;
++    }
++    static inline uint32_t scaleColor(uint32_t c, float s) {
++        uint8_t r = clamp8(((c >> 16) & 0xFF) * s);
++        uint8_t g = clamp8(((c >> 8) & 0xFF) * s);
++        uint8_t b = clamp8((c & 0xFF) * s);
++        return ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
++    }
++
++private:
++    void initDisplay();
++    void initLED();
++    void initRotary();
++
++    void drawFace(const char* face, uint16_t color);
++    void updateFace();
++
++    bool waitingForAck = false;
++    bool emergencyBannerVisible = false;
++    String emergencyBannerText;
++    uint16_t emergencyBannerColor = 0;
++    uint32_t emergencyBannerHideDeadline = 0;
++    bool ackReceived = false;
++    uint32_t waitingAckId = 0;
++    uint32_t lastSentTime = 0;
++    uint32_t lastSentId = 0;
++    uint32_t lastSentRequestId = 0;
++    uint32_t lastRawPressMs = 0;
++    uint8_t rawPressCount = 0;
++    bool safeWindowActive = false;
++    uint8_t safePressCount = 0;
++    uint32_t safeWindowDeadlineMs = 0;
++
++    void sendText(NodeNum dest, ChannelIndex channel, const char *message, bool wantAck);
++    void sendCannedMessage(const char* msg);
++    void onPacketSent();
++    virtual ProcessMessage handleReceived(const meshtastic_MeshPacket &packet) override;
++
++    void initBuzzer();
++    void playTone(float freq, uint32_t duration_ms);
++    void stopTone();
++    void playStartupTone();
++    void playReceiveTone();
++    void playSendTone();
++    void playFailedTone();
++
++    bool wantPacket(const meshtastic_MeshPacket *p) override;
++    bool pendingSuccessFeedback = false;
++    uint32_t successFeedbackTime = 0;
++
++    enum HermesFaceState { FACE_IDLE, FACE_RECEIVED, FACE_SENT, FACE_ERROR };
++    HermesFaceState faceState = FACE_IDLE;
++    HermesFaceState lastState = FACE_IDLE;
++
++    // Breathing background (?嚙踝蕭?)
++    uint32_t lastBreathUpdate = 0;
++    float breathPhase = 0.0f;
++    float breathDelta = 0.02f;
++
++    // LED animation state (?嚙踝蕭?)
++    LedAnimState animState = LedAnimState::IDLE;
++
++    // Idle runner (?嚙踝蕭?)
++    uint8_t idlePos = 0;
++    int8_t idleDir = 1;
++    uint32_t lastIdleMove = 0;
++    bool idleRunnerEnabled = true;
++    uint16_t idleRunnerInterval = 160;
++    uint16_t idleRunnerEdgeDwell = 260;
++    bool idleRunnerVarSpeed = true;
++    uint16_t idleRunnerMinInterval = 140;
++    uint16_t idleRunnerMaxInterval = 240;
++
++    // Event runner (?嚙踝蕭?)
++    uint8_t animPos = 0;
++    int8_t animDir = 0;
++    uint32_t lastAnimStep = 0;
++    uint32_t eventColor = 0;
++
++    // Flashing state (?嚙踝蕭?)
++    uint8_t flashCount = 0;
++    bool flashOn = false;
++    uint32_t lastFlashToggle = 0;
++
++    // ?嚙踝蕭?
++    bool powerHoldActive = false;
++    PowerHoldMode powerHoldMode = PowerHoldMode::None;
++    uint32_t powerHoldDurationMs = 0;
++    uint32_t powerHoldElapsedMs = 0;
++    bool powerHoldReady = false;
++    bool powerHoldFadeActive = false;
++    bool powerHoldLatchedRed = false;
++    uint32_t powerHoldFadeStartMs = 0;
++
++    uint32_t toneStopTime = 0;
++
++    LedTheme currentTheme {
++        .colorSendPrimary = 0xFFFFFF,
++        .colorSendSecondary = 0x5050FF,
++        .colorReceivePrimary = 0xFFFFFF,
++        .colorReceiveSecondary = 0x5050FF,
++        .colorAck = 0x00FF00,
++        .colorFailed = 0xFF0000,
++        .colorIdleBreathBase = 0xFF5000,
++        .breathBrightnessMin = 0.5f,
++        .breathBrightnessMax = 1.0f
++    };
++
++    int32_t runOnce() override;
++};
++
++extern HermesXInterfaceModule* globalHermes;
++
+diff --git a/HermesX/src/modules/Modules.cpp b/HermesX/src/modules/Modules.cpp
+new file mode 100644
+index 0000000..3a5e5be
+--- a/HermesX/src/modules/Modules.cpp
++++ b/HermesX/src/modules/Modules.cpp
+@@ -0,0 +1,292 @@
++#include "configuration.h"
++#ifndef MESHTASTIC_EXCLUDE_HERMESX
++#define MESHTASTIC_EXCLUDE_HERMESX 0
++#endif
++#ifndef MESHTASTIC_EXCLUDE_LIGHTHOUSE
++#define MESHTASTIC_EXCLUDE_LIGHTHOUSE 0
++#endif
++#if !MESHTASTIC_EXCLUDE_INPUTBROKER
++#include "input/ExpressLRSFiveWay.h"
++#include "input/InputBroker.h"
++#include "input/RotaryEncoderInterruptImpl1.h"
++#include "input/ScanAndSelect.h"
++#include "input/SerialKeyboardImpl.h"
++#include "input/TrackballInterruptImpl1.h"
++#include "input/UpDownInterruptImpl1.h"
++#if !MESHTASTIC_EXCLUDE_I2C
++#include "input/cardKbI2cImpl.h"
++#endif
++#include "input/kbMatrixImpl.h"
++#endif
++#if !MESHTASTIC_EXCLUDE_ADMIN
++#include "modules/AdminModule.h"
++#endif
++#if !MESHTASTIC_EXCLUDE_ATAK
++#include "modules/AtakPluginModule.h"
++#endif
++#if !MESHTASTIC_EXCLUDE_HERMESX
++#include "modules/HermesXInterfaceModule.h"
++#include "modules/EmergencyAdaptiveModule.h"
++#if HAS_SCREEN
++#include "modules/EmUiModule.h"
++#endif
++#include "modules/HermesXLog.h"
++#endif
++#if !MESHTASTIC_EXCLUDE_LIGHTHOUSE
++#include "modules/LighthouseModule.h"
++#endif
++#if !MESHTASTIC_EXCLUDE_CANNEDMESSAGES
++#include "modules/CannedMessageModule.h"
++#endif
++#if !MESHTASTIC_EXCLUDE_DETECTIONSENSOR
++#include "modules/DetectionSensorModule.h"
++#endif
++#if !MESHTASTIC_EXCLUDE_NEIGHBORINFO
++#include "modules/NeighborInfoModule.h"
++#endif
++#if !MESHTASTIC_EXCLUDE_NODEINFO
++#include "modules/NodeInfoModule.h"
++#endif
++#if !MESHTASTIC_EXCLUDE_GPS
++#include "modules/PositionModule.h"
++#endif
++#if !MESHTASTIC_EXCLUDE_REMOTEHARDWARE
++#include "modules/RemoteHardwareModule.h"
++#endif
++#if !MESHTASTIC_EXCLUDE_POWERSTRESS
++#include "modules/PowerStressModule.h"
++#endif
++#include "modules/RoutingModule.h"
++#include "modules/TextMessageModule.h"
++#if !MESHTASTIC_EXCLUDE_TRACEROUTE
++#include "modules/TraceRouteModule.h"
++#endif
++#if !MESHTASTIC_EXCLUDE_WAYPOINT
++#include "modules/WaypointModule.h"
++#endif
++#if ARCH_PORTDUINO
++#include "input/LinuxInputImpl.h"
++#include "modules/Telemetry/HostMetrics.h"
++#if !MESHTASTIC_EXCLUDE_STOREFORWARD
++#include "modules/StoreForwardModule.h"
++#endif
++#endif
++#if HAS_TELEMETRY
++#include "modules/Telemetry/DeviceTelemetry.h"
++#endif
++#if HAS_SENSOR && !MESHTASTIC_EXCLUDE_ENVIRONMENTAL_SENSOR
++#include "main.h"
++#include "modules/Telemetry/AirQualityTelemetry.h"
++#include "modules/Telemetry/EnvironmentTelemetry.h"
++#include "modules/Telemetry/HealthTelemetry.h"
++#endif
++#if HAS_TELEMETRY && !MESHTASTIC_EXCLUDE_POWER_TELEMETRY
++#include "modules/Telemetry/PowerTelemetry.h"
++#endif
++#if !MESHTASTIC_EXCLUDE_GENERIC_THREAD_MODULE
++#include "modules/GenericThreadModule.h"
++#endif
++
++#ifdef ARCH_ESP32
++#if defined(USE_SX1280) && !MESHTASTIC_EXCLUDE_AUDIO
++#include "modules/esp32/AudioModule.h"
++#endif
++#if !MESHTASTIC_EXCLUDE_PAXCOUNTER
++#include "modules/esp32/PaxcounterModule.h"
++#endif
++#if !MESHTASTIC_EXCLUDE_STOREFORWARD
++#include "modules/StoreForwardModule.h"
++#endif
++#endif
++#if defined(ARCH_ESP32) || defined(ARCH_NRF52) || defined(ARCH_RP2040) || defined(ARCH_PORTDUINO)
++#if !MESHTASTIC_EXCLUDE_EXTERNALNOTIFICATION
++#include "modules/ExternalNotificationModule.h"
++#endif
++#if !MESHTASTIC_EXCLUDE_RANGETEST && !MESHTASTIC_EXCLUDE_GPS
++#include "modules/RangeTestModule.h"
++#endif
++#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !MESHTASTIC_EXCLUDE_SERIAL
++#include "modules/SerialModule.h"
++#endif
++#endif
++
++#if !MESHTASTIC_EXCLUDE_DROPZONE
++#include "modules/DropzoneModule.h"
++#endif
++
++/**
++ * Create module instances here.  If you are adding a new module, you must 'new' it here (or somewhere else)
++ */
++void setupModules()
++{
++    if (config.device.role != meshtastic_Config_DeviceConfig_Role_REPEATER) {
++#if (HAS_BUTTON || ARCH_PORTDUINO) && !MESHTASTIC_EXCLUDE_INPUTBROKER
++        inputBroker = new InputBroker();
++#endif
++#if !MESHTASTIC_EXCLUDE_ADMIN
++        adminModule = new AdminModule();
++#endif
++#if !MESHTASTIC_EXCLUDE_NODEINFO
++        nodeInfoModule = new NodeInfoModule();
++#endif
++#if !MESHTASTIC_EXCLUDE_GPS
++        positionModule = new PositionModule();
++#endif
++#if !MESHTASTIC_EXCLUDE_WAYPOINT
++        waypointModule = new WaypointModule();
++#endif
++#if !MESHTASTIC_EXCLUDE_TEXTMESSAGE
++        textMessageModule = new TextMessageModule();
++#endif
++#if !MESHTASTIC_EXCLUDE_TRACEROUTE
++        traceRouteModule = new TraceRouteModule();
++#endif
++#if !MESHTASTIC_EXCLUDE_NEIGHBORINFO
++        neighborInfoModule = new NeighborInfoModule();
++#endif
++#if !MESHTASTIC_EXCLUDE_DETECTIONSENSOR
++        detectionSensorModule = new DetectionSensorModule();
++#endif
++#if !MESHTASTIC_EXCLUDE_ATAK
++        atakPluginModule = new AtakPluginModule();
++#endif
++
++#if !MESHTASTIC_EXCLUDE_DROPZONE
++        dropzoneModule = new DropzoneModule();
++#endif
++#if !MESHTASTIC_EXCLUDE_GENERIC_THREAD_MODULE
++        new GenericThreadModule();
++#endif
++        // Note: if the rest of meshtastic doesn't need to explicitly use your module, you do not need to assign the instance
++        // to a global variable.
++
++#if !MESHTASTIC_EXCLUDE_REMOTEHARDWARE
++        new RemoteHardwareModule();
++#endif
++#if !MESHTASTIC_EXCLUDE_POWERSTRESS
++        new PowerStressModule();
++#endif
++#if !MESHTASTIC_EXCLUDE_LIGHTHOUSE
++        lighthouseModule = new LighthouseModule();
++#endif
++#if !MESHTASTIC_EXCLUDE_HERMESX
++        globalHermes = new HermesXInterfaceModule();
++        emergencyModule = new EmergencyAdaptiveModule();
++#if HAS_SCREEN
++        emUiModule = new EmUiModule();
++#endif
++        HERMESX_LOG_INFO("new HermesInterface");
++#endif
++
++        // Example: Put your module here
++        // new ReplyModule();
++#if (HAS_BUTTON || ARCH_PORTDUINO) && !MESHTASTIC_EXCLUDE_INPUTBROKER
++        rotaryEncoderInterruptImpl1 = new RotaryEncoderInterruptImpl1();
++        if (!rotaryEncoderInterruptImpl1->init()) {
++            delete rotaryEncoderInterruptImpl1;
++            rotaryEncoderInterruptImpl1 = nullptr;
++        }
++        upDownInterruptImpl1 = new UpDownInterruptImpl1();
++        if (!upDownInterruptImpl1->init()) {
++            delete upDownInterruptImpl1;
++            upDownInterruptImpl1 = nullptr;
++        }
++
++#if HAS_SCREEN
++        // In order to have the user button dismiss the canned message frame, this class lightly interacts with the Screen class
++        scanAndSelectInput = new ScanAndSelectInput();
++        if (!scanAndSelectInput->init()) {
++            delete scanAndSelectInput;
++            scanAndSelectInput = nullptr;
++        }
++#endif
++
++        cardKbI2cImpl = new CardKbI2cImpl();
++        cardKbI2cImpl->init();
++#ifdef INPUTBROKER_MATRIX_TYPE
++        kbMatrixImpl = new KbMatrixImpl();
++        kbMatrixImpl->init();
++#endif // INPUTBROKER_MATRIX_TYPE
++#ifdef INPUTBROKER_SERIAL_TYPE
++        aSerialKeyboardImpl = new SerialKeyboardImpl();
++        aSerialKeyboardImpl->init();
++#endif // INPUTBROKER_MATRIX_TYPE
++#endif // HAS_BUTTON
++#if ARCH_PORTDUINO && !HAS_TFT
++        aLinuxInputImpl = new LinuxInputImpl();
++        aLinuxInputImpl->init();
++#endif
++#if HAS_TRACKBALL && !MESHTASTIC_EXCLUDE_INPUTBROKER
++        trackballInterruptImpl1 = new TrackballInterruptImpl1();
++        trackballInterruptImpl1->init();
++#endif
++#ifdef INPUTBROKER_EXPRESSLRSFIVEWAY_TYPE
++        expressLRSFiveWayInput = new ExpressLRSFiveWay();
++#endif
++#if HAS_SCREEN && !MESHTASTIC_EXCLUDE_CANNEDMESSAGES
++        cannedMessageModule = new CannedMessageModule();
++#endif
++#if ARCH_PORTDUINO
++        new HostMetricsModule();
++#endif
++#if HAS_TELEMETRY
++        new DeviceTelemetryModule();
++#endif
++#if HAS_SENSOR && !MESHTASTIC_EXCLUDE_ENVIRONMENTAL_SENSOR
++        new EnvironmentTelemetryModule();
++        if (nodeTelemetrySensorsMap[meshtastic_TelemetrySensorType_PMSA003I].first > 0) {
++            new AirQualityTelemetryModule();
++        }
++#if !MESHTASTIC_EXCLUDE_HEALTH_TELEMETRY
++        if (nodeTelemetrySensorsMap[meshtastic_TelemetrySensorType_MAX30102].first > 0 ||
++            nodeTelemetrySensorsMap[meshtastic_TelemetrySensorType_MLX90614].first > 0) {
++            new HealthTelemetryModule();
++        }
++#endif
++#endif
++#if HAS_TELEMETRY && !MESHTASTIC_EXCLUDE_POWER_TELEMETRY && !MESHTASTIC_EXCLUDE_ENVIRONMENTAL_SENSOR
++        new PowerTelemetryModule();
++#endif
++#if (defined(ARCH_ESP32) || defined(ARCH_NRF52) || defined(ARCH_RP2040)) && !defined(CONFIG_IDF_TARGET_ESP32S2) &&               \
++    !defined(CONFIG_IDF_TARGET_ESP32C3)
++#if !MESHTASTIC_EXCLUDE_SERIAL
++        new SerialModule();
++#endif
++#endif
++#ifdef ARCH_ESP32
++        // Only run on an esp32 based device.
++#if defined(USE_SX1280) && !MESHTASTIC_EXCLUDE_AUDIO
++        audioModule = new AudioModule();
++#endif
++#if !MESHTASTIC_EXCLUDE_PAXCOUNTER
++        paxcounterModule = new PaxcounterModule();
++#endif
++#endif
++#if defined(ARCH_ESP32) || defined(ARCH_PORTDUINO)
++#if !MESHTASTIC_EXCLUDE_STOREFORWARD
++        storeForwardModule = new StoreForwardModule();
++#endif
++#endif
++#if defined(ARCH_ESP32) || defined(ARCH_NRF52) || defined(ARCH_RP2040) || defined(ARCH_PORTDUINO)
++#if !MESHTASTIC_EXCLUDE_EXTERNALNOTIFICATION
++        externalNotificationModule = new ExternalNotificationModule();
++#endif
++#if !MESHTASTIC_EXCLUDE_RANGETEST && !MESHTASTIC_EXCLUDE_GPS
++        new RangeTestModule();
++#endif
++#endif
++    } else {
++#if !MESHTASTIC_EXCLUDE_ADMIN
++        adminModule = new AdminModule();
++#endif
++#if HAS_TELEMETRY
++        new DeviceTelemetryModule();
++#endif
++#if !MESHTASTIC_EXCLUDE_TRACEROUTE
++        traceRouteModule = new TraceRouteModule();
++#endif
++    }
++    // NOTE! This module must be added LAST because it likes to check for replies from other modules and avoid sending extra
++    // acks
++    routingModule = new RoutingModule();
++}
