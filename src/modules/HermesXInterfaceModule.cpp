@@ -29,7 +29,8 @@
 #include "DebugConfiguration.h"
 #include "meshtastic/portnums.pb.h"
 #include "HermesXLog.h"
-#include "HermesFace.h"`n#include "HermesEmergencyUi.h"
+#include "HermesFace.h"
+#include "HermesEmergencyUi.h"
 #include "graphics/ScreenFonts.h"
 
 

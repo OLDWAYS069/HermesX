@@ -41,6 +41,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "input/ScanAndSelect.h"
 #include "input/TouchScreenImpl1.h"
 #include "main.h"
+#if HAS_TFT
+extern void startTftTask();
+#endif
 #include "mesh-pb-constants.h"
 #include "mesh/Channels.h"
 #include "mesh/generated/meshtastic/deviceonly.pb.h"
@@ -126,7 +129,9 @@ static bool heartbeat = false;
 
 static inline bool isPortrait(const OLEDDisplay *display)
 {
-    return display->getWidth() < display->getHeight();
+    // Library lacks const-qualified accessors, so cast away const for read-only queries.
+    auto *mutableDisplay = const_cast<OLEDDisplay *>(display);
+    return mutableDisplay->getWidth() < mutableDisplay->getHeight();
 }
 
 // Check if the display can render a string (detect special chars; emoji)
@@ -1838,6 +1843,9 @@ void Screen::setup()
         inputObserver.observe(inputBroker);
 
     // Modules can notify screen about refresh
+#if HAS_TFT
+    startTftTask();
+#endif
     MeshModule::observeUIEvents(&uiFrameEventObserver);
 }
 
