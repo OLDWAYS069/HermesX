@@ -41,9 +41,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "input/ScanAndSelect.h"
 #include "input/TouchScreenImpl1.h"
 #include "main.h"
-#if HAS_TFT
-extern void startTftTask();
-#endif
 #include "mesh-pb-constants.h"
 #include "mesh/Channels.h"
 #include "mesh/generated/meshtastic/deviceonly.pb.h"
@@ -126,13 +123,6 @@ static bool heartbeat = false;
 #include <Throttle.h>
 
 #define getStringCenteredX(s) ((SCREEN_WIDTH - display->getStringWidth(s)) / 2)
-
-static inline bool isPortrait(const OLEDDisplay *display)
-{
-    // Library lacks const-qualified accessors, so cast away const for read-only queries.
-    auto *mutableDisplay = const_cast<OLEDDisplay *>(display);
-    return mutableDisplay->getWidth() < mutableDisplay->getHeight();
-}
 
 // Check if the display can render a string (detect special chars; emoji)
 static bool haveGlyphs(const char *str)
@@ -305,22 +295,6 @@ static void drawFunctionOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
         snprintf(buf, sizeof(buf), "%s", functionSymbolString.c_str());
         display->drawString(SCREEN_WIDTH - display->getStringWidth(buf), SCREEN_HEIGHT - FONT_HEIGHT_SMALL, buf);
     }
-}
-
-static void drawHermesBrandOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
-{
-    (void)state;
-    display->setFont(FONT_SMALL);
-#if defined(USE_EINK)
-    display->setColor(EINK_BLACK);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-    constexpr int16_t kPadding = 2;
-    const char *brandLabel = "HERMESX";
-    const int16_t baselineY = SCREEN_HEIGHT - FONT_HEIGHT_SMALL;
-    display->drawString(kPadding, baselineY, brandLabel);
 }
 
 #ifdef USE_EINK
@@ -1107,7 +1081,6 @@ void Screen::drawColumns(OLEDDisplay *display, int16_t x, int16_t y, const char 
     // The coordinates define the left starting point of the text
     display->setTextAlignment(TEXT_ALIGN_LEFT);
 
-    const bool portrait = isPortrait(display);
     const char **f = fields;
     int xo = x, yo = y;
     while (*f) {
@@ -1118,8 +1091,6 @@ void Screen::drawColumns(OLEDDisplay *display, int16_t x, int16_t y, const char 
         display->setColor(WHITE);
         yo += FONT_HEIGHT_SMALL;
         if (yo > SCREEN_HEIGHT - FONT_HEIGHT_SMALL) {
-            if (portrait)
-                break;
             xo += SCREEN_WIDTH / 2;
             yo = 0;
         }
@@ -1843,9 +1814,6 @@ void Screen::setup()
         inputObserver.observe(inputBroker);
 
     // Modules can notify screen about refresh
-#if HAS_TFT
-    startTftTask();
-#endif
     MeshModule::observeUIEvents(&uiFrameEventObserver);
 }
 
@@ -2230,7 +2198,7 @@ void Screen::setFrames(FrameFocus focus)
     ui->enableAllIndicators();
 
     // Add function overlay here. This can show when notifications muted, modifier key is active etc
-    static OverlayCallback functionOverlay[] = {drawHermesBrandOverlay, drawFunctionOverlay};
+    static OverlayCallback functionOverlay[] = {drawFunctionOverlay};
     static const int functionOverlayCount = sizeof(functionOverlay) / sizeof(functionOverlay[0]);
     ui->setOverlays(functionOverlay, functionOverlayCount);
 
@@ -2481,12 +2449,7 @@ void DebugInfo::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16
     // The coordinates define the left starting point of the text
     display->setTextAlignment(TEXT_ALIGN_LEFT);
 
-    const bool invertedMode = config.display.displaymode == meshtastic_Config_DisplayConfig_DisplayMode_INVERTED;
-    const bool portrait = isPortrait(display);
-    const int16_t statusYOffset = invertedMode ? 3 : 2;
-    int16_t logStartY = y + (FONT_HEIGHT_SMALL * 2);
-
-    if (invertedMode) {
+    if (config.display.displaymode == meshtastic_Config_DisplayConfig_DisplayMode_INVERTED) {
         display->fillRect(0 + x, 0 + y, x + display->getWidth(), y + FONT_HEIGHT_SMALL);
         display->setColor(BLACK);
     }
@@ -2497,138 +2460,89 @@ void DebugInfo::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16
         snprintf(channelStr, sizeof(channelStr), "#%s", channels.getName(channels.getPrimaryIndex()));
     }
 
-    if (portrait) {
-        int16_t cursorY = y + statusYOffset;
-        const int16_t lineAdvance = FONT_HEIGHT_SMALL + 6;
-        const int16_t batteryX = x + (invertedMode ? 1 : 0);
-
-        if (powerStatus->getHasBattery()) {
-            drawBattery(display, batteryX, cursorY, imgBattery, powerStatus);
-            cursorY += lineAdvance;
-        } else if (powerStatus->knowsUSB()) {
-            display->drawFastImage(batteryX, cursorY, 16, 8, powerStatus->getHasUSB() ? imgUSB : imgPower);
-            cursorY += lineAdvance;
-        }
-
-        drawNodes(display, x, cursorY, nodeStatus);
-        cursorY += lineAdvance;
-#if HAS_GPS
-        if (config.position.gps_mode != meshtastic_Config_PositionConfig_GpsMode_ENABLED) {
-            drawGPSpowerstat(display, x, cursorY, gpsStatus);
+    // Display power status
+    if (powerStatus->getHasBattery()) {
+        if (config.display.displaymode == meshtastic_Config_DisplayConfig_DisplayMode_DEFAULT) {
+            drawBattery(display, x, y + 2, imgBattery, powerStatus);
         } else {
-            drawGPS(display, x, cursorY, gpsStatus);
+            drawBattery(display, x + 1, y + 3, imgBattery, powerStatus);
         }
-        cursorY += lineAdvance;
-#endif
-        display->setColor(WHITE);
-        display->drawString(x, cursorY, channelStr);
-        if (config.display.heading_bold)
-            display->drawString(x + 1, cursorY, channelStr);
-
-        const int16_t idX = x + SCREEN_WIDTH - display->getStringWidth(ourId);
-        display->drawString(idX, cursorY, ourId);
-
-        const int16_t iconX = idX - 10;
-        const int16_t iconY = cursorY - (FONT_HEIGHT_SMALL / 2);
-
-        if (moduleConfig.store_forward.enabled) {
-#ifdef ARCH_ESP32
-            if (!Throttle::isWithinTimespanMs(storeForwardModule->lastHeartbeat,
-                                              (storeForwardModule->heartbeatInterval * 1200))) {
-                display->drawFastImage(iconX, iconY, 8, 8, imgQuestion);
-            } else {
-                display->drawFastImage(iconX, iconY, 11, 8, imgSF);
-            }
-#endif
+    } else if (powerStatus->knowsUSB()) {
+        if (config.display.displaymode == meshtastic_Config_DisplayConfig_DisplayMode_DEFAULT) {
+            display->drawFastImage(x, y + 2, 16, 8, powerStatus->getHasUSB() ? imgUSB : imgPower);
         } else {
-            display->drawFastImage(iconX, iconY, 8, 8, imgInfo);
+            display->drawFastImage(x + 1, y + 3, 16, 8, powerStatus->getHasUSB() ? imgUSB : imgPower);
         }
-
-        logStartY = cursorY + FONT_HEIGHT_SMALL;
+    }
+    // Display nodes status
+    if (config.display.displaymode == meshtastic_Config_DisplayConfig_DisplayMode_DEFAULT) {
+        drawNodes(display, x + (SCREEN_WIDTH * 0.25), y + 2, nodeStatus);
     } else {
-        if (powerStatus->getHasBattery()) {
-            if (!invertedMode) {
-                drawBattery(display, x, y + 2, imgBattery, powerStatus);
-            } else {
-                drawBattery(display, x + 1, y + 3, imgBattery, powerStatus);
-            }
-        } else if (powerStatus->knowsUSB()) {
-            if (!invertedMode) {
-                display->drawFastImage(x, y + 2, 16, 8, powerStatus->getHasUSB() ? imgUSB : imgPower);
-            } else {
-                display->drawFastImage(x + 1, y + 3, 16, 8, powerStatus->getHasUSB() ? imgUSB : imgPower);
-            }
-        }
-        // Display nodes status
-        if (!invertedMode) {
-            drawNodes(display, x + (SCREEN_WIDTH * 0.25), y + 2, nodeStatus);
-        } else {
-            drawNodes(display, x + (SCREEN_WIDTH * 0.25), y + 3, nodeStatus);
-        }
+        drawNodes(display, x + (SCREEN_WIDTH * 0.25), y + 3, nodeStatus);
+    }
 #if HAS_GPS
-        // Display GPS status
-        if (config.position.gps_mode != meshtastic_Config_PositionConfig_GpsMode_ENABLED) {
-            drawGPSpowerstat(display, x, y + 2, gpsStatus);
+    // Display GPS status
+    if (config.position.gps_mode != meshtastic_Config_PositionConfig_GpsMode_ENABLED) {
+        drawGPSpowerstat(display, x, y + 2, gpsStatus);
+    } else {
+        if (config.display.displaymode == meshtastic_Config_DisplayConfig_DisplayMode_DEFAULT) {
+            drawGPS(display, x + (SCREEN_WIDTH * 0.63), y + 2, gpsStatus);
         } else {
-            if (!invertedMode) {
-                drawGPS(display, x + (SCREEN_WIDTH * 0.63), y + 2, gpsStatus);
-            } else {
-                drawGPS(display, x + (SCREEN_WIDTH * 0.63), y + 3, gpsStatus);
-            }
+            drawGPS(display, x + (SCREEN_WIDTH * 0.63), y + 3, gpsStatus);
         }
+    }
 #endif
-        display->setColor(WHITE);
-        // Draw the channel name
-        display->drawString(x, y + FONT_HEIGHT_SMALL, channelStr);
-        // Draw our hardware ID to assist with bluetooth pairing. Either prefix with Info or S&F Logo
-        if (moduleConfig.store_forward.enabled) {
+    display->setColor(WHITE);
+    // Draw the channel name
+    display->drawString(x, y + FONT_HEIGHT_SMALL, channelStr);
+    // Draw our hardware ID to assist with bluetooth pairing. Either prefix with Info or S&F Logo
+    if (moduleConfig.store_forward.enabled) {
 #ifdef ARCH_ESP32
-            if (!Throttle::isWithinTimespanMs(storeForwardModule->lastHeartbeat,
-                                              (storeForwardModule->heartbeatInterval * 1200))) { // no heartbeat, overlap a bit
-#if (defined(USE_EINK) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7735_CS) ||      \
-     defined(ST7789_CS) || defined(USE_ST7789) || defined(HX8357_CS) || defined(ILI9488_CS) || ARCH_PORTDUINO) &&                \
-    !defined(DISPLAY_FORCE_SMALL_FONTS)
-                display->drawFastImage(x + SCREEN_WIDTH - 14 - display->getStringWidth(ourId), y + 3 + FONT_HEIGHT_SMALL, 12, 8,
-                                       imgQuestionL1);
-                display->drawFastImage(x + SCREEN_WIDTH - 14 - display->getStringWidth(ourId), y + 11 + FONT_HEIGHT_SMALL, 12, 8,
-                                       imgQuestionL2);
-#else
-                display->drawFastImage(x + SCREEN_WIDTH - 10 - display->getStringWidth(ourId), y + 2 + FONT_HEIGHT_SMALL, 8, 8,
-                                       imgQuestion);
-#endif
-            } else {
-#if (defined(USE_EINK) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7735_CS) ||      \
-     defined(ST7789_CS) || defined(USE_ST7789) || defined(ILI9488_CS) || defined(HX8357_CS)) &&                                  \
-    !defined(DISPLAY_FORCE_SMALL_FONTS)
-                display->drawFastImage(x + SCREEN_WIDTH - 18 - display->getStringWidth(ourId), y + 3 + FONT_HEIGHT_SMALL, 16, 8,
-                                       imgSFL1);
-                display->drawFastImage(x + SCREEN_WIDTH - 18 - display->getStringWidth(ourId), y + 11 + FONT_HEIGHT_SMALL, 16, 8,
-                                       imgSFL2);
-#else
-                display->drawFastImage(x + SCREEN_WIDTH - 13 - display->getStringWidth(ourId), y + 2 + FONT_HEIGHT_SMALL, 11, 8,
-                                       imgSF);
-#endif
-            }
-#endif
-        } else {
-            // TODO: Raspberry Pi supports more than just the one screen size
+        if (!Throttle::isWithinTimespanMs(storeForwardModule->lastHeartbeat,
+                                          (storeForwardModule->heartbeatInterval * 1200))) { // no heartbeat, overlap a bit
 #if (defined(USE_EINK) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7735_CS) ||      \
      defined(ST7789_CS) || defined(USE_ST7789) || defined(HX8357_CS) || defined(ILI9488_CS) || ARCH_PORTDUINO) &&                \
     !defined(DISPLAY_FORCE_SMALL_FONTS)
             display->drawFastImage(x + SCREEN_WIDTH - 14 - display->getStringWidth(ourId), y + 3 + FONT_HEIGHT_SMALL, 12, 8,
-                                   imgInfoL1);
+                                   imgQuestionL1);
             display->drawFastImage(x + SCREEN_WIDTH - 14 - display->getStringWidth(ourId), y + 11 + FONT_HEIGHT_SMALL, 12, 8,
-                                   imgInfoL2);
+                                   imgQuestionL2);
 #else
             display->drawFastImage(x + SCREEN_WIDTH - 10 - display->getStringWidth(ourId), y + 2 + FONT_HEIGHT_SMALL, 8, 8,
-                                   imgInfo);
+                                   imgQuestion);
+#endif
+        } else {
+#if (defined(USE_EINK) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7735_CS) ||      \
+     defined(ST7789_CS) || defined(USE_ST7789) || defined(ILI9488_CS) || defined(HX8357_CS)) &&                                  \
+    !defined(DISPLAY_FORCE_SMALL_FONTS)
+            display->drawFastImage(x + SCREEN_WIDTH - 18 - display->getStringWidth(ourId), y + 3 + FONT_HEIGHT_SMALL, 16, 8,
+                                   imgSFL1);
+            display->drawFastImage(x + SCREEN_WIDTH - 18 - display->getStringWidth(ourId), y + 11 + FONT_HEIGHT_SMALL, 16, 8,
+                                   imgSFL2);
+#else
+            display->drawFastImage(x + SCREEN_WIDTH - 13 - display->getStringWidth(ourId), y + 2 + FONT_HEIGHT_SMALL, 11, 8,
+                                   imgSF);
 #endif
         }
-
-        display->drawString(x + SCREEN_WIDTH - display->getStringWidth(ourId), y + FONT_HEIGHT_SMALL, ourId);
+#endif
+    } else {
+        // TODO: Raspberry Pi supports more than just the one screen size
+#if (defined(USE_EINK) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7735_CS) ||      \
+     defined(ST7789_CS) || defined(USE_ST7789) || defined(HX8357_CS) || defined(ILI9488_CS) || ARCH_PORTDUINO) &&                \
+    !defined(DISPLAY_FORCE_SMALL_FONTS)
+        display->drawFastImage(x + SCREEN_WIDTH - 14 - display->getStringWidth(ourId), y + 3 + FONT_HEIGHT_SMALL, 12, 8,
+                               imgInfoL1);
+        display->drawFastImage(x + SCREEN_WIDTH - 14 - display->getStringWidth(ourId), y + 11 + FONT_HEIGHT_SMALL, 12, 8,
+                               imgInfoL2);
+#else
+        display->drawFastImage(x + SCREEN_WIDTH - 10 - display->getStringWidth(ourId), y + 2 + FONT_HEIGHT_SMALL, 8, 8, imgInfo);
+#endif
     }
 
-    display->drawLogBuffer(x, logStartY);
+    display->drawString(x + SCREEN_WIDTH - display->getStringWidth(ourId), y + FONT_HEIGHT_SMALL, ourId);
+
+    // Draw any log messages
+    display->drawLogBuffer(x, y + (FONT_HEIGHT_SMALL * 2));
 
     /* Display a heartbeat pixel that blinks every time the frame is redrawn */
 #ifdef SHOW_REDRAWS

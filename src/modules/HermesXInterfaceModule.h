@@ -2,6 +2,8 @@
 #ifndef MESHTASTIC_EXCLUDE_HERMESX
 #define MESHTASTIC_EXCLUDE_HERMESX 0
 #endif
+#if !MESHTASTIC_EXCLUDE_HERMESX
+
 #include "SinglePortModule.h"
 #include <Arduino.h>
 #include <Adafruit_GFX.h>
@@ -55,13 +57,13 @@ public:
     void onTripleClick();
     void onDoubleClickWithin3s();
     void onEmergencyModeChanged(bool active);
-    void onEmergencyTxResult(uint8_t type, bool ok);
     void registerRawButtonPress(HermesButtonSource source);
     void playSOSFeedback();
     void playAckSuccess();
     void playNackFail();
-    void handleAckNotification(bool success);
-    void showEmergencyBanner(bool on, const __FlashStringHelper *text = nullptr, uint16_t color = 0);
+    bool isEmergencyUiActive() const;
+    void showEmergencyBanner(bool on, const __FlashStringHelper *text = nullptr, uint16_t color = 0,
+                             uint32_t durationMs = 0);
 
     void playSendFeedback();
     void playReceiveFeedback();
@@ -113,6 +115,7 @@ private:
     bool emergencyBannerVisible = false;
     String emergencyBannerText;
     uint16_t emergencyBannerColor = 0;
+    uint32_t emergencyBannerHideDeadline = 0;
     bool ackReceived = false;
     uint32_t waitingAckId = 0;
     uint32_t lastSentTime = 0;
@@ -204,3 +207,9 @@ private:
 
 extern HermesXInterfaceModule* globalHermes;
 
+#else
+
+class HermesXInterfaceModule;
+extern HermesXInterfaceModule* globalHermes;
+
+#endif // !MESHTASTIC_EXCLUDE_HERMESX

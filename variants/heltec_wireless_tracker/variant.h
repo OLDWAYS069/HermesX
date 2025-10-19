@@ -20,10 +20,11 @@
 #define ST7735_SPI_HOST SPI3_HOST
 #define SPI_FREQUENCY 40000000
 #define SPI_READ_FREQUENCY 16000000
-#define TFT_WIDTH DISPLAY_WIDTH
-#define TFT_HEIGHT DISPLAY_HEIGHT
+#define SCREEN_ROTATE
+#define TFT_HEIGHT DISPLAY_WIDTH
+#define TFT_WIDTH DISPLAY_HEIGHT
 #define TFT_OFFSET_X 26
-#define TFT_OFFSET_Y 0
+#define TFT_OFFSET_Y -1
 #define SCREEN_TRANSITION_FRAMERATE 3 // fps
 #define DISPLAY_FORCE_SMALL_FONTS
 
@@ -34,7 +35,7 @@
 
 #define VEXT_ENABLE 3 // active HIGH - powers the GPS, GPS LNA and OLED
 #define VEXT_ON_VALUE HIGH
-#define BUTTON_PIN 0
+#define BUTTON_PIN 43
 
 #define BATTERY_PIN 1 // A battery voltage measurement pin, voltage divider connected here to measure battery voltage
 #define ADC_CHANNEL ADC1_GPIO1_CHANNEL

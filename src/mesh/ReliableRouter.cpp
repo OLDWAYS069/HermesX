@@ -7,7 +7,6 @@
 #include "modules/RoutingModule.h"
 #if !MESHTASTIC_EXCLUDE_HERMESX
 #include "modules/HermesXInterfaceModule.h"
-#include "modules/EmergencyAdaptiveModule.h"
 #endif
 
 // ReliableRouter::ReliableRouter() {}
@@ -136,22 +135,12 @@ void ReliableRouter::sniffReceived(const meshtastic_MeshPacket *p, const meshtas
             if (ackId) {
                 stopRetransmission(p->to, ackId);
 #if !MESHTASTIC_EXCLUDE_HERMESX
-            if (emergencyModule) {
-                emergencyModule->handleTxCompletion(ackId, true);
-            }
-#endif
-#if !MESHTASTIC_EXCLUDE_HERMESX
                 if (hermesXCallback) {
                     hermesXCallback(3, true);
                 }
 #endif
             } else {
                 stopRetransmission(p->to, nakId);
-#if !MESHTASTIC_EXCLUDE_HERMESX
-            if (emergencyModule) {
-                emergencyModule->handleTxCompletion(nakId, false);
-            }
-#endif
 #if !MESHTASTIC_EXCLUDE_HERMESX
                 if (hermesXCallback) {
                     hermesXCallback(4, true);
@@ -164,6 +153,3 @@ void ReliableRouter::sniffReceived(const meshtastic_MeshPacket *p, const meshtas
     // handle the packet as normal
     isBroadcast(p->to) ? FloodingRouter::sniffReceived(p, c) : NextHopRouter::sniffReceived(p, c);
 }
-
-
-

@@ -10,13 +10,13 @@
 #include "buzz.h"
 #include "main.h"
 #include "modules/ExternalNotificationModule.h"
-#if !MESHTASTIC_EXCLUDE_HERMESX
-#include "modules/HermesXInterfaceModule.h"
-#endif
 #include "power.h"
 #include "sleep.h"
 #ifdef ARCH_PORTDUINO
 #include "platform/portduino/PortduinoGlue.h"
+#endif
+#if !MESHTASTIC_EXCLUDE_HERMESX
+#include "modules/HermesXInterfaceModule.h"
 #endif
 
 #define DEBUG_BUTTONS 0
@@ -26,18 +26,13 @@
 #define LOG_BUTTON(...)
 #endif
 
-#if !MESHTASTIC_EXCLUDE_HERMESX
-constexpr unsigned int kHermesMultiClickMs = 480;
-constexpr unsigned int kHermesIdleMs = 1200;
-#endif
-
 using namespace concurrency;
 
 ButtonThread *buttonThread; // Declared extern in header
 volatile ButtonThread::ButtonEventType ButtonThread::btnEvent = ButtonThread::BUTTON_EVENT_NONE;
 
 #if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN)
-HermesOneButton ButtonThread::userButton; // Get reference to static member
+OneButton ButtonThread::userButton; // Get reference to static member
 #endif
 ButtonThread::ButtonThread() : OSThread("Button")
 {
@@ -45,7 +40,7 @@ ButtonThread::ButtonThread() : OSThread("Button")
 
 #if defined(ARCH_PORTDUINO)
     if (settingsMap.count(user) != 0 && settingsMap[user] != RADIOLIB_NC) {
-        this->userButton = HermesOneButton(settingsMap[user], true, true);
+        this->userButton = OneButton(settingsMap[user], true, true);
         LOG_DEBUG("Use GPIO%02d for button", settingsMap[user]);
     }
 #elif defined(BUTTON_PIN)
@@ -56,17 +51,17 @@ ButtonThread::ButtonThread() : OSThread("Button")
     int pin = config.device.button_gpio ? config.device.button_gpio : USERPREFS_BUTTON_PIN; // Resolved button pin
 #endif
 #if defined(HELTEC_CAPSULE_SENSOR_V3) || defined(HELTEC_SENSOR_HUB)
-    this->userButton = HermesOneButton(pin, false, false);
+    this->userButton = OneButton(pin, false, false);
 #elif defined(BUTTON_ACTIVE_LOW)
-    this->userButton = HermesOneButton(pin, BUTTON_ACTIVE_LOW, BUTTON_ACTIVE_PULLUP);
+    this->userButton = OneButton(pin, BUTTON_ACTIVE_LOW, BUTTON_ACTIVE_PULLUP);
 #else
-    this->userButton = HermesOneButton(pin, true, true);
+    this->userButton = OneButton(pin, true, true);
 #endif
     LOG_DEBUG("Use GPIO%02d for button", pin);
 #endif
 
 #ifdef INPUT_PULLUP_SENSE
-    // Some platforms (nrf52) have a SENSE variant which allows wake from sleep - override what HermesOneButton did
+    // Some platforms (nrf52) have a SENSE variant which allows wake from sleep - override what OneButton did
 #ifdef BUTTON_SENSE_TYPE
     pinMode(pin, BUTTON_SENSE_TYPE);
 #else
@@ -79,12 +74,8 @@ ButtonThread::ButtonThread() : OSThread("Button")
     userButton.setClickMs(BUTTON_CLICK_MS);
     userButton.setPressMs(BUTTON_LONGPRESS_MS);
     userButton.setDebounceMs(1);
-#if !MESHTASTIC_EXCLUDE_HERMESX
-    userButton.setClickMs(kHermesMultiClickMs);
-    userButton.setIdleMs(kHermesIdleMs);
-#endif
     userButton.attachDoubleClick(userButtonDoublePressed);
-    userButton.attachMultiClick(userButtonMultiPressed, this); // Reference to instance: get click count from non-static HermesOneButton
+    userButton.attachMultiClick(userButtonMultiPressed, this); // Reference to instance: get click count from non-static OneButton
 #if !defined(T_DECK) &&                                                                                                          \
     !defined(                                                                                                                    \
         ELECROW_ThinkNode_M2) // T-Deck immediately wakes up after shutdown, Thinknode M2 has this on the smaller ALT button
@@ -95,30 +86,24 @@ ButtonThread::ButtonThread() : OSThread("Button")
 
 #ifdef BUTTON_PIN_ALT
 #if defined(ELECROW_ThinkNode_M2)
-    this->userButtonAlt = HermesOneButton(BUTTON_PIN_ALT, false, false);
+    this->userButtonAlt = OneButton(BUTTON_PIN_ALT, false, false);
 #else
-    this->userButtonAlt = HermesOneButton(BUTTON_PIN_ALT, true, true);
+    this->userButtonAlt = OneButton(BUTTON_PIN_ALT, true, true);
 #endif
 #ifdef INPUT_PULLUP_SENSE
-    // Some platforms (nrf52) have a SENSE variant which allows wake from sleep - override what HermesOneButton did
+    // Some platforms (nrf52) have a SENSE variant which allows wake from sleep - override what OneButton did
     pinMode(BUTTON_PIN_ALT, INPUT_PULLUP_SENSE);
 #endif
-    userButtonAlt.attachClick(userButtonPressed);
+    userButtonAlt.attachClick(userButtonPressedScreen);
     userButtonAlt.setClickMs(BUTTON_CLICK_MS);
     userButtonAlt.setPressMs(BUTTON_LONGPRESS_MS);
     userButtonAlt.setDebounceMs(1);
-#if !MESHTASTIC_EXCLUDE_HERMESX
-    userButtonAlt.setClickMs(kHermesMultiClickMs);
-    userButtonAlt.setIdleMs(kHermesIdleMs);
-#endif
-    userButtonAlt.attachDoubleClick(userButtonDoublePressed);
-    userButtonAlt.attachMultiClick(userButtonMultiPressed, this);
     userButtonAlt.attachLongPressStart(userButtonPressedLongStart);
     userButtonAlt.attachLongPressStop(userButtonPressedLongStop);
 #endif
 
 #ifdef BUTTON_PIN_TOUCH
-    userButtonTouch = HermesOneButton(BUTTON_PIN_TOUCH, true, true);
+    userButtonTouch = OneButton(BUTTON_PIN_TOUCH, true, true);
     userButtonTouch.setPressMs(BUTTON_TOUCH_MS);
     userButtonTouch.attachLongPressStart(touchPressedLongStart); // Better handling with longpress than click?
 #endif
@@ -181,11 +166,6 @@ int32_t ButtonThread::runOnce()
 {
     // If the button is pressed we suppress CPU sleep until release
     canSleep = true; // Assume we should not keep the board awake
-#if !MESHTASTIC_EXCLUDE_HERMESX
-    if (tripleClickWindowActive && (millis() - lastTripleClickMs > 3000)) {
-        tripleClickWindowActive = false;
-    }
-#endif
 
 #if defined(BUTTON_PIN) || defined(USERPREFS_BUTTON_PIN)
     userButton.tick();
@@ -204,11 +184,9 @@ int32_t ButtonThread::runOnce()
     userButtonTouch.tick();
     canSleep &= userButtonTouch.isIdle();
 #endif
-
 #if !MESHTASTIC_EXCLUDE_HERMESX
     updatePowerHoldAnimation();
 #endif
-
     if (btnEvent != BUTTON_EVENT_NONE) {
         switch (btnEvent) {
         case BUTTON_EVENT_PRESSED: {
@@ -218,18 +196,6 @@ int32_t ButtonThread::runOnce()
                 externalNotificationModule->stopNow();
                 break;
             }
-#if !MESHTASTIC_EXCLUDE_HERMESX
-            if (HermesXInterfaceModule::instance) {
-                auto *currentState = powerFSM.getState();
-                if (currentState == &stateDARK) {
-                    powerFSM.trigger(EVENT_PRESS);
-                } else {
-                    HermesXInterfaceModule::instance->registerRawButtonPress(HermesXInterfaceModule::HermesButtonSource::Primary);
-                    LOG_DEBUG("HermesX single press suppressed");
-                }
-                break;
-            }
-#endif
 #ifdef ELECROW_ThinkNode_M1
             sendAdHocPosition();
             break;
@@ -240,41 +206,20 @@ int32_t ButtonThread::runOnce()
 
         case BUTTON_EVENT_PRESSED_SCREEN: {
             LOG_BUTTON("AltPress!");
+#ifdef ELECROW_ThinkNode_M1
+            // If a nag notification is running, stop it and prevent other actions
             if (moduleConfig.external_notification.enabled && (externalNotificationModule->nagCycleCutoff != UINT32_MAX)) {
                 externalNotificationModule->stopNow();
                 break;
             }
-#if !MESHTASTIC_EXCLUDE_HERMESX
-            if (HermesXInterfaceModule::instance) {
-                auto *currentState = powerFSM.getState();
-                if (currentState == &stateDARK) {
-                    powerFSM.trigger(EVENT_PRESS);
-                } else {
-                    HermesXInterfaceModule::instance->registerRawButtonPress(HermesXInterfaceModule::HermesButtonSource::Alt);
-                    LOG_DEBUG("HermesX alt press suppressed");
-                }
-                break;
-            }
-#endif
-#ifdef ELECROW_ThinkNode_M1
-            switchPage();
-            break;
-#else
             switchPage();
             break;
 #endif
+            // Rotary short-press is handled by InputBroker (e.g. canned messages); no additional side-effects here.
+            break;
         }
 
         case BUTTON_EVENT_DOUBLE_PRESSED: {
-#if !MESHTASTIC_EXCLUDE_HERMESX
-            if (tripleClickWindowActive) {
-                tripleClickWindowActive = false;
-                if (HermesXInterfaceModule::instance) {
-                    HermesXInterfaceModule::instance->onDoubleClickWithin3s();
-                    break;
-                }
-            }
-#endif
             LOG_BUTTON("Double press!");
 #ifdef ELECROW_ThinkNode_M1
             digitalWrite(PIN_EINK_EN, digitalRead(PIN_EINK_EN) == LOW);
@@ -285,14 +230,6 @@ int32_t ButtonThread::runOnce()
         }
 
         case BUTTON_EVENT_MULTI_PRESSED: {
-#if !MESHTASTIC_EXCLUDE_HERMESX
-            if (multipressClickCount == 3 && HermesXInterfaceModule::instance) {
-                HermesXInterfaceModule::instance->onTripleClick();
-                tripleClickWindowActive = true;
-                lastTripleClickMs = millis();
-                break;
-            }
-#endif
             LOG_BUTTON("Mulitipress! %hux", multipressClickCount);
             switch (multipressClickCount) {
 #if HAS_GPS && !defined(ELECROW_ThinkNode_M1)
@@ -356,6 +293,11 @@ int32_t ButtonThread::runOnce()
         // may wake the board immediatedly.
         case BUTTON_EVENT_LONG_RELEASED: {
             LOG_INFO("Shutdown from long press");
+#if !MESHTASTIC_EXCLUDE_HERMESX
+            if (HermesXInterfaceModule::instance) {
+                HermesXInterfaceModule::instance->playShutdownEffect(BUTTON_LONGPRESS_MS);
+            }
+#endif
             playShutdownMelody();
             delay(3000);
             power->shutdown();
@@ -515,11 +457,6 @@ void ButtonThread::storeClickCount()
 #if defined(BUTTON_PIN) || defined(USERPREFS_BUTTON_PIN)
     multipressClickCount = userButton.getNumberClicks();
 #endif
-#ifdef BUTTON_PIN_ALT
-    if (multipressClickCount == 0) {
-        multipressClickCount = userButtonAlt.getNumberClicks();
-    }
-#endif
 }
 
 #if !MESHTASTIC_EXCLUDE_HERMESX
@@ -616,7 +553,9 @@ void ButtonThread::updatePowerHoldAnimation()
     holdAnimationLastMs = 0;
 #endif
 }
+
 #endif
+
 void ButtonThread::userButtonPressedLongStart()
 {
     if (millis() > c_holdOffTime) {
@@ -630,8 +569,5 @@ void ButtonThread::userButtonPressedLongStop()
         btnEvent = BUTTON_EVENT_LONG_RELEASED;
     }
 }
-
-
-
 
 

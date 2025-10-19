@@ -1,21 +1,6 @@
 #pragma once
 
-#ifndef ONEBUTTON_USE_CALLBACK_PARAMETER
-#define ONEBUTTON_USE_CALLBACK_PARAMETER
-#endif
-
-#if __has_include(<OneButtonWithCallbackParameter.h>)
-#include <OneButtonWithCallbackParameter.h>
-using HermesOneButton = OneButtonWithCallbackParameter;
-#elif __has_include(<OneButtonWithCallback.h>)
-#include <OneButtonWithCallback.h>
-using HermesOneButton = OneButtonWithCallback;
-#elif __has_include(<OneButton.h>)
-#include <OneButton.h>
-using HermesOneButton = OneButton;
-#else
-#error "OneButton library with callback support is required"
-#endif
+#include "OneButton.h"
 #include "concurrency/OSThread.h"
 #include "configuration.h"
 
@@ -65,21 +50,21 @@ class ButtonThread : public concurrency::OSThread
     int afterLightSleep(esp_sleep_wakeup_cause_t cause);
 #endif
   private:
-#if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN)
-    static HermesOneButton userButton; // Static - accessed from an interrupt
-#endif
-#ifdef BUTTON_PIN_ALT
-    HermesOneButton userButtonAlt;
-#endif
-#ifdef BUTTON_PIN_TOUCH
-    HermesOneButton userButtonTouch;
-#endif
 #if !MESHTASTIC_EXCLUDE_HERMESX && (defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT) || defined(BUTTON_PIN_TOUCH))
     enum class HoldAnimationMode { None, PowerOn, PowerOff };
     HoldAnimationMode holdAnimationMode = HoldAnimationMode::None;
     bool holdAnimationActive = false;
     uint32_t holdAnimationLastMs = 0;
     HoldAnimationMode resolveHoldMode() const;
+#endif
+#if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN)
+    static OneButton userButton; // Static - accessed from an interrupt
+#endif
+#ifdef BUTTON_PIN_ALT
+    OneButton userButtonAlt;
+#endif
+#ifdef BUTTON_PIN_TOUCH
+    OneButton userButtonTouch;
 #endif
 
 #ifdef ARCH_ESP32
@@ -97,10 +82,6 @@ class ButtonThread : public concurrency::OSThread
 
     // Store click count during callback, for later use
     volatile int multipressClickCount = 0;
-#if !MESHTASTIC_EXCLUDE_HERMESX
-    uint32_t lastTripleClickMs = 0;
-    bool tripleClickWindowActive = false;
-#endif
 
     static void wakeOnIrq(int irq, int mode);
 
@@ -118,4 +99,3 @@ class ButtonThread : public concurrency::OSThread
 };
 
 extern ButtonThread *buttonThread;
-

@@ -791,15 +791,6 @@ void NodeDB::installDefaultModuleConfig()
 #endif
 
     moduleConfig.has_canned_message = true;
-    moduleConfig.has_emergency = true;
-    moduleConfig.emergency.mode = meshtastic_ModuleConfig_EmergencyConfig_Mode_ON;
-    moduleConfig.emergency.role = meshtastic_ModuleConfig_EmergencyConfig_Role_DEFAULT;
-    moduleConfig.emergency.lang = meshtastic_ModuleConfig_EmergencyConfig_Language_EN;
-    moduleConfig.emergency.emit_position_request_on_activate = true;
-    moduleConfig.emergency.position_request_delay_ms = 300;
-    moduleConfig.emergency.position_request_jitter_ms = 200;
-    moduleConfig.emergency.position_request_cooldown_sec = 180;
-    moduleConfig.emergency.whitelist_count = 0;
 
 #if USERPREFS_MQTT_ENABLED && !MESHTASTIC_EXCLUDE_MQTT
     moduleConfig.mqtt.enabled = true;
@@ -1368,15 +1359,6 @@ bool NodeDB::saveToDiskNoRetry(int saveWhat)
 
     if (saveWhat & SEGMENT_MODULECONFIG) {
         moduleConfig.has_canned_message = true;
-        moduleConfig.has_emergency = true;
-        moduleConfig.emergency.mode = meshtastic_ModuleConfig_EmergencyConfig_Mode_ON;
-        moduleConfig.emergency.role = meshtastic_ModuleConfig_EmergencyConfig_Role_DEFAULT;
-        moduleConfig.emergency.lang = meshtastic_ModuleConfig_EmergencyConfig_Language_EN;
-        moduleConfig.emergency.emit_position_request_on_activate = true;
-        moduleConfig.emergency.position_request_delay_ms = 300;
-        moduleConfig.emergency.position_request_jitter_ms = 200;
-        moduleConfig.emergency.position_request_cooldown_sec = 180;
-        moduleConfig.emergency.whitelist_count = 0;
         moduleConfig.has_external_notification = true;
         moduleConfig.has_mqtt = true;
         moduleConfig.has_range_test = true;

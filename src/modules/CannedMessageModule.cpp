@@ -14,18 +14,10 @@
 #include "input/ScanAndSelect.h"
 #include "mesh/generated/meshtastic/cannedmessages.pb.h"
 #include "modules/AdminModule.h"
+#include "HermesFace.h"
 
 #include "main.h"                               // for cardkb_found
 #include "modules/ExternalNotificationModule.h" // for buzzer control
-#if !MESHTASTIC_EXCLUDE_HERMESX
-#include "modules/EmergencyAdaptiveModule.h"
-#endif
-#if !MESHTASTIC_EXCLUDE_HERMESX
-#include "modules/HermesXInterfaceModule.h"
-#endif
-#if !MESHTASTIC_EXCLUDE_HERMESX
-#include "HermesFace.h"
-#endif
 #if !MESHTASTIC_EXCLUDE_GPS
 #include "GPS.h"
 #endif
@@ -39,8 +31,6 @@
 
 #include "graphics/ScreenFonts.h"
 #include <Throttle.h>
-#include <algorithm>
-#include <cstring>
 
 // Remove Canned message screen if no action is taken for some milliseconds
 #define INACTIVATE_AFTER_MS 20000
@@ -56,8 +46,6 @@ CannedMessageModule *cannedMessageModule;
 CannedMessageModule::CannedMessageModule()
     : SinglePortModule("canned", meshtastic_PortNum_TEXT_MESSAGE_APP), concurrency::OSThread("CannedMessage")
 {
-    std::fill_n(normalMessages, CANNED_MESSAGE_MODULE_MESSAGE_MAX_COUNT, nullptr);
-    normalMessagesCount = 0;
     if (moduleConfig.canned_message.enabled || CANNED_MESSAGE_MODULE_ENABLE) {
         this->loadProtoForModule();
         if ((this->splitConfiguredMessages() <= 0) && (cardkb_found.address == 0x00) && !INPUTBROKER_MATRIX_TYPE &&
@@ -92,9 +80,6 @@ int CannedMessageModule::splitConfiguredMessages()
 {
     int messageIndex = 0;
     int i = 0;
-
-    std::fill_n(normalMessages, CANNED_MESSAGE_MODULE_MESSAGE_MAX_COUNT, nullptr);
-    normalMessagesCount = 0;
 
     String canned_messages = cannedMessageModuleConfig.messages;
 
@@ -133,11 +118,6 @@ int CannedMessageModule::splitConfiguredMessages()
         this->messagesCount = messageIndex;
     } else {
         this->messagesCount = messageIndex - 1;
-    }
-
-    normalMessagesCount = messagesCount;
-    for (int idx = 0; idx < normalMessagesCount && idx < CANNED_MESSAGE_MODULE_MESSAGE_MAX_COUNT; ++idx) {
-        normalMessages[idx] = messages[idx];
     }
 
     return this->messagesCount;
@@ -338,7 +318,7 @@ int CannedMessageModule::handleInputEvent(const InputEvent *event)
     if (this->runState == CANNED_MESSAGE_RUN_STATE_FREETEXT) {
         String keyTapped = keyForCoordinates(event->touchX, event->touchY);
 
-        if (keyTapped == "SHIFT") {
+        if (keyTapped == "⇧") {
             this->highlight = -1;
 
             this->payload = 0x00;
@@ -346,7 +326,7 @@ int CannedMessageModule::handleInputEvent(const InputEvent *event)
             validEvent = true;
 
             this->shift = !this->shift;
-        } else if (keyTapped == "BKSP") {
+        } else if (keyTapped == "⌫") {
 #ifndef RAK14014
             this->highlight = keyTapped[0];
 #endif
@@ -374,7 +354,7 @@ int CannedMessageModule::handleInputEvent(const InputEvent *event)
             validEvent = true;
 
             this->shift = false;
-        } else if (keyTapped == "ENTER") {
+        } else if (keyTapped == "↵") {
             this->highlight = 0x00;
 
             this->runState = CANNED_MESSAGE_RUN_STATE_ACTION_SELECT;
@@ -713,30 +693,20 @@ int32_t CannedMessageModule::runOnce()
 
 const char *CannedMessageModule::getCurrentMessage()
 {
-    if (currentMessageIndex < 0) {
-        return "";
-    }
-    return getMessageLabel(static_cast<size_t>(currentMessageIndex));
+    return this->messages[this->currentMessageIndex];
 }
-
 const char *CannedMessageModule::getPrevMessage()
 {
-    return getMessageLabel(static_cast<size_t>(getPrevIndex()));
+    return this->messages[this->getPrevIndex()];
 }
-
 const char *CannedMessageModule::getNextMessage()
 {
-    return getMessageLabel(static_cast<size_t>(getNextIndex()));
+    return this->messages[this->getNextIndex()];
 }
-
 const char *CannedMessageModule::getMessageByIndex(int index)
 {
-    if (index < 0) {
-        return "";
-    }
-    return getMessageLabel(static_cast<size_t>(index));
+    return (index >= 0 && index < this->messagesCount) ? this->messages[index] : "";
 }
-
 
 const char *CannedMessageModule::getNodeName(NodeNum node)
 {
@@ -770,34 +740,26 @@ bool CannedMessageModule::shouldDraw()
 // Expose publicly whether canned message module is ready for use
 bool CannedMessageModule::hasMessages()
 {
-    return getMessageCount() > 0;
+    return (this->messagesCount > 0);
 }
-
 
 int CannedMessageModule::getNextIndex()
 {
-    if (messagesCount <= 0) {
+    if (this->currentMessageIndex >= (this->messagesCount - 1)) {
         return 0;
+    } else {
+        return this->currentMessageIndex + 1;
     }
-    if (currentMessageIndex >= (messagesCount - 1)) {
-        return 0;
-    }
-    return currentMessageIndex + 1;
 }
-
 
 int CannedMessageModule::getPrevIndex()
 {
-    if (messagesCount <= 0) {
-        LOG_DEBUG("No messages found");
-        return 0;
+    if (this->currentMessageIndex <= 0) {
+        return this->messagesCount - 1;
+    } else {
+        return this->currentMessageIndex - 1;
     }
-    if (currentMessageIndex == 0) {
-        return messagesCount - 1;
-    }
-    return currentMessageIndex - 1;
 }
-
 void CannedMessageModule::showTemporaryMessage(const String &message)
 {
     temporaryMessage = message;
@@ -885,7 +847,7 @@ void CannedMessageModule::drawKeyboard(OLEDDisplay *display, OLEDDisplayUiState 
 
             float characterOffset = ((cellWidth / 2) - (letter.width / 2));
 
-            if (letter.character == "SHIFT") {
+            if (letter.character == "⇧") {
                 if (this->shift) {
                     display->fillRect(xOffset, yOffset, cellWidth, cellHeight);
 
@@ -899,7 +861,7 @@ void CannedMessageModule::drawKeyboard(OLEDDisplay *display, OLEDDisplayUiState 
 
                     drawShiftIcon(display, xOffset + characterOffset, yOffset + yCorrection + 5, 1.2);
                 }
-            } else if (letter.character == "BKSP") {
+            } else if (letter.character == "⌫") {
                 if (this->highlight == letter.character[0]) {
                     display->fillRect(xOffset, yOffset, cellWidth, cellHeight);
 
@@ -915,7 +877,7 @@ void CannedMessageModule::drawKeyboard(OLEDDisplay *display, OLEDDisplayUiState 
 
                     drawBackspaceIcon(display, xOffset + characterOffset, yOffset + yCorrection + 5, 1.2);
                 }
-            } else if (letter.character == "ENTER") {
+            } else if (letter.character == "↵") {
                 display->drawRect(xOffset, yOffset, cellWidth, cellHeight);
 
                 drawEnterIcon(display, xOffset + characterOffset, yOffset + yCorrection + 5, 1.7);
@@ -1027,112 +989,89 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
 {
     char buffer[50];
 
-#if !MESHTASTIC_EXCLUDE_HERMESX
-    const bool hermesActive = (HermesXInterfaceModule::instance != nullptr);
-#endif
-
     if (temporaryMessage.length() != 0) {
+        requestFocus(); // Tell Screen::setFrames to move to our module's frame
 #if !MESHTASTIC_EXCLUDE_HERMESX
-        if (hermesActive) {
-            requestFocus(); // Tell Screen::setFrames to move to our module's frame
-            HermesX_DrawFace(display, x, y, HermesFaceMode::Thinking);
-        } else
+        HermesX_DrawFace(display, x, y, HermesFaceMode::Thinking);
+#else
+        LOG_DEBUG("Draw temporary message: %s", temporaryMessage.c_str());
+        display->setTextAlignment(TEXT_ALIGN_CENTER);
+        display->setFont(FONT_MEDIUM);
+        display->drawString(display->getWidth() / 2 + x, 0 + y + 12, temporaryMessage);
 #endif
-        {
-            requestFocus(); // Tell Screen::setFrames to move to our module's frame
-            LOG_DEBUG("Draw temporary message: %s", temporaryMessage.c_str());
-            display->setTextAlignment(TEXT_ALIGN_CENTER);
-            display->setFont(FONT_MEDIUM);
-            display->drawString(display->getWidth() / 2 + x, 0 + y + 12, temporaryMessage);
-        }
     } else if (cannedMessageModule->runState == CANNED_MESSAGE_RUN_STATE_ACK_NACK_RECEIVED) {
+        requestFocus();                        // Tell Screen::setFrames to move to our module's frame
+        EINK_ADD_FRAMEFLAG(display, COSMETIC); // Clean after this popup. Layout makes ghosting particularly obvious
 #if !MESHTASTIC_EXCLUDE_HERMESX
-        if (hermesActive) {
-            requestFocus();                        // Tell Screen::setFrames to move to our module's frame
-            EINK_ADD_FRAMEFLAG(display, COSMETIC); // Clean after this popup. Layout makes ghosting particularly obvious
-            const HermesFaceMode faceMode = this->ack ? HermesFaceMode::AckSuccess : HermesFaceMode::AckFailed;
-            HermesX_DrawFace(display, x, y, faceMode);
-        } else
-#endif
-        {
-            requestFocus();                        // Tell Screen::setFrames to move to our module's frame
-            EINK_ADD_FRAMEFLAG(display, COSMETIC); // Clean after this popup. Layout makes ghosting particularly obvious
-
-#ifdef USE_EINK
-            display->setFont(FONT_SMALL); // No chunky text
+        const HermesFaceMode faceMode = this->ack ? HermesFaceMode::AckSuccess : HermesFaceMode::AckFailed;
+        HermesX_DrawFace(display, x, y, faceMode);
 #else
-            display->setFont(FONT_MEDIUM); // Chunky text
+#ifdef USE_EINK
+        display->setFont(FONT_SMALL); // No chunky text
+#else
+        display->setFont(FONT_MEDIUM); // Chunky text
 #endif
 
-            String displayString;
-            display->setTextAlignment(TEXT_ALIGN_CENTER);
+        String displayString;
+        display->setTextAlignment(TEXT_ALIGN_CENTER);
+        if (this->ack) {
+            displayString = "Delivered to\n%s";
+        } else {
+            displayString = "Delivery failed\nto %s";
+        }
+        display->drawStringf(display->getWidth() / 2 + x, 0 + y + 12, buffer, displayString,
+                             cannedMessageModule->getNodeName(this->incoming));
+
+        display->setFont(FONT_SMALL);
+
+        String snrString = "Last Rx SNR: %f";
+        String rssiString = "Last Rx RSSI: %d";
+
+        // Don't bother drawing snr and rssi for tiny displays
+        if (display->getHeight() > 100) {
+
+            // Original implementation used constants of y = 100 and y = 130. Shrink this if screen is *slightly* small
+            int16_t snrY = 100;
+            int16_t rssiY = 130;
+
+            // If dislay is *slighly* too small for the original consants, squish up a bit
+            if (display->getHeight() < rssiY + FONT_HEIGHT_SMALL) {
+                snrY = display->getHeight() - ((1.5) * FONT_HEIGHT_SMALL);
+                rssiY = display->getHeight() - ((2.5) * FONT_HEIGHT_SMALL);
+            }
+
             if (this->ack) {
-                displayString = "Delivered to\n%s";
-            } else {
-                displayString = "Delivery failed\nto %s";
-            }
-            display->drawStringf(display->getWidth() / 2 + x, 0 + y + 12, buffer, displayString,
-                                 cannedMessageModule->getNodeName(this->incoming));
-
-            display->setFont(FONT_SMALL);
-
-            String snrString = "Last Rx SNR: %f";
-            String rssiString = "Last Rx RSSI: %d";
-
-            // Don't bother drawing snr and rssi for tiny displays
-            if (display->getHeight() > 100) {
-
-                // Original implementation used constants of y = 100 and y = 130. Shrink this if screen is *slightly* small
-                int16_t snrY = 100;
-                int16_t rssiY = 130;
-
-                // If dislay is *slighly* too small for the original consants, squish up a bit
-                if (display->getHeight() < rssiY + FONT_HEIGHT_SMALL) {
-                    snrY = display->getHeight() - ((1.5) * FONT_HEIGHT_SMALL);
-                    rssiY = display->getHeight() - ((2.5) * FONT_HEIGHT_SMALL);
-                }
-
-                if (this->ack) {
-                    display->drawStringf(display->getWidth() / 2 + x, snrY + y, buffer, snrString, this->lastRxSnr);
-                    display->drawStringf(display->getWidth() / 2 + x, rssiY + y, buffer, rssiString, this->lastRxRssi);
-                }
+                display->drawStringf(display->getWidth() / 2 + x, snrY + y, buffer, snrString, this->lastRxSnr);
+                display->drawStringf(display->getWidth() / 2 + x, rssiY + y, buffer, rssiString, this->lastRxRssi);
             }
         }
+#endif
     } else if (cannedMessageModule->runState == CANNED_MESSAGE_RUN_STATE_SENDING_ACTIVE) {
+        // E-Ink: clean the screen *after* this pop-up
+        EINK_ADD_FRAMEFLAG(display, COSMETIC);
+
+        requestFocus(); // Tell Screen::setFrames to move to our module's frame
 #if !MESHTASTIC_EXCLUDE_HERMESX
-        if (hermesActive) {
-            EINK_ADD_FRAMEFLAG(display, COSMETIC);
-            requestFocus(); // Tell Screen::setFrames to move to our module's frame
-            HermesX_DrawFace(display, x, y, HermesFaceMode::Sending);
-        } else
-#endif
-        {
-            // E-Ink: clean the screen *after* this pop-up
-            EINK_ADD_FRAMEFLAG(display, COSMETIC);
-
-            requestFocus(); // Tell Screen::setFrames to move to our module's frame
-
-#ifdef USE_EINK
-            display->setFont(FONT_SMALL); // No chunky text
+        HermesX_DrawFace(display, x, y, HermesFaceMode::Sending);
 #else
-            display->setFont(FONT_MEDIUM); // Chunky text
+#ifdef USE_EINK
+        display->setFont(FONT_SMALL); // No chunky text
+#else
+        display->setFont(FONT_MEDIUM); // Chunky text
 #endif
 
-            display->setTextAlignment(TEXT_ALIGN_CENTER);
-            display->drawString(display->getWidth() / 2 + x, 0 + y + 12, "Sending...");
-        }
+        display->setTextAlignment(TEXT_ALIGN_CENTER);
+        display->drawString(display->getWidth() / 2 + x, 0 + y + 12, "Sending...");
+#endif
     } else if (cannedMessageModule->runState == CANNED_MESSAGE_RUN_STATE_DISABLED) {
 #if !MESHTASTIC_EXCLUDE_HERMESX
-        if (hermesActive) {
-            requestFocus();
-            HermesX_DrawFace(display, x, y, HermesFaceMode::Disabled);
-        } else
+        requestFocus();
+        HermesX_DrawFace(display, x, y, HermesFaceMode::Disabled);
+#else
+        display->setTextAlignment(TEXT_ALIGN_LEFT);
+        display->setFont(FONT_SMALL);
+        display->drawString(10 + x, 0 + y + FONT_HEIGHT_SMALL, "Canned Message\nModule disabled.");
 #endif
-        {
-            display->setTextAlignment(TEXT_ALIGN_LEFT);
-            display->setFont(FONT_SMALL);
-            display->drawString(10 + x, 0 + y + FONT_HEIGHT_SMALL, "Canned Message\nModule disabled.");
-        }
     } else if (cannedMessageModule->runState == CANNED_MESSAGE_RUN_STATE_FREETEXT) {
         requestFocus(); // Tell Screen::setFrames to move to our module's frame
 #if defined(USE_EINK) && defined(USE_EINK_DYNAMICDISPLAY)
@@ -1354,175 +1293,4 @@ String CannedMessageModule::drawWithCursor(String text, int cursor)
     return result;
 }
 
-void CannedMessageModule::setActiveList(CannedListKind kind)
-{
-    if (activeList == kind && kind == CannedListKind::NORMAL) {
-        return;
-    }
-
-    activeList = kind;
-
-    const bool isEmergencyLike = (activeList != CannedListKind::NORMAL);
-
-    if (activeList == CannedListKind::NORMAL) {
-        messagesCount = normalMessagesCount;
-        for (int i = 0; i < normalMessagesCount && i < CANNED_MESSAGE_MODULE_MESSAGE_MAX_COUNT; ++i) {
-            messages[i] = normalMessages[i];
-        }
-    } else {
-        rebuildEmergencyMenu(kind);
-        messagesCount = emergencyMenu.size();
-        for (size_t i = 0; i < emergencyMenu.size() && i < CANNED_MESSAGE_MODULE_MESSAGE_MAX_COUNT; ++i) {
-            messages[i] = emergencyMenu[i].label.c_str();
-        }
-    }
-
-    currentMessageIndex = (messagesCount > 0) ? 0 : -1;
-    freetext = "";
-    cursor = 0;
-    destSelect = CANNED_MESSAGE_DESTINATION_TYPE_NONE;
-    dest = NODENUM_BROADCAST;
-
-    if (runState != CANNED_MESSAGE_RUN_STATE_DISABLED) {
-        runState = CANNED_MESSAGE_RUN_STATE_INACTIVE;
-    }
-
-    if (isEmergencyLike) {
-        requestFocus();
-    }
-
-    UIFrameEvent evt;
-    evt.action = UIFrameEvent::Action::REGENERATE_FRAMESET;
-    notifyObservers(&evt);
-}
-
-size_t CannedMessageModule::getMessageCount() const
-{
-    return static_cast<size_t>(messagesCount);
-}
-
-const char *CannedMessageModule::getMessageLabel(size_t index) const
-{
-    if (index >= getMessageCount()) {
-        return "";
-    }
-    return messages[index] ? messages[index] : "";
-}
-
-void CannedMessageModule::rebuildEmergencyMenu(CannedListKind kind)
-{
-#if !MESHTASTIC_EXCLUDE_HERMESX
-    emergencyMenu.clear();
-
-    auto language = moduleConfig.emergency.lang;
-    auto localize = [&](const char *en, const char *zh) {
-        if (language == meshtastic_ModuleConfig_EmergencyConfig_Language_ZH) {
-            return String(zh);
-        }
-        return String(en);
-    };
-
-    auto addNeed = [&](uint32_t code, const char *en, const char *zh) {
-        EmergencyMenuOption option;
-        option.label = localize(en, zh);
-        option.action = EmergencyMenuOption::Action::NEED;
-        option.codes[0] = code;
-        option.codeCount = 1;
-        emergencyMenu.push_back(option);
-    };
-
-    auto addResource = [&](uint32_t code, const char *en, const char *zh) {
-        EmergencyMenuOption option;
-        option.label = localize(en, zh);
-        option.action = EmergencyMenuOption::Action::RESOURCE;
-        option.codes[0] = code;
-        option.codeCount = 1;
-        emergencyMenu.push_back(option);
-    };
-
-    EmergencyMenuOption sos;
-    sos.label = localize("Send SOS", "�o�X�D��");
-    if (kind == CannedListKind::DRILL) {
-        sos.label += " (DRILL)";
-    }
-    sos.action = EmergencyMenuOption::Action::SOS;
-    sos.codeCount = 0;
-    emergencyMenu.push_back(sos);
-
-    EmergencyMenuOption safe;
-    safe.label = localize("Send SAFE", "���i�w��");
-    safe.action = EmergencyMenuOption::Action::SAFE;
-    safe.codeCount = 0;
-    emergencyMenu.push_back(safe);
-
-    addNeed(1, "Need Medical", "�ݭn����");
-    addNeed(2, "Need Water", "�ݭn����");
-    addNeed(3, "Need Power", "�ݭn�q�O");
-    addNeed(4, "Need Food", "�ݭn����");
-    addNeed(5, "Need Evac", "�ݭn�M��");
-
-    if (moduleConfig.emergency.role == meshtastic_ModuleConfig_EmergencyConfig_Role_SHELTER) {
-        addResource(1, "Offer Medical", "��������");
-        addResource(2, "Offer Water", "���Ѷ���");
-        addResource(3, "Offer Power", "���ѹq�O");
-        addResource(4, "Offer Food", "���ѭ���");
-        addResource(5, "Offer Evac", "���ѧ��@");
-    }
-#else
-    (void)kind;
-    emergencyMenu.clear();
 #endif
-}
-
-bool CannedMessageModule::handleEmergencySelection(size_t index)
-{
-#if !MESHTASTIC_EXCLUDE_HERMESX
-    if (!emergencyModule || index >= emergencyMenu.size()) {
-        return false;
-    }
-
-    const auto &entry = emergencyMenu[index];
-    bool ok = false;
-    switch (entry.action) {
-    case EmergencyMenuOption::Action::SOS:
-        ok = emergencyModule->sendSOS();
-        if (ok && HermesXInterfaceModule::instance) {
-            HermesXInterfaceModule::instance->playSOSFeedback();
-        }
-        break;
-    case EmergencyMenuOption::Action::SAFE:
-        ok = emergencyModule->sendSafe();
-        break;
-    case EmergencyMenuOption::Action::NEED:
-        ok = emergencyModule->sendNeed(entry.codes[0]);
-        break;
-    case EmergencyMenuOption::Action::RESOURCE:
-        ok = emergencyModule->broadcastResource(entry.codes.data(), entry.codeCount);
-        break;
-    }
-    return ok;
-#else
-    (void)index;
-    return false;
-#endif
-}
-
-void CannedMessageModule::setup()
-{
-    SinglePortModule::setup();
-#if !MESHTASTIC_EXCLUDE_HERMESX
-    if (emergencyModule) {
-        emergencyModule->addModeListener([this](bool active) {
-            CannedListKind target = active ?
-                ((moduleConfig.emergency.mode == meshtastic_ModuleConfig_EmergencyConfig_Mode_DRILL)
-                     ? CannedListKind::DRILL
-                     : CannedListKind::EMERGENCY)
-                : CannedListKind::NORMAL;
-            setActiveList(target);
-        });
-    }
-#endif
-}
-
-#endif
-

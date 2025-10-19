@@ -1,7 +1,7 @@
 // HermesXInterfaceModule.cpp - Refactored without TinyScheduler
 
 #include "HermesXInterfaceModule.h"
-#include "EmergencyAdaptiveModule.h"
+
 #include "mesh/MeshService.h"
 #include "mesh/NodeDB.h"
 #include "mesh/Channels.h"
@@ -30,8 +30,8 @@
 #include "meshtastic/portnums.pb.h"
 #include "HermesXLog.h"
 #include "HermesFace.h"
-#include "HermesEmergencyUi.h"
 #include "graphics/ScreenFonts.h"
+
 
 
 #include "ReliableRouter.h"
@@ -44,6 +44,7 @@
 
 #include "pb_decode.h"
 #include "mesh/mesh-pb-constants.h"
+#include "mesh/generated/meshtastic/module_config.pb.h"
 
 #define PIN_LED 6
 #define NUM_LEDS 8
@@ -61,9 +62,6 @@ constexpr uint32_t kDefaultShutdownDurationMs = 700;
 constexpr uint32_t kShutdownAnimationStepMs = 20;
 
 constexpr uint32_t kPowerHoldFadeDurationMs = 1200;
-constexpr uint16_t kHermesPressIntervalMs = 500;
-constexpr uint32_t kHermesSafeWindowMs = 3000;
-
 constexpr uint32_t kPowerHoldRedColor = 0xFF0000;
 
 struct ShutdownToneSegment {
@@ -219,81 +217,104 @@ HermesXInterfaceModule::HermesXInterfaceModule()
     initLED();
 
     HERMESX_LOG_DEBUG("constroct");
-    HermesEmergencyUi::setup();
     playStartupLEDAnimation(currentTheme.colorIdleBreathBase);
 }
 
 void HermesXInterfaceModule::setup()
 {
-    if (emergencyModule) {
-        emergencyModule->addModeListener([this](bool active) { onEmergencyModeChanged(active); });
-        emergencyModule->addTxResultListener([this](uint8_t /*type*/, bool ok) {
-            if (ok) {
-                showEmergencyBanner(true, F("SOS ACTIVE"), 0x07E0);
-            } else {
-                showEmergencyBanner(true, F("SOS FAILED"), 0xF800);
-            }
-        });
-        onEmergencyModeChanged(emergencyModule->isEmergencyActive());
-    }
+    // Setup code here
 }
 
 
 void HermesXInterfaceModule::handleButtonPress()
 {
-    HERMESX_LOG_INFO("HermesX interface button pressed");
-    playReceiveFeedback();
+
+}
+
+
+void HermesXInterfaceModule::registerRawButtonPress(HermesButtonSource /*source*/)//目前任何輸入都可
+{
+    const uint32_t now = millis();
+
+    // Expire the SAFE double-press window if the timeout has elapsed.
+    if (safeWindowActive && now > safeWindowDeadlineMs) {
+        safeWindowActive = false;
+        safePressCount = 0;
+        safeWindowDeadlineMs = 0;
+    }
+
+    constexpr uint32_t kMultiPressWindowMs = 1200;
+    if (lastRawPressMs == 0 || now - lastRawPressMs > kMultiPressWindowMs) {
+        rawPressCount = 0;
+    }
+
+    lastRawPressMs = now;
+    rawPressCount++;
+
+    if (rawPressCount >= 3) {
+        rawPressCount = 0;
+        safeWindowActive = false;
+        safePressCount = 0;
+        safeWindowDeadlineMs = 0;
+        onTripleClick();
+        return;
+    }
+
+    constexpr uint32_t kSafeWindowMs = 3000;
+    if (!safeWindowActive) {
+        safeWindowActive = true;
+        safePressCount = 1;
+        safeWindowDeadlineMs = now + kSafeWindowMs;
+    } else {
+        safePressCount++;
+        if (safePressCount >= 2 && now <= safeWindowDeadlineMs) {
+            safeWindowActive = false;
+            safePressCount = 0;
+            safeWindowDeadlineMs = 0;
+            onDoubleClickWithin3s();
+        }
+    }
 }
 
 
 void HermesXInterfaceModule::drawFace(const char* face, uint16_t color) {
     const char *faceText = face;
     uint16_t faceColor = color;
-
-    HermesFaceRenderContext ctx{};
-    if (!HermesX_TryGetFaceRenderContext(ctx) || ctx.display == nullptr) {
-        HERMESX_LOG_INFO("HermesXInterfaceModule drawFace fallback; no display ctx for face=%s", faceText ? faceText : "");
-        return;
-    }
-
-    const bool showEmergencyOverlay = emergencyBannerVisible && emergencyBannerText.length() &&
-        ctx.mode == HermesFaceMode::Neutral;
-    const uint16_t bannerColor = emergencyBannerColor ? emergencyBannerColor : static_cast<uint16_t>(0xF800);
-
-    if ((!faceText || !*faceText) && showEmergencyOverlay) {
-        faceText = emergencyBannerText.c_str();
+    if (emergencyBannerVisible) {
+        faceText = emergencyBannerText.length() ? emergencyBannerText.c_str() : "SOS";
+        if (emergencyBannerColor) {
+            faceColor = emergencyBannerColor;
+        }
     }
 
     if (!faceText || !*faceText) {
         return;
     }
 
-    if (showEmergencyOverlay && faceColor == 0) {
-        faceColor = bannerColor;
+    HermesFaceRenderContext ctx{};
+    if (!HermesX_TryGetFaceRenderContext(ctx) || ctx.display == nullptr) {
+        HERMESX_LOG_INFO("HermesXInterfaceModule drawFace fallback; no display ctx for face=%s", faceText);
+        return;
     }
 
     OLEDDisplay *display = ctx.display;
     const int16_t width = display->getWidth();
     const int16_t height = display->getHeight();
 
-    const uint8_t *faceFont = FONT_LARGE;
     auto applyFaceFont = [&](const char *text, int16_t &faceWidth, int16_t &faceHeight) {
         const int16_t availableWidth = width > 8 ? width - 8 : width;
         const int16_t availableHeight = height > 8 ? height - 8 : height;
 
         display->setFont(FONT_LARGE);
-        faceFont = FONT_LARGE;
         faceWidth = display->getStringWidth(text);
         faceHeight = FONT_HEIGHT_LARGE;
         if (faceWidth > availableWidth || faceHeight > availableHeight) {
             display->setFont(FONT_MEDIUM);
-            faceFont = FONT_MEDIUM;
             faceWidth = display->getStringWidth(text);
             faceHeight = FONT_HEIGHT_MEDIUM;
         }
         if (faceWidth > availableWidth || faceHeight > availableHeight) {
             display->setFont(FONT_SMALL);
-            faceFont = FONT_SMALL;
             faceWidth = display->getStringWidth(text);
             faceHeight = FONT_HEIGHT_SMALL;
         }
@@ -352,26 +373,6 @@ void HermesXInterfaceModule::drawFace(const char* face, uint16_t color) {
     }
 
     display->drawString(drawX, drawY, faceText);
-
-    if (showEmergencyOverlay) {
-        display->setTextAlignment(TEXT_ALIGN_CENTER);
-        display->setFont(FONT_SMALL);
-#if defined(USE_EINK)
-        display->setColor(EINK_BLACK);
-#else
-        const bool highlightOverlay = bannerColor != 0;
-        const OLEDDISPLAY_COLOR overlayColor = highlightOverlay ? OLEDDISPLAY_COLOR::WHITE
-                                                                : (faceColor ? OLEDDISPLAY_COLOR::WHITE : OLEDDISPLAY_COLOR::BLACK);
-        display->setColor(overlayColor);
-#endif
-        int16_t bannerY = ctx.originY + height - FONT_HEIGHT_SMALL - 2;
-        if (bannerY < ctx.originY) {
-            bannerY = ctx.originY;
-        }
-        display->drawString(centerX, bannerY, emergencyBannerText.c_str());
-        display->setFont(faceFont);
-        display->setTextAlignment(TEXT_ALIGN_CENTER);
-    }
 
     display->setTextAlignment(TEXT_ALIGN_LEFT);
 #if defined(USE_EINK)
@@ -501,14 +502,14 @@ void HermesXInterfaceModule::updateLED() {
     uint32_t bgColor = scaleColor(currentTheme.colorIdleBreathBase, bgScale);
     rgb.fill(bgColor);
 
-    // === 事件?�畫（送出/?�收/?��?資�?�?==
+    // === 事件?�畫（送出/?�收/?��?資�?�?==
     if (animState == LedAnimState::SEND_R2L || animState == LedAnimState::RECV_L2R || animState == LedAnimState::INFO2_L2R) {
         const uint16_t stepInterval = 80;
         if (now - lastAnimStep >= stepInterval) {
             lastAnimStep = now;
             int next = animPos + animDir;
             if (next < 0 || next >= NUM_LEDS) {
-                // ?��??��? idle runner ?�起點、方?�設�?
+                // ?��??��? idle runner ?�起點、方?�設�?
                 if (animState == LedAnimState::SEND_R2L) {
                     idlePos = 0;
                     idleDir = 1;
@@ -559,52 +560,6 @@ void HermesXInterfaceModule::updateLED() {
 }
 
 
-void HermesXInterfaceModule::registerRawButtonPress(HermesButtonSource source)
-{
-    const uint32_t now = millis();
-
-    if (safeWindowActive) {
-        if (static_cast<int32_t>(now - safeWindowDeadlineMs) > 0) {
-            HERMESX_LOG_DEBUG("Safe window expired before press");
-            safeWindowActive = false;
-            safePressCount = 0;
-            rawPressCount = 1;
-            lastRawPressMs = now;
-            HERMESX_LOG_DEBUG("Raw press restart count=%u source=%d", static_cast<unsigned>(rawPressCount), static_cast<int>(source));
-            return;
-        }
-
-        safePressCount++;
-        lastRawPressMs = now;
-        HERMESX_LOG_DEBUG("Safe press %u/%u source=%d", static_cast<unsigned>(safePressCount), 2u, static_cast<int>(source));
-        if (safePressCount >= 2) {
-            safeWindowActive = false;
-            safePressCount = 0;
-            rawPressCount = 0;
-            HERMESX_LOG_DEBUG("Invoking SAFE double-click");
-            onDoubleClickWithin3s();
-        }
-        return;
-    }
-
-    if (static_cast<int32_t>(now - lastRawPressMs) > kHermesPressIntervalMs) {
-        rawPressCount = 0;
-    }
-
-    rawPressCount++;
-    lastRawPressMs = now;
-    HERMESX_LOG_DEBUG("Raw press count=%u source=%d", static_cast<unsigned>(rawPressCount), static_cast<int>(source));
-
-    if (rawPressCount >= 3) {
-        rawPressCount = 0;
-        safeWindowActive = true;
-        safePressCount = 0;
-        safeWindowDeadlineMs = now + kHermesSafeWindowMs;
-        HERMESX_LOG_INFO("Trigger SOS triple press");
-        onTripleClick();
-    }
-}
-
 void HermesXInterfaceModule::onPacketSent() {
     music.playSendSound();        // ?�出?��?
     startSendAnim();              // ?�出?�畫（R?�L）�?交給 updateLED()/animState 流�???
@@ -621,7 +576,7 @@ void HermesXInterfaceModule::playTone(float freq, uint32_t duration_ms) {
 
 bool HermesXInterfaceModule::wantPacket(const meshtastic_MeshPacket *p)
 {
-    // ?��? Routing 封�???Text Message 封�??��?�?
+    // ?��? Routing 封�???Text Message 封�??��?�?
     return p->decoded.portnum == meshtastic_PortNum_ROUTING_APP ||
        p->decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP ||
        p->decoded.portnum == meshtastic_PortNum_NODEINFO_APP;
@@ -646,11 +601,9 @@ ProcessMessage HermesXInterfaceModule::handleReceived(const meshtastic_MeshPacke
             &decoded);
 
         if (ok) {
-            if (isFromUs(&packet) && isToUs(&packet)) {
-                // Local router reflection; ignore.
-                return ProcessMessage::CONTINUE;
-            }
             if (decoded.error_reason != meshtastic_Routing_Error_NONE) {
+                playSendFailedFeedback();
+                waitingForAck = false;
                 HERMESX_LOG_WARN("Routing NAK error=%d req_id=0x%08x id=%u from=%x to=%x",
                     decoded.error_reason,
                     packet.decoded.request_id,
@@ -658,7 +611,17 @@ ProcessMessage HermesXInterfaceModule::handleReceived(const meshtastic_MeshPacke
                     packet.from,
                     packet.to);
             } else {
-                HERMESX_LOG_DEBUG("Routing ACK observed req_id=0x%08x id=%u", packet.decoded.request_id, packet.id);
+                bool ours = waitingForAck ||
+                    packet.decoded.request_id == lastSentRequestId ||
+                    packet.id == lastSentId ||
+                    isFromUs(&packet);
+                if (ours) {
+                    ackReceived = true;
+                    waitingForAck = false;
+                    pendingSuccessFeedback = true;
+                    successFeedbackTime = millis() + 300;
+                    HERMESX_LOG_INFO("Routing ACK req_id=0x%08x id=%u", packet.decoded.request_id, packet.id);
+                }
             }
         } else {
             HERMESX_LOG_ERROR("Failed to decode Routing payload.");
@@ -709,7 +672,7 @@ int32_t HermesXInterfaceModule::runOnce() {
     static bool testPlayed = false;
     uint32_t now = millis();
 
-    // === ?��??��?段�??�執行�?�?===
+    // === ?��??��?段�??�執行�?�?===
     if (firstTime) {
         firstTime = false;
         music.begin();
@@ -753,9 +716,13 @@ int32_t HermesXInterfaceModule::runOnce() {
         HERMESX_LOG_INFO("Success feedback triggered (ACK animation)");
     }
 
+    if (emergencyBannerVisible && emergencyBannerHideDeadline && now >= emergencyBannerHideDeadline) {
+        showEmergencyBanner(false);
+    }
+
     renderLEDs();
 
-    return 100;  // ?��??��?�?00ms
+    return 100;  // ?��??��?�?00ms
 }
 
 void HermesXInterfaceModule::stopTone() {
@@ -767,34 +734,23 @@ void HermesXInterfaceModule::stopTone() {
 
 
 int HermesXInterfaceModule::onNotify(uint32_t fromNum)
- {
+{
     HERMESX_LOG_INFO("onNotify fromNum=%u", fromNum);
 
     return 0;
 }
 
-void HermesXInterfaceModule::handleExternalNotification(int index, bool state) {
-    if (!state) {
-        return;
-    }
+bool HermesXInterfaceModule::isEmergencyUiActive() const
+{
 
-    switch (index) {
-    case 0:
-        playReceiveFeedback();
-        break;
-    case 2:
-        playSendFeedback();
-        break;
-    case 3:
-        handleAckNotification(true);
-        break;
-    case 4:
-        handleAckNotification(false);
-        break;
-    default:
-        HERMESX_LOG_DEBUG("Unhandled external notification index=%d state=%d", index, state);
-        break;
-    }
+}
+
+void HermesXInterfaceModule::handleExternalNotification(int index, bool state) {
+    if (index == 0 && state) playReceiveFeedback();
+    if (index == 2 && state) playSendFeedback();
+    if (index == 3 && state) playAckSuccess();
+    if (index == 4 && state) playNackFail();
+    HERMESX_LOG_DEBUG("handleExternalNotification!");
 }
 
 
@@ -831,44 +787,17 @@ void HermesXInterfaceModule::playSendFailedFeedback() {
 
 void HermesXInterfaceModule::onTripleClick()
 {
-    if (!emergencyModule) {
-        playSendFailedFeedback();
-        return;
-    }
-
-    if (emergencyModule->sendSOS()) {
-        playSOSFeedback();
-    } else {
-        playSendFailedFeedback();
-    }
+    ///come back on beta_0.3.0
 }
 
 void HermesXInterfaceModule::onDoubleClickWithin3s()
 {
-    if (!emergencyModule) {
-        playSendFailedFeedback();
-        return;
-    }
-
-    if (emergencyModule->sendSafe()) {
-        playAckSuccess();
-    } else {
-        playSendFailedFeedback();
-    }
-}
-
-void HermesXInterfaceModule::onEmergencyTxResult(uint8_t /*type*/, bool ok)
-{
-    if (ok) {
-        showEmergencyBanner(true, F("SOS ACTIVE"), 0x07E0);
-    } else {
-        showEmergencyBanner(true, F("SOS FAILED"), 0xF800);
-    }
+   ///will comeback on beta_0.3.0
 }
 
 void HermesXInterfaceModule::onEmergencyModeChanged(bool active)
 {
-    showEmergencyBanner(active);
+    ///will comeback on beta_0.3.0
 }
 
 
@@ -876,7 +805,6 @@ void HermesXInterfaceModule::playSOSFeedback()
 {
     music.playSendSound();
     startSendAnim();
-    showEmergencyBanner(true);
 }
 
 void HermesXInterfaceModule::playAckSuccess()
@@ -891,41 +819,11 @@ void HermesXInterfaceModule::playNackFail()
     startNackFlash();
 }
 
-void HermesXInterfaceModule::handleAckNotification(bool success)
+void HermesXInterfaceModule::showEmergencyBanner(bool on, const __FlashStringHelper *text, uint16_t color,
+                                                 uint32_t durationMs)
 {
-    if (!waitingForAck) {
-        HERMESX_LOG_DEBUG("Ignoring ACK notification; no pending send");
-        return;
-    }
-
-    waitingForAck = false;
-    if (success) {
-        ackReceived = true;
-        pendingSuccessFeedback = true;
-        successFeedbackTime = millis() + 300;
-        HERMESX_LOG_INFO("ACK notification received");
-    } else {
-        ackReceived = false;
-        pendingSuccessFeedback = false;
-        HERMESX_LOG_WARN("ACK notification failed");
-        playSendFailedFeedback();
-    }
-}
-
-void HermesXInterfaceModule::showEmergencyBanner(bool on, const __FlashStringHelper *text, uint16_t color)
-{
-    emergencyBannerVisible = on;
-    if (on) {
-        if (text) {
-            emergencyBannerText = text;
-        } else {
-            emergencyBannerText = F("SOS");
-        }
-        emergencyBannerColor = color ? color : 0xF800;
-    } else {
-        emergencyBannerText = "";
-        emergencyBannerColor = 0;
-    }
+   ///coming soon (0.3.0)
+   
 }
 
 void HermesXInterfaceModule::startSendAnim() {
@@ -1103,11 +1001,10 @@ void runPreDeepSleepHook(const SleepPreHookParams &params)
     if (HermesXInterfaceModule::instance) {
         HermesXInterfaceModule::instance->playShutdownEffect(ms);
     } else {
-        // 沒�? HermesX ?�環境�??��?底方�?
+        // 沒�? HermesX ?�環境�??��?底方�?
         fallbackShutdownEffect(ms);
     }
 }
-
 
 
 

@@ -1,66 +1,30 @@
-# HermesX 需求規格 (REF_prd.md)
+# HermesX Product Requirements (REF_prd.md)
 
-## 核心驗收條件
-1. **Emergency 302.1協議**
-   - 支援 SOS/SAFE/NEED/RESOURCE/STATUS/HEARTBEAT 六類型
-   - 觸發 `@EmergencyActive` 僅接受白名單節點
-2. **輸入控制**
-   - GPIO5 長按 → 開關機
-   - GPIO5 三擊 → 觸發 SOS
-   - GPIO5 雙擊 → 取消 SOS
-3. **LED/聲音回饋**
-   - Idle：橘色呼吸
-   - SEND → 光點由右向左   螢幕顯示表情 
-    {">_>", kColorWhite, 160},
-    {">.>", kColorWhite, 160},
-    {">o>", kColorWhite, 160},
-    {">.>", kColorWhite, 160},
-   
-   - RECEIVE → 光點由左向右 螢幕顯示表情  
-    {"<_<", kColorWhite, 160},
-    {"<.<", kColorWhite, 160},
-    {"<o<", kColorWhite, 160},
-    {"<.<", kColorWhite, 160},
-   
-   - ACK → 綠色閃光
-    {"^_^", kColorGreen, 220},
-    {"^o^", kColorGreen, 220},
-   
-   - NACK → 紅色閃光
-    {">_<", kColorRed, 260},
-    {"x_x", kColorRed, 260},
-   
-   - SOS → 特殊閃爍（抑制 Idle）螢幕顯示表情
-   - 所有動畫結束後需淡出並恢復 Idle
+## Acceptance Criteria
+1. **Emergency 302.1 Flow**
+   - Support SOS / SAFE / NEED / RESOURCE / STATUS / HEARTBEAT canned actions
+   - Trigger @EmergencyActive and show the corresponding white banner
+2. **Input Control**
+   - GPIO43 rotary button short-press is reserved for canned message / EM UI send; it must not toggle the screen
+   - GPIO43 rotary button long-press plays the HermesX power-hold animation and finally shuts down the device
+   - Primary power button (BUTTON_PIN) long-press continues to drive the standard shutdown flow
+3. **LED / Buzzer**
+   - **Idle**: breathing animation
+   - **SEND**: run from right to left with the faces [">_>", 0xFFFFFF, 160], [">.>", 0xFFFFFF, 160], [">o>", 0xFFFFFF, 160], [">.>", 0xFFFFFF, 160]
+   - **RECEIVE**: run from left to right with "<_<", "<.<", "<o<", "<.<" using the same colour/timing scheme
+   - **ACK**: green flash using "^_^" and "^o^" (220 ms)
+   - **NACK**: red flash using ">_<" and "x_x" (260 ms)
+   - **SOS**: priority animation and banner, then fade back to Idle
+4. **Power Control**
+   - While preparing for sleep, animate the LED progress bar and keep HermesX faces in sync
+   - GPIO4 remains reserved for deep-sleep wake behaviour
+5. **Reliable Messaging**
+   - Preserve ACK / NACK handling; retries must surface through the HermesX callback
+   - SOS messages do not retry once a NACK is received
+6. **EM Mode + Canned Messages**
+   - Provide canned messages such as "�ݭn����" / "�ݭn����" / "�ڦb�o��" while EM mode is enabled
 
-4. **睡眠控制**
-   - 進入深睡前播放關機動畫＋音效
-   - 長按時應有動態進度條逐步關閉led燈
-   - 最終 LED 全熄
-   - 進入深睡時應透過gpio 4(將在未來提供)來長按喚醒
-5. **可靠傳輸**
-   - 支援 ACK/NACK 機制
-   - Retry 直到放棄 → 事件 callback
-   - sos訊息將無限制retry直到ack
-
-6. **EM模式下的CANNEDMESSAGE**
-   -我受困了
-
-   -需要醫療
-
-   -需要物資
-   
-   -我在這裡
-
-7.**進入EM**
--三擊ROTARY SWITCH
--切換整體UI，LED也會更新
-
-
-
-## 不可違反的限制
-- 不得修改 Meshtastic 核心 LoRa 協定
-- Emergency 配置獨立存於 `emergency_config.proto`
-- `BUTTON_PIN_ALT` 僅能擴充，不可覆蓋 `BUTTON_PIN`
--非必要時務必不要更動除要求之程式碼
-
+## Constraints
+- Do not modify the Meshtastic LoRa stack logic
+- Keep BUTTON_PIN_ALT as an optional extension only; never replace BUTTON_PIN
+- Avoid flow regressions outside the HermesX modules

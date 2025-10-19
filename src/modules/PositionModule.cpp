@@ -331,26 +331,7 @@ void PositionModule::sendOurPosition()
     sendOurPosition(NODENUM_BROADCAST, requestReplies);
 }
 
-void PositionModule::scheduleBroadcastPositionRequest(uint32_t delayMs, uint32_t jitterMs, uint8_t channelIndex, bool forceWantResponse)
-{
-    uint64_t totalDelay = delayMs;
-    if (jitterMs) {
-        totalDelay += static_cast<uint32_t>(random(jitterMs + 1));
-    }
-    if (totalDelay > UINT32_MAX) {
-        totalDelay = UINT32_MAX;
-    }
-
-    uint32_t dueAt = millis() + static_cast<uint32_t>(totalDelay);
-    positionRequestDueAt = dueAt;
-    positionRequestDest = NODENUM_BROADCAST;
-    positionRequestWantReplies = true;
-    positionRequestForceWantResponse = forceWantResponse;
-    positionRequestChannel = channelIndex;
-    pendingPositionRequest = true;
-}
-
-void PositionModule::sendOurPosition(NodeNum dest, bool wantReplies, uint8_t channel, bool forceWantResponse)
+void PositionModule::sendOurPosition(NodeNum dest, bool wantReplies, uint8_t channel)
 {
     // cancel any not yet sent (now stale) position packets
     if (prevPacketId) // if we wrap around to zero, we'll simply fail to cancel in that rare case (no big deal)
@@ -373,10 +354,7 @@ void PositionModule::sendOurPosition(NodeNum dest, bool wantReplies, uint8_t cha
     }
 
     p->to = dest;
-    bool shouldRequestReply = forceWantResponse
-                                 ? true
-                                 : (config.device.role == meshtastic_Config_DeviceConfig_Role_TRACKER ? false : wantReplies);
-    p->decoded.want_response = shouldRequestReply;
+    p->decoded.want_response = config.device.role == meshtastic_Config_DeviceConfig_Role_TRACKER ? false : wantReplies;
     if (config.device.role == meshtastic_Config_DeviceConfig_Role_TRACKER ||
         config.device.role == meshtastic_Config_DeviceConfig_Role_TAK_TRACKER)
         p->priority = meshtastic_MeshPacket_Priority_RELIABLE;
@@ -405,54 +383,30 @@ void PositionModule::sendOurPosition(NodeNum dest, bool wantReplies, uint8_t cha
     }
 }
 
-#define RUNONCE_INTERVAL 5000
+#define RUNONCE_INTERVAL 5000;
 
 int32_t PositionModule::runOnce()
 {
-    uint32_t now = millis();
-    uint32_t pendingDelay = 0;
-    bool hasPendingDelay = false;
-
-    if (pendingPositionRequest) {
-        if (static_cast<int32_t>(now - positionRequestDueAt) >= 0) {
-            pendingPositionRequest = false;
-            sendOurPosition(positionRequestDest, positionRequestWantReplies, positionRequestChannel, positionRequestForceWantResponse);
-            lastGpsSend = millis();
-            now = lastGpsSend;
-        } else {
-            pendingDelay = positionRequestDueAt - now;
-            hasPendingDelay = true;
-        }
-    }
-
-    auto adjustInterval = [&](int32_t interval) -> int32_t {
-        if (hasPendingDelay) {
-            if (pendingDelay < static_cast<uint32_t>(interval)) {
-                return static_cast<int32_t>(pendingDelay);
-            }
-        }
-        return interval;
-    };
-
     if (sleepOnNextExecution == true) {
         sleepOnNextExecution = false;
         uint32_t nightyNightMs = Default::getConfiguredOrDefaultMs(config.position.position_broadcast_secs);
         LOG_DEBUG("Sleep for %ims, then awaking to send position again", nightyNightMs);
         doDeepSleep(nightyNightMs, false, false);
-        return adjustInterval(RUNONCE_INTERVAL);
     }
 
     meshtastic_NodeInfoLite *node = nodeDB->getMeshNode(nodeDB->getNodeNum());
     if (node == nullptr)
-        return adjustInterval(RUNONCE_INTERVAL);
+        return RUNONCE_INTERVAL;
 
+    // We limit our GPS broadcasts to a max rate
+    uint32_t now = millis();
     uint32_t intervalMs = Default::getConfiguredOrDefaultMsScaled(config.position.position_broadcast_secs,
                                                                   default_broadcast_interval_secs, numOnlineNodes);
     uint32_t msSinceLastSend = now - lastGpsSend;
-
+    // Only send packets if the channel util. is less than 25% utilized or we're a tracker with less than 40% utilized.
     if (!airTime->isTxAllowedChannelUtil(config.device.role != meshtastic_Config_DeviceConfig_Role_TRACKER &&
                                          config.device.role != meshtastic_Config_DeviceConfig_Role_TAK_TRACKER)) {
-        return adjustInterval(RUNONCE_INTERVAL);
+        return RUNONCE_INTERVAL;
     }
 
     if (lastGpsSend == 0 || msSinceLastSend >= intervalMs) {
@@ -471,6 +425,8 @@ int32_t PositionModule::runOnce()
         const meshtastic_NodeInfoLite *node2 = service->refreshLocalMeshNode(); // should guarantee there is now a position
 
         if (nodeDB->hasValidPosition(node2)) {
+            // The minimum time (in seconds) that would pass before we are able to send a new position packet.
+
             auto smartPosition = getDistanceTraveledSinceLastSend(node->position);
             msSinceLastSend = now - lastGpsSend;
 
@@ -484,13 +440,14 @@ int32_t PositionModule::runOnce()
                           localPosition.timestamp, smartPosition.distanceTraveled, smartPosition.distanceThreshold,
                           msSinceLastSend, minimumTimeThreshold);
 
+                // Set the current coords as our last ones, after we've compared distance with current and decided to send
                 lastGpsLatitude = node->position.latitude_i;
                 lastGpsLongitude = node->position.longitude_i;
             }
         }
     }
 
-    return adjustInterval(RUNONCE_INTERVAL);
+    return RUNONCE_INTERVAL; // to save power only wake for our callback occasionally
 }
 
 void PositionModule::sendLostAndFoundText()

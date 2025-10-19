@@ -1,9 +1,6 @@
 #include "MeshPacketQueue.h"
 #include "NodeDB.h"
 #include "configuration.h"
-#include "mesh-pb-constants.h"
-#include "HermesPortnums.h"
-#include "mesh/generated/meshtastic/emergency.pb.h"
 #include <assert.h>
 
 #include <algorithm>
@@ -176,6 +173,3 @@ bool MeshPacketQueue::replaceLowerPriorityPacket(meshtastic_MeshPacket *p)
     // If the back packet's priority is not lower, no replacement occurs
     return false;
 }
-
-
-

@@ -38,6 +38,3 @@ release/
 /compile_commands.json
 src/mesh/raspihttp/certificate.pem
 src/mesh/raspihttp/private_key.pem
-tools/fonts/bin/
-tools/fonts/cache/
-tools/fonts/generated/

@@ -3,8 +3,6 @@
 #include "SPILock.h"
 #include "sleep.h"
 
-#include <Arduino.h>
-
 #include "api/PacketAPI.h"
 #include "comms/PacketClient.h"
 #include "comms/PacketServer.h"
@@ -17,11 +15,6 @@
 #endif
 
 DeviceScreen *deviceScreen = nullptr;
-#ifdef ARCH_ESP32
-static TaskHandle_t tftTaskHandle = nullptr;
-#elif defined(ARCH_PORTDUINO)
-static std::thread *tftTaskHandle = nullptr;
-#endif
 
 #ifdef ARCH_ESP32
 // Get notified when the system is entering light sleep
@@ -34,35 +27,11 @@ CallbackObserver<DeviceScreen, esp_sleep_wakeup_cause_t> endSleepObserver =
 void tft_task_handler(void *param = nullptr)
 {
     while (true) {
-        if (!deviceScreen) {
-            delay(1);
-            continue;
-        }
-
-        if (spiLock && spiLock->tryLock(0)) {
-            deviceScreen->task_handler();
-            spiLock->unlock();
-            deviceScreen->sleep();
-        } else {
-            delay(1);
-        }
+        spiLock->lock();
+        deviceScreen->task_handler();
+        spiLock->unlock();
+        deviceScreen->sleep();
     }
-}
-
-void startTftTask()
-{
-    if (!deviceScreen)
-        return;
-
-#ifdef ARCH_ESP32
-    if (!tftTaskHandle) {
-        xTaskCreatePinnedToCore(tft_task_handler, "tft", 10240, NULL, 1, &tftTaskHandle, 0);
-    }
-#elif defined(ARCH_PORTDUINO)
-    if (!tftTaskHandle) {
-        tftTaskHandle = new std::thread([] { tft_task_handler(); });
-    }
-#endif
 }
 
 void tftSetup(void)
@@ -151,7 +120,6 @@ void tftSetup(void)
         deviceScreen->init(new PacketClient);
     } else {
         LOG_INFO("Running without TFT display!");
-        return;
     }
 #endif
 
@@ -159,6 +127,9 @@ void tftSetup(void)
 #ifdef ARCH_ESP32
         tftSleepObserver.observe(&notifyLightSleep);
         endSleepObserver.observe(&notifyLightSleepEnd);
+        xTaskCreatePinnedToCore(tft_task_handler, "tft", 10240, NULL, 1, NULL, 0);
+#elif defined(ARCH_PORTDUINO)
+        std::thread *tft_task = new std::thread([] { tft_task_handler(); });
 #endif
     }
 }

@@ -1,51 +1,39 @@
-# HermesX Firmware
+<div align="center" markdown="1">
 
-HermesX ¬O¤@´Ú«Ø¥ß¦b Meshtastic ¨ó§@ºô¸ô¤Wªº©w»s¶´Åé¡A±Mª`©óÅýÂ÷½u³q°T§óª½Ä±¡C³o¤@¥Nªº®Ö¤ß¥ô°È¬O±j¤Æ¤H¾÷¤¶­±¡G§Y¨Ï¨Ï¥ÎªÌ¤£®³¥X¤â¾÷¡A¤]¯à³z¹L¸Ë¸m¥»Åéªº±Û¶s¡BLED »P­µ®Ä§Ö³t´x´¤ª¬ºA¨Ã§¹¦¨°T®§¶Ç»¼¡C
+<img src=".github/meshtastic_logo.png" alt="Meshtastic Logo" width="80"/>
+<h1>Meshtastic Firmware</h1>
 
-## ¥\¯à«GÂI
-- **±Mª`ªº¾Þ§@ÅéÅç**¡G±j½Õ¡u©ï¤â§Y¥Î¡vªº¥æ¤¬¡A¤£»Ý¤â¾÷§Y¥iÂsÄýÅøÀY°T®§¨Ã§¹¦¨µo°e¡C
-- **µøÄ± + Å¥Ä±Âù³qª¾**¡GLED ª¬ºA±ø»P¹ïÀ³­µ®Ä¦@¦P¦^õX¡AÅý°T®§ª¬ºA¤@¥Ø¤FµM¡B¦Õ»D§Yª¾¡C
-- **HermesX «~µP¤Æ UI**¡G­±ªOªí±¡¡B°Êµe»P©R¦W¥þ­±²Î¤@¡A¥´³y¤@­Pªº¤¶­±ÃÑ§O¡C
+![GitHub release downloads](https://img.shields.io/github/downloads/meshtastic/firmware/total)
+[![CI](https://img.shields.io/github/actions/workflow/status/meshtastic/firmware/main_matrix.yml?branch=master&label=actions&logo=github&color=yellow)](https://github.com/meshtastic/firmware/actions/workflows/ci.yml)
+[![CLA assistant](https://cla-assistant.io/readme/badge/meshtastic/firmware)](https://cla-assistant.io/meshtastic/firmware)
+[![Fiscal Contributors](https://opencollective.com/meshtastic/tiers/badge.svg?label=Fiscal%20Contributors&color=deeppink)](https://opencollective.com/meshtastic/)
+[![Vercel](https://img.shields.io/static/v1?label=Powered%20by&message=Vercel&style=flat&logo=vercel&color=000000)](https://vercel.com?utm_source=meshtastic&utm_campaign=oss)
 
-## ¥~Æ[³]­p
-¥~´ß¹w¯d¤Ä¼Ñ¡A¥i·f°t D ¦©©Î±¾Ã·±N HermesX ©T©w©ó­I¥]¡B¯Ý±¾¡B¥Ö±a©Î¿Ç¤l¡A¯u¥¿°µ¨ìÀH¨­Äâ±a¡BÀH®É¨Ï¥Î¡C
+<a href="https://trendshift.io/repositories/5524" target="_blank"><img src="https://trendshift.io/api/badge/repositories/5524" alt="meshtastic%2Ffirmware | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 
-## LED ª¬ºA±ø¦æ¬°
-| ª¬ºA | ÃC¦â»P°Êµe | »¡©ú |
-| --- | --- | --- |
-| «Ý¾÷ | ¾ï¦â¿O±ø¡B¦³¤@Áû«GÂI¨Ó¦^²¾°Ê | ¸Ë¸m³B©ó«Ý©R¦ý¥i¥ß§Y¾Þ§@¡C |
-| µo°e°T®§ | ¥Õ¦â«GÂI¦Û¤U¦Ó¤W¬y°Ê | ¥Ø«e¥¿¦bµo°e¨Ï¥ÎªÌ¿ï©wªº°T®§¡C |
-| ±µ¦¬°T®§ | ¥Õ¦â«GÂI¦Û¤W¦Ó¤U¬y°Ê | ¦¬¨ì¨ä¥L¸`ÂIªº°T®§¡C |
-| ¦¬¨ì¸`ÂI¸ê°T | ºñ¦â«GÂI¦Û¤W¦Ó¤U¬y°Ê | µo²{©Î§ó·sºô¸ô¸`ÂI¸ê°T¡C |
-| ¶Ç°T¦¨¥\ | ºñ¿O°{Ã{¤T¦¸ | °T®§¤wÀò½T»{¡C |
-| ¶Ç°T¥¢±Ñ | ¬õ¿O°{Ã{¤T¦¸ | °T®§¥¼¦¨¥\°e¹F¡A½Ð­«¸Õ¡C |
+</div>
 
-¦P®É·f°t¹ïÀ³­µ®Ä³qª¾¡A¨Ï¥ÎªÌµL»Ý¨nµÛ¿O±ø¤]¯à§Y®É´x´¤ª¬ºA¡C
+</div>
 
-## ±Û¶s¾Þ§@
-- **±ÛÂà**¡GÂsÄý¨Ã¿ï¾Ü±ýµo°eªºÅøÀY°T®§¡C
-- **«ö¤U**¡G¥ß§Yµo°e¥Ø«e¿ï©wªº°T®§¡C
-- **ªø«ö**¡G±±¨î¶}¾÷»PÃö¾÷¡C
+<div align="center">
+	<a href="https://meshtastic.org">Website</a>
+	-
+	<a href="https://meshtastic.org/docs/">Documentation</a>
+</div>
 
-## ¨ä¥L¯SÂI
-- ¤ä´© 18650 ¹q¦À§Ö³t§ó´«¡A©µªø¥~¶ÔÄò¯è¡C
-- ¨¾¼â¤ô³]­p¡]½Ð¤Å®ûªw¡F­Y¤£·Vªw¤ô¾É­P·lÃa¡A¥i±H¦^§ó´«¹q¸ôªO ??¡^¡C
+## Overview
 
-## °â»ù
-¥ý¦æªÌ®M¥ó»ù®æ¬° 3000 ¤¸ / ¥x¡A§t§¹¾ã«O©TªA°È¡C
+This repository contains the official device firmware for Meshtastic, an open-source LoRa mesh networking project designed for long-range, low-power communication without relying on internet or cellular infrastructure. The firmware supports various hardware platforms, including ESP32, nRF52, RP2040/RP2350, and Linux-based devices.
 
-³o¬O HermesX ªº²Ä¤@¨B¡A§Ú­Ì´Á«Ý§â¥¦±a¨ì¯u¹ê³õ°ì»P¨C¤@­Ó¤é±`³õ´º¡C
+Meshtastic enables text messaging, location sharing, and telemetry over a decentralized mesh network, making it ideal for outdoor adventures, emergency preparedness, and remote operations.
 
-## HermesX Agents «ü«n
-- **®Ö¤ß©R¦W²ßºD**¡G¥H HermesX ¬°¥D­n«eºó¡A²[»\Ãþ§O¡]¦p `HermesXInterfaceModule`¡B`HermesFace`¡^¡B¤u¨ã¡]`HermesXPacketUtils`¡^»P°O¿ý¡]`HermesXLog`¡^¡F¥\¯à±¾¹_±Ä»y·N¤Æ©R¦W¡]`setNextSleepPreHookParams`¡B`runPreDeepSleepHook`¡^¡F¥H¤j¼g§» `MESHTASTIC_EXCLUDE_HERMESX` ±±¨î½sÄ¶½d³ò¡C
-- **Hermes ¤¶­± Agent** (`src/modules/HermesXInterfaceModule.*`¡B`HermesFace*`¡B`TinyScheduler.h`)¡G³B²zªí±¡°Êµe¡B±Û¶s¥æ¤¬»P¹q·½´£¥Ü¡A¤½¦@ API ¥]§t `startPowerHoldAnimation`/`updatePowerHoldAnimation`/`stopPowerHoldAnimation`¡A¸ê·½¨Ì `HermesFaceMode` enum ©R¦W¡C
-- **«öÁä»P¿é¤J Agent** (`ButtonThread.*`¡B`input/RotaryEncoderInterruptBase.*`)¡GÂX¥R `HermesOneButton` «¬§O§O¦W¡B`HoldAnimationMode` ª¬ºA»P³Æ´© `BUTTON_PIN_ALT` ³ê¿ô¡F¨Æ¥ó¨ç¦¡²Î¤@¬° `userButtonPressedLongStart/Stop`¡B`rotaryStateCW` ©R¦W¡A¨Ã³z¹L Hermes ¤¶­±§ó·s°Êµe¡C
-- **³q«H¥i¾a«× Agent** (`mesh/ReliableRouter.*`)¡G·s¼W `ReliableEventType` enum¡B`ReliableEvent` µ²ºc»P `setNotify`/`emit` ¦^©I¡A©R¦W¥H¥Î³~¬°¥D¡]`ImplicitAck`¡B`GiveUp`¡^¡A`hermesXCallback` ¨Æ¥ó¾ô±µ ACK/NACK¡C
-- **¼Ò²Õµù¥U Agent** (`modules/Modules.cpp`)¡Gºû«ù Hermes ¼Ò²Õ«Ø¥ß§Ç¦C¡A©R¦W¿í´` `moduleName = new Hermes...`¡A¥[¤J `LighthouseModule`¡B`MusicModule` µ¥¨Ì¥\¯à©R¦Wªº¼Ò²Õ¡C
-- **ºÎ¯v±±¨î Agent** (`sleep.*`¡B`sleep_hooks.*`¡B`Power.cpp`¡B`platform/esp32/main-esp32.cpp`)¡G½Õ¾ã³ê¿ô¸ô®|¡A¤½¶}ÅÜ¼Æ `g_ext1WakeMask`/`g_ext1WakeMode`¡A¨ç¦¡¥H°Ê§@´y­z©R¦W¡]`setNextSleepPreHookParams`¡B`consumeSleepPreHookParams`¡^¡A`BUTTON_PIN_ALT` §PÂ_ÅÞ¿è¿W¥ß¡C
-- **UI »P¸ê·½ Agent** (`graphics/Screen.cpp`¡B`graphics/img/icon.xbm`¡B`modules/CannedMessageModule.*`)¡G²Î¤@ Hermes ­±ªO¡B¹Ï¥Ü»P´£¥Ü¤å¦r©R¦W¡]`HermesX_DrawFace`¡B`HermesFaceMode::Sending`¡^¡A°T®§µo°e§ï¨« `RX_SRC_USER`¡AÁ{®É°T®§¥H `temporaryMessage` ©R¦W¡C
-- **¥~³¡³qª¾ Agent** (`modules/ExternalNotificationModule.cpp`)¡G«O¯d `hermesXCallback` ©I¥sÂI»P `setExternalState` ©R¦W¡A½T«O»P Hermes UI/LED ¦P¨B¡C
-- **³]©w»PÁ`Äý** (`platformio.ini`¡B`.vscode/settings.json`¡B`README.md`)¡G©R¦W¥HÀô¹Ò©Î«~µP¬°®Ö¤ß¡]`default_envs = heltec-wireless-tracker`¡BREADME ¼ÐÃD `HermesX Firmware`¡^¡A·s¼WºX¼Ð®É¨Ï¥Î `BUTTON_PIN_ALT`¡B`LIGHTHOUSE_DEBUG` µ¥¬ðÅã¥Î³~ªº¦WºÙ¡C
-- «áÄò©µ¦ù®É¡A«O«ù¤W­z«eºó¡B»y·N¤Æ¨ç¦¡»PªTÁ|ªº©R¦W¼Ò¦¡¡A§Y¥iºû«ù HermesX ¤À¤äªº¤@­P©Ê¡C
+### Get Started
 
+- ðŸ”§ **[Building Instructions](https://meshtastic.org/docs/development/firmware/build)** â€“ Learn how to compile the firmware from source.
+- âš¡ **[Flashing Instructions](https://meshtastic.org/docs/getting-started/flashing-firmware/)** â€“ Install or update the firmware on your device.
 
+Join our community and help improve Meshtastic! ðŸš€
+
+## Stats
+
+![Alt](https://repobeats.axiom.co/api/embed/8025e56c482ec63541593cc5bd322c19d5c0bdcf.svg "Repobeats analytics image")

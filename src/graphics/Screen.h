@@ -310,98 +310,16 @@ class Screen : public concurrency::OSThread
     std::string drawTimeDelta(uint32_t days, uint32_t hours, uint32_t minutes, uint32_t seconds);
 
     /// Overrides the default utf8 character conversion, to replace empty space with question marks
-
-#if defined(OLED_ZH)
-    static uint8_t mapHermesXChineseGlyph(uint32_t codepoint)
-    {
-        switch (codepoint) {
-        case 0x7DCA:
-            return 0x80; // ?
-        case 0x6025:
-            return 0x81; // ?
-        case 0x6A21:
-            return 0x82; // ?
-        case 0x5F0F:
-            return 0x83; // ?
-        case 0x6211:
-            return 0x84; // ?
-        case 0x53D7:
-            return 0x85; // ?
-        case 0x56F0:
-            return 0x86; // ?
-        case 0x4E86:
-            return 0x87; // ?
-        case 0x9700:
-            return 0x88; // ?
-        case 0x8981:
-            return 0x89; // ?
-        case 0x91AB:
-            return 0x8A; // ?
-        case 0x7642:
-            return 0x8B; // ?
-        case 0x7269:
-            return 0x8C; // ?
-        case 0x8CC7:
-            return 0x8D; // ?
-        case 0x5728:
-            return 0x8E; // ?
-        case 0x9019:
-            return 0x8F; // ?
-        case 0x88E1:
-            return 0x90; // ?
-        case 0x4F60:
-            return 0x91; // ?
-        case 0x597D:
-            return 0x92; // ?
-        case 0x6536:
-            return 0x93; // ?
-        case 0x5230:
-            return 0x94; // ?
-        case 0x5E73:
-            return 0x95; // ?
-        case 0x5B89:
-            return 0x96; // ?
-        case 0xFF1A:
-            return 0x97; // ?
-        case 0xFF0C:
-            return 0x98; // ?
-        case 0x3002:
-            return 0x99; // ?
-        case 0xFF01:
-            return 0x9A; // ?
-        case 0xFF1F:
-            return 0x9B; // ?
-        case 0xFF08:
-            return 0x9C; // ?
-        case 0xFF09:
-            return 0x9D; // ?
-        case 0x300A:
-            return 0x9E; // ?
-        case 0x300B:
-            return 0x9F; // ?
-        default:
-            return 0;
-        }
-    }
-#endif
-
     static char customFontTableLookup(const uint8_t ch)
     {
         // UTF-8 to font table index converter
         // Code from http://playground.arduino.cc/Main/Utf8ascii
         static uint8_t LASTCHAR;
         static bool SKIPREST; // Only display a single unconvertable-character symbol per sequence of unconvertable characters
-#if defined(OLED_ZH)
-        static uint8_t zhBytesRemaining;
-        static uint32_t zhCodepoint;
-#endif
 
         if (ch < 128) { // Standard ASCII-set 0..0x7F handling
             LASTCHAR = 0;
             SKIPREST = false;
-#if defined(OLED_ZH)
-            zhBytesRemaining = 0;
-#endif
             return ch;
         }
 
@@ -423,37 +341,6 @@ class Screen : public concurrency::OSThread
         // We want to strip out prefix chars for two-byte char formats
         if (ch == 0xC2 || ch == 0xC3)
             return (uint8_t)0;
-
-#if defined(OLED_ZH)
-        if ((ch & 0xF0) == 0xE0) {
-            SKIPREST = false;
-            zhCodepoint = ch & 0x0F;
-            zhBytesRemaining = 2;
-            return (uint8_t)0;
-        }
-        if ((ch & 0xF8) == 0xF0) {
-            SKIPREST = false;
-            zhCodepoint = ch & 0x07;
-            zhBytesRemaining = 3;
-            return (uint8_t)0;
-        }
-        if ((ch & 0xC0) == 0x80 && zhBytesRemaining) {
-            zhCodepoint = (zhCodepoint << 6) | (ch & 0x3F);
-            zhBytesRemaining--;
-            if (zhBytesRemaining == 0) {
-                uint8_t mapped = mapHermesXChineseGlyph(zhCodepoint);
-                if (mapped) {
-                    SKIPREST = false;
-                    return mapped;
-                }
-                if (!SKIPREST) {
-                    SKIPREST = true;
-                    return (uint8_t)191;
-                }
-            }
-            return (uint8_t)0;
-        }
-#endif
 
 #if defined(OLED_PL)
 

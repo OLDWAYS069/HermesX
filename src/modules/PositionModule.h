@@ -1,7 +1,6 @@
 #pragma once
 #include "Default.h"
 #include "ProtobufModule.h"
-#include "mesh/MeshTypes.h"
 #include "concurrency/OSThread.h"
 
 /**
@@ -25,13 +24,6 @@ class PositionModule : public ProtobufModule<meshtastic_Position>, private concu
     /// We force a rebroadcast if the radio settings change
     uint32_t currentGeneration = 0;
 
-    bool pendingPositionRequest = false;
-    uint32_t positionRequestDueAt = 0;
-    NodeNum positionRequestDest = NODENUM_BROADCAST;
-    bool positionRequestWantReplies = false;
-    bool positionRequestForceWantResponse = false;
-    uint8_t positionRequestChannel = 0;
-
   public:
     /** Constructor
      * name is for debugging output
@@ -41,9 +33,8 @@ class PositionModule : public ProtobufModule<meshtastic_Position>, private concu
     /**
      * Send our position into the mesh
      */
-    void sendOurPosition(NodeNum dest, bool wantReplies = false, uint8_t channel = 0, bool forceWantResponse = false);
+    void sendOurPosition(NodeNum dest, bool wantReplies = false, uint8_t channel = 0);
     void sendOurPosition();
-    void scheduleBroadcastPositionRequest(uint32_t delayMs, uint32_t jitterMs, uint8_t channelIndex, bool forceWantResponse = false);
 
     void handleNewPosition();
 

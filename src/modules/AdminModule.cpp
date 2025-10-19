@@ -818,11 +818,6 @@ bool AdminModule::handleSetModuleConfig(const meshtastic_ModuleConfig &c)
         moduleConfig.has_paxcounter = true;
         moduleConfig.paxcounter = c.payload_variant.paxcounter;
         break;
-    case meshtastic_ModuleConfig_emergency_tag:
-        LOG_INFO("Set module config: Emergency");
-        moduleConfig.has_emergency = true;
-        moduleConfig.emergency = c.payload_variant.emergency;
-        break;
     }
     saveChanges(SEGMENT_MODULECONFIG);
     return true;
@@ -1265,4 +1260,3 @@ void disableBluetooth()
 #endif
 #endif
 }
-

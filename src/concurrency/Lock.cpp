@@ -17,11 +17,6 @@ void Lock::lock()
     assert(xSemaphoreTake(handle, portMAX_DELAY));
 }
 
-bool Lock::tryLock(TickType_t timeout)
-{
-    return xSemaphoreTake(handle, timeout) == pdTRUE;
-}
-
 void Lock::unlock()
 {
     assert(xSemaphoreGive(handle));
@@ -30,11 +25,6 @@ void Lock::unlock()
 Lock::Lock() {}
 
 void Lock::lock() {}
-
-bool Lock::tryLock()
-{
-    return true;
-}
 
 void Lock::unlock() {}
 #endif

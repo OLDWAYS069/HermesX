@@ -1,8 +1,6 @@
 #pragma once
 #if HAS_SCREEN
 #include "ProtobufModule.h"
-#include <array>
-#include <vector>
 #include "input/InputBroker.h"
 
 enum cannedMessageModuleRunState {
@@ -17,8 +15,6 @@ enum cannedMessageModuleRunState {
     CANNED_MESSAGE_RUN_STATE_ACTION_UP,
     CANNED_MESSAGE_RUN_STATE_ACTION_DOWN,
 };
-
-enum class CannedListKind { NORMAL, DRILL, EMERGENCY };
 
 enum cannedMessageDestinationType {
     CANNED_MESSAGE_DESTINATION_TYPE_NONE,
@@ -54,15 +50,10 @@ class CannedMessageModule : public SinglePortModule, public Observable<const UIF
 
   public:
     CannedMessageModule();
-    void setup() override;
     const char *getCurrentMessage();
     const char *getPrevMessage();
     const char *getNextMessage();
     const char *getMessageByIndex(int index);
-    const char *getMessageLabel(size_t index) const;
-    size_t getMessageCount() const;
-    void setActiveList(CannedListKind kind);
-    CannedListKind getActiveList() const { return activeList; }
     const char *getNodeName(NodeNum node);
     bool shouldDraw();
     bool hasMessages();
@@ -106,8 +97,6 @@ class CannedMessageModule : public SinglePortModule, public Observable<const UIF
     virtual int32_t runOnce() override;
 
     void sendText(NodeNum dest, ChannelIndex channel, const char *message, bool wantReplies);
-    bool handleEmergencySelection(size_t index);
-    void rebuildEmergencyMenu(CannedListKind kind);
 
     int splitConfiguredMessages();
     int getNextIndex();
@@ -150,14 +139,6 @@ class CannedMessageModule : public SinglePortModule, public Observable<const UIF
     int currentMessageIndex = -1;
     cannedMessageModuleRunState runState = CANNED_MESSAGE_RUN_STATE_INACTIVE;
     char payload = 0x00;
-    CannedListKind activeList = CannedListKind::NORMAL;
-    struct EmergencyMenuOption {
-        String label;
-        enum class Action { SOS, SAFE, NEED, RESOURCE } action;
-        std::array<uint32_t, 4> codes{};
-        size_t codeCount = 0;
-    };
-    std::vector<EmergencyMenuOption> emergencyMenu;
     unsigned int cursor = 0;
     String freetext = ""; // Text Buffer for Freetext Editor
     NodeNum dest = NODENUM_BROADCAST;
@@ -172,10 +153,8 @@ class CannedMessageModule : public SinglePortModule, public Observable<const UIF
     int32_t lastRxRssi = 0;
 
     char messageStore[CANNED_MESSAGE_MODULE_MESSAGES_SIZE + 1];
-    const char *messages[CANNED_MESSAGE_MODULE_MESSAGE_MAX_COUNT];
-    const char *normalMessages[CANNED_MESSAGE_MODULE_MESSAGE_MAX_COUNT];
+    char *messages[CANNED_MESSAGE_MODULE_MESSAGE_MAX_COUNT];
     int messagesCount = 0;
-    int normalMessagesCount = 0;
     unsigned long lastTouchMillis = 0;
     String temporaryMessage;
 
@@ -200,7 +179,7 @@ class CannedMessageModule : public SinglePortModule, public Observable<const UIF
                                    {"K", 15.5, 0, 0, 0, 0},
                                    {"L", 14, 0, 0, 0, 0},
                                    {"", 0, 0, 0, 0, 0}},
-                                  {{"SHIFT", 20, 0, 0, 0, 0},
+                                  {{"⇧", 20, 0, 0, 0, 0},
                                    {"Z", 14, 0, 0, 0, 0},
                                    {"X", 14.5, 0, 0, 0, 0},
                                    {"C", 15.5, 0, 0, 0, 0},
@@ -208,11 +187,11 @@ class CannedMessageModule : public SinglePortModule, public Observable<const UIF
                                    {"B", 15, 0, 0, 0, 0},
                                    {"N", 15, 0, 0, 0, 0},
                                    {"M", 17, 0, 0, 0, 0},
-                                   {"BKSP", 20, 0, 0, 0, 0},
+                                   {"⌫", 20, 0, 0, 0, 0},
                                    {"", 0, 0, 0, 0, 0}},
                                   {{"123", 42, 0, 0, 0, 0},
                                    {" ", 64, 0, 0, 0, 0},
-                                   {"ENTER", 36, 0, 0, 0, 0},
+                                   {"↵", 36, 0, 0, 0, 0},
                                    {"", 0, 0, 0, 0, 0},
                                    {"", 0, 0, 0, 0, 0},
                                    {"", 0, 0, 0, 0, 0},
@@ -245,14 +224,10 @@ class CannedMessageModule : public SinglePortModule, public Observable<const UIF
                                    {"?", 10, 0, 0, 0, 0},
                                    {"!", 10, 0, 0, 0, 0},
                                    {"'", 10, 0, 0, 0, 0},
-                                   {"SYM", 20, 0, 0, 0, 0}},
-                                  {{"ABC", 50, 0, 0, 0, 0}, {" ", 64, 0, 0, 0, 0}, {"SYM", 36, 0, 0, 0, 0}}}};
+                                   {"⌫", 20, 0, 0, 0, 0}},
+                                  {{"ABC", 50, 0, 0, 0, 0}, {" ", 64, 0, 0, 0, 0}, {"↵", 36, 0, 0, 0, 0}}}};
 #endif
 };
 
 extern CannedMessageModule *cannedMessageModule;
 #endif
-
-
-
-

@@ -14,7 +14,6 @@
 #include "error.h"
 #include "main.h"
 #include "sleep.h"
-#include "sleep_hooks.h"
 #include "target_specific.h"
 
 #ifdef ARCH_ESP32
@@ -45,23 +44,6 @@ Observable<void *> notifyDeepSleep;
 
 /// Called to tell observers we are rebooting ASAP.  Must return 0
 Observable<void *> notifyReboot;
-static constexpr uint32_t kDefaultSleepAnimationMs = 700;
-static SleepPreHookParams g_nextSleepHookParams{ kDefaultSleepAnimationMs };
-static bool g_hasCustomSleepHookParams = false;
-
-void setNextSleepPreHookParams(const SleepPreHookParams &params)
-{
-    g_nextSleepHookParams = params;
-    g_hasCustomSleepHookParams = true;
-}
-
-static SleepPreHookParams consumeSleepPreHookParams()
-{
-    SleepPreHookParams params = g_hasCustomSleepHookParams ? g_nextSleepHookParams : SleepPreHookParams{ kDefaultSleepAnimationMs };
-    g_nextSleepHookParams = SleepPreHookParams{ kDefaultSleepAnimationMs };
-    g_hasCustomSleepHookParams = false;
-    return params;
-}
 
 #ifdef ARCH_ESP32
 /// Called to tell observers that light sleep is about to begin
@@ -231,16 +213,12 @@ void doDeepSleep(uint32_t msecToWake, bool skipPreflight = false, bool skipSaveN
         nimbleBluetooth->deinit();
 #endif
 
-    SleepPreHookParams hookParams = consumeSleepPreHookParams();
 #ifdef ARCH_ESP32
     if (!shouldLoraWake(msecToWake))
         notifyDeepSleep.notifyObservers(NULL);
 #else
     notifyDeepSleep.notifyObservers(NULL);
 #endif
-
-    runPreDeepSleepHook(hookParams);
-
 
     powerMon->setState(meshtastic_PowerMon_State_CPU_DeepSleep);
 
@@ -565,7 +543,3 @@ void enableLoraInterrupt()
 #endif
 }
 #endif
-
-
-
-

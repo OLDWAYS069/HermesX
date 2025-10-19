@@ -16,50 +16,52 @@
 #include "graphics/fonts/OLEDDisplayFontsCS.h"
 #endif
 
-#ifdef OLED_ZH
-#include "graphics/fonts/OLEDDisplayFontsZH.h"
-#endif
-
 #ifdef CROWPANEL_ESP32S3_5_EPAPER
 #include "graphics/fonts/EinkDisplayFonts.h"
 #endif
 
-#if defined(OLED_PL)
+#ifdef OLED_PL
 #define FONT_SMALL_LOCAL ArialMT_Plain_10_PL
-#elif defined(OLED_RU)
+#else
+#ifdef OLED_RU
 #define FONT_SMALL_LOCAL ArialMT_Plain_10_RU
-#elif defined(OLED_UA)
+#else
+#ifdef OLED_UA
 #define FONT_SMALL_LOCAL ArialMT_Plain_10_UA // Height: 13
-#elif defined(OLED_CS)
+#else
+#ifdef OLED_CS
 #define FONT_SMALL_LOCAL ArialMT_Plain_10_CS
-#elif defined(OLED_ZH)
-#define FONT_SMALL_LOCAL HermesX_EM16_ZH
 #else
 #define FONT_SMALL_LOCAL ArialMT_Plain_10 // Height: 13
 #endif
-
-#if defined(OLED_PL)
+#endif
+#endif
+#endif
+#ifdef OLED_PL
 #define FONT_MEDIUM_LOCAL ArialMT_Plain_16_PL // Height: 19
-#elif defined(OLED_UA)
+#else
+#ifdef OLED_UA
 #define FONT_MEDIUM_LOCAL ArialMT_Plain_16_UA // Height: 19
-#elif defined(OLED_CS)
+#else
+#ifdef OLED_CS
 #define FONT_MEDIUM_LOCAL ArialMT_Plain_16_CS
-#elif defined(OLED_ZH)
-#define FONT_MEDIUM_LOCAL HermesX_EM16_ZH
 #else
 #define FONT_MEDIUM_LOCAL ArialMT_Plain_16 // Height: 19
 #endif
-
-#if defined(OLED_PL)
+#endif
+#endif
+#ifdef OLED_PL
 #define FONT_LARGE_LOCAL ArialMT_Plain_24_PL // Height: 28
-#elif defined(OLED_UA)
+#else
+#ifdef OLED_UA
 #define FONT_LARGE_LOCAL ArialMT_Plain_24_UA // Height: 28
-#elif defined(OLED_CS)
+#else
+#ifdef OLED_CS
 #define FONT_LARGE_LOCAL ArialMT_Plain_24_CS // Height: 28
-#elif defined(OLED_ZH)
-#define FONT_LARGE_LOCAL HermesX_EM16_ZH
 #else
 #define FONT_LARGE_LOCAL ArialMT_Plain_24 // Height: 28
+#endif
+#endif
 #endif
 
 #if (defined(USE_EINK) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7735_CS) ||      \
@@ -89,4 +91,3 @@
 #define FONT_HEIGHT_SMALL _fontHeight(FONT_SMALL)
 #define FONT_HEIGHT_MEDIUM _fontHeight(FONT_MEDIUM)
 #define FONT_HEIGHT_LARGE _fontHeight(FONT_LARGE)
-

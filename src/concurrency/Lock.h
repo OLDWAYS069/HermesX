@@ -21,13 +21,6 @@ class Lock
     // Must not be called from an ISR.
     void lock();
 
-#ifdef HAS_FREE_RTOS
-    /// Attempt to lock with an optional timeout (in RTOS ticks).
-    bool tryLock(TickType_t timeout = 0);
-#else
-    bool tryLock();
-#endif
-
     // Unlocks the lock.
     //
     // Must not be called from an ISR.

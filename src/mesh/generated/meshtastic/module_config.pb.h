@@ -105,22 +105,6 @@ typedef enum _meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar {
     meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL = 24
 } meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar;
 
-typedef enum _meshtastic_ModuleConfig_EmergencyConfig_Mode {
-    meshtastic_ModuleConfig_EmergencyConfig_Mode_OFF = 0,
-    meshtastic_ModuleConfig_EmergencyConfig_Mode_DRILL = 1,
-    meshtastic_ModuleConfig_EmergencyConfig_Mode_ON = 2
-} meshtastic_ModuleConfig_EmergencyConfig_Mode;
-
-typedef enum _meshtastic_ModuleConfig_EmergencyConfig_Role {
-    meshtastic_ModuleConfig_EmergencyConfig_Role_DEFAULT = 0,
-    meshtastic_ModuleConfig_EmergencyConfig_Role_SHELTER = 1
-} meshtastic_ModuleConfig_EmergencyConfig_Role;
-
-typedef enum _meshtastic_ModuleConfig_EmergencyConfig_Language {
-    meshtastic_ModuleConfig_EmergencyConfig_Language_EN = 0,
-    meshtastic_ModuleConfig_EmergencyConfig_Language_ZH = 1
-} meshtastic_ModuleConfig_EmergencyConfig_Language;
-
 /* Struct definitions */
 /* Settings for reporting unencrypted information about our node to a map via MQTT */
 typedef struct _meshtastic_ModuleConfig_MapReportSettings {
@@ -396,18 +380,6 @@ typedef struct _meshtastic_ModuleConfig_CannedMessageConfig {
     bool send_bell;
 } meshtastic_ModuleConfig_CannedMessageConfig;
 
-typedef struct _meshtastic_ModuleConfig_EmergencyConfig {
-    meshtastic_ModuleConfig_EmergencyConfig_Mode mode;
-    meshtastic_ModuleConfig_EmergencyConfig_Role role;
-    meshtastic_ModuleConfig_EmergencyConfig_Language lang;
-    bool emit_position_request_on_activate;
-    uint32_t position_request_delay_ms;
-    uint32_t position_request_jitter_ms;
-    uint32_t position_request_cooldown_sec;
-    pb_size_t whitelist_count;
-    uint32_t whitelist[16];
-} meshtastic_ModuleConfig_EmergencyConfig;
-
 /* Ambient Lighting Module - Settings for control of onboard LEDs to allow users to adjust the brightness levels and respective color levels.
 Initially created for the RAK14001 RGB LED module. */
 typedef struct _meshtastic_ModuleConfig_AmbientLightingConfig {
@@ -473,8 +445,6 @@ typedef struct _meshtastic_ModuleConfig {
         /* TODO: REPLACE */
         meshtastic_ModuleConfig_DetectionSensorConfig detection_sensor;
         /* TODO: REPLACE */
-        meshtastic_ModuleConfig_EmergencyConfig emergency;
-        /* TODO: REPLACE */
         meshtastic_ModuleConfig_PaxcounterConfig paxcounter;
     } payload_variant;
 } meshtastic_ModuleConfig;
@@ -508,17 +478,6 @@ extern "C" {
 #define _meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_MIN meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_NONE
 #define _meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_MAX meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK
 #define _meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_ARRAYSIZE ((meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar)(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK+1))
-#define _meshtastic_ModuleConfig_EmergencyConfig_Mode_MIN meshtastic_ModuleConfig_EmergencyConfig_Mode_OFF
-#define _meshtastic_ModuleConfig_EmergencyConfig_Mode_MAX meshtastic_ModuleConfig_EmergencyConfig_Mode_ON
-#define _meshtastic_ModuleConfig_EmergencyConfig_Mode_ARRAYSIZE ((meshtastic_ModuleConfig_EmergencyConfig_Mode)(meshtastic_ModuleConfig_EmergencyConfig_Mode_ON+1))
-
-#define _meshtastic_ModuleConfig_EmergencyConfig_Role_MIN meshtastic_ModuleConfig_EmergencyConfig_Role_DEFAULT
-#define _meshtastic_ModuleConfig_EmergencyConfig_Role_MAX meshtastic_ModuleConfig_EmergencyConfig_Role_SHELTER
-#define _meshtastic_ModuleConfig_EmergencyConfig_Role_ARRAYSIZE ((meshtastic_ModuleConfig_EmergencyConfig_Role)(meshtastic_ModuleConfig_EmergencyConfig_Role_SHELTER+1))
-
-#define _meshtastic_ModuleConfig_EmergencyConfig_Language_MIN meshtastic_ModuleConfig_EmergencyConfig_Language_EN
-#define _meshtastic_ModuleConfig_EmergencyConfig_Language_MAX meshtastic_ModuleConfig_EmergencyConfig_Language_ZH
-#define _meshtastic_ModuleConfig_EmergencyConfig_Language_ARRAYSIZE ((meshtastic_ModuleConfig_EmergencyConfig_Language)(meshtastic_ModuleConfig_EmergencyConfig_Language_ZH+1))
 
 
 
@@ -560,7 +519,6 @@ extern "C" {
 #define meshtastic_ModuleConfig_RangeTestConfig_init_default {0, 0, 0}
 #define meshtastic_ModuleConfig_TelemetryConfig_init_default {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 #define meshtastic_ModuleConfig_CannedMessageConfig_init_default {0, 0, 0, 0, _meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_MIN, _meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_MIN, _meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_MIN, 0, 0, "", 0}
-#define meshtastic_ModuleConfig_EmergencyConfig_init_default {_meshtastic_ModuleConfig_EmergencyConfig_Mode_MIN, _meshtastic_ModuleConfig_EmergencyConfig_Role_MIN, _meshtastic_ModuleConfig_EmergencyConfig_Language_MIN, 0, 0, 0, 0, 0, {0}}
 #define meshtastic_ModuleConfig_AmbientLightingConfig_init_default {0, 0, 0, 0, 0}
 #define meshtastic_RemoteHardwarePin_init_default {0, "", _meshtastic_RemoteHardwarePinType_MIN}
 #define meshtastic_ModuleConfig_init_zero        {0, {meshtastic_ModuleConfig_MQTTConfig_init_zero}}
@@ -577,7 +535,6 @@ extern "C" {
 #define meshtastic_ModuleConfig_RangeTestConfig_init_zero {0, 0, 0}
 #define meshtastic_ModuleConfig_TelemetryConfig_init_zero {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 #define meshtastic_ModuleConfig_CannedMessageConfig_init_zero {0, 0, 0, 0, _meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_MIN, _meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_MIN, _meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_MIN, 0, 0, "", 0}
-#define meshtastic_ModuleConfig_EmergencyConfig_init_zero {_meshtastic_ModuleConfig_EmergencyConfig_Mode_MIN, _meshtastic_ModuleConfig_EmergencyConfig_Role_MIN, _meshtastic_ModuleConfig_EmergencyConfig_Language_MIN, 0, 0, 0, 0, 0, {0}}
 #define meshtastic_ModuleConfig_AmbientLightingConfig_init_zero {0, 0, 0, 0, 0}
 #define meshtastic_RemoteHardwarePin_init_zero   {0, "", _meshtastic_RemoteHardwarePinType_MIN}
 
@@ -674,14 +631,6 @@ extern "C" {
 #define meshtastic_ModuleConfig_CannedMessageConfig_enabled_tag 9
 #define meshtastic_ModuleConfig_CannedMessageConfig_allow_input_source_tag 10
 #define meshtastic_ModuleConfig_CannedMessageConfig_send_bell_tag 11
-#define meshtastic_ModuleConfig_EmergencyConfig_mode_tag 1
-#define meshtastic_ModuleConfig_EmergencyConfig_role_tag 2
-#define meshtastic_ModuleConfig_EmergencyConfig_lang_tag 3
-#define meshtastic_ModuleConfig_EmergencyConfig_whitelist_tag 4
-#define meshtastic_ModuleConfig_EmergencyConfig_emit_position_request_on_activate_tag 5
-#define meshtastic_ModuleConfig_EmergencyConfig_position_request_delay_ms_tag 6
-#define meshtastic_ModuleConfig_EmergencyConfig_position_request_jitter_ms_tag 7
-#define meshtastic_ModuleConfig_EmergencyConfig_position_request_cooldown_sec_tag 8
 #define meshtastic_ModuleConfig_AmbientLightingConfig_led_state_tag 1
 #define meshtastic_ModuleConfig_AmbientLightingConfig_current_tag 2
 #define meshtastic_ModuleConfig_AmbientLightingConfig_red_tag 3
@@ -706,7 +655,6 @@ extern "C" {
 #define meshtastic_ModuleConfig_ambient_lighting_tag 11
 #define meshtastic_ModuleConfig_detection_sensor_tag 12
 #define meshtastic_ModuleConfig_paxcounter_tag   13
-#define meshtastic_ModuleConfig_emergency_tag 14
 
 /* Struct field encoding specification for nanopb */
 #define meshtastic_ModuleConfig_FIELDLIST(X, a) \
@@ -722,8 +670,7 @@ X(a, STATIC,   ONEOF,    MESSAGE,  (payload_variant,remote_hardware,payload_vari
 X(a, STATIC,   ONEOF,    MESSAGE,  (payload_variant,neighbor_info,payload_variant.neighbor_info),  10) \
 X(a, STATIC,   ONEOF,    MESSAGE,  (payload_variant,ambient_lighting,payload_variant.ambient_lighting),  11) \
 X(a, STATIC,   ONEOF,    MESSAGE,  (payload_variant,detection_sensor,payload_variant.detection_sensor),  12) \
-X(a, STATIC,   ONEOF,    MESSAGE,  (payload_variant,paxcounter,payload_variant.paxcounter),  13) \
-X(a, STATIC,   ONEOF,    MESSAGE,  (payload_variant,emergency,payload_variant.emergency),  14)
+X(a, STATIC,   ONEOF,    MESSAGE,  (payload_variant,paxcounter,payload_variant.paxcounter),  13)
 #define meshtastic_ModuleConfig_CALLBACK NULL
 #define meshtastic_ModuleConfig_DEFAULT NULL
 #define meshtastic_ModuleConfig_payload_variant_mqtt_MSGTYPE meshtastic_ModuleConfig_MQTTConfig
@@ -739,7 +686,6 @@ X(a, STATIC,   ONEOF,    MESSAGE,  (payload_variant,emergency,payload_variant.em
 #define meshtastic_ModuleConfig_payload_variant_ambient_lighting_MSGTYPE meshtastic_ModuleConfig_AmbientLightingConfig
 #define meshtastic_ModuleConfig_payload_variant_detection_sensor_MSGTYPE meshtastic_ModuleConfig_DetectionSensorConfig
 #define meshtastic_ModuleConfig_payload_variant_paxcounter_MSGTYPE meshtastic_ModuleConfig_PaxcounterConfig
-#define meshtastic_ModuleConfig_payload_variant_emergency_MSGTYPE meshtastic_ModuleConfig_EmergencyConfig
 
 #define meshtastic_ModuleConfig_MQTTConfig_FIELDLIST(X, a) \
 X(a, STATIC,   SINGULAR, BOOL,     enabled,           1) \
@@ -889,17 +835,6 @@ X(a, STATIC,   SINGULAR, STRING,   allow_input_source,  10) \
 X(a, STATIC,   SINGULAR, BOOL,     send_bell,        11)
 #define meshtastic_ModuleConfig_CannedMessageConfig_CALLBACK NULL
 #define meshtastic_ModuleConfig_CannedMessageConfig_DEFAULT NULL
-#define meshtastic_ModuleConfig_EmergencyConfig_FIELDLIST(X, a) \
-X(a, STATIC,   SINGULAR, UENUM,    mode,              1) \
-X(a, STATIC,   SINGULAR, UENUM,    role,              2) \
-X(a, STATIC,   SINGULAR, UENUM,    lang,              3) \
-X(a, STATIC,   SINGULAR, BOOL,     emit_position_request_on_activate, 5) \
-X(a, STATIC,   SINGULAR, UINT32,   position_request_delay_ms, 6) \
-X(a, STATIC,   SINGULAR, UINT32,   position_request_jitter_ms, 7) \
-X(a, STATIC,   SINGULAR, UINT32,   position_request_cooldown_sec, 8) \
-X(a, STATIC,   REPEATED, UINT32,   whitelist,         4)
-#define meshtastic_ModuleConfig_EmergencyConfig_CALLBACK NULL
-#define meshtastic_ModuleConfig_EmergencyConfig_DEFAULT NULL
 
 #define meshtastic_ModuleConfig_AmbientLightingConfig_FIELDLIST(X, a) \
 X(a, STATIC,   SINGULAR, BOOL,     led_state,         1) \
@@ -931,7 +866,6 @@ extern const pb_msgdesc_t meshtastic_ModuleConfig_StoreForwardConfig_msg;
 extern const pb_msgdesc_t meshtastic_ModuleConfig_RangeTestConfig_msg;
 extern const pb_msgdesc_t meshtastic_ModuleConfig_TelemetryConfig_msg;
 extern const pb_msgdesc_t meshtastic_ModuleConfig_CannedMessageConfig_msg;
-extern const pb_msgdesc_t meshtastic_ModuleConfig_EmergencyConfig_msg;
 extern const pb_msgdesc_t meshtastic_ModuleConfig_AmbientLightingConfig_msg;
 extern const pb_msgdesc_t meshtastic_RemoteHardwarePin_msg;
 
@@ -950,7 +884,6 @@ extern const pb_msgdesc_t meshtastic_RemoteHardwarePin_msg;
 #define meshtastic_ModuleConfig_RangeTestConfig_fields &meshtastic_ModuleConfig_RangeTestConfig_msg
 #define meshtastic_ModuleConfig_TelemetryConfig_fields &meshtastic_ModuleConfig_TelemetryConfig_msg
 #define meshtastic_ModuleConfig_CannedMessageConfig_fields &meshtastic_ModuleConfig_CannedMessageConfig_msg
-#define meshtastic_ModuleConfig_EmergencyConfig_fields &meshtastic_ModuleConfig_EmergencyConfig_msg
 #define meshtastic_ModuleConfig_AmbientLightingConfig_fields &meshtastic_ModuleConfig_AmbientLightingConfig_msg
 #define meshtastic_RemoteHardwarePin_fields &meshtastic_RemoteHardwarePin_msg
 
@@ -966,12 +899,11 @@ extern const pb_msgdesc_t meshtastic_RemoteHardwarePin_msg;
 #define meshtastic_ModuleConfig_NeighborInfoConfig_size 10
 #define meshtastic_ModuleConfig_PaxcounterConfig_size 30
 #define meshtastic_ModuleConfig_RangeTestConfig_size 10
-#define meshtastic_ModuleConfig_EmergencyConfig_size 140
 #define meshtastic_ModuleConfig_RemoteHardwareConfig_size 96
 #define meshtastic_ModuleConfig_SerialConfig_size 28
 #define meshtastic_ModuleConfig_StoreForwardConfig_size 24
 #define meshtastic_ModuleConfig_TelemetryConfig_size 46
-#define meshtastic_ModuleConfig_size             240
+#define meshtastic_ModuleConfig_size             227
 #define meshtastic_RemoteHardwarePin_size        21
 
 #ifdef __cplusplus

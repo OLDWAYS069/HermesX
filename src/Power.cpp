@@ -19,7 +19,6 @@
 #include "main.h"
 #include "meshUtils.h"
 #include "sleep.h"
-#include "sleep_hooks.h"
 
 // Working USB detection for powered/charging states on the RAK platform
 #ifdef NRF_APM
@@ -407,10 +406,11 @@ class AnalogBatteryLevel : public HasBatteryLevel
     virtual bool isBatteryConnect() override
     {
         int lastReading = digitalRead(ADC_V);
-        // ?�断?�是?��???        for (int i = 2; i < 500; i++) {
+        // 判断值是否变化
+        for (int i = 2; i < 500; i++) {
             int reading = digitalRead(ADC_V);
             if (reading != lastReading) {
-                return false; // ?��??��?USB供电, 没接?��?
+                return false; // 有变化，USB供电, 没接电池
             }
         }
 
@@ -692,7 +692,6 @@ void Power::shutdown()
 #ifdef PIN_LED3
     ledOff(PIN_LED3);
 #endif
-    setNextSleepPreHookParams(SleepPreHookParams{800});
     doDeepSleep(DELAY_FOREVER, false, false);
 #endif
 }

@@ -1,10 +1,4 @@
 #include "configuration.h"
-#ifndef MESHTASTIC_EXCLUDE_HERMESX
-#define MESHTASTIC_EXCLUDE_HERMESX 0
-#endif
-#ifndef MESHTASTIC_EXCLUDE_LIGHTHOUSE
-#define MESHTASTIC_EXCLUDE_LIGHTHOUSE 0
-#endif
 #if !MESHTASTIC_EXCLUDE_INPUTBROKER
 #include "input/ExpressLRSFiveWay.h"
 #include "input/InputBroker.h"
@@ -24,19 +18,15 @@
 #if !MESHTASTIC_EXCLUDE_ATAK
 #include "modules/AtakPluginModule.h"
 #endif
-#if !MESHTASTIC_EXCLUDE_HERMESX
-#include "modules/HermesXInterfaceModule.h"
-#include "modules/EmergencyAdaptiveModule.h"
-#include "modules/HermesXLog.h"
-#endif
-#if !MESHTASTIC_EXCLUDE_LIGHTHOUSE
-#include "modules/LighthouseModule.h"
-#endif
 #if !MESHTASTIC_EXCLUDE_CANNEDMESSAGES
 #include "modules/CannedMessageModule.h"
 #endif
 #if !MESHTASTIC_EXCLUDE_DETECTIONSENSOR
 #include "modules/DetectionSensorModule.h"
+#endif
+#if !MESHTASTIC_EXCLUDE_HERMESX
+#include "HermesXLog.h"
+#include "modules/HermesXInterfaceModule.h"
 #endif
 #if !MESHTASTIC_EXCLUDE_NEIGHBORINFO
 #include "modules/NeighborInfoModule.h"
@@ -163,15 +153,10 @@ void setupModules()
 #if !MESHTASTIC_EXCLUDE_POWERSTRESS
         new PowerStressModule();
 #endif
-#if !MESHTASTIC_EXCLUDE_LIGHTHOUSE
-        lighthouseModule = new LighthouseModule();
-#endif
 #if !MESHTASTIC_EXCLUDE_HERMESX
         globalHermes = new HermesXInterfaceModule();
-        emergencyModule = new EmergencyAdaptiveModule();
         HERMESX_LOG_INFO("new HermesInterface");
 #endif
-
         // Example: Put your module here
         // new ReplyModule();
 #if (HAS_BUTTON || ARCH_PORTDUINO) && !MESHTASTIC_EXCLUDE_INPUTBROKER
