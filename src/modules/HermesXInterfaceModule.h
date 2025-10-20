@@ -87,6 +87,10 @@ public:
     void stopPowerHoldAnimation(bool completed);
     void startPowerHoldFade(uint32_t now);
 
+    static void deferStartupVisuals();
+    static void setPowerHoldReady(bool ready);
+    static bool isPowerHoldReady();
+
     void setLedTheme(const LedTheme& theme) { currentTheme = theme; }
     void onCannedMessageResult(bool ack, const String& nodeName);
 

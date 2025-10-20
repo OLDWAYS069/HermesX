@@ -17,6 +17,7 @@
 #endif
 #if !MESHTASTIC_EXCLUDE_HERMESX
 #include "modules/HermesXInterfaceModule.h"
+#include "modules/HermesXPowerGuard.h"
 #endif
 
 #define DEBUG_BUTTONS 0
@@ -34,6 +35,10 @@ volatile ButtonThread::ButtonEventType ButtonThread::btnEvent = ButtonThread::BU
 #if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN)
 OneButton ButtonThread::userButton; // Get reference to static member
 #endif
+#if !MESHTASTIC_EXCLUDE_HERMESX && (defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) ||           \
+                                    defined(BUTTON_PIN_ALT) || defined(BUTTON_PIN_TOUCH)) && defined(HERMESX_GUARD_POWER_ANIMATIONS)
+bool ButtonThread::holdOffBypassed = false;
+#endif
 ButtonThread::ButtonThread() : OSThread("Button")
 {
 #if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN)
@@ -50,14 +55,36 @@ ButtonThread::ButtonThread() : OSThread("Button")
 #ifdef USERPREFS_BUTTON_PIN
     int pin = config.device.button_gpio ? config.device.button_gpio : USERPREFS_BUTTON_PIN; // Resolved button pin
 #endif
+    bool activeLow = true;
+    bool pullupActive = true;
 #if defined(HELTEC_CAPSULE_SENSOR_V3) || defined(HELTEC_SENSOR_HUB)
-    this->userButton = OneButton(pin, false, false);
+    activeLow = false;
+    pullupActive = false;
 #elif defined(BUTTON_ACTIVE_LOW)
-    this->userButton = OneButton(pin, BUTTON_ACTIVE_LOW, BUTTON_ACTIVE_PULLUP);
+    activeLow = BUTTON_ACTIVE_LOW;
+    pullupActive = BUTTON_ACTIVE_PULLUP;
 #else
-    this->userButton = OneButton(pin, true, true);
+    activeLow = true;
+    pullupActive = true;
 #endif
+    this->userButton = OneButton(pin, activeLow, pullupActive);
     LOG_DEBUG("Use GPIO%02d for button", pin);
+
+#if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS)
+    if (HermesXPowerGuard::guardEnabled()) {
+        bool pressedAtBoot = activeLow ? (digitalRead(pin) == LOW) : (digitalRead(pin) == HIGH);
+        if (HermesXPowerGuard::registerInitialButtonState(pressedAtBoot)) {
+            bootHoldArmed = true;
+            bootHoldPressActive = pressedAtBoot;
+            bootHoldWaitingForPress = !pressedAtBoot;
+            bootHoldStartMs = pressedAtBoot ? millis() : 0;
+            holdOffBypassed = true;
+            LOG_BUTTON("BootHold: armed (usb=%d, pressed=%d)", HermesXPowerGuard::usbPresentAtBoot() ? 1 : 0,
+                       pressedAtBoot ? 1 : 0);
+            HermesXInterfaceModule::setPowerHoldReady(false);
+        }
+    }
+#endif
 #endif
 
 #ifdef INPUT_PULLUP_SENSE
@@ -168,7 +195,24 @@ int32_t ButtonThread::runOnce()
     canSleep = true; // Assume we should not keep the board awake
 
 #if defined(BUTTON_PIN) || defined(USERPREFS_BUTTON_PIN)
-    userButton.tick();
+    bool userButtonTicked = false;
+#endif
+
+#if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS) &&                                                 \
+    (defined(BUTTON_PIN) || defined(USERPREFS_BUTTON_PIN))
+    if (bootHoldArmed) {
+        userButton.tick();
+        userButtonTicked = true;
+        if (handleBootHold()) {
+            return 50;
+        }
+    }
+#endif
+
+#if defined(BUTTON_PIN) || defined(USERPREFS_BUTTON_PIN)
+    if (!userButtonTicked) {
+        userButton.tick();
+    }
     canSleep &= userButton.isIdle();
 #elif defined(ARCH_PORTDUINO)
     if (settingsMap.count(user) != 0 && settingsMap[user] != RADIOLIB_NC) {
@@ -556,16 +600,90 @@ void ButtonThread::updatePowerHoldAnimation()
 
 #endif
 
+#if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS) &&                                                   \
+    (defined(BUTTON_PIN) || defined(USERPREFS_BUTTON_PIN))
+bool ButtonThread::handleBootHold()
+{
+    if (!bootHoldArmed)
+        return false;
+
+    bool currentlyPressed = userButton.debouncedValue();
+
+    if (bootHoldWaitingForPress) {
+        if (!currentlyPressed)
+            return true;
+
+        bootHoldWaitingForPress = false;
+        bootHoldPressActive = true;
+        HermesXPowerGuard::markPressDetected();
+        bootHoldStartMs = millis();
+        LOG_BUTTON("BootHold: press detected");
+    }
+
+    if (!bootHoldPressActive && currentlyPressed) {
+        bootHoldPressActive = true;
+        bootHoldStartMs = millis();
+    }
+
+    if (!currentlyPressed) {
+        uint32_t pressedMs = userButton.getPressedMs();
+        if (!bootHoldPressActive || pressedMs < BUTTON_LONGPRESS_MS) {
+            HermesXPowerGuard::markBootHoldAborted();
+            HermesXPowerGuard::requestShutdownAnimationSuppression();
+            LOG_BUTTON("BootHold: aborted (sleep)");
+            bootHoldArmed = false;
+            bootHoldPressActive = false;
+            bootHoldWaitingForPress = false;
+            holdOffBypassed = false;
+            HermesXInterfaceModule::setPowerHoldReady(false);
+            power->shutdown();
+            return true;
+        }
+        bootHoldArmed = false;
+        bootHoldPressActive = false;
+        bootHoldWaitingForPress = false;
+        holdOffBypassed = false;
+        return false;
+    }
+
+    uint32_t pressedMs = userButton.getPressedMs();
+
+    if (pressedMs >= BUTTON_LONGPRESS_MS) {
+        HermesXPowerGuard::markBootHoldCommitted();
+        LOG_BUTTON("BootHold: committed (ready)");
+        bootHoldArmed = false;
+        bootHoldPressActive = false;
+        bootHoldWaitingForPress = false;
+        holdOffBypassed = false;
+        HermesXInterfaceModule::setPowerHoldReady(true);
+        return false;
+    }
+
+    HermesXPowerGuard::setPowerHoldReady(false);
+    return true;
+}
+#endif
+
 void ButtonThread::userButtonPressedLongStart()
 {
+#if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS) &&                                                   \
+    (defined(BUTTON_PIN) || defined(USERPREFS_BUTTON_PIN) || defined(ARCH_PORTDUINO))
+    if (holdOffBypassed || (millis() > c_holdOffTime)) {
+#else
     if (millis() > c_holdOffTime) {
+#endif
         btnEvent = BUTTON_EVENT_LONG_PRESSED;
     }
 }
 
 void ButtonThread::userButtonPressedLongStop()
 {
+#if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS) &&                                                   \
+    (defined(BUTTON_PIN) || defined(USERPREFS_BUTTON_PIN) || defined(ARCH_PORTDUINO))
+    if (holdOffBypassed || (millis() > c_holdOffTime)) {
+#else
     if (millis() > c_holdOffTime) {
+#endif
         btnEvent = BUTTON_EVENT_LONG_RELEASED;
     }
 }

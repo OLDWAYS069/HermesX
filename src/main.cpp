@@ -102,6 +102,10 @@ NRF52Bluetooth *nrf52Bluetooth = nullptr;
 #include "ButtonThread.h"
 #endif
 
+#if !MESHTASTIC_EXCLUDE_HERMESX
+#include "modules/HermesXPowerGuard.h"
+#endif
+
 #include "AmbientLightingThread.h"
 #include "PowerFSMThread.h"
 
@@ -546,6 +550,17 @@ void setup()
     power->setStatusHandler(powerStatus);
     powerStatus->observe(&power->newStatus);
     power->setup(); // Must be after status handler is installed, so that handler gets notified of the initial configuration
+#if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS)
+    power->readPowerStatus();
+    bool usbPresent = powerStatus && powerStatus->knowsUSB() ? powerStatus->getHasUSB() : false;
+    bool wokeFromTimer = false;
+    bool wokeFromExt = false;
+#ifdef ARCH_ESP32
+    wokeFromTimer = (wakeCause == ESP_SLEEP_WAKEUP_TIMER);
+    wokeFromExt = (wakeCause == ESP_SLEEP_WAKEUP_EXT0 || wakeCause == ESP_SLEEP_WAKEUP_EXT1);
+#endif
+    HermesXPowerGuard::initialize(usbPresent, wokeFromTimer, wokeFromExt);
+#endif
 
 #if !MESHTASTIC_EXCLUDE_I2C
     // We need to scan here to decide if we have a screen for nodeDB.init() and because power has been applied to
@@ -787,7 +802,13 @@ void setup()
                   meshtastic_Config_DeviceConfig_Role_TAK_TRACKER, meshtastic_Config_DeviceConfig_Role_SENSOR))
         LOG_DEBUG("Tracker/Sensor: Skip start melody");
     else
+#if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS)
+        if (HermesXPowerGuard::startupVisualsAllowed()) {
+            playStartMelody();
+        }
+#else
         playStartMelody();
+#endif
 
 #if !HAS_TFT
     // fixed screen override?

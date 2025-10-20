@@ -14,6 +14,9 @@
 #include "error.h"
 #include "main.h"
 #include "meshUtils.h"
+#if !MESHTASTIC_EXCLUDE_HERMESX
+#include "modules/HermesXPowerGuard.h"
+#endif
 
 #ifdef BQ25703A_ADDR
 #include "BQ25713.h"
@@ -400,6 +403,9 @@ void clearBonds()
 
 void enterDfuMode()
 {
+#if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS)
+    HermesXPowerGuard::requestDfuBypassForNextBoot();
+#endif
 // SDK kit does not have native USB like almost all other NRF52 boards
 #ifdef NRF_USE_SERIAL_DFU
     enterSerialDfu();

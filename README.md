@@ -29,10 +29,10 @@ Meshtastic enables text messaging, location sharing, and telemetry over a decent
 
 ### Get Started
 
-- 🔧 **[Building Instructions](https://meshtastic.org/docs/development/firmware/build)** – Learn how to compile the firmware from source.
-- ⚡ **[Flashing Instructions](https://meshtastic.org/docs/getting-started/flashing-firmware/)** – Install or update the firmware on your device.
+- **[Building Instructions](https://meshtastic.org/docs/development/firmware/build)** - Learn how to compile the firmware from source.
+- **[Flashing Instructions](https://meshtastic.org/docs/getting-started/flashing-firmware/)** - Install or update the firmware on your device.
 
-Join our community and help improve Meshtastic! 🚀
+Join our community and help improve Meshtastic!
 
 ## Stats
 

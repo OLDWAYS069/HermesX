@@ -31,6 +31,7 @@
 #include "HermesXLog.h"
 #include "HermesFace.h"
 #include "graphics/ScreenFonts.h"
+#include "modules/HermesXPowerGuard.h"
 
 
 
@@ -203,6 +204,35 @@ uint32_t safeTimeout = 5000;
 
 HermesXFeedbackCallback hermesXCallback = nullptr;
 
+void HermesXInterfaceModule::deferStartupVisuals()
+{
+#if defined(HERMESX_GUARD_POWER_ANIMATIONS)
+    HermesXPowerGuard::setPowerHoldReady(false);
+#endif
+    if (HermesXInterfaceModule::instance) {
+        HermesXInterfaceModule::instance->powerHoldReady = false;
+    }
+}
+
+void HermesXInterfaceModule::setPowerHoldReady(bool ready)
+{
+#if defined(HERMESX_GUARD_POWER_ANIMATIONS)
+    HermesXPowerGuard::setPowerHoldReady(ready);
+#endif
+    if (HermesXInterfaceModule::instance) {
+        HermesXInterfaceModule::instance->powerHoldReady = ready;
+    }
+}
+
+bool HermesXInterfaceModule::isPowerHoldReady()
+{
+#if defined(HERMESX_GUARD_POWER_ANIMATIONS)
+    return HermesXPowerGuard::isPowerHoldReady();
+#else
+    return true;
+#endif
+}
+
 HermesXInterfaceModule::HermesXInterfaceModule()
   : SinglePortModule("hermesx", meshtastic_PortNum_PRIVATE_APP),
     OSThread("hermesTask", 500),
@@ -211,13 +241,22 @@ HermesXInterfaceModule::HermesXInterfaceModule()
 {
     globalHermes = this;
     HermesXInterfaceModule::instance = this;
+#if defined(HERMESX_GUARD_POWER_ANIMATIONS)
+    powerHoldReady = HermesXPowerGuard::isPowerHoldReady();
+#endif
     observe(&service->fromNumChanged);
     isPromiscuous = true;
     loopbackOk = true;
     initLED();
 
     HERMESX_LOG_DEBUG("constroct");
+#if defined(HERMESX_GUARD_POWER_ANIMATIONS)
+    if (HermesXPowerGuard::startupVisualsAllowed()) {
+        playStartupLEDAnimation(currentTheme.colorIdleBreathBase);
+    }
+#else
     playStartupLEDAnimation(currentTheme.colorIdleBreathBase);
+#endif
 }
 
 void HermesXInterfaceModule::setup()
@@ -874,7 +913,7 @@ void HermesXInterfaceModule::startPowerHoldAnimation(PowerHoldMode mode, uint32_
     powerHoldMode = mode;
     powerHoldDurationMs = holdDurationMs;
     powerHoldElapsedMs = 0;
-    powerHoldReady = false;
+    HermesXInterfaceModule::setPowerHoldReady(false);
     powerHoldFadeActive = false;
     powerHoldLatchedRed = false;
     powerHoldFadeStartMs = 0;
@@ -906,7 +945,7 @@ void HermesXInterfaceModule::stopPowerHoldAnimation(bool completed) {
     }
 
     powerHoldActive = false;
-    powerHoldReady = false;
+    HermesXInterfaceModule::setPowerHoldReady(false);
     powerHoldFadeActive = false;
     powerHoldLatchedRed = false;
     powerHoldMode = PowerHoldMode::None;
@@ -915,12 +954,17 @@ void HermesXInterfaceModule::stopPowerHoldAnimation(bool completed) {
 }
 
 void HermesXInterfaceModule::startPowerHoldFade(uint32_t now) {
+#if defined(HERMESX_GUARD_POWER_ANIMATIONS)
+    if (!HermesXPowerGuard::isPowerHoldReady()) {
+        return;
+    }
+#endif
     if (powerHoldFadeActive || powerHoldLatchedRed) {
         return;
     }
 
     powerHoldActive = false;
-    powerHoldReady = true;
+    HermesXInterfaceModule::setPowerHoldReady(true);
     powerHoldFadeActive = true;
     powerHoldLatchedRed = false;
     powerHoldFadeStartMs = now;
@@ -961,13 +1005,40 @@ void HermesXInterfaceModule::playShutdownEffect(uint32_t durationMs)
 {
     const uint32_t effectiveDuration = durationMs ? durationMs : 700;
 
+#if defined(HERMESX_GUARD_POWER_ANIMATIONS)
+    if (HermesXPowerGuard::consumeShutdownAnimationSuppression()) {
+        HermesXPowerGuard::logBootHoldEvent("BootHold: shutdown animation suppressed");
+        pendingSuccessFeedback = false;
+        animState = LedAnimState::IDLE;
+        flashOn = false;
+        flashCount = 0;
+
+        powerHoldActive = false;
+        HermesXInterfaceModule::setPowerHoldReady(false);
+        powerHoldFadeActive = false;
+        powerHoldLatchedRed = false;
+        powerHoldMode = PowerHoldMode::None;
+        powerHoldDurationMs = 0;
+        powerHoldElapsedMs = 0;
+
+        rgb.clear();
+        rgb.show();
+
+        music.stopTone();
+        stopTone();
+
+        disableVisibleOutputsCommon();
+        return;
+    }
+#endif
+
     pendingSuccessFeedback = false;
     animState = LedAnimState::IDLE;
     flashOn = false;
     flashCount = 0;
 
     powerHoldActive = false;
-    powerHoldReady = false;
+    HermesXInterfaceModule::setPowerHoldReady(false);
     powerHoldFadeActive = false;
     powerHoldLatchedRed = false;
     powerHoldMode = PowerHoldMode::None;
@@ -1005,13 +1076,6 @@ void runPreDeepSleepHook(const SleepPreHookParams &params)
         fallbackShutdownEffect(ms);
     }
 }
-
-
-
-
-
-
-
 
 
 

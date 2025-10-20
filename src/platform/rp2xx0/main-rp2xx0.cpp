@@ -4,6 +4,9 @@
 #include <hardware/pll.h>
 #include <pico/stdlib.h>
 #include <pico/unique_id.h>
+#if !MESHTASTIC_EXCLUDE_HERMESX
+#include "modules/HermesXPowerGuard.h"
+#endif
 
 #ifdef __PLAT_RP2040__
 #include <pico/sleep.h>
@@ -127,6 +130,9 @@ void rp2040Setup()
 
 void enterDfuMode()
 {
+#if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS)
+    HermesXPowerGuard::requestDfuBypassForNextBoot();
+#endif
     reset_usb_boot(0, 0);
 }
 

@@ -154,6 +154,9 @@ void setupModules()
         new PowerStressModule();
 #endif
 #if !MESHTASTIC_EXCLUDE_HERMESX
+#if defined(HERMESX_GUARD_POWER_ANIMATIONS)
+        HermesXInterfaceModule::deferStartupVisuals();
+#endif
         globalHermes = new HermesXInterfaceModule();
         HERMESX_LOG_INFO("new HermesInterface");
 #endif

@@ -39,6 +39,9 @@ class ButtonThread : public concurrency::OSThread
     void storeClickCount();
 #if !MESHTASTIC_EXCLUDE_HERMESX
     void updatePowerHoldAnimation();
+#if defined(HERMESX_GUARD_POWER_ANIMATIONS)
+    bool handleBootHold();
+#endif
 #endif
     bool isBuzzing() { return buzzer_flag; }
     void setScreenFlag(bool flag) { screen_flag = flag; }
@@ -56,6 +59,13 @@ class ButtonThread : public concurrency::OSThread
     bool holdAnimationActive = false;
     uint32_t holdAnimationLastMs = 0;
     HoldAnimationMode resolveHoldMode() const;
+#if defined(HERMESX_GUARD_POWER_ANIMATIONS)
+    bool bootHoldArmed = false;
+    bool bootHoldPressActive = false;
+    bool bootHoldWaitingForPress = false;
+    uint32_t bootHoldStartMs = 0;
+    static bool holdOffBypassed;
+#endif
 #endif
 #if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN)
     static OneButton userButton; // Static - accessed from an interrupt
