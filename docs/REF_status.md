@@ -28,3 +28,6 @@
   - task_emui_rotary3021.md
 - 所有提交請使用 patch 格式（見 docs/CODEX_PATCH_FORMAT.md）
 - TRACKER 的 TFT是160X80
+## 備註
+- `Resuming...` 畫面代表此次為 EXT1/RTC 喚醒，需長按電源鍵直到超過 `BUTTON_LONGPRESS_MS` 才能完成啟動；若提前放開會依照 BootHold 流程重新進入深睡。
+
