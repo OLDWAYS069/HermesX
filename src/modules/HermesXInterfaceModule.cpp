@@ -542,19 +542,19 @@ void HermesXInterfaceModule::updateLED() {
     rgb.fill(bgColor);
 
     // === 事件?�畫（送出/?�收/?��?資�?�?==
-    if (animState == LedAnimState::SEND_R2L || animState == LedAnimState::RECV_L2R || animState == LedAnimState::INFO2_L2R) {
+    if (animState == LedAnimState::SEND_L2R || animState == LedAnimState::RECV_R2L || animState == LedAnimState::INFO2_R2L) {
         const uint16_t stepInterval = 80;
         if (now - lastAnimStep >= stepInterval) {
             lastAnimStep = now;
             int next = animPos + animDir;
             if (next < 0 || next >= NUM_LEDS) {
                 // ?��??��? idle runner ?�起點、方?�設�?
-                if (animState == LedAnimState::SEND_R2L) {
-                    idlePos = 0;
-                    idleDir = 1;
-                } else {
+                if (animState == LedAnimState::SEND_L2R) {
                     idlePos = NUM_LEDS - 1;
                     idleDir = -1;
+                } else {
+                    idlePos = 0;
+                    idleDir = 1;
                 }
                 animState = LedAnimState::IDLE;
             } else {
@@ -564,8 +564,11 @@ void HermesXInterfaceModule::updateLED() {
 
         if (animState != LedAnimState::IDLE) {
             rgb.setPixelColor(animPos, eventColor);
-            if (animState == LedAnimState::INFO2_L2R && animPos + 1 < NUM_LEDS) {
-                rgb.setPixelColor(animPos + 1, eventColor);
+            if (animState == LedAnimState::INFO2_R2L) {
+                int second = animPos + animDir;
+                if (second >= 0 && second < NUM_LEDS) {
+                    rgb.setPixelColor(second, eventColor);
+                }
             }
         }
 
@@ -866,25 +869,25 @@ void HermesXInterfaceModule::showEmergencyBanner(bool on, const __FlashStringHel
 }
 
 void HermesXInterfaceModule::startSendAnim() {
-    animState = LedAnimState::SEND_R2L;
-    animPos = NUM_LEDS - 1;
-    animDir = -1;
+    animState = LedAnimState::SEND_L2R;
+    animPos = 0;
+    animDir = 1;
     eventColor = currentTheme.colorSendPrimary;
     lastAnimStep = millis();
 }
 
 void HermesXInterfaceModule::startReceiveAnim() {
-    animState = LedAnimState::RECV_L2R;
-    animPos = 0;
-    animDir = 1;
+    animState = LedAnimState::RECV_R2L;
+    animPos = NUM_LEDS - 1;
+    animDir = -1;
     eventColor = currentTheme.colorReceivePrimary;
     lastAnimStep = millis();
 }
 
 void HermesXInterfaceModule::startInfoReceiveAnimTwoDots() {
-    animState = LedAnimState::INFO2_L2R;
-    animPos = 0;
-    animDir = 1;
+    animState = LedAnimState::INFO2_R2L;
+    animPos = NUM_LEDS - 1;
+    animDir = -1;
     eventColor = currentTheme.colorAck;
     lastAnimStep = millis();
 }
@@ -1076,6 +1079,3 @@ void runPreDeepSleepHook(const SleepPreHookParams &params)
         fallbackShutdownEffect(ms);
     }
 }
-
-
-

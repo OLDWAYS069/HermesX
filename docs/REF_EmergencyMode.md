@@ -6,7 +6,7 @@
 - `CannedMessageModule::setActiveList()` automatically switches UI focus to the emergency menu when the module is in emergency or drill mode, so the user sees SOS/SAFE options immediately.
 
 ## UI and Feedback
-- LED/face animations follow the standard HermesX scheme: send (`SEND_R2L`), receive (`RECV_L2R`), ACK (`ACK_FLASH` with green face), NACK (`NACK_FLASH` with red face), and idle breathing.
+- LED/face animations follow the standard HermesX scheme: send (`SEND_L2R`), receive (`RECV_R2L`), ACK (`ACK_FLASH` with green face), NACK (`NACK_FLASH` with red face), and idle breathing.
 - SOS activation plays the send tone, shows the SOS banner, and keeps retrying until an ACK is received.
 - ACK/NACK events are handled centrally through `handleAckNotification()` which updates `waitingForAck`, schedules success animations, or triggers NACK feedback.
 
@@ -32,3 +32,4 @@ Current emergency menu entries (localized via `rebuildEmergencyMenu()`):
 - `src/modules/CannedMessageModule.cpp`
 - `src/modules/EmergencyAdaptiveModule.cpp`
 - Docs: `REF_prd.md`, `REF_status.md`, `REF_techspec.md`
+

@@ -35,7 +35,7 @@
 
 #define VEXT_ENABLE 3 // active HIGH - powers the GPS, GPS LNA and OLED
 #define VEXT_ON_VALUE HIGH
-#define BUTTON_PIN 43
+#define BUTTON_PIN 4
 
 #define BATTERY_PIN 1 // A battery voltage measurement pin, voltage divider connected here to measure battery voltage
 #define ADC_CHANNEL ADC1_GPIO1_CHANNEL

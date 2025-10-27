@@ -32,7 +32,7 @@ struct LedTheme {
     float breathBrightnessMax;
 };
 
-enum class LedAnimState { IDLE, SEND_R2L, RECV_L2R, INFO2_L2R, ACK_FLASH, NACK_FLASH };
+enum class LedAnimState { IDLE, SEND_L2R, RECV_R2L, INFO2_R2L, ACK_FLASH, NACK_FLASH };
 
 class HermesXInterfaceModule : public SinglePortModule, public concurrency::OSThread, public Observer<uint32_t> {
 public:

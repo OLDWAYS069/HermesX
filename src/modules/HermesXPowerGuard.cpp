@@ -48,7 +48,6 @@ static void clearDfuFlagIfSet()
 void initialize(bool usbPresent, bool wokeFromTimer, bool wokeFromExt)
 {
     (void)wokeFromTimer;
-    (void)wokeFromExt;
 
     gUsbPresent = usbPresent;
     gSuppressShutdownAnim = false;
@@ -72,7 +71,7 @@ void initialize(bool usbPresent, bool wokeFromTimer, bool wokeFromExt)
     }
 #endif
 
-    if (gQuietBoot) {
+    if (gQuietBoot || wokeFromExt) {
         gRequireLongPress = true;
         gWaitingForPress = true;
         gStartupVisualsAllowed = false;
@@ -80,8 +79,8 @@ void initialize(bool usbPresent, bool wokeFromTimer, bool wokeFromExt)
     }
 
 #if DEBUG_BUTTONS
-    if (gQuietBoot) {
-        LOG_DEBUG("BootHold: armed (usb=%d)", usbPresent ? 1 : 0);
+    if (gQuietBoot || wokeFromExt) {
+        LOG_DEBUG("BootHold: armed (usb=%d, wokeFromExt=%d)", usbPresent ? 1 : 0, wokeFromExt ? 1 : 0);
     }
 #endif
 }
