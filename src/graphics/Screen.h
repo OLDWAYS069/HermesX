@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "configuration.h"
 
@@ -289,6 +289,10 @@ class Screen : public concurrency::OSThread
     void setFunctionSymbol(std::string sym);
     void removeFunctionSymbol(std::string sym);
 
+    // --- HermesX Remove TFT fast-path START
+    void drawMixed(OLEDDisplay *display, int16_t x, int16_t y, const char *text, int advanceX = 12, int lineHeight = 13);
+    // --- HermesX Remove TFT fast-path END
+
     /// Stops showing the boot screen.
     void stopBootScreen() { enqueueCmd(ScreenCmd{.cmd = Cmd::STOP_BOOT_SCREEN}); }
 
@@ -348,9 +352,9 @@ class Screen : public concurrency::OSThread
         case 0xC3: {
 
             if (ch == 147)
-                return (uint8_t)(ch); // Ó
+                return (uint8_t)(ch); // ?
             else if (ch == 179)
-                return (uint8_t)(148); // ó
+                return (uint8_t)(148); // 籀
             else
                 return (uint8_t)(ch | 0xC0);
             break;
@@ -364,9 +368,9 @@ class Screen : public concurrency::OSThread
         case 0xC5: {
             SKIPREST = false;
             if (ch == 132)
-                return (uint8_t)(136); // ń
+                return (uint8_t)(136); // ?
             else if (ch == 186)
-                return (uint8_t)(137); // ź
+                return (uint8_t)(137); // 驕
             else
                 return (uint8_t)(ch);
             break;
@@ -392,13 +396,13 @@ class Screen : public concurrency::OSThread
         case 0xD0: {
             SKIPREST = false;
             if (ch == 132)
-                return (uint8_t)(170); // Є
+                return (uint8_t)(170); // ?
             if (ch == 134)
-                return (uint8_t)(178); // І
+                return (uint8_t)(178); // ?
             if (ch == 135)
-                return (uint8_t)(175); // Ї
+                return (uint8_t)(175); // ?
             if (ch == 129)
-                return (uint8_t)(168); // Ё
+                return (uint8_t)(168); // ?
             if (ch > 143 && ch < 192)
                 return (uint8_t)(ch + 48);
             break;
@@ -406,13 +410,13 @@ class Screen : public concurrency::OSThread
         case 0xD1: {
             SKIPREST = false;
             if (ch == 148)
-                return (uint8_t)(186); // є
+                return (uint8_t)(186); // ?
             if (ch == 150)
-                return (uint8_t)(179); // і
+                return (uint8_t)(179); // ?
             if (ch == 151)
-                return (uint8_t)(191); // ї
+                return (uint8_t)(191); // ?
             if (ch == 145)
-                return (uint8_t)(184); // ё
+                return (uint8_t)(184); // ?
             if (ch > 127 && ch < 144)
                 return (uint8_t)(ch + 112);
             break;
@@ -420,9 +424,9 @@ class Screen : public concurrency::OSThread
         case 0xD2: {
             SKIPREST = false;
             if (ch == 144)
-                return (uint8_t)(165); // Ґ
+                return (uint8_t)(165); // ?
             if (ch == 145)
-                return (uint8_t)(180); // ґ
+                return (uint8_t)(180); // ?
             break;
         }
         }
@@ -449,60 +453,60 @@ class Screen : public concurrency::OSThread
         case 0xC4: {
             SKIPREST = false;
             if (ch == 140)
-                return (uint8_t)(129); // Č
+                return (uint8_t)(129); // ?
             if (ch == 141)
-                return (uint8_t)(138); // č
+                return (uint8_t)(138); // ?
             if (ch == 142)
-                return (uint8_t)(130); // Ď
+                return (uint8_t)(130); // ?
             if (ch == 143)
-                return (uint8_t)(139); // ď
+                return (uint8_t)(139); // ?
             if (ch == 154)
-                return (uint8_t)(131); // Ě
+                return (uint8_t)(131); // ?
             if (ch == 155)
-                return (uint8_t)(140); // ě
+                return (uint8_t)(140); // ?
             // Slovak specific glyphs
             if (ch == 185)
-                return (uint8_t)(147); // Ĺ
+                return (uint8_t)(147); // 贏
             if (ch == 186)
-                return (uint8_t)(148); // ĺ
+                return (uint8_t)(148); // 贍
             if (ch == 189)
-                return (uint8_t)(149); // Ľ
+                return (uint8_t)(149); // 躅
             if (ch == 190)
-                return (uint8_t)(150); // ľ
+                return (uint8_t)(150); // 躂
             break;
         }
 
         case 0xC5: {
             SKIPREST = false;
             if (ch == 135)
-                return (uint8_t)(132); // Ň
+                return (uint8_t)(132); // ?
             if (ch == 136)
-                return (uint8_t)(141); // ň
+                return (uint8_t)(141); // ?
             if (ch == 152)
-                return (uint8_t)(133); // Ř
+                return (uint8_t)(133); // ?
             if (ch == 153)
-                return (uint8_t)(142); // ř
+                return (uint8_t)(142); // ?
             if (ch == 160)
-                return (uint8_t)(134); // Š
+                return (uint8_t)(134); // ?
             if (ch == 161)
-                return (uint8_t)(143); // š
+                return (uint8_t)(143); // 禳
             if (ch == 164)
-                return (uint8_t)(135); // Ť
+                return (uint8_t)(135); // 聾
             if (ch == 165)
-                return (uint8_t)(144); // ť
+                return (uint8_t)(144); // 聽
             if (ch == 174)
-                return (uint8_t)(136); // Ů
+                return (uint8_t)(136); // 躓
             if (ch == 175)
-                return (uint8_t)(145); // ů
+                return (uint8_t)(145); // 轡
             if (ch == 189)
-                return (uint8_t)(137); // Ž
+                return (uint8_t)(137); // 鬚
             if (ch == 190)
-                return (uint8_t)(146); // ž
+                return (uint8_t)(146); // 鱉
             // Slovak specific glyphs
             if (ch == 148)
-                return (uint8_t)(151); // Ŕ
+                return (uint8_t)(151); // ?
             if (ch == 149)
-                return (uint8_t)(152); // ŕ
+                return (uint8_t)(152); // ?
             break;
         }
         }
@@ -519,7 +523,7 @@ class Screen : public concurrency::OSThread
             return (uint8_t)0;
         SKIPREST = true;
 
-        return (uint8_t)191; // otherwise: return ¿ if character can't be converted (note that the font map we're using doesn't
+        return (uint8_t)191; // otherwise: return 聶 if character can't be converted (note that the font map we're using doesn't
                              // stick to standard EASCII codes)
     }
 
@@ -684,6 +688,9 @@ class Screen : public concurrency::OSThread
 
     /// Display device
     OLEDDisplay *dispdev;
+    // --- HermesX Remove TFT fast-path START
+    // TFT fast-path disabled; no cached pointer required.
+    // --- HermesX Remove TFT fast-path END
 
     /// UI helper for rendering to frames and switching between them
     OLEDDisplayUi *ui;

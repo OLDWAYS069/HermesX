@@ -1,0 +1,18 @@
+{
+  "glyphs": {
+    "count": 5129,
+    "bytes_per_glyph": 18,
+    "total_bytes": 92322,
+    "sha256": "3f24a04cb5baa9231bf87500f6a1157fbc277112e6e73db06766ac66f908b9d0"
+  },
+  "codepoints": {
+    "count": 5129,
+    "bytes_per_codepoint": 4,
+    "total_bytes": 20516,
+    "sha256": "efa4f593aab6d31dc5c6b8d6bd4f0e00007cfd0bf1ad067c4076582943077023"
+  },
+  "font": {
+    "source": "unifont.ttf",
+    "size_px": 12
+  }
+}

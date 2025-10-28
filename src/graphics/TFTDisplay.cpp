@@ -1145,6 +1145,82 @@ void TFTDisplay::setDetected(uint8_t detected)
     (void)detected;
 }
 
+// --- HermesX TFT fast-path START
+#if defined(HERMESX_TFT_FASTPATH)
+bool TFTDisplay::writeRow565(int16_t x, int16_t y, const uint16_t *row565, int len)
+{
+    if (len <= 0)
+        return true;
+    if (!row565)
+        return false;
+
+    const int16_t displayWidth = static_cast<int16_t>(width());
+    const int16_t displayHeight = static_cast<int16_t>(height());
+    if (displayWidth <= 0 || displayHeight <= 0)
+        return false;
+
+    if (y < 0 || y >= displayHeight)
+        return true;
+
+    int16_t drawX = x;
+    int offset = 0;
+    int remaining = len;
+
+    if (drawX < 0) {
+        offset = -drawX;
+        if (offset >= remaining)
+            return true;
+        drawX = 0;
+        remaining -= offset;
+    }
+
+    if (drawX >= displayWidth)
+        return true;
+
+    if (drawX + remaining > displayWidth)
+        remaining = displayWidth - drawX;
+    if (remaining <= 0)
+        return true;
+
+    const uint16_t *source = row565 + offset;
+
+    concurrency::LockGuard g(spiLock);
+#if defined(RAK14014)
+    tft->startWrite();
+    tft->setAddrWindow(drawX, y, drawX + static_cast<int16_t>(remaining) - 1, y);
+    tft->pushPixels(const_cast<uint16_t *>(source), static_cast<uint32_t>(remaining));
+    tft->endWrite();
+#else
+    tft->startWrite();
+    tft->setWindow(drawX, y, drawX + static_cast<int16_t>(remaining) - 1, y);
+    tft->writePixels(source, static_cast<int32_t>(remaining), false);
+    tft->endWrite();
+#endif
+    return true;
+}
+
+uint16_t TFTDisplay::mapColor(uint32_t logicalColor) const
+{
+    if (logicalColor <= static_cast<uint32_t>(OLEDDISPLAY_COLOR::INVERSE)) {
+        switch (static_cast<OLEDDISPLAY_COLOR>(logicalColor)) {
+        case OLEDDISPLAY_COLOR::BLACK:
+            return COLOR565(0x00, 0x00, 0x00);
+        case OLEDDISPLAY_COLOR::WHITE:
+        case OLEDDISPLAY_COLOR::INVERSE:
+            return COLOR565(0xFF, 0xFF, 0xFF);
+        default:
+            break;
+        }
+    }
+
+    uint8_t r = static_cast<uint8_t>((logicalColor >> 16) & 0xFFu);
+    uint8_t g = static_cast<uint8_t>((logicalColor >> 8) & 0xFFu);
+    uint8_t b = static_cast<uint8_t>(logicalColor & 0xFFu);
+    return COLOR565(r, g, b);
+}
+#endif
+// --- HermesX TFT fast-path END
+
 // Connect to the display
 bool TFTDisplay::connect()
 {

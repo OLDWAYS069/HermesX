@@ -2,7 +2,7 @@
 
 SSD1306 - Screen module
 
-Copyright (C) 2018 by Xose Pérez <xose dot perez at gmail dot com>
+Copyright (C) 2018 by Xose Perez <xose dot perez at gmail dot com>
 
 
 This program is free software: you can redistribute it and/or modify
@@ -37,6 +37,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "gps/GeoCoord.h"
 #include "gps/RTC.h"
 #include "graphics/ScreenFonts.h"
+// --- HermesX Remove TFT fast-path START
+#include "graphics/fonts/HermesX_zh/HermesX_CN12.h"
+#include <inttypes.h>
+// --- HermesX Remove TFT fast-path END
 #include "graphics/images.h"
 #include "input/ScanAndSelect.h"
 #include "input/TouchScreenImpl1.h"
@@ -137,7 +141,7 @@ static bool haveGlyphs(const char *str)
     bool have = true;
     for (uint16_t i = 0; i < strlen(str); i++) {
         uint8_t result = Screen::customFontTableLookup((uint8_t)str[i]);
-        // If font doesn't support a character, it is substituted for ¿
+        // If font doesn't support a character, it is substituted for 聶
         if (result == 191 && (uint8_t)str[i] != 191) {
             have = false;
             break;
@@ -164,7 +168,12 @@ static void drawIconScreen(const char *upperMsg, OLEDDisplay *display, OLEDDispl
     display->setFont(FONT_MEDIUM);
     display->setTextAlignment(TEXT_ALIGN_LEFT);
     const char *title = "HermesX";
-    display->drawString(x + getStringCenteredX(title), y + SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM, title);
+    // --- HermesX Remove TFT fast-path START
+    if (screen)
+        screen->drawMixed(display, x + getStringCenteredX(title), y + SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM, title);
+    else
+        HermesX_zh::drawMixed(*display, x + getStringCenteredX(title), y + SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM, title);
+    // --- HermesX Remove TFT fast-path END
     display->setFont(FONT_SMALL);
 
     // Draw region in upper left
@@ -176,7 +185,13 @@ static void drawIconScreen(const char *upperMsg, OLEDDisplay *display, OLEDDispl
     snprintf(buf, sizeof(buf), "%s\n%s", xstr(APP_VERSION_SHORT), haveGlyphs(owner.short_name) ? owner.short_name : "");
 
     display->setTextAlignment(TEXT_ALIGN_RIGHT);
-    display->drawString(x + SCREEN_WIDTH, y + 0, buf);
+    // --- HermesX Remove TFT fast-path START
+    const int bufWidth = HermesX_zh::stringAdvance(buf);
+    if (screen)
+        screen->drawMixed(display, x + SCREEN_WIDTH - bufWidth, y + 0, buf);
+    else
+        HermesX_zh::drawMixed(*display, x + SCREEN_WIDTH - bufWidth, y + 0, buf);
+    // --- HermesX Remove TFT fast-path END
     screen->forceDisplay();
 
     display->setTextAlignment(TEXT_ALIGN_LEFT); // Restore left align, just to be kind to any other unsuspecting code
@@ -205,19 +220,36 @@ static void drawOEMIconScreen(const char *upperMsg, OLEDDisplay *display, OLEDDi
 
     display->setTextAlignment(TEXT_ALIGN_LEFT);
     const char *title = USERPREFS_OEM_TEXT;
-    display->drawString(x + getStringCenteredX(title), y + SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM, title);
+    // --- HermesX Remove TFT fast-path START
+    if (screen)
+        screen->drawMixed(display, x + getStringCenteredX(title), y + SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM, title);
+    else
+        HermesX_zh::drawMixed(*display, x + getStringCenteredX(title), y + SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM, title);
+    // --- HermesX Remove TFT fast-path END
     display->setFont(FONT_SMALL);
 
     // Draw region in upper left
-    if (upperMsg)
-        display->drawString(x + 0, y + 0, upperMsg);
+    if (upperMsg) {
+        // --- HermesX Remove TFT fast-path START
+        if (screen)
+            screen->drawMixed(display, x + 0, y + 0, upperMsg);
+        else
+            HermesX_zh::drawMixed(*display, x + 0, y + 0, upperMsg);
+        // --- HermesX Remove TFT fast-path END
+    }
 
     // Draw version and shortname in upper right
     char buf[25];
     snprintf(buf, sizeof(buf), "%s\n%s", xstr(APP_VERSION_SHORT), haveGlyphs(owner.short_name) ? owner.short_name : "");
 
     display->setTextAlignment(TEXT_ALIGN_RIGHT);
-    display->drawString(x + SCREEN_WIDTH, y + 0, buf);
+    // --- HermesX Remove TFT fast-path START
+    const int bufWidth = HermesX_zh::stringAdvance(buf);
+    if (screen)
+        screen->drawMixed(display, x + SCREEN_WIDTH - bufWidth, y + 0, buf);
+    else
+        HermesX_zh::drawMixed(*display, x + SCREEN_WIDTH - bufWidth, y + 0, buf);
+    // --- HermesX Remove TFT fast-path END
     screen->forceDisplay();
 
     display->setTextAlignment(TEXT_ALIGN_LEFT); // Restore left align, just to be kind to any other unsuspecting code
@@ -293,7 +325,13 @@ static void drawFunctionOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
         char buf[64];
         display->setFont(FONT_SMALL);
         snprintf(buf, sizeof(buf), "%s", functionSymbolString.c_str());
-        display->drawString(SCREEN_WIDTH - display->getStringWidth(buf), SCREEN_HEIGHT - FONT_HEIGHT_SMALL, buf);
+        // --- HermesX Remove TFT fast-path START
+        const int width = HermesX_zh::stringAdvance(buf);
+        if (screen)
+            screen->drawMixed(display, SCREEN_WIDTH - width, SCREEN_HEIGHT - FONT_HEIGHT_SMALL, buf);
+        else
+            HermesX_zh::drawMixed(*display, SCREEN_WIDTH - width, SCREEN_HEIGHT - FONT_HEIGHT_SMALL, buf);
+        // --- HermesX Remove TFT fast-path END
     }
 }
 
@@ -392,12 +430,22 @@ static void drawFrameFirmware(OLEDDisplay *display, OLEDDisplayUiState *state, i
 {
     display->setTextAlignment(TEXT_ALIGN_CENTER);
     display->setFont(FONT_MEDIUM);
-    display->drawString(64 + x, y, "Updating");
-
+    // --- HermesX Remove TFT fast-path START
+    if (screen)
+        screen->drawMixed(display, 64 + x, y, "Updating");
+    else
+        HermesX_zh::drawMixed(*display, 64 + x, y, "Updating");
+    // --- HermesX Remove TFT fast-path END
     display->setFont(FONT_SMALL);
     display->setTextAlignment(TEXT_ALIGN_LEFT);
-    display->drawStringMaxWidth(0 + x, 2 + y + FONT_HEIGHT_SMALL * 2, x + display->getWidth(),
-                                "Please be patient and do not power off.");
+    // --- HermesX Remove TFT fast-path START
+    if (screen)
+        HermesX_zh::drawMixedBounded(*display, 0 + x, 2 + y + FONT_HEIGHT_SMALL * 2, display->getWidth(),
+                                     "Please be patient and do not power off.", 12, FONT_HEIGHT_SMALL, nullptr);
+    else
+        HermesX_zh::drawMixedBounded(*display, 0 + x, 2 + y + FONT_HEIGHT_SMALL * 2, display->getWidth(),
+                                     "Please be patient and do not power off.", 12, FONT_HEIGHT_SMALL, nullptr);
+    // --- HermesX Remove TFT fast-path END
 }
 
 /// Draw the last text message we received
@@ -609,7 +657,7 @@ void Screen::drawSegmentedDisplayCharacter(OLEDDisplay *display, int x, int y, u
         {0, 1, 1, 0, 0, 0, 0}, // 1                   1
         {1, 1, 0, 1, 1, 0, 1}, // 2                  ___
         {1, 1, 1, 1, 0, 0, 1}, // 3              6  |   | 2
-        {0, 1, 1, 0, 0, 1, 1}, // 4                 |_7̲_|
+        {0, 1, 1, 0, 0, 1, 1}, // 4                 |_7戽_|
         {1, 0, 1, 1, 0, 1, 1}, // 5              5  |   | 3
         {1, 0, 1, 1, 1, 1, 1}, // 6                 |___|
         {1, 1, 1, 0, 0, 1, 0}, // 7
@@ -619,12 +667,7 @@ void Screen::drawSegmentedDisplayCharacter(OLEDDisplay *display, int x, int y, u
 
     // the width and height of each segment's central rectangle:
     //             _____________________
-    //           ⋰|  (only this part,  |⋱
-    //         ⋰  |   not including    |  ⋱
-    //         ⋱  |   the triangles    |  ⋰
-    //           ⋱|    on the ends)    |⋰
-    //             ‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
-
+    //           ?院  (only this part,  |??    //         ?? |   not including    |  ??    //         ?? |   the triangles    |  ??    //           ?悴    on the ends)    |??    //             ?撾撾撾撾撾撾撾撾撾撾撾撾撾撾撾撾撾撾撾撾?
     uint16_t segmentWidth = SEGMENT_WIDTH * scale;
     uint16_t segmentHeight = SEGMENT_HEIGHT * scale;
 
@@ -1005,6 +1048,7 @@ static void drawTextMessageFrame(OLEDDisplay *display, OLEDDisplayUiState *state
     display->setColor(WHITE);
 #ifndef EXCLUDE_EMOJI
     const char *msg = reinterpret_cast<const char *>(mp.decoded.payload.bytes);
+    // NOTE: Emoji comparisons below use explicit UTF-8 literals; keep this block UTF-8 encoded and do not replace with '?' placeholders
     if (strcmp(msg, "\U0001F44D") == 0) {
         display->drawXbm(x + (SCREEN_WIDTH - thumbs_width) / 2,
                          y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - thumbs_height) / 2 + 2 + 5, thumbs_width, thumbs_height,
@@ -1020,11 +1064,11 @@ static void drawTextMessageFrame(OLEDDisplay *display, OLEDDisplayUiState *state
         display->drawXbm(x + (SCREEN_WIDTH - smiley_width) / 2,
                          y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - smiley_height) / 2 + 2 + 5, smiley_width, smiley_height,
                          smiley);
-    } else if (strcmp(msg, "❓") == 0) {
+    } else if (strcmp(msg, "\xE2\x80\xBC") == 0) { // U+203C DOUBLE EXCLAMATION MARK
         display->drawXbm(x + (SCREEN_WIDTH - question_width) / 2,
                          y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - question_height) / 2 + 2 + 5, question_width, question_height,
                          question);
-    } else if (strcmp(msg, "‼️") == 0) {
+    } else if (strcmp(msg, "\xE2\x80\xBC\xEF\xB8\x8F") == 0) { // U+203C + U+FE0F (double exclamation mark VS16)
         display->drawXbm(x + (SCREEN_WIDTH - bang_width) / 2, y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - bang_height) / 2 + 2 + 5,
                          bang_width, bang_height, bang);
     } else if (strcmp(msg, "\U0001F4A9") == 0) {
@@ -1051,27 +1095,41 @@ static void drawTextMessageFrame(OLEDDisplay *display, OLEDDisplayUiState *state
     } else if (strcmp(msg, "\u2614") == 0) {
         display->drawXbm(x + (SCREEN_WIDTH - rain_width) / 2, y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - rain_height) / 2 + 2 + 10,
                          rain_width, rain_height, rain);
-    } else if (strcmp(msg, "☁️") == 0) {
+    } else if (strcmp(msg, "\u2601") == 0) {
         display->drawXbm(x + (SCREEN_WIDTH - cloud_width) / 2,
                          y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - cloud_height) / 2 + 2 + 5, cloud_width, cloud_height, cloud);
-    } else if (strcmp(msg, "🌫️") == 0) {
+    } else if (strcmp(msg, "\U0001F32B") == 0) {
         display->drawXbm(x + (SCREEN_WIDTH - fog_width) / 2, y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - fog_height) / 2 + 2 + 5,
                          fog_width, fog_height, fog);
     } else if (strcmp(msg, "\U0001F608") == 0) {
         display->drawXbm(x + (SCREEN_WIDTH - devil_width) / 2,
                          y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - devil_height) / 2 + 2 + 5, devil_width, devil_height, devil);
-    } else if (strcmp(msg, "♥️") == 0 || strcmp(msg, "\U0001F9E1") == 0 || strcmp(msg, "\U00002763") == 0 ||
+    } else if (strcmp(msg, "\xE2\x9D\xA4") == 0 || strcmp(msg, "\xE2\x9D\xA4\xEF\xB8\x8F") == 0 || strcmp(msg, "\U0001F9E1") == 0 || strcmp(msg, "\u2763") == 0 ||
                strcmp(msg, "\U00002764") == 0 || strcmp(msg, "\U0001F495") == 0 || strcmp(msg, "\U0001F496") == 0 ||
                strcmp(msg, "\U0001F497") == 0 || strcmp(msg, "\U0001F498") == 0) {
         display->drawXbm(x + (SCREEN_WIDTH - heart_width) / 2,
                          y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - heart_height) / 2 + 2 + 5, heart_width, heart_height, heart);
     } else {
         snprintf(tempBuf, sizeof(tempBuf), "%s", mp.decoded.payload.bytes);
-        display->drawStringMaxWidth(0 + x, 0 + y + FONT_HEIGHT_SMALL, x + display->getWidth(), tempBuf);
+        // --- HermesX Remove TFT fast-path START
+        if (screen)
+            HermesX_zh::drawMixedBounded(*display, 0 + x, 0 + y + FONT_HEIGHT_SMALL, display->getWidth(), tempBuf, 12,
+                                         FONT_HEIGHT_SMALL, nullptr);
+        else
+            HermesX_zh::drawMixedBounded(*display, 0 + x, 0 + y + FONT_HEIGHT_SMALL, display->getWidth(), tempBuf, 12,
+                                         FONT_HEIGHT_SMALL, nullptr);
+        // --- HermesX Remove TFT fast-path END
     }
 #else
     snprintf(tempBuf, sizeof(tempBuf), "%s", mp.decoded.payload.bytes);
-    display->drawStringMaxWidth(0 + x, 0 + y + FONT_HEIGHT_SMALL, x + display->getWidth(), tempBuf);
+    // --- HermesX Remove TFT fast-path START
+    if (screen)
+        HermesX_zh::drawMixedBounded(*display, 0 + x, 0 + y + FONT_HEIGHT_SMALL, display->getWidth(), tempBuf, 12,
+                                     FONT_HEIGHT_SMALL, nullptr);
+    else
+        HermesX_zh::drawMixedBounded(*display, 0 + x, 0 + y + FONT_HEIGHT_SMALL, display->getWidth(), tempBuf, 12,
+                                     FONT_HEIGHT_SMALL, nullptr);
+    // --- HermesX Remove TFT fast-path END
 #endif
 }
 
@@ -1247,9 +1305,9 @@ static void drawGPScoordinates(OLEDDisplay *display, int16_t x, int16_t y, const
         } else {
             char latLine[22];
             char lonLine[22];
-            snprintf(latLine, sizeof(latLine), "%2i° %2i' %2u\" %1c", geoCoord.getDMSLatDeg(), geoCoord.getDMSLatMin(),
+            snprintf(latLine, sizeof(latLine), "%2i簞 %2i' %2u\" %1c", geoCoord.getDMSLatDeg(), geoCoord.getDMSLatMin(),
                      geoCoord.getDMSLatSec(), geoCoord.getDMSLatCP());
-            snprintf(lonLine, sizeof(lonLine), "%3i° %2i' %2u\" %1c", geoCoord.getDMSLonDeg(), geoCoord.getDMSLonMin(),
+            snprintf(lonLine, sizeof(lonLine), "%3i簞 %2i' %2u\" %1c", geoCoord.getDMSLonDeg(), geoCoord.getDMSLonMin(),
                      geoCoord.getDMSLonSec(), geoCoord.getDMSLonCP());
             display->drawString(x + (SCREEN_WIDTH - (display->getStringWidth(latLine))) / 2, y - FONT_HEIGHT_SMALL * 1, latLine);
             display->drawString(x + (SCREEN_WIDTH - (display->getStringWidth(lonLine))) / 2, y, lonLine);
@@ -1447,9 +1505,9 @@ static void drawNodeInfo(OLEDDisplay *display, OLEDDisplayUiState *state, int16_
 
     static char distStr[20];
     if (config.display.units == meshtastic_Config_DisplayConfig_DisplayUnits_IMPERIAL) {
-        strncpy(distStr, "? mi ?°", sizeof(distStr)); // might not have location data
+        strncpy(distStr, "? mi ?簞", sizeof(distStr)); // might not have location data
     } else {
-        strncpy(distStr, "? km ?°", sizeof(distStr));
+        strncpy(distStr, "? km ?簞", sizeof(distStr));
     }
     meshtastic_NodeInfoLite *ourNode = nodeDB->getMeshNode(nodeDB->getNodeNum());
     const char *fields[] = {username, lastStr, signalStr, distStr, NULL};
@@ -1495,15 +1553,15 @@ static void drawNodeInfo(OLEDDisplay *display, OLEDDisplayUiState *state, int16_
 
             if (config.display.units == meshtastic_Config_DisplayConfig_DisplayUnits_IMPERIAL) {
                 if (d < (2 * MILES_TO_FEET))
-                    snprintf(distStr, sizeof(distStr), "%.0fft   %.0f°", d * METERS_TO_FEET, bearingToOtherDegrees);
+                    snprintf(distStr, sizeof(distStr), "%.0fft   %.0f簞", d * METERS_TO_FEET, bearingToOtherDegrees);
                 else
-                    snprintf(distStr, sizeof(distStr), "%.1fmi   %.0f°", d * METERS_TO_FEET / MILES_TO_FEET,
+                    snprintf(distStr, sizeof(distStr), "%.1fmi   %.0f簞", d * METERS_TO_FEET / MILES_TO_FEET,
                              bearingToOtherDegrees);
             } else {
                 if (d < 2000)
-                    snprintf(distStr, sizeof(distStr), "%.0fm   %.0f°", d, bearingToOtherDegrees);
+                    snprintf(distStr, sizeof(distStr), "%.0fm   %.0f簞", d, bearingToOtherDegrees);
                 else
-                    snprintf(distStr, sizeof(distStr), "%.1fkm   %.0f°", d / 1000, bearingToOtherDegrees);
+                    snprintf(distStr, sizeof(distStr), "%.1fkm   %.0f簞", d / 1000, bearingToOtherDegrees);
             }
         }
     }
@@ -1857,6 +1915,17 @@ static uint32_t lastScreenTransition;
 
 int32_t Screen::runOnce()
 {
+    // --- HermesX Remove TFT fast-path START
+    static bool loggedMissingGlyphs = false;
+    if (!loggedMissingGlyphs) {
+        const uint32_t missing = HermesX_zh::drainMissingGlyphs();
+        if (missing) {
+            LOG_WARN("HermesX CN12 fallback glyphs used: %" PRIu32, missing);
+            loggedMissingGlyphs = true;
+        }
+    }
+    // --- HermesX Remove TFT fast-path END
+
     // If we don't have a screen, don't ever spend any CPU for us.
     if (!useDisplay) {
         enabled = false;
@@ -2362,6 +2431,16 @@ void Screen::removeFunctionSymbol(std::string sym)
     setFastFramerate();
 }
 
+// --- HermesX Remove TFT fast-path START
+void Screen::drawMixed(OLEDDisplay *display, int16_t x, int16_t y, const char *text, int advanceX, int lineHeight)
+{
+    if (!display || !text)
+        return;
+
+    HermesX_zh::drawMixed(*display, x, y, text, advanceX, lineHeight, nullptr);
+}
+// --- HermesX Remove TFT fast-path END
+
 std::string Screen::drawTimeDelta(uint32_t days, uint32_t hours, uint32_t minutes, uint32_t seconds)
 {
     std::string uptime;
@@ -2493,8 +2572,13 @@ void DebugInfo::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16
     }
 #endif
     display->setColor(WHITE);
+    // --- HermesX Remove TFT fast-path START
+    const int idWidth = HermesX_zh::stringAdvance(ourId);
     // Draw the channel name
-    display->drawString(x, y + FONT_HEIGHT_SMALL, channelStr);
+    if (screen)
+        screen->drawMixed(display, x, y + FONT_HEIGHT_SMALL, channelStr);
+    else
+        HermesX_zh::drawMixed(*display, x, y + FONT_HEIGHT_SMALL, channelStr);
     // Draw our hardware ID to assist with bluetooth pairing. Either prefix with Info or S&F Logo
     if (moduleConfig.store_forward.enabled) {
 #ifdef ARCH_ESP32
@@ -2503,24 +2587,24 @@ void DebugInfo::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16
 #if (defined(USE_EINK) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7735_CS) ||      \
      defined(ST7789_CS) || defined(USE_ST7789) || defined(HX8357_CS) || defined(ILI9488_CS) || ARCH_PORTDUINO) &&                \
     !defined(DISPLAY_FORCE_SMALL_FONTS)
-            display->drawFastImage(x + SCREEN_WIDTH - 14 - display->getStringWidth(ourId), y + 3 + FONT_HEIGHT_SMALL, 12, 8,
+            display->drawFastImage(x + SCREEN_WIDTH - 14 - idWidth, y + 3 + FONT_HEIGHT_SMALL, 12, 8,
                                    imgQuestionL1);
-            display->drawFastImage(x + SCREEN_WIDTH - 14 - display->getStringWidth(ourId), y + 11 + FONT_HEIGHT_SMALL, 12, 8,
+            display->drawFastImage(x + SCREEN_WIDTH - 14 - idWidth, y + 11 + FONT_HEIGHT_SMALL, 12, 8,
                                    imgQuestionL2);
 #else
-            display->drawFastImage(x + SCREEN_WIDTH - 10 - display->getStringWidth(ourId), y + 2 + FONT_HEIGHT_SMALL, 8, 8,
+            display->drawFastImage(x + SCREEN_WIDTH - 10 - idWidth, y + 2 + FONT_HEIGHT_SMALL, 8, 8,
                                    imgQuestion);
 #endif
         } else {
 #if (defined(USE_EINK) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7735_CS) ||      \
      defined(ST7789_CS) || defined(USE_ST7789) || defined(ILI9488_CS) || defined(HX8357_CS)) &&                                  \
     !defined(DISPLAY_FORCE_SMALL_FONTS)
-            display->drawFastImage(x + SCREEN_WIDTH - 18 - display->getStringWidth(ourId), y + 3 + FONT_HEIGHT_SMALL, 16, 8,
+            display->drawFastImage(x + SCREEN_WIDTH - 18 - idWidth, y + 3 + FONT_HEIGHT_SMALL, 16, 8,
                                    imgSFL1);
-            display->drawFastImage(x + SCREEN_WIDTH - 18 - display->getStringWidth(ourId), y + 11 + FONT_HEIGHT_SMALL, 16, 8,
+            display->drawFastImage(x + SCREEN_WIDTH - 18 - idWidth, y + 11 + FONT_HEIGHT_SMALL, 16, 8,
                                    imgSFL2);
 #else
-            display->drawFastImage(x + SCREEN_WIDTH - 13 - display->getStringWidth(ourId), y + 2 + FONT_HEIGHT_SMALL, 11, 8,
+            display->drawFastImage(x + SCREEN_WIDTH - 13 - idWidth, y + 2 + FONT_HEIGHT_SMALL, 11, 8,
                                    imgSF);
 #endif
         }
@@ -2530,16 +2614,20 @@ void DebugInfo::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16
 #if (defined(USE_EINK) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7735_CS) ||      \
      defined(ST7789_CS) || defined(USE_ST7789) || defined(HX8357_CS) || defined(ILI9488_CS) || ARCH_PORTDUINO) &&                \
     !defined(DISPLAY_FORCE_SMALL_FONTS)
-        display->drawFastImage(x + SCREEN_WIDTH - 14 - display->getStringWidth(ourId), y + 3 + FONT_HEIGHT_SMALL, 12, 8,
+        display->drawFastImage(x + SCREEN_WIDTH - 14 - idWidth, y + 3 + FONT_HEIGHT_SMALL, 12, 8,
                                imgInfoL1);
-        display->drawFastImage(x + SCREEN_WIDTH - 14 - display->getStringWidth(ourId), y + 11 + FONT_HEIGHT_SMALL, 12, 8,
+        display->drawFastImage(x + SCREEN_WIDTH - 14 - idWidth, y + 11 + FONT_HEIGHT_SMALL, 12, 8,
                                imgInfoL2);
 #else
-        display->drawFastImage(x + SCREEN_WIDTH - 10 - display->getStringWidth(ourId), y + 2 + FONT_HEIGHT_SMALL, 8, 8, imgInfo);
+        display->drawFastImage(x + SCREEN_WIDTH - 10 - idWidth, y + 2 + FONT_HEIGHT_SMALL, 8, 8, imgInfo);
 #endif
     }
 
-    display->drawString(x + SCREEN_WIDTH - display->getStringWidth(ourId), y + FONT_HEIGHT_SMALL, ourId);
+    if (screen)
+        screen->drawMixed(display, x + SCREEN_WIDTH - idWidth, y + FONT_HEIGHT_SMALL, ourId);
+    else
+        HermesX_zh::drawMixed(*display, x + SCREEN_WIDTH - idWidth, y + FONT_HEIGHT_SMALL, ourId);
+    // --- HermesX Remove TFT fast-path END
 
     // Draw any log messages
     display->drawLogBuffer(x, y + (FONT_HEIGHT_SMALL * 2));
@@ -2866,3 +2954,7 @@ int Screen::handleAdminMessage(const meshtastic_AdminMessage *arg)
 #else
 graphics::Screen::Screen(ScanI2C::DeviceAddress, meshtastic_Config_DisplayConfig_OledType, OLEDDISPLAY_GEOMETRY) {}
 #endif // HAS_SCREEN
+
+
+
+

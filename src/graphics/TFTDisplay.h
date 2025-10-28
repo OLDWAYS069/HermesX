@@ -2,6 +2,9 @@
 
 #include <GpioLogic.h>
 #include <OLEDDisplay.h>
+#if defined(HERMESX_TFT_FASTPATH)
+#include <cstdint>
+#endif
 
 /**
  * An adapter class that allows using the LovyanGFX library as if it was an OLEDDisplay implementation.
@@ -47,6 +50,11 @@ class TFTDisplay : public OLEDDisplay
      * We (cruftily) make it static so that variant.cpp can access it without needing a ptr to the TFTDisplay instance.
      */
     static GpioPin *backlightEnable;
+
+#if defined(HERMESX_TFT_FASTPATH)
+    bool writeRow565(int16_t x, int16_t y, const uint16_t *row565, int len);
+    uint16_t mapColor(uint32_t logicalColor) const;
+#endif
 
   protected:
     // the header size of the buffer used, e.g. for the SPI command header

@@ -18,6 +18,7 @@
 
 #include "main.h"                               // for cardkb_found
 #include "modules/ExternalNotificationModule.h" // for buzzer control
+#include "graphics/fonts/HermesX_zh/HermesX_CN12.h"
 #if !MESHTASTIC_EXCLUDE_GPS
 #include "GPS.h"
 #endif
@@ -31,6 +32,8 @@
 
 #include "graphics/ScreenFonts.h"
 #include <Throttle.h>
+#include <algorithm>
+#include <cstring>
 
 // Remove Canned message screen if no action is taken for some milliseconds
 #define INACTIVATE_AFTER_MS 20000
@@ -42,6 +45,134 @@ static const char *cannedMessagesConfigFile = "/prefs/cannedConf.proto";
 meshtastic_CannedMessageModuleConfig cannedMessageModuleConfig;
 
 CannedMessageModule *cannedMessageModule;
+
+// --- HermesX Canned UTF-8 render fix START
+namespace
+{
+void drawMixedText(OLEDDisplay &display, int16_t x, int16_t y, const char *text, int lineHeight)
+{
+    if (!text)
+        return;
+    graphics::HermesX_zh::drawMixed(display, x, y, text, graphics::HermesX_zh::GLYPH_WIDTH, lineHeight, nullptr);
+}
+
+void drawMixedText(OLEDDisplay &display, int16_t x, int16_t y, const String &text, int lineHeight)
+{
+    drawMixedText(display, x, y, text.c_str(), lineHeight);
+}
+
+void drawMixedBoundedText(OLEDDisplay &display, int16_t x, int16_t y, int16_t maxWidth, const char *text, int lineHeight)
+{
+    if (!text)
+        return;
+    graphics::HermesX_zh::drawMixedBounded(display, x, y, maxWidth, text, graphics::HermesX_zh::GLYPH_WIDTH, lineHeight,
+                                           nullptr);
+}
+
+void drawMixedBoundedText(OLEDDisplay &display, int16_t x, int16_t y, int16_t maxWidth, const String &text,
+                          int lineHeight)
+{
+    drawMixedBoundedText(display, x, y, maxWidth, text.c_str(), lineHeight);
+}
+
+String substringAsString(const char *start, size_t length)
+{
+    String result;
+    result.reserve(length);
+    for (size_t i = 0; i < length; ++i)
+        result += start[i];
+    return result;
+}
+
+int mixedStringWidth(OLEDDisplay &display, const char *text)
+{
+    if (!text)
+        return 0;
+    const char *cursor = text;
+    const char *end = cursor + std::strlen(text);
+    int maxWidth = 0;
+    int lineWidth = 0;
+    while (cursor < end) {
+        std::uint32_t cp = graphics::HermesX_zh::nextCodepoint(cursor, end);
+        if (cp == 0)
+            break;
+        if (cp == '\r')
+            continue;
+        if (cp == '\n') {
+            maxWidth = std::max(maxWidth, lineWidth);
+            lineWidth = 0;
+            continue;
+        }
+        if (cp >= 0x20u && cp < 0x7Fu) {
+            const char *segmentStart = cursor - 1;
+            size_t segmentLength = 1;
+            while (cursor < end) {
+                const unsigned char nextByte = static_cast<unsigned char>(*cursor);
+                if (nextByte >= 0x20u && nextByte < 0x7Fu) {
+                    ++cursor;
+                    ++segmentLength;
+                } else {
+                    break;
+                }
+            }
+            String asciiSegment = substringAsString(segmentStart, segmentLength);
+            int advance = static_cast<int>(display.getStringWidth(asciiSegment));
+            if (advance <= 0)
+                advance = graphics::HermesX_zh::GLYPH_WIDTH;
+            lineWidth += advance;
+        } else {
+            lineWidth += graphics::HermesX_zh::GLYPH_WIDTH;
+        }
+    }
+    return std::max(maxWidth, lineWidth);
+}
+
+int mixedStringWidth(OLEDDisplay &display, const String &text)
+{
+    return mixedStringWidth(display, text.c_str());
+}
+
+void drawMixedCentered(OLEDDisplay &display, int16_t centerX, int16_t y, const char *text, int lineHeight)
+{
+    if (!text)
+        return;
+    const char *cursor = text;
+    const char *lineStart = cursor;
+    int lineIndex = 0;
+    while (true) {
+        const char *newline = std::strchr(lineStart, '\n');
+        const size_t length = newline ? static_cast<size_t>(newline - lineStart) : std::strlen(lineStart);
+        String lineString = substringAsString(lineStart, length);
+        const int width = mixedStringWidth(display, lineString);
+        const int drawX = centerX - (width / 2);
+        drawMixedText(display, drawX, y + lineIndex * lineHeight, lineString, lineHeight);
+        if (!newline)
+            break;
+        lineStart = newline + 1;
+        ++lineIndex;
+    }
+}
+
+void drawMixedCentered(OLEDDisplay &display, int16_t centerX, int16_t y, const String &text, int lineHeight)
+{
+    drawMixedCentered(display, centerX, y, text.c_str(), lineHeight);
+}
+
+void drawMixedRightAligned(OLEDDisplay &display, int16_t rightX, int16_t y, const char *text, int lineHeight)
+{
+    if (!text)
+        return;
+    const int width = mixedStringWidth(display, text);
+    const int drawX = rightX - width;
+    drawMixedText(display, drawX, y, text, lineHeight);
+}
+
+void drawMixedRightAligned(OLEDDisplay &display, int16_t rightX, int16_t y, const String &text, int lineHeight)
+{
+    drawMixedRightAligned(display, rightX, y, text.c_str(), lineHeight);
+}
+
+} // namespace
 
 CannedMessageModule::CannedMessageModule()
     : SinglePortModule("canned", meshtastic_PortNum_TEXT_MESSAGE_APP), concurrency::OSThread("CannedMessage")
@@ -807,8 +938,9 @@ void CannedMessageModule::drawKeyboard(OLEDDisplay *display, OLEDDisplayUiState 
 
     display->setColor(OLEDDISPLAY_COLOR::WHITE);
 
-    display->drawStringMaxWidth(0, 0, display->getWidth(),
-                                cannedMessageModule->drawWithCursor(cannedMessageModule->freetext, cannedMessageModule->cursor));
+    drawMixedBoundedText(*display, 0, 0, display->getWidth(),
+                         cannedMessageModule->drawWithCursor(cannedMessageModule->freetext, cannedMessageModule->cursor),
+                         FONT_HEIGHT_SMALL);
 
     display->setFont(FONT_MEDIUM);
 
@@ -887,8 +1019,8 @@ void CannedMessageModule::drawKeyboard(OLEDDisplay *display, OLEDDisplayUiState 
 
                     display->setColor(OLEDDISPLAY_COLOR::BLACK);
 
-                    display->drawString(xOffset + characterOffset, yOffset + yCorrection,
-                                        letter.character == " " ? "space" : letter.character);
+                    drawMixedText(*display, xOffset + characterOffset, yOffset + yCorrection,
+                                  letter.character == " " ? "space" : letter.character, FONT_HEIGHT_MEDIUM);
 
                     display->setColor(OLEDDISPLAY_COLOR::WHITE);
 
@@ -896,8 +1028,8 @@ void CannedMessageModule::drawKeyboard(OLEDDisplay *display, OLEDDisplayUiState 
                 } else {
                     display->drawRect(xOffset, yOffset, cellWidth, cellHeight);
 
-                    display->drawString(xOffset + characterOffset, yOffset + yCorrection,
-                                        letter.character == " " ? "space" : letter.character);
+                    drawMixedText(*display, xOffset + characterOffset, yOffset + yCorrection,
+                                  letter.character == " " ? "space" : letter.character, FONT_HEIGHT_MEDIUM);
                 }
             }
         }
@@ -997,7 +1129,7 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
         LOG_DEBUG("Draw temporary message: %s", temporaryMessage.c_str());
         display->setTextAlignment(TEXT_ALIGN_CENTER);
         display->setFont(FONT_MEDIUM);
-        display->drawString(display->getWidth() / 2 + x, 0 + y + 12, temporaryMessage);
+        drawMixedCentered(*display, display->getWidth() / 2 + x, y + 12, temporaryMessage, FONT_HEIGHT_MEDIUM);
 #endif
     } else if (cannedMessageModule->runState == CANNED_MESSAGE_RUN_STATE_ACK_NACK_RECEIVED) {
         requestFocus();                        // Tell Screen::setFrames to move to our module's frame
@@ -1008,24 +1140,25 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
 #else
 #ifdef USE_EINK
         display->setFont(FONT_SMALL); // No chunky text
+        const int ackLineHeight = FONT_HEIGHT_SMALL;
 #else
         display->setFont(FONT_MEDIUM); // Chunky text
+        const int ackLineHeight = FONT_HEIGHT_MEDIUM;
 #endif
 
-        String displayString;
+        const char *successFormat = "Delivered to\n%s";
+        const char *failureFormat = "Delivery failed\nto %s";
         display->setTextAlignment(TEXT_ALIGN_CENTER);
-        if (this->ack) {
-            displayString = "Delivered to\n%s";
-        } else {
-            displayString = "Delivery failed\nto %s";
-        }
-        display->drawStringf(display->getWidth() / 2 + x, 0 + y + 12, buffer, displayString,
-                             cannedMessageModule->getNodeName(this->incoming));
+
+        const char *targetName = cannedMessageModule->getNodeName(this->incoming);
+        snprintf(buffer, sizeof(buffer), this->ack ? successFormat : failureFormat, targetName);
+        drawMixedCentered(*display, display->getWidth() / 2 + x, y + 12, buffer, ackLineHeight);
 
         display->setFont(FONT_SMALL);
+        const int statsLineHeight = FONT_HEIGHT_SMALL;
 
-        String snrString = "Last Rx SNR: %f";
-        String rssiString = "Last Rx RSSI: %d";
+        const char *snrFormat = "Last Rx SNR: %f";
+        const char *rssiFormat = "Last Rx RSSI: %d";
 
         // Don't bother drawing snr and rssi for tiny displays
         if (display->getHeight() > 100) {
@@ -1041,8 +1174,10 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
             }
 
             if (this->ack) {
-                display->drawStringf(display->getWidth() / 2 + x, snrY + y, buffer, snrString, this->lastRxSnr);
-                display->drawStringf(display->getWidth() / 2 + x, rssiY + y, buffer, rssiString, this->lastRxRssi);
+                snprintf(buffer, sizeof(buffer), snrFormat, this->lastRxSnr);
+                drawMixedCentered(*display, display->getWidth() / 2 + x, snrY + y, buffer, statsLineHeight);
+                snprintf(buffer, sizeof(buffer), rssiFormat, this->lastRxRssi);
+                drawMixedCentered(*display, display->getWidth() / 2 + x, rssiY + y, buffer, statsLineHeight);
             }
         }
 #endif
@@ -1059,9 +1194,8 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
 #else
         display->setFont(FONT_MEDIUM); // Chunky text
 #endif
-
         display->setTextAlignment(TEXT_ALIGN_CENTER);
-        display->drawString(display->getWidth() / 2 + x, 0 + y + 12, "Sending...");
+        drawMixedCentered(*display, display->getWidth() / 2 + x, y + 12, "Sending...", FONT_HEIGHT_MEDIUM);
 #endif
     } else if (cannedMessageModule->runState == CANNED_MESSAGE_RUN_STATE_DISABLED) {
 #if !MESHTASTIC_EXCLUDE_HERMESX
@@ -1070,7 +1204,7 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
 #else
         display->setTextAlignment(TEXT_ALIGN_LEFT);
         display->setFont(FONT_SMALL);
-        display->drawString(10 + x, 0 + y + FONT_HEIGHT_SMALL, "Canned Message\nModule disabled.");
+        drawMixedText(*display, 10 + x, y + FONT_HEIGHT_SMALL, "Canned Message\nModule disabled.", FONT_HEIGHT_SMALL);
 #endif
     } else if (cannedMessageModule->runState == CANNED_MESSAGE_RUN_STATE_FREETEXT) {
         requestFocus(); // Tell Screen::setFrames to move to our module's frame
@@ -1085,31 +1219,33 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
 
         display->setTextAlignment(TEXT_ALIGN_LEFT);
         display->setFont(FONT_SMALL);
+        const int smallLineHeight = FONT_HEIGHT_SMALL;
         if (this->destSelect != CANNED_MESSAGE_DESTINATION_TYPE_NONE) {
             display->fillRect(0 + x, 0 + y, x + display->getWidth(), y + FONT_HEIGHT_SMALL);
             display->setColor(BLACK);
         }
         switch (this->destSelect) {
         case CANNED_MESSAGE_DESTINATION_TYPE_NODE:
-            display->drawStringf(1 + x, 0 + y, buffer, "To: >%s<@%s", cannedMessageModule->getNodeName(this->dest),
-                                 channels.getName(indexChannels[this->channel]));
-            display->drawStringf(0 + x, 0 + y, buffer, "To: >%s<@%s", cannedMessageModule->getNodeName(this->dest),
-                                 channels.getName(indexChannels[this->channel]));
+            snprintf(buffer, sizeof(buffer), "To: >%s<@%s", cannedMessageModule->getNodeName(this->dest),
+                     channels.getName(indexChannels[this->channel]));
+            drawMixedText(*display, 1 + x, y, buffer, smallLineHeight);
+            drawMixedText(*display, 0 + x, y, buffer, smallLineHeight);
             break;
         case CANNED_MESSAGE_DESTINATION_TYPE_CHANNEL:
-            display->drawStringf(1 + x, 0 + y, buffer, "To: %s@>%s<", cannedMessageModule->getNodeName(this->dest),
-                                 channels.getName(indexChannels[this->channel]));
-            display->drawStringf(0 + x, 0 + y, buffer, "To: %s@>%s<", cannedMessageModule->getNodeName(this->dest),
-                                 channels.getName(indexChannels[this->channel]));
+            snprintf(buffer, sizeof(buffer), "To: %s@>%s<", cannedMessageModule->getNodeName(this->dest),
+                     channels.getName(indexChannels[this->channel]));
+            drawMixedText(*display, 1 + x, y, buffer, smallLineHeight);
+            drawMixedText(*display, 0 + x, y, buffer, smallLineHeight);
             break;
         default:
             if (display->getWidth() > 128) {
-                display->drawStringf(0 + x, 0 + y, buffer, "To: %s@%s", cannedMessageModule->getNodeName(this->dest),
-                                     channels.getName(indexChannels[this->channel]));
+                snprintf(buffer, sizeof(buffer), "To: %s@%s", cannedMessageModule->getNodeName(this->dest),
+                         channels.getName(indexChannels[this->channel]));
             } else {
-                display->drawStringf(0 + x, 0 + y, buffer, "To: %.5s@%.5s", cannedMessageModule->getNodeName(this->dest),
-                                     channels.getName(indexChannels[this->channel]));
+                snprintf(buffer, sizeof(buffer), "To: %.5s@%.5s", cannedMessageModule->getNodeName(this->dest),
+                         channels.getName(indexChannels[this->channel]));
             }
+            drawMixedText(*display, 0 + x, y, buffer, smallLineHeight);
             break;
         }
         // used chars right aligned, only when not editing the destination
@@ -1117,46 +1253,52 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
             uint16_t charsLeft =
                 meshtastic_Constants_DATA_PAYLOAD_LEN - this->freetext.length() - (moduleConfig.canned_message.send_bell ? 1 : 0);
             snprintf(buffer, sizeof(buffer), "%d left", charsLeft);
-            display->drawString(x + display->getWidth() - display->getStringWidth(buffer), y + 0, buffer);
+            drawMixedRightAligned(*display, x + display->getWidth(), y, buffer, smallLineHeight);
         }
         display->setColor(WHITE);
-        display->drawStringMaxWidth(
-            0 + x, 0 + y + FONT_HEIGHT_SMALL, x + display->getWidth(),
-            cannedMessageModule->drawWithCursor(cannedMessageModule->freetext, cannedMessageModule->cursor));
+        drawMixedBoundedText(*display, 0 + x, y + FONT_HEIGHT_SMALL, display->getWidth(),
+                             cannedMessageModule->drawWithCursor(cannedMessageModule->freetext, cannedMessageModule->cursor),
+                             smallLineHeight);
 #endif
     } else {
         if (this->messagesCount > 0) {
             display->setTextAlignment(TEXT_ALIGN_LEFT);
             display->setFont(FONT_SMALL);
-            display->drawStringf(0 + x, 0 + y, buffer, "To: %s", cannedMessageModule->getNodeName(this->dest));
+            const int smallLineHeight = FONT_HEIGHT_SMALL;
+            snprintf(buffer, sizeof(buffer), "To: %s", cannedMessageModule->getNodeName(this->dest));
+            drawMixedText(*display, 0 + x, 0 + y, buffer, smallLineHeight);
             int lines = (display->getHeight() / FONT_HEIGHT_SMALL) - 1;
             if (lines == 3) {
                 display->fillRect(0 + x, 0 + y + FONT_HEIGHT_SMALL * 2, x + display->getWidth(), y + FONT_HEIGHT_SMALL);
                 display->setColor(BLACK);
-                display->drawString(0 + x, 0 + y + FONT_HEIGHT_SMALL * 2, cannedMessageModule->getCurrentMessage());
+                drawMixedText(*display, 0 + x, 0 + y + FONT_HEIGHT_SMALL * 2, cannedMessageModule->getCurrentMessage(),
+                              smallLineHeight);
                 display->setColor(WHITE);
                 if (this->messagesCount > 1) {
-                    display->drawString(0 + x, 0 + y + FONT_HEIGHT_SMALL, cannedMessageModule->getPrevMessage());
-                    display->drawString(0 + x, 0 + y + FONT_HEIGHT_SMALL * 3, cannedMessageModule->getNextMessage());
+                    drawMixedText(*display, 0 + x, 0 + y + FONT_HEIGHT_SMALL, cannedMessageModule->getPrevMessage(),
+                                  smallLineHeight);
+                    drawMixedText(*display, 0 + x, 0 + y + FONT_HEIGHT_SMALL * 3, cannedMessageModule->getNextMessage(),
+                                  smallLineHeight);
                 }
             } else {
                 int topMsg = (messagesCount > lines && currentMessageIndex >= lines - 1) ? currentMessageIndex - lines + 2 : 0;
                 for (int i = 0; i < std::min(messagesCount, lines); i++) {
                     if (i == currentMessageIndex - topMsg) {
 #ifdef USE_EINK
-                        display->drawString(0 + x, 0 + y + FONT_HEIGHT_SMALL * (i + 1), ">");
-                        display->drawString(12 + x, 0 + y + FONT_HEIGHT_SMALL * (i + 1),
-                                            cannedMessageModule->getCurrentMessage());
+                        drawMixedText(*display, 0 + x, 0 + y + FONT_HEIGHT_SMALL * (i + 1), ">", smallLineHeight);
+                        drawMixedText(*display, 12 + x, 0 + y + FONT_HEIGHT_SMALL * (i + 1),
+                                      cannedMessageModule->getCurrentMessage(), smallLineHeight);
 #else
                         display->fillRect(0 + x, 0 + y + FONT_HEIGHT_SMALL * (i + 1), x + display->getWidth(),
                                           y + FONT_HEIGHT_SMALL);
                         display->setColor(BLACK);
-                        display->drawString(0 + x, 0 + y + FONT_HEIGHT_SMALL * (i + 1), cannedMessageModule->getCurrentMessage());
+                        drawMixedText(*display, 0 + x, 0 + y + FONT_HEIGHT_SMALL * (i + 1),
+                                      cannedMessageModule->getCurrentMessage(), smallLineHeight);
                         display->setColor(WHITE);
 #endif
                     } else if (messagesCount > 1) { // Only draw others if there are multiple messages
-                        display->drawString(0 + x, 0 + y + FONT_HEIGHT_SMALL * (i + 1),
-                                            cannedMessageModule->getMessageByIndex(topMsg + i));
+                        drawMixedText(*display, 0 + x, 0 + y + FONT_HEIGHT_SMALL * (i + 1),
+                                      cannedMessageModule->getMessageByIndex(topMsg + i), smallLineHeight);
                     }
                 }
             }
@@ -1292,5 +1434,7 @@ String CannedMessageModule::drawWithCursor(String text, int cursor)
     String result = text.substring(0, cursor) + "_" + text.substring(cursor);
     return result;
 }
+
+// --- HermesX Canned UTF-8 render fix END
 
 #endif
