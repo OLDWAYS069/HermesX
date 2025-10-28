@@ -521,6 +521,12 @@ ButtonThread::HoldAnimationMode ButtonThread::resolveHoldMode() const
 #endif
 }
 
+#if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT) ||                \
+    defined(BUTTON_PIN_TOUCH)
+static bool s_longPressEventArmed = false;
+static uint32_t s_longPressStartMillis = 0;
+#endif
+
 void ButtonThread::updatePowerHoldAnimation()
 {
 #if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT) || defined(BUTTON_PIN_TOUCH)
@@ -666,11 +672,29 @@ bool ButtonThread::handleBootHold()
 
 void ButtonThread::userButtonPressedLongStart()
 {
+#if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT)
+    uint32_t pressedMs = 0;
+#if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN)
+    pressedMs = userButton.getPressedMs();
+#endif
+#ifdef BUTTON_PIN_ALT
+    uint32_t altPressed = userButtonAlt.getPressedMs();
+    if (altPressed > pressedMs)
+        pressedMs = altPressed;
+#endif
+    if (pressedMs + 20 < BUTTON_LONGPRESS_MS)
+        return;
+#endif
+
 #if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS) &&                                                   \
     (defined(BUTTON_PIN) || defined(USERPREFS_BUTTON_PIN) || defined(ARCH_PORTDUINO))
     if (holdOffBypassed || (millis() > c_holdOffTime)) {
 #else
     if (millis() > c_holdOffTime) {
+#endif
+#if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT)
+        s_longPressEventArmed = true;
+        s_longPressStartMillis = millis() - pressedMs;
 #endif
         btnEvent = BUTTON_EVENT_LONG_PRESSED;
     }
@@ -678,14 +702,33 @@ void ButtonThread::userButtonPressedLongStart()
 
 void ButtonThread::userButtonPressedLongStop()
 {
+#if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT)
+    bool holdAllowed =
 #if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS) &&                                                   \
     (defined(BUTTON_PIN) || defined(USERPREFS_BUTTON_PIN) || defined(ARCH_PORTDUINO))
-    if (holdOffBypassed || (millis() > c_holdOffTime)) {
+        (holdOffBypassed || (millis() > c_holdOffTime));
 #else
-    if (millis() > c_holdOffTime) {
+        (millis() > c_holdOffTime);
 #endif
-        btnEvent = BUTTON_EVENT_LONG_RELEASED;
-    }
+
+    if (!s_longPressEventArmed)
+        return;
+
+    uint32_t duration = millis() - s_longPressStartMillis;
+    s_longPressEventArmed = false;
+
+    if (!holdAllowed)
+        return;
+
+    if (duration + 20 < BUTTON_LONGPRESS_MS)
+        return;
+#else
+    bool holdAllowed = (millis() > c_holdOffTime);
+    if (!holdAllowed)
+        return;
+#endif
+
+    btnEvent = BUTTON_EVENT_LONG_RELEASED;
 }
 
 
