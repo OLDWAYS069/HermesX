@@ -191,8 +191,12 @@ void fallbackShutdownEffect(uint32_t durationMs)
         fallbackMusicInit = true;
     }
 
-    performShutdownAnimation(durationMs, fallbackStrip, kPowerHoldRedColor, &fallbackMusic);
+    fallbackStrip.fill(kPowerHoldRedColor);
+    fallbackStrip.show();
+
     disableVisibleOutputsCommon();
+
+    performShutdownAnimation(durationMs, fallbackStrip, kPowerHoldRedColor, &fallbackMusic);
 }
 }
 
@@ -443,28 +447,28 @@ void HermesXInterfaceModule::updateLED() {
         if (progress > 1.0f) progress = 1.0f;
 
         rgb.clear();
-        uint32_t segmentColor = currentTheme.colorIdleBreathBase;
+        const uint32_t activeColor = kPowerHoldRedColor;
+        const uint32_t idleColor = currentTheme.colorIdleBreathBase;
 
         for (int step = 0; step < NUM_LEDS; ++step) {
             const int ledIndex = (NUM_LEDS - 1) - step;
             const float threshold = static_cast<float>(step + 1) / static_cast<float>(NUM_LEDS);
-            bool segmentOn = false;
 
+            bool segmentLatched = false;
             switch (powerHoldMode) {
             case PowerHoldMode::PowerOn:
-                segmentOn = progress >= threshold;
+                segmentLatched = progress >= threshold;
                 break;
             case PowerHoldMode::PowerOff:
-                segmentOn = progress < threshold;
+                segmentLatched = progress >= threshold;
                 break;
             default:
-                segmentOn = false;
+                segmentLatched = false;
                 break;
             }
 
-            if (segmentOn) {
-                rgb.setPixelColor(ledIndex, segmentColor);
-            }
+            const uint32_t color = segmentLatched ? activeColor : idleColor;
+            rgb.setPixelColor(ledIndex, color);
         }
 
         rgb.show();
@@ -968,8 +972,8 @@ void HermesXInterfaceModule::startPowerHoldFade(uint32_t now) {
 
     powerHoldActive = false;
     HermesXInterfaceModule::setPowerHoldReady(true);
-    powerHoldFadeActive = true;
-    powerHoldLatchedRed = false;
+    powerHoldFadeActive = false;
+    powerHoldLatchedRed = true;
     powerHoldFadeStartMs = now;
     if (powerHoldDurationMs > 0 && powerHoldElapsedMs < powerHoldDurationMs) {
         powerHoldElapsedMs = powerHoldDurationMs;
@@ -978,6 +982,9 @@ void HermesXInterfaceModule::startPowerHoldFade(uint32_t now) {
     animState = LedAnimState::IDLE;
     flashOn = false;
     flashCount = 0;
+
+    rgb.fill(kPowerHoldRedColor);
+    rgb.show();
 }
 
 void HermesXInterfaceModule::playStartupLEDAnimation(uint32_t color) {
@@ -1049,18 +1056,15 @@ void HermesXInterfaceModule::playShutdownEffect(uint32_t durationMs)
     powerHoldElapsedMs = 0;
 
     rgb.setBrightness(80);
-    rgb.clear();
+    rgb.fill(kPowerHoldRedColor);
     rgb.show();
 
     music.stopTone();
     stopTone();
 
-    performShutdownAnimation(effectiveDuration, rgb, kPowerHoldRedColor, &music);
-
-    rgb.clear();
-    rgb.show();
-
     disableVisibleOutputsCommon();
+
+    performShutdownAnimation(effectiveDuration, rgb, kPowerHoldRedColor, &music);
 }
 
 void HermesXInterfaceModule::renderLEDs()
