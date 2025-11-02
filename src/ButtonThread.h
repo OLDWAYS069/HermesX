@@ -52,6 +52,7 @@ class ButtonThread : public concurrency::OSThread
     int beforeLightSleep(void *unused);
     int afterLightSleep(esp_sleep_wakeup_cause_t cause);
 #endif
+    static void resetLongPressGates();
   private:
 #if !MESHTASTIC_EXCLUDE_HERMESX && (defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT) || defined(BUTTON_PIN_TOUCH))
     enum class HoldAnimationMode { None, PowerOn, PowerOff };
@@ -106,6 +107,9 @@ class ButtonThread : public concurrency::OSThread
     static void userButtonPressedLongStart();
     static void userButtonPressedLongStop();
     static void touchPressedLongStart() { btnEvent = BUTTON_EVENT_TOUCH_LONG_PRESSED; }
+
+    void resetLongPressState();
+    void updateLongGateTracking();
 };
 
 extern ButtonThread *buttonThread;

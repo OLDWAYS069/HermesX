@@ -143,6 +143,7 @@ ButtonThread::ButtonThread() : OSThread("Button")
 #endif
 
     attachButtonInterrupts();
+    resetLongPressState();
 #endif
 }
 
@@ -231,6 +232,7 @@ int32_t ButtonThread::runOnce()
 #if !MESHTASTIC_EXCLUDE_HERMESX
     updatePowerHoldAnimation();
 #endif
+    updateLongGateTracking();
     if (btnEvent != BUTTON_EVENT_NONE) {
         switch (btnEvent) {
         case BUTTON_EVENT_PRESSED: {
@@ -523,9 +525,88 @@ ButtonThread::HoldAnimationMode ButtonThread::resolveHoldMode() const
 
 #if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT) ||                \
     defined(BUTTON_PIN_TOUCH)
-static bool s_longPressEventArmed = false;
-static uint32_t s_longPressStartMillis = 0;
+static bool s_releaseSeen = false;
+static bool s_longGateArmed = false;
+static bool s_longEventPending = false;
+static uint32_t s_resumeGraceUntil = 0;
+static uint32_t s_lastStableChangeMs = 0;
+static bool s_lastStablePressed = false;
+static constexpr uint32_t kResumeGraceMs = 1200;
+static constexpr uint32_t kReleaseDebounceMs = 80;
+
+void ButtonThread::resetLongPressState()
+{
+    s_releaseSeen = false;
+    s_longGateArmed = false;
+    s_longEventPending = false;
+    s_resumeGraceUntil = millis() + kResumeGraceMs;
+    s_lastStableChangeMs = 0;
+    s_lastStablePressed = false;
+}
+#else
+void ButtonThread::resetLongPressState() {}
 #endif
+
+#if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT) ||                \
+    defined(BUTTON_PIN_TOUCH)
+void ButtonThread::updateLongGateTracking()
+{
+    const uint32_t now = millis();
+    if (s_resumeGraceUntil == 0) {
+        s_resumeGraceUntil = now + kResumeGraceMs;
+    }
+
+    bool anyPressed = false;
+#if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN)
+    if (userButton.pin() >= 0 && userButton.debouncedValue()) {
+        anyPressed = true;
+    }
+#endif
+#ifdef BUTTON_PIN_ALT
+    if (!anyPressed && userButtonAlt.pin() >= 0 && userButtonAlt.debouncedValue()) {
+        anyPressed = true;
+    }
+#endif
+#ifdef BUTTON_PIN_TOUCH
+    if (!anyPressed && userButtonTouch.pin() >= 0 && userButtonTouch.debouncedValue()) {
+        anyPressed = true;
+    }
+#endif
+
+    if (s_lastStableChangeMs == 0) {
+        s_lastStableChangeMs = now;
+        s_lastStablePressed = anyPressed;
+    }
+
+    if (anyPressed != s_lastStablePressed) {
+        s_lastStablePressed = anyPressed;
+        s_lastStableChangeMs = now;
+    }
+
+    if (!anyPressed && (now - s_lastStableChangeMs >= kReleaseDebounceMs)) {
+        s_releaseSeen = true;
+    }
+}
+#else
+void ButtonThread::updateLongGateTracking() {}
+#endif
+
+void ButtonThread::resetLongPressGates()
+{
+#if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT) ||                \
+    defined(BUTTON_PIN_TOUCH)
+    if (buttonThread) {
+        buttonThread->resetLongPressState();
+    } else {
+        s_releaseSeen = false;
+        s_longGateArmed = false;
+        s_longEventPending = false;
+        s_resumeGraceUntil = millis() + kResumeGraceMs;
+        s_lastStableChangeMs = 0;
+        s_lastStablePressed = false;
+    }
+#endif
+}
 
 void ButtonThread::updatePowerHoldAnimation()
 {
@@ -684,51 +765,70 @@ void ButtonThread::userButtonPressedLongStart()
 #endif
     if (pressedMs + 20 < BUTTON_LONGPRESS_MS)
         return;
-#endif
 
+    const uint32_t now = millis();
 #if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS) &&                                                   \
     (defined(BUTTON_PIN) || defined(USERPREFS_BUTTON_PIN) || defined(ARCH_PORTDUINO))
-    if (holdOffBypassed || (millis() > c_holdOffTime)) {
+    bool holdAllowed = holdOffBypassed || (now > c_holdOffTime);
 #else
-    if (millis() > c_holdOffTime) {
+    bool holdAllowed = (now > c_holdOffTime);
 #endif
-#if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT)
-        s_longPressEventArmed = true;
-        s_longPressStartMillis = millis() - pressedMs;
+
+    if (!holdAllowed)
+        return;
+
+    if (!s_releaseSeen)
+        return;
+
+    if (s_resumeGraceUntil && (now < s_resumeGraceUntil))
+        return;
+
+    if (s_longGateArmed)
+        return;
+
+    s_longGateArmed = true;
+    s_longEventPending = true;
+    s_releaseSeen = false;
+    btnEvent = BUTTON_EVENT_LONG_PRESSED;
 #endif
-        btnEvent = BUTTON_EVENT_LONG_PRESSED;
-    }
 }
 
 void ButtonThread::userButtonPressedLongStop()
 {
 #if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT)
+    const uint32_t now = millis();
     bool holdAllowed =
 #if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS) &&                                                   \
     (defined(BUTTON_PIN) || defined(USERPREFS_BUTTON_PIN) || defined(ARCH_PORTDUINO))
-        (holdOffBypassed || (millis() > c_holdOffTime));
+        (holdOffBypassed || (now > c_holdOffTime));
 #else
-        (millis() > c_holdOffTime);
+        (now > c_holdOffTime);
 #endif
 
-    if (!s_longPressEventArmed)
+    if (!s_longGateArmed) {
+        s_longEventPending = false;
         return;
+    }
 
-    uint32_t duration = millis() - s_longPressStartMillis;
-    s_longPressEventArmed = false;
+    s_longGateArmed = false;
 
-    if (!holdAllowed)
+    if (!holdAllowed) {
+        s_longEventPending = false;
         return;
+    }
 
-    if (duration + 20 < BUTTON_LONGPRESS_MS)
+    if (s_resumeGraceUntil && (now < s_resumeGraceUntil)) {
+        s_longEventPending = false;
         return;
+    }
+
+    s_longEventPending = false;
+    btnEvent = BUTTON_EVENT_LONG_RELEASED;
 #else
     bool holdAllowed = (millis() > c_holdOffTime);
     if (!holdAllowed)
         return;
-#endif
 
     btnEvent = BUTTON_EVENT_LONG_RELEASED;
+#endif
 }
-
-
