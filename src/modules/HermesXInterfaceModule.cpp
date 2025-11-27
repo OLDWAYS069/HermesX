@@ -61,72 +61,19 @@ extern graphics::Screen *screen;
 
 namespace
 {
-String substringAsString(const char *start, size_t length)
-{
-    String result;
-    result.reserve(length);
-    for (size_t i = 0; i < length; ++i)
-        result += start[i];
-    return result;
-}
-
-int mixedStringWidth(OLEDDisplay &display, const char *text)
-{
-    if (!text)
-        return 0;
-    const char *cursor = text;
-    const char *end = cursor + std::strlen(text);
-    int maxWidth = 0;
-    int lineWidth = 0;
-    while (cursor < end) {
-        std::uint32_t cp = graphics::HermesX_zh::nextCodepoint(cursor, end);
-        if (cp == 0)
-            break;
-        if (cp == '\r')
-            continue;
-        if (cp == '\n') {
-            maxWidth = std::max(maxWidth, lineWidth);
-            lineWidth = 0;
-            continue;
-        }
-        if (cp >= 0x20u && cp < 0x7Fu) {
-            const char *segmentStart = cursor - 1;
-            size_t segmentLength = 1;
-            while (cursor < end) {
-                const unsigned char nextByte = static_cast<unsigned char>(*cursor);
-                if (nextByte >= 0x20u && nextByte < 0x7Fu) {
-                    ++cursor;
-                    ++segmentLength;
-                } else {
-                    break;
-                }
-            }
-            String asciiSegment = substringAsString(segmentStart, segmentLength);
-            int advance = static_cast<int>(display.getStringWidth(asciiSegment));
-            if (advance <= 0)
-                advance = graphics::HermesX_zh::GLYPH_WIDTH;
-            lineWidth += advance;
-        } else {
-            lineWidth += graphics::HermesX_zh::GLYPH_WIDTH;
-        }
-    }
-    return std::max(maxWidth, lineWidth);
-}
-
-int mixedStringWidth(OLEDDisplay &display, const String &text)
-{
-    return mixedStringWidth(display, text.c_str());
-}
-
 void drawMixedCentered(OLEDDisplay &display, int16_t centerX, int16_t y, const String &text, int lineHeight)
 {
+    // drawMixed uses current text alignment; force left so manual centering is accurate
+    display.setTextAlignment(TEXT_ALIGN_LEFT);
+
     const char *lineStart = text.c_str();
     int lineIndex = 0;
     while (true) {
         const char *newline = std::strchr(lineStart, '\n');
         const size_t length = newline ? static_cast<size_t>(newline - lineStart) : std::strlen(lineStart);
-        String lineString = substringAsString(lineStart, length);
-        const int width = mixedStringWidth(display, lineString);
+        String lineString(lineStart, length);
+        const int width =
+            graphics::HermesX_zh::stringAdvance(lineString.c_str(), graphics::HermesX_zh::GLYPH_WIDTH, &display);
         const int drawX = centerX - (width / 2);
         graphics::HermesX_zh::drawMixed(display, drawX, y + lineIndex * lineHeight, lineString.c_str(),
                                         graphics::HermesX_zh::GLYPH_WIDTH, lineHeight, nullptr);
@@ -142,6 +89,16 @@ void drawMixedCentered(OLEDDisplay &display, int16_t centerX, int16_t y, const c
     if (!text)
         return;
     drawMixedCentered(display, centerX, y, String(text), lineHeight);
+}
+
+int mixedStringWidth(OLEDDisplay &display, const char *text)
+{
+    return graphics::HermesX_zh::stringAdvance(text, graphics::HermesX_zh::GLYPH_WIDTH, &display);
+}
+
+int mixedStringWidth(OLEDDisplay &display, const String &text)
+{
+    return mixedStringWidth(display, text.c_str());
 }
 
 } // namespace

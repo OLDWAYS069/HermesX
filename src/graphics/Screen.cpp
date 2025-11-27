@@ -186,7 +186,7 @@ static void drawIconScreen(const char *upperMsg, OLEDDisplay *display, OLEDDispl
 
     display->setTextAlignment(TEXT_ALIGN_RIGHT);
     // --- HermesX Remove TFT fast-path START
-    const int bufWidth = HermesX_zh::stringAdvance(buf);
+    const int bufWidth = HermesX_zh::stringAdvance(buf, HermesX_zh::GLYPH_WIDTH, display);
     if (screen)
         screen->drawMixed(display, x + SCREEN_WIDTH - bufWidth, y + 0, buf);
     else
@@ -244,7 +244,7 @@ static void drawOEMIconScreen(const char *upperMsg, OLEDDisplay *display, OLEDDi
 
     display->setTextAlignment(TEXT_ALIGN_RIGHT);
     // --- HermesX Remove TFT fast-path START
-    const int bufWidth = HermesX_zh::stringAdvance(buf);
+    const int bufWidth = HermesX_zh::stringAdvance(buf, HermesX_zh::GLYPH_WIDTH, display);
     if (screen)
         screen->drawMixed(display, x + SCREEN_WIDTH - bufWidth, y + 0, buf);
     else
@@ -326,7 +326,7 @@ static void drawFunctionOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
         display->setFont(FONT_SMALL);
         snprintf(buf, sizeof(buf), "%s", functionSymbolString.c_str());
         // --- HermesX Remove TFT fast-path START
-        const int width = HermesX_zh::stringAdvance(buf);
+        const int width = HermesX_zh::stringAdvance(buf, HermesX_zh::GLYPH_WIDTH, display);
         if (screen)
             screen->drawMixed(display, SCREEN_WIDTH - width, SCREEN_HEIGHT - FONT_HEIGHT_SMALL, buf);
         else
@@ -579,25 +579,32 @@ void Screen::drawDigitalClockFrame(OLEDDisplay *display, OLEDDisplayUiState *sta
 
         uint16_t segmentWidth = SEGMENT_WIDTH * scale;
         uint16_t segmentHeight = SEGMENT_HEIGHT * scale;
+        const uint16_t charSpacing = 5;
+        const uint16_t gapBetweenTimeAndSeconds = 4;
 
         // calculate hours:minutes string width
-        uint16_t timeStringWidth = timeString.length() * 5;
+        uint16_t timeStringWidth = 0;
 
         for (uint8_t i = 0; i < timeString.length(); i++) {
             String character = String(timeString[i]);
 
             if (character == ":") {
-                timeStringWidth += segmentHeight;
+                timeStringWidth += segmentHeight + 6;
             } else {
                 timeStringWidth += segmentWidth + (segmentHeight * 2) + 4;
+            }
+
+            if (i + 1u < timeString.length()) {
+                timeStringWidth += charSpacing;
             }
         }
 
         // calculate seconds string width
-        uint16_t secondStringWidth = (secondString.length() * 12) + 4;
+        display->setFont(FONT_MEDIUM);
+        uint16_t secondStringWidth = display->getStringWidth(secondString);
 
         // sum these to get total string width
-        uint16_t totalWidth = timeStringWidth + secondStringWidth;
+        uint16_t totalWidth = timeStringWidth + gapBetweenTimeAndSeconds + secondStringWidth;
 
         uint16_t hourMinuteTextX = (display->getWidth() / 2) - (totalWidth / 2);
 
@@ -619,12 +626,13 @@ void Screen::drawDigitalClockFrame(OLEDDisplay *display, OLEDDisplayUiState *sta
                 hourMinuteTextX += segmentWidth + (segmentHeight * 2) + 4;
             }
 
-            hourMinuteTextX += 5;
+            if (i + 1u < timeString.length()) {
+                hourMinuteTextX += charSpacing;
+            }
         }
 
         // draw seconds string
-        display->setFont(FONT_MEDIUM);
-        display->drawString(startingHourMinuteTextX + timeStringWidth + 4,
+        display->drawString(startingHourMinuteTextX + timeStringWidth + gapBetweenTimeAndSeconds,
                             (display->getHeight() - hourMinuteTextY) - FONT_HEIGHT_MEDIUM + 6, secondString);
     }
 }
@@ -2573,7 +2581,7 @@ void DebugInfo::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16
 #endif
     display->setColor(WHITE);
     // --- HermesX Remove TFT fast-path START
-    const int idWidth = HermesX_zh::stringAdvance(ourId);
+    const int idWidth = HermesX_zh::stringAdvance(ourId, HermesX_zh::GLYPH_WIDTH, display);
     // Draw the channel name
     if (screen)
         screen->drawMixed(display, x, y + FONT_HEIGHT_SMALL, channelStr);
@@ -2954,7 +2962,5 @@ int Screen::handleAdminMessage(const meshtastic_AdminMessage *arg)
 #else
 graphics::Screen::Screen(ScanI2C::DeviceAddress, meshtastic_Config_DisplayConfig_OledType, OLEDDISPLAY_GEOMETRY) {}
 #endif // HAS_SCREEN
-
-
 
 

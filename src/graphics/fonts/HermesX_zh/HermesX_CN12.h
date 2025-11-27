@@ -52,6 +52,6 @@ void drawMixed(OLEDDisplay &display, int16_t x, int16_t y, const char *text, int
 void drawMixedBounded(OLEDDisplay &display, int16_t x, int16_t y, int16_t maxWidth, const char *text,
                       int advanceX = GLYPH_WIDTH, int lineHeight = 13, TFTDisplay *fastDisplay = nullptr);
 
-int stringAdvance(const char *text, int advanceX = GLYPH_WIDTH);
+int stringAdvance(const char *text, int advanceX = GLYPH_WIDTH, OLEDDisplay *display = nullptr);
 
 } // namespace graphics::HermesX_zh

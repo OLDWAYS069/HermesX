@@ -6,6 +6,8 @@
 #include "configuration.h"
 #include "sleep.h"
 #include <cstring>
+#include <algorithm>
+#include <cstdlib>
 #include "HermesXLog.h"
 #include "mesh/Channels.h"
 #include "mesh/Router.h"
@@ -13,6 +15,7 @@
 
 static const char *bootFile = "/prefs/lighthouse_boot.bin";
 static const char *modeFile = "/prefs/lighthouse_mode.bin";
+static const char *whitelistFile = "/prefs/lighthouse_whitelist.txt";
 
 static const uint32_t WAIT_TIME_MS = 10UL * 1000UL;
 static const uint32_t POLLING_AWAKE_MS = 300000UL; // 醒來期間
@@ -27,6 +30,7 @@ LighthouseModule::LighthouseModule()
     lighthouseModule = this;
     loadBoot();
     loadState();
+    loadWhitelist();
 
     // 僅當 boot file 沒載入成功時才設為現在時間
     if (firstBootMillis == 0) {
@@ -99,6 +103,63 @@ void LighthouseModule::loadState()
       
     }
 #endif
+}
+
+void LighthouseModule::loadWhitelist()
+{
+#ifdef FSCom
+    concurrency::LockGuard g(spiLock);
+    emergencyWhitelist.clear();
+
+    auto f = FSCom.open(whitelistFile, FILE_O_READ);
+    if (!f) {
+        HERMESX_LOG_INFO("lighthouse whitelist missing (%s); @EmergencyActive will be ignored", whitelistFile);
+        return;
+    }
+
+    auto processLine = [&](String &line) {
+        line.trim();
+        if (line.length() == 0 || line[0] == '#')
+            return;
+
+        char *end = nullptr;
+        uint32_t value = strtoul(line.c_str(), &end, 0);
+        if (end && *end == '\0') {
+            emergencyWhitelist.push_back(static_cast<NodeNum>(value));
+        } else {
+            HERMESX_LOG_WARN("skip invalid whitelist entry: %s", line.c_str());
+        }
+    };
+
+    String line;
+    while (f.available()) {
+        char c = f.read();
+        if (c == '\n' || c == '\r') {
+            processLine(line);
+            line = "";
+        } else {
+            line += c;
+        }
+    }
+    processLine(line);
+    f.close();
+
+    if (emergencyWhitelist.empty()) {
+        HERMESX_LOG_WARN("lighthouse whitelist loaded but empty; @EmergencyActive will be rejected");
+    } else {
+        HERMESX_LOG_INFO("lighthouse whitelist loaded (%u entries)",
+                         static_cast<unsigned int>(emergencyWhitelist.size()));
+    }
+#else
+    HERMESX_LOG_INFO("FSCom not available; whitelist disabled");
+#endif
+}
+
+bool LighthouseModule::isEmergencyActiveAllowed(NodeNum from) const
+{
+    if (emergencyWhitelist.empty())
+        return false;
+    return std::find(emergencyWhitelist.begin(), emergencyWhitelist.end(), from) != emergencyWhitelist.end();
 }
 
 void flushDelaySleep(uint32_t extraDelay = 1000, uint32_t sleepMs = 1800000UL)
@@ -256,57 +317,63 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
         return ProcessMessage::CONTINUE;
     }
 
-    if (strcmp(txt, "@EmergencyActive") == 0 && !emergencyModeActive) {
-    emergencyModeActive = true;
-    pollingModeRequested = false;
-    config.has_device = true;
-    config.device.role = meshtastic_Config_DeviceConfig_Role_ROUTER;
-    config.power.is_power_saving = false;
-    
-    roleCorrected = true;
+    if (strcmp(txt, "@EmergencyActive") == 0) {
+        if (!isEmergencyActiveAllowed(mp.from)) {
+            HERMESX_LOG_WARN("ignore @EmergencyActive from 0x%x (not in whitelist)", mp.from);
+            return ProcessMessage::CONTINUE;
+        }
 
-    nodeDB->saveToDisk(SEGMENT_CONFIG);
-    saveState();
+        if (!emergencyModeActive) {
+            emergencyModeActive = true;
+            pollingModeRequested = false;
+            config.has_device = true;
+            config.device.role = meshtastic_Config_DeviceConfig_Role_ROUTER;
+            config.power.is_power_saving = false;
 
-    HERMESX_LOG_INFO("LIGHTHOUSE ACTIVE. Restarting...");
-    delay(15000);  
-    ESP.restart();
+            roleCorrected = true;
+
+            nodeDB->saveToDisk(SEGMENT_CONFIG);
+            saveState();
+
+            HERMESX_LOG_INFO("LIGHTHOUSE ACTIVE. Restarting...");
+            delay(15000);
+            ESP.restart();
+        }
+
+        return ProcessMessage::CONTINUE;
+    }
+
+    if (strcmp(txt, "@GoToSleep") == 0) {
+        emergencyModeActive = false;
+        pollingModeRequested = true;
+        firstBootMillis = millis();
+        config.device.role = meshtastic_Config_DeviceConfig_Role_ROUTER_LATE;
+
+        saveBoot();
+        saveState();
+
+        delay(15000); // 確保 log 有時間送出
+        ESP.restart();
+
+        return ProcessMessage::CONTINUE;
+    }
+
+    if (strcmp(txt, "@Status") == 0) {
+        broadcastStatusMessage();
+        return ProcessMessage::CONTINUE;
+    }
+
+    if (strcmp(txt, "@HiHermes") == 0) {
+        hihermes = true;
+        emergencyModeActive = false;
+        pollingModeRequested = false;
+        IntroduceMessage();
+        HERMESX_LOG_INFO("@HiHermes INTRODUCING");
+
+        return ProcessMessage::CONTINUE;
+    }
 
     return ProcessMessage::CONTINUE;
-}
-
-if (strcmp(txt, "@GoToSleep") == 0) {
-    emergencyModeActive = false;
-    pollingModeRequested = true;
-    firstBootMillis = millis();
-    config.device.role = meshtastic_Config_DeviceConfig_Role_ROUTER_LATE;
-
-    saveBoot();
-    saveState();
-   
-   
-    delay(15000);  // 確保 log 有時間送出
-    ESP.restart();
-
-    return ProcessMessage::CONTINUE;
-}
-
-if (strcmp(txt, "@Status") == 0) {
-    broadcastStatusMessage();
-    return ProcessMessage::CONTINUE;
-}
-
-if (strcmp(txt, "@HiHermes") == 0) {
-    hihermes = true;
-    emergencyModeActive = false;
-    pollingModeRequested = false;
-    IntroduceMessage();
-    HERMESX_LOG_INFO("@HiHermes INTRODUCING");
-
-    return ProcessMessage::CONTINUE;
-}
-        
-return ProcessMessage::CONTINUE;
 
 }
 

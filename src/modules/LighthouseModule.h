@@ -5,6 +5,7 @@
 
 #include "SinglePortModule.h"
 #include "concurrency/OSThread.h"
+#include <vector>
 #include <Arduino.h>
 
 class LighthouseModule : public SinglePortModule, private concurrency::OSThread
@@ -22,6 +23,8 @@ class LighthouseModule : public SinglePortModule, private concurrency::OSThread
     void saveBoot();
     void loadState();
     void saveState();
+    void loadWhitelist();
+    bool isEmergencyActiveAllowed(NodeNum from) const;
  
     void broadcastStatusMessage();
     void IntroduceMessage();
@@ -31,6 +34,7 @@ class LighthouseModule : public SinglePortModule, private concurrency::OSThread
     bool pollingModeRequested = false;
     bool hihermes = false;
     uint32_t firstBootMillis = 0;
+    std::vector<NodeNum> emergencyWhitelist;
 
 };
 

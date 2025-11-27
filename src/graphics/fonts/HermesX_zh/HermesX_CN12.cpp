@@ -278,7 +278,9 @@ void drawMixedBounded(OLEDDisplay &display, int16_t x, int16_t y, int16_t maxWid
 }
 // --- HermesX Remove TFT fast-path END
 
-int stringAdvance(const char *text, int advanceX)
+// Return the max rendered width (not just the last line) so multiline strings align correctly (e.g. version + short_name).
+// If a display is provided, ASCII width is taken from the active font metrics; otherwise falls back to advanceX.
+int stringAdvance(const char *text, int advanceX, OLEDDisplay *display)
 {
     if (!text)
         return 0;
@@ -286,23 +288,34 @@ int stringAdvance(const char *text, int advanceX)
     const char *cursor = text;
     const char *end = cursor + std::strlen(text);
     int width = 0;
+    int maxWidth = 0;
     while (cursor < end) {
         std::uint32_t cp = nextCodepoint(cursor, end);
         if (cp == 0)
             break;
         if (cp == '\n') {
+            if (width > maxWidth)
+                maxWidth = width;
             width = 0;
             continue;
         }
         if (cp == '\r')
             continue;
-        width += advanceX;
+        if (cp >= 0x20u && cp < 0x7Fu && display) {
+            ::String asciiString(static_cast<char>(cp));
+            int glyphWidth = static_cast<int>(display->getStringWidth(asciiString));
+            if (glyphWidth <= 0) {
+                glyphWidth = advanceX;
+            }
+            width += glyphWidth;
+        } else {
+            width += advanceX;
+        }
     }
-    return width;
+    if (width > maxWidth)
+        maxWidth = width;
+    return maxWidth;
 }
 
 } // namespace graphics::HermesX_zh
-
-
-
 

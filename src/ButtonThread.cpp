@@ -531,6 +531,7 @@ static bool s_longEventPending = false;
 static uint32_t s_resumeGraceUntil = 0;
 static uint32_t s_lastStableChangeMs = 0;
 static bool s_lastStablePressed = false;
+static uint32_t s_longStartMillis = 0;
 static constexpr uint32_t kResumeGraceMs = 1200;
 static constexpr uint32_t kReleaseDebounceMs = 80;
 
@@ -542,6 +543,7 @@ void ButtonThread::resetLongPressState()
     s_resumeGraceUntil = millis() + kResumeGraceMs;
     s_lastStableChangeMs = 0;
     s_lastStablePressed = false;
+    s_longStartMillis = 0;
 }
 #else
 void ButtonThread::resetLongPressState() {}
@@ -604,6 +606,7 @@ void ButtonThread::resetLongPressGates()
         s_resumeGraceUntil = millis() + kResumeGraceMs;
         s_lastStableChangeMs = 0;
         s_lastStablePressed = false;
+        s_longStartMillis = 0;
     }
 #endif
 }
@@ -786,6 +789,7 @@ void ButtonThread::userButtonPressedLongStart()
     if (s_longGateArmed)
         return;
 
+    s_longStartMillis = now - pressedMs;
     s_longGateArmed = true;
     s_longEventPending = true;
     s_releaseSeen = false;
@@ -807,6 +811,7 @@ void ButtonThread::userButtonPressedLongStop()
 
     if (!s_longGateArmed) {
         s_longEventPending = false;
+        s_longStartMillis = 0;
         return;
     }
 
@@ -814,15 +819,24 @@ void ButtonThread::userButtonPressedLongStop()
 
     if (!holdAllowed) {
         s_longEventPending = false;
+        s_longStartMillis = 0;
         return;
     }
 
     if (s_resumeGraceUntil && (now < s_resumeGraceUntil)) {
         s_longEventPending = false;
+        s_longStartMillis = 0;
         return;
     }
 
+    uint32_t duration = s_longStartMillis ? (now - s_longStartMillis) : 0;
+    s_longStartMillis = 0;
     s_longEventPending = false;
+
+    if (duration + 20 < BUTTON_LONGPRESS_MS) {
+        return;
+    }
+
     btnEvent = BUTTON_EVENT_LONG_RELEASED;
 #else
     bool holdAllowed = (millis() > c_holdOffTime);
