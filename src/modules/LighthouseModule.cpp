@@ -8,6 +8,7 @@
 #include <cstring>
 #include <algorithm>
 #include <cstdlib>
+#include <string>
 #include "HermesXLog.h"
 #include "mesh/Channels.h"
 #include "mesh/Router.h"
@@ -16,6 +17,7 @@
 static const char *bootFile = "/prefs/lighthouse_boot.bin";
 static const char *modeFile = "/prefs/lighthouse_mode.bin";
 static const char *whitelistFile = "/prefs/lighthouse_whitelist.txt";
+static const char *passphraseFile = "/prefs/lighthouse_passphrase.txt";
 
 static const uint32_t WAIT_TIME_MS = 10UL * 1000UL;
 static const uint32_t POLLING_AWAKE_MS = 300000UL; // 醒來期間
@@ -31,6 +33,7 @@ LighthouseModule::LighthouseModule()
     loadBoot();
     loadState();
     loadWhitelist();
+    loadPassphrase();
 
     // 僅當 boot file 沒載入成功時才設為現在時間
     if (firstBootMillis == 0) {
@@ -160,6 +163,59 @@ bool LighthouseModule::isEmergencyActiveAllowed(NodeNum from) const
     if (emergencyWhitelist.empty())
         return false;
     return std::find(emergencyWhitelist.begin(), emergencyWhitelist.end(), from) != emergencyWhitelist.end();
+}
+
+void LighthouseModule::loadPassphrase()
+{
+#ifdef FSCom
+    concurrency::LockGuard g(spiLock);
+    emergencyPassphrase = "";
+
+    auto f = FSCom.open(passphraseFile, FILE_O_READ);
+    if (!f) {
+        HERMESX_LOG_INFO("lighthouse passphrase missing (%s); passphrase auth disabled", passphraseFile);
+        return;
+    }
+
+    String content;
+    while (f.available()) {
+        content += static_cast<char>(f.read());
+    }
+    f.close();
+
+    content.trim();
+    if (content.length() == 0) {
+        HERMESX_LOG_WARN("lighthouse passphrase file empty; passphrase auth disabled");
+        emergencyPassphrase = "";
+        return;
+    }
+
+    emergencyPassphrase = content;
+    HERMESX_LOG_INFO("lighthouse passphrase loaded");
+#else
+    HERMESX_LOG_INFO("FSCom not available; passphrase disabled");
+#endif
+}
+
+bool LighthouseModule::isEmergencyActiveAuthorized(const char *txt, NodeNum from) const
+{
+    bool passOk = false;
+    if (emergencyPassphrase.length() > 0) {
+        constexpr const char *kPrefix = "@EmergencyActive";
+        const size_t prefixLen = strlen(kPrefix);
+        if (strncmp(txt, kPrefix, prefixLen) == 0) {
+            const char *p = txt + prefixLen;
+            while (*p == ' ' || *p == ':' || *p == '=') {
+                ++p;
+            }
+            if (*p != '\0') {
+                passOk = (emergencyPassphrase == String(p));
+            }
+        }
+    }
+
+    const bool whiteOk = isEmergencyActiveAllowed(from);
+    return passOk || whiteOk;
 }
 
 void flushDelaySleep(uint32_t extraDelay = 1000, uint32_t sleepMs = 1800000UL)
@@ -317,9 +373,9 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
         return ProcessMessage::CONTINUE;
     }
 
-    if (strcmp(txt, "@EmergencyActive") == 0) {
-        if (!isEmergencyActiveAllowed(mp.from)) {
-            HERMESX_LOG_WARN("ignore @EmergencyActive from 0x%x (not in whitelist)", mp.from);
+    if (strncmp(txt, "@EmergencyActive", 16) == 0) {
+        if (!isEmergencyActiveAuthorized(txt, mp.from)) {
+            HERMESX_LOG_WARN("ignore @EmergencyActive from 0x%x (not authorized)", mp.from);
             return ProcessMessage::CONTINUE;
         }
 

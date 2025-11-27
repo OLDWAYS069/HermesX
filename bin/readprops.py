@@ -30,13 +30,13 @@ def readProps(prefsLoc):
         # if isDirty:
         #     # short for 'dirty', we want to keep our verstrings source for protobuf reasons
         #     suffix = sha + "-d"
-        verObj["long"] = "{}.{}".format(verObj["short"], suffix)
-        verObj["deb"] = "{}.{}~{}{}".format(verObj["short"], run_number, build_location, sha)
+        verObj["long"] = "HXB_{}{}".format(verObj["short"], suffix)
+        verObj["deb"] = "HXB_{}.{}~{}{}".format(verObj["short"], run_number, build_location, sha)
     except:
         # print("Unexpected error:", sys.exc_info()[0])
         # traceback.print_exc()
-        verObj["long"] = verObj["short"]
-        verObj["deb"] = "{}.{}~{}".format(verObj["short"], run_number, build_location)
+        verObj["long"] = "HXB_{}".format(verObj["short"])
+        verObj["deb"] = "HXB_{}.{}~{}".format(verObj["short"], run_number, build_location)
 
     # print("firmware version " + verStr)
     return verObj

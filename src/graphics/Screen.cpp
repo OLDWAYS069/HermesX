@@ -238,9 +238,9 @@ static void drawOEMIconScreen(const char *upperMsg, OLEDDisplay *display, OLEDDi
         // --- HermesX Remove TFT fast-path END
     }
 
-    // Draw version and shortname in upper right
-    char buf[25];
-    snprintf(buf, sizeof(buf), "%s\n%s", xstr(APP_VERSION_SHORT), haveGlyphs(owner.short_name) ? owner.short_name : "");
+    // Draw full version (repo tag + build suffix) and shortname in upper right
+    char buf[40];
+    snprintf(buf, sizeof(buf), "%s\n%s", xstr(APP_VERSION), haveGlyphs(owner.short_name) ? owner.short_name : "");
 
     display->setTextAlignment(TEXT_ALIGN_RIGHT);
     // --- HermesX Remove TFT fast-path START
@@ -2962,5 +2962,4 @@ int Screen::handleAdminMessage(const meshtastic_AdminMessage *arg)
 #else
 graphics::Screen::Screen(ScanI2C::DeviceAddress, meshtastic_Config_DisplayConfig_OledType, OLEDDISPLAY_GEOMETRY) {}
 #endif // HAS_SCREEN
-
 

@@ -1,0 +1,5 @@
+# lighthouse whitelist for @EmergencyActive（HermesEMMD)
+
+# 一行一個 NodeNum，可用十六進位（例：0x23abcd01）
+0x00000000
+0xe2e5b994

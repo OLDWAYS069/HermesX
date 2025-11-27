@@ -24,7 +24,9 @@ class LighthouseModule : public SinglePortModule, private concurrency::OSThread
     void loadState();
     void saveState();
     void loadWhitelist();
+    void loadPassphrase();
     bool isEmergencyActiveAllowed(NodeNum from) const;
+    bool isEmergencyActiveAuthorized(const char *txt, NodeNum from) const;
  
     void broadcastStatusMessage();
     void IntroduceMessage();
@@ -35,6 +37,7 @@ class LighthouseModule : public SinglePortModule, private concurrency::OSThread
     bool hihermes = false;
     uint32_t firstBootMillis = 0;
     std::vector<NodeNum> emergencyWhitelist;
+    String emergencyPassphrase;
 
 };
 

@@ -52,6 +52,7 @@ if (emergencyAwaitingSafe && p.decoded.portnum == meshtastic_PortNum_TEXT_MESSAG
 - 封鎖：`PortNum_TEXT_MESSAGE_APP`（外部與裝置端皆同），以及任何走純文字的自由輸入。  
 - `@EmergencyActive` 白名單：僅白名單節點觸發 EM；其他來源的 `@EmergencyActive` 忽略。  
 - 白名單檔案：`/prefs/lighthouse_whitelist.txt`，一行一個 NodeNum（可用十六進位 0x 前綴），允許 `@EmergencyActive` 的來源。
+- 密碼檔：`/prefs/lighthouse_passphrase.txt`，單行 passphrase；收到 `@EmergencyActive:<pass>`（或以空白/等號分隔）時可直接授權（與白名單 OR 關係）。
 - SAFE 傳送：不得走 TEXT_MESSAGE_APP，長按時直接用 Emergency 專用封包，避開文字攔截。
 
 ## ✅ 實作 Checklist

@@ -1,0 +1,3 @@
+# lighthouse passphrase for @EmergencyActive:<pass>
+# 單行密碼，與白名單 OR；任一通過即觸發
+LILWEI240504
