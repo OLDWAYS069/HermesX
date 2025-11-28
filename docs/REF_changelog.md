@@ -1,6 +1,21 @@
 # HermesX 變更紀錄 (REF_changelog.md)
 
 ## 範圍
+- 日期：0.2.7（計畫）
+- 項目：EMACT @EmergencyActive 授權與版本顯示
+- 檔案：
+  - bin/readprops.py
+  - bin/platformio-custom.py
+  - src/graphics/Screen.cpp
+  - src/modules/LighthouseModule.cpp
+  - src/modules/LighthouseModule.h
+- 說明：
+  - Lighthouse 加入 passphrase/白名單授權日誌並支援全形＠前綴，便於追蹤 EMACT 觸發失敗原因。
+  - APP_VERSION_DISPLAY 以 branch 語意版號＋ git 短碼呈現，開機畫面顯示 `HXB_<tag><sha>`。
+- 測試：
+  - 待執行：載入 `/prefs/lighthouse_passphrase.txt`，用 ASCII/全形 ＠EmergencyActive:<pass> 觸發；檢查未授權時的 log。
+
+## 範圍
 - 日期：2025-10-15
 - 項目：EM 中文最小字型整合
 - 檔案：

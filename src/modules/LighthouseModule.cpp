@@ -25,6 +25,26 @@ static const uint32_t POLLING_SLEEP_MS = 1800000UL; // 睡覺時間
 
 LighthouseModule *lighthouseModule = nullptr;
 
+namespace
+{
+// Normalize leading fullwidth '@' (U+FF20) to ASCII '@'
+void normalizeAtPrefix(char *txt, size_t &len)
+{
+    if (len < 3)
+        return;
+    const unsigned char b0 = static_cast<unsigned char>(txt[0]);
+    const unsigned char b1 = static_cast<unsigned char>(txt[1]);
+    const unsigned char b2 = static_cast<unsigned char>(txt[2]);
+    if (b0 == 0xEF && b1 == 0xBC && b2 == 0xA0) {
+        txt[0] = '@';
+        // shift left by two bytes
+        memmove(txt + 1, txt + 3, len - 2);
+        len -= 2;
+        txt[len] = '\0';
+    }
+}
+} // namespace
+
 LighthouseModule::LighthouseModule()
     : SinglePortModule("lighthouse", meshtastic_PortNum_TEXT_MESSAGE_APP),
       concurrency::OSThread("lighthouseTask", 300)
@@ -191,7 +211,7 @@ void LighthouseModule::loadPassphrase()
     }
 
     emergencyPassphrase = content;
-    HERMESX_LOG_INFO("lighthouse passphrase loaded");
+    HERMESX_LOG_INFO("lighthouse passphrase loaded (len=%d)", emergencyPassphrase.length());
 #else
     HERMESX_LOG_INFO("FSCom not available; passphrase disabled");
 #endif
@@ -215,6 +235,11 @@ bool LighthouseModule::isEmergencyActiveAuthorized(const char *txt, NodeNum from
     }
 
     const bool whiteOk = isEmergencyActiveAllowed(from);
+    if (!passOk && !whiteOk) {
+        HERMESX_LOG_WARN("reject @EmergencyActive from 0x%x (pass %s, whitelist %s)", from,
+                         emergencyPassphrase.length() ? "mismatch" : "disabled",
+                         emergencyWhitelist.empty() ? "empty" : "miss");
+    }
     return passOk || whiteOk;
 }
 
@@ -326,7 +351,11 @@ bool LighthouseModule::wantPacket(const meshtastic_MeshPacket *p)
     if (p->decoded.portnum != meshtastic_PortNum_TEXT_MESSAGE_APP)
         return false;
 
-    if (p->decoded.payload.size > 0 && p->decoded.payload.bytes[0] == '@')
+    if (p->decoded.payload.size > 0 &&
+        (p->decoded.payload.bytes[0] == '@' ||
+         (p->decoded.payload.size >= 3 && static_cast<unsigned char>(p->decoded.payload.bytes[0]) == 0xEF &&
+          static_cast<unsigned char>(p->decoded.payload.bytes[1]) == 0xBC &&
+          static_cast<unsigned char>(p->decoded.payload.bytes[2]) == 0xA0)))
         return true;
 
     if (emergencyModeActive)
@@ -346,6 +375,8 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
         len = sizeof(txt) - 1;
     memcpy(txt, mp.decoded.payload.bytes, len);
     txt[len] = '\0';
+
+    normalizeAtPrefix(txt, len);
 
      while (len > 0 && (txt[len - 1] == '\n' || txt[len - 1] == '\r' || txt[len - 1] == ' ')) {
         txt[--len] = '\0';
@@ -380,6 +411,7 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
         }
 
         if (!emergencyModeActive) {
+            HERMESX_LOG_INFO("Accept @EmergencyActive from 0x%x", mp.from);
             emergencyModeActive = true;
             pollingModeRequested = false;
             config.has_device = true;

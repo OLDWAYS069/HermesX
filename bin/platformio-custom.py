@@ -116,6 +116,7 @@ for pref in userPrefs:
 flags = [
         "-DAPP_VERSION=" + verObj["long"],
         "-DAPP_VERSION_SHORT=" + verObj["short"],
+        "-DAPP_VERSION_DISPLAY=" + env.StringifyMacro(verObj["display"]),
         "-DAPP_ENV=" + env.get("PIOENV"),
     ] + pref_flags
 
