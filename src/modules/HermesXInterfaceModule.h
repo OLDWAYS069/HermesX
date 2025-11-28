@@ -130,6 +130,8 @@ private:
     bool safeWindowActive = false;
     uint8_t safePressCount = 0;
     uint32_t safeWindowDeadlineMs = 0;
+    uint32_t lastSafeRequestId = 0;
+    bool safeSendPending = false;
 
     void sendText(NodeNum dest, ChannelIndex channel, const char *message, bool wantAck);
     void sendCannedMessage(const char* msg);

@@ -1,19 +1,31 @@
 # HermesX 變更紀錄 (REF_changelog.md)
 
 ## 範圍
-- 日期：0.2.7（計畫）
-- 項目：EMACT @EmergencyActive 授權與版本顯示
+- 日期：251129
+- 版本：0.2.7
+- 項目：EMACT @EmergencyActive 授權、SAFE 長按、版號顯示、Lighthouse 改為隨身模式
 - 檔案：
   - bin/readprops.py
   - bin/platformio-custom.py
   - src/graphics/Screen.cpp
+  - src/modules/HermesEmergencyState.*
   - src/modules/LighthouseModule.cpp
   - src/modules/LighthouseModule.h
+  - src/mesh/MeshService.cpp
+  - src/modules/CannedMessageModule.cpp
+  - src/modules/Modules.cpp
+  - src/modules/HermesXInterfaceModule.cpp
+  - docs/REF_3021.md
+  - docs/Lighthouse_portable.md
 - 說明：
-  - Lighthouse 加入 passphrase/白名單授權日誌並支援全形＠前綴，便於追蹤 EMACT 觸發失敗原因。
+  - Lighthouse 加入 passphrase/白名單授權日誌並支援全形＠前綴；EM 封鎖旗標持久化；SAFE 必須收到 ACK 才解除封鎖。
   - APP_VERSION_DISPLAY 以 branch 語意版號＋ git 短碼呈現，開機畫面顯示 `HXB_<tag><sha>`。
+  - 收到 @EmergencyActive 後阻擋 TEXT_MESSAGE_APP（外部/本地）；長按觸發 SAFE Emergency 封包，ACK 後解除封鎖並退出 EM。
+  - Lighthouse 預設改為隨身模式：開機不再廣播，改在主螢幕顯示狀態；以宏 `HERMESX_LH_BROADCAST_ON_BOOT` 控制是否仍廣播（給中繼用）。
+  - 新增 `docs/REF_3021.md` 描述 302.1 流程與封包對應；`docs/Lighthouse_portable.md` 紀錄隨身模式調整與舊行為保留方法。
+  - 已知問題：開機後狀態 banner（EM/輪詢/行動）仍可能未顯示，雖有 log「show status banner」，需再對齊 HermesX face 刷新管線。
 - 測試：
-  - 待執行：載入 `/prefs/lighthouse_passphrase.txt`，用 ASCII/全形 ＠EmergencyActive:<pass> 觸發；檢查未授權時的 log。
+  - 待執行：載入 `/prefs/lighthouse_passphrase.txt`，用 ASCII/全形 ＠EmergencyActive:<pass> 觸發；檢查未授權時的 log；EM 封鎖 TEXT_MESSAGE_APP；長按 SAFE 發送 Emergency 封包，收到 ACK 後解除封鎖並退出 EM；確認隨身模式開機只顯示狀態、不廣播。
 
 ## 範圍
 - 日期：2025-10-15

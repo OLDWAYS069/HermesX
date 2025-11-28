@@ -8,10 +8,15 @@
 #include <vector>
 #include <Arduino.h>
 
+#ifndef HERMESX_LH_BROADCAST_ON_BOOT
+#define HERMESX_LH_BROADCAST_ON_BOOT 0
+#endif
+
 class LighthouseModule : public SinglePortModule, private concurrency::OSThread
 {
   public:
     LighthouseModule();
+    void exitEmergencyMode();
 
   protected:
     virtual bool wantPacket(const meshtastic_MeshPacket *p) override;
@@ -27,7 +32,6 @@ class LighthouseModule : public SinglePortModule, private concurrency::OSThread
     void loadPassphrase();
     bool isEmergencyActiveAllowed(NodeNum from) const;
     bool isEmergencyActiveAuthorized(const char *txt, NodeNum from) const;
- 
     void broadcastStatusMessage();
     void IntroduceMessage();
 
