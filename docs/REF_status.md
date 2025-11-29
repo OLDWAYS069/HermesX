@@ -21,6 +21,7 @@
 - EM 功能仍在聯調（SOS / SAFE 流程倒數與 debounce）
 - 251015:LED的發送接收邏輯左右要反過來 
 - 302.1協議不確定會部會影響到現有的傳輸邏輯(格式的部分，不知道會部會占用太多頻寬)
+- 電源鍵長按喚醒實機無觸發：分支 hermesX_b0.2.6 (HXB_0.2.64158fb2) / Heltec Wireless Tracker / GPIO04 按鍵。開機長按時 log 只有系統啟動，沒有 ButtonThread “press/long press” 或 `startPowerHoldAnimation()` 訊號，按住期間會反覆重啟直到鬆手，長按動畫與 3 秒喚醒閘門都未生效。待確認按鍵電平/activeLow、powerFSM 是否仍在 DARK、或 HermesX 模組初始化時序。
 
 ## 對 Codex 的提醒
 - 若任務涉及 EM / Rotary / 302.1 請優先參照：
@@ -30,4 +31,3 @@
 - TRACKER 的 TFT是160X80
 ## 備註
 - `Resuming...` 畫面代表此次為 EXT1/RTC 喚醒，需長按電源鍵直到超過 `BUTTON_LONGPRESS_MS` 才能完成啟動；若提前放開會依照 BootHold 流程重新進入深睡。
-

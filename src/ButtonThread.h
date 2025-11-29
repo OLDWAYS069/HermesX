@@ -59,6 +59,11 @@ class ButtonThread : public concurrency::OSThread
     HoldAnimationMode holdAnimationMode = HoldAnimationMode::None;
     bool holdAnimationActive = false;
     uint32_t holdAnimationLastMs = 0;
+    static constexpr uint32_t kWakeHoldMs = 3000; // 要按住多久才放行開機
+    bool wakeAnimStarted = false;
+    bool wakeHoldActive = false;
+    bool wakeTriggered = false;
+    uint32_t wakeHoldStart = 0;
     HoldAnimationMode resolveHoldMode() const;
 #if defined(HERMESX_GUARD_POWER_ANIMATIONS)
     bool bootHoldArmed = false;
@@ -110,6 +115,8 @@ class ButtonThread : public concurrency::OSThread
 
     void resetLongPressState();
     void updateLongGateTracking();
+    void resetWakeHoldGate();
+    void processWakeHoldGate();
 };
 
 extern ButtonThread *buttonThread;

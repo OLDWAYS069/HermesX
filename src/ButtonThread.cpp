@@ -229,6 +229,10 @@ int32_t ButtonThread::runOnce()
     userButtonTouch.tick();
     canSleep &= userButtonTouch.isIdle();
 #endif
+#if !MESHTASTIC_EXCLUDE_HERMESX && (defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) ||          \
+                                    defined(BUTTON_PIN_ALT) || defined(BUTTON_PIN_TOUCH))
+    processWakeHoldGate();
+#endif
 #if !MESHTASTIC_EXCLUDE_HERMESX
     updatePowerHoldAnimation();
 #endif
@@ -246,7 +250,15 @@ int32_t ButtonThread::runOnce()
             sendAdHocPosition();
             break;
 #endif
+#if !MESHTASTIC_EXCLUDE_HERMESX && (defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) ||          \
+                                    defined(BUTTON_PIN_ALT) || defined(BUTTON_PIN_TOUCH))
+            // 改為先進入喚醒閘門，按住達 kWakeHoldMs 才真正觸發開機
+            wakeHoldActive = true;
+            wakeTriggered = false;
+            wakeHoldStart = millis();
+#else
             switchPage();
+#endif
             break;
         }
 
@@ -326,6 +338,12 @@ int32_t ButtonThread::runOnce()
         } // end multipress event
 
         case BUTTON_EVENT_LONG_PRESSED: {
+#if !MESHTASTIC_EXCLUDE_HERMESX && (defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) ||          \
+                                    defined(BUTTON_PIN_ALT) || defined(BUTTON_PIN_TOUCH))
+            if (wakeTriggered) {
+                break;
+            }
+#endif
             LOG_BUTTON("Long press!");
             powerFSM.trigger(EVENT_PRESS);
             if (screen) {
@@ -338,6 +356,14 @@ int32_t ButtonThread::runOnce()
         // Do actual shutdown when button released, otherwise the button release
         // may wake the board immediatedly.
         case BUTTON_EVENT_LONG_RELEASED: {
+#if !MESHTASTIC_EXCLUDE_HERMESX && (defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) ||          \
+                                    defined(BUTTON_PIN_ALT) || defined(BUTTON_PIN_TOUCH))
+            if (wakeTriggered) {
+                // 這次長按是喚醒流程，不要進入關機
+                resetWakeHoldGate();
+                break;
+            }
+#endif
             LOG_INFO("Shutdown from long press");
 #if !MESHTASTIC_EXCLUDE_HERMESX
             if (HermesXInterfaceModule::instance) {
@@ -544,6 +570,96 @@ void ButtonThread::resetLongPressState()
     s_lastStableChangeMs = 0;
     s_lastStablePressed = false;
     s_longStartMillis = 0;
+}
+
+void ButtonThread::resetWakeHoldGate()
+{
+    wakeHoldActive = false;
+    wakeTriggered = false;
+    wakeHoldStart = 0;
+    wakeAnimStarted = false;
+#if !MESHTASTIC_EXCLUDE_HERMESX
+    if (HermesXInterfaceModule::instance) {
+        HermesXInterfaceModule::instance->stopPowerHoldAnimation(false);
+    }
+#endif
+}
+
+void ButtonThread::processWakeHoldGate()
+{
+    bool anyPressed = false;
+    uint32_t pressedMs = 0;
+
+#if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN)
+    if (userButton.pin() >= 0 && userButton.debouncedValue()) {
+        anyPressed = true;
+        uint32_t candidate = userButton.getPressedMs();
+        if (candidate > pressedMs) {
+            pressedMs = candidate;
+        }
+    }
+#endif
+#ifdef BUTTON_PIN_ALT
+    if (userButtonAlt.pin() >= 0 && userButtonAlt.debouncedValue()) {
+        anyPressed = true;
+        uint32_t candidate = userButtonAlt.getPressedMs();
+        if (candidate > pressedMs) {
+            pressedMs = candidate;
+        }
+    }
+#endif
+#ifdef BUTTON_PIN_TOUCH
+    if (userButtonTouch.pin() >= 0 && userButtonTouch.debouncedValue()) {
+        anyPressed = true;
+        uint32_t candidate = userButtonTouch.getPressedMs();
+        if (candidate > pressedMs) {
+            pressedMs = candidate;
+        }
+    }
+#endif
+
+    if (!wakeHoldActive && anyPressed) {
+        // 按住後在事件送達前就進入閘門，避免開機時抓不到 PRESS 事件
+        wakeHoldActive = true;
+        wakeTriggered = false;
+        wakeAnimStarted = false;
+        wakeHoldStart = millis();
+    }
+
+    if (!anyPressed) {
+        resetWakeHoldGate();
+        return;
+    }
+
+    auto *interfaceModule = HermesXInterfaceModule::instance;
+
+    if (!wakeAnimStarted && interfaceModule) {
+        interfaceModule->startPowerHoldAnimation(HermesXInterfaceModule::PowerHoldMode::PowerOn, kWakeHoldMs);
+        wakeAnimStarted = true;
+    }
+
+    if (wakeAnimStarted && interfaceModule) {
+        uint32_t clamped = pressedMs;
+        if (clamped > kWakeHoldMs) {
+            clamped = kWakeHoldMs;
+        }
+        interfaceModule->updatePowerHoldAnimation(clamped);
+    }
+
+    if (!wakeTriggered && pressedMs >= kWakeHoldMs) {
+        wakeTriggered = true;
+        // 只有在 Dark 狀態才觸發開機，避免已開機狀態下按住又切回關機
+        auto *currentState = powerFSM.getState();
+        if (currentState == &stateDARK) {
+            powerFSM.trigger(EVENT_PRESS);
+        }
+#if !MESHTASTIC_EXCLUDE_HERMESX
+        if (HermesXInterfaceModule::instance) {
+            // 使用預設待機色播放開機動畫
+            HermesXInterfaceModule::instance->playStartupLEDAnimation(0xFF5000);
+        }
+#endif
+    }
 }
 #else
 void ButtonThread::resetLongPressState() {}
