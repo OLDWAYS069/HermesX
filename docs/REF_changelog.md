@@ -25,7 +25,7 @@
   - 新增 `docs/REF_3021.md` 描述 302.1 流程與封包對應；`docs/Lighthouse_portable.md` 紀錄隨身模式調整與舊行為保留方法。
   - 已知問題：開機後狀態 banner（EM/輪詢/行動）仍可能未顯示，雖有 log「show status banner」，需再對齊 HermesX face 刷新管線。
 - 測試：
-  - 待執行：載入 `/prefs/lighthouse_passphrase.txt`，用 ASCII/全形 ＠EmergencyActive:<pass> 觸發；檢查未授權時的 log；EM 封鎖 TEXT_MESSAGE_APP；長按 SAFE 發送 Emergency 封包，收到 ACK 後解除封鎖並退出 EM；確認隨身模式開機只顯示狀態、不廣播。
+  - 待執行：載入 `/prefs/lighthouse_passphrase.txt`，檢查未授權時的 log；EM 封鎖 TEXT_MESSAGE_APP；長按 SAFE 發送 Emergency 封包，收到 ACK 後解除封鎖並退出 EM；確認隨身模式開機只顯示狀態、不廣播。
 
 ## 範圍
 - 日期：2025-10-15

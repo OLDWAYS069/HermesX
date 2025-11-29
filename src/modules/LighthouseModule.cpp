@@ -52,8 +52,10 @@ void normalizeAtPrefix(char *txt, size_t &len)
 
 void showLocalStatusOverlay(bool emergencyModeActive, bool pollingModeRequested)
 {
-    if (!HermesXInterfaceModule::instance)
+    if (!HermesXInterfaceModule::instance) {
+        HERMESX_LOG_WARN("skip status banner: HermesX interface not ready");
         return;
+    }
 
     const __FlashStringHelper *text = nullptr;
     uint16_t color = 0;
@@ -534,12 +536,12 @@ int32_t LighthouseModule::runOnce()
             broadcastStatusMessage();
             HERMESX_LOG_INFO("broadcasting...");
         } else {
-            lighthouseStatusDueMs = millis() + 8000; // wait for boot screen to finish
+            lighthouseStatusDueMs = millis() + 13000; // wait for boot screen to finish
         }
     }
 
     if (!HERMESX_LH_BROADCAST_ON_BOOT && !lighthouseStatusShown && HermesXInterfaceModule::instance &&
-        lighthouseStatusDueMs && static_cast<int32_t>(millis() - lighthouseStatusDueMs) >= 0) {
+        lighthouseStatusDueMs && millis() >= lighthouseStatusDueMs) {
         showLocalStatusOverlay(emergencyModeActive, pollingModeRequested);
         lighthouseStatusShown = true;
     }
