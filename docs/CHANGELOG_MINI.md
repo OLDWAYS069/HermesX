@@ -1,6 +1,12 @@
 # HermesX Mini Change Log
 （每次只寫極簡亮點，便於快速回顧）
 
+## 2025-11-30
+- 分支 `hermesX_b0.2.6` 紀錄 Heltec Tracker 電源鍵長按喚醒異常：按住反覆重啟、無 ButtonThread 事件與 power-hold 動畫，文件化環境與待查方向。
+
+## 2025-11-29
+- Lighthouse EMACT：支援全形＠的 `@EmergencyActive:<pass>`，並在拒絕/通過時寫 log（密碼/白名單狀態）。開機版號改為 `HXB_<語意版號><git>` 方便現場辨識。
+
 ## 2025-10-30
 - 恢復 HermesX CN12 混排的 ASCII 分流，英數回到半形寬度，中文仍交由 CN12 繪製。
 - CannedMessage 清單與輸入框改用混排渲染，完整保留 UTF-8 中文並原樣傳送。
