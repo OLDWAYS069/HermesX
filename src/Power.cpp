@@ -692,7 +692,9 @@ void Power::shutdown()
 #ifdef PIN_LED3
     ledOff(PIN_LED3);
 #endif
-    doDeepSleep(DELAY_FOREVER, false, false);
+    // 這是使用者明確要求的關機；若無線佇列仍有待送封包，preflight 可能卡住 30 秒並觸發 critical error。
+    // 直接跳過 preflight，確保立即關機進入深睡。
+    doDeepSleep(DELAY_FOREVER, true /* skipPreflight */, false);
 #endif
 }
 

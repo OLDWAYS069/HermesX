@@ -139,6 +139,8 @@ public:
     void startPowerHoldAnimation(PowerHoldMode mode, uint32_t holdDurationMs);
     void updatePowerHoldAnimation(uint32_t elapsedMs);
     void stopPowerHoldAnimation(bool completed);
+    void forceStopPowerHoldAnimation();
+    LEDAnimation getCurrentAnimation() const;
     void startPowerHoldFade(uint32_t now);
 
     static void deferStartupVisuals();
@@ -251,6 +253,7 @@ private:
     uint32_t powerHoldDurationMs = 0;
     uint32_t powerHoldElapsedMs = 0;
     bool powerHoldReady = false;
+    bool forceStopPowerOff = false;
     bool powerHoldFadeActive = false;
     bool powerHoldLatchedRed = false;
     uint32_t powerHoldFadeStartMs = 0;

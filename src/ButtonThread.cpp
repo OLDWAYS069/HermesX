@@ -51,7 +51,40 @@ static constexpr uint32_t kShutdownAnimDurationMs = BUTTON_LONGPRESS_MS ? BUTTON
 static constexpr uint32_t kResumeGraceMs = 1200;
 static constexpr uint32_t kReleaseDebounceMs = 80;
 #if !MESHTASTIC_EXCLUDE_HERMESX
+// 逐格視覺放慢倍率（需等全部轉紅才觸發關機）
+static constexpr float kPowerHoldVisualStretch = 1.0f;
+#endif
+#if !MESHTASTIC_EXCLUDE_HERMESX
 static bool s_deferShutdownUi = false;
+static bool s_shutdownSequenceStarted = false;
+
+static void startShutdownVisuals(uint32_t holdDurationMs)
+{
+    if (s_shutdownSequenceStarted)
+        return;
+
+    auto *interfaceModule = HermesXInterfaceModule::instance;
+
+    // 先讓逐格動畫補滿並關閉，以免阻擋後續 ShutdownEffect
+    if (interfaceModule) {
+        interfaceModule->updatePowerHoldAnimation(holdDurationMs);
+        interfaceModule->forceStopPowerHoldAnimation();
+    }
+    ButtonThread::clearHoldAnimationState();
+
+    if (screen) {
+        screen->startAlert("Shutting down...");
+    }
+    playBeep();
+
+    s_shutdownAnimArmed = interfaceModule;
+    s_shutdownDeadlineMs = millis() + kShutdownAnimDurationMs;
+    if (interfaceModule) {
+        interfaceModule->startLEDAnimation(LEDAnimation::ShutdownEffect);
+    }
+
+    s_shutdownSequenceStarted = true;
+}
 #endif
 #endif
 
@@ -230,7 +263,9 @@ int32_t ButtonThread::runOnce()
     if (bootHoldArmed) {
         userButton.tick();
         userButtonTicked = true;
-        if (handleBootHold()) {
+        bool gate = handleBootHold();
+        // 只在深睡/待機時才阻塞其他流程；已開機就讓其他邏輯繼續（避免第一次長按延遲）
+        if (powerFSM.getState() == &stateDARK && gate) {
             return 50;
         }
     }
@@ -387,6 +422,7 @@ int32_t ButtonThread::runOnce()
 #if !MESHTASTIC_EXCLUDE_HERMESX
             // HermesX: 延後 Shutdown UI/動畫到 PowerHold 完成（逐格轉紅後）
             s_deferShutdownUi = HermesXInterfaceModule::instance;
+            s_shutdownSequenceStarted = false;
             if (!s_deferShutdownUi)
 #endif
             if (screen) {
@@ -423,45 +459,29 @@ int32_t ButtonThread::runOnce()
 #if !MESHTASTIC_EXCLUDE_HERMESX
             uint32_t shutdownDelayMs = kShutdownAnimDurationMs;
             auto *interfaceModule = HermesXInterfaceModule::instance;
-            if (s_deferShutdownUi && interfaceModule) {
-                if (screen) {
-                    screen->startAlert("Shutting down...");
-                }
-                playBeep();
-
-                // 持續跑完逐格轉紅動畫，再進入關機
-                const uint32_t holdDurationMs = BUTTON_LONGPRESS_MS ? BUTTON_LONGPRESS_MS : 1;
-                uint32_t holdAnimWaitMs = 0;
-                uint32_t targetElapsed = holdDurationMs;
-                uint32_t elapsed = holdAnimationLastMs;
-                if (elapsed < targetElapsed) {
-                    const uint32_t waitStart = millis();
-                    while (elapsed < targetElapsed) {
-                        uint32_t nowMs = millis();
-                        uint32_t simulatedElapsed = holdAnimationLastMs + (nowMs - waitStart);
-                        if (simulatedElapsed > targetElapsed) {
-                            simulatedElapsed = targetElapsed;
-                        }
-                        interfaceModule->updatePowerHoldAnimation(simulatedElapsed);
-                        elapsed = simulatedElapsed;
-                        delay(50);
-                    }
-                    holdAnimWaitMs = millis() - waitStart;
-                } else {
-                    interfaceModule->updatePowerHoldAnimation(elapsed);
-                }
-                interfaceModule->stopPowerHoldAnimation(true);
-
-                if (holdAnimWaitMs >= shutdownDelayMs) {
-                    shutdownDelayMs = 0;
-                } else {
-                    shutdownDelayMs -= holdAnimWaitMs;
+            if (s_shutdownSequenceStarted) {
+                // 視覺已啟動：只需等待已排程的 deadline，再做實際關機
+                uint32_t nowMs = millis();
+                if (s_shutdownAnimArmed && s_shutdownDeadlineMs > nowMs) {
+                    delay(s_shutdownDeadlineMs - nowMs);
                 }
             } else {
-                if (screen) {
-                    screen->startAlert("Shutting down...");
+                if (s_deferShutdownUi && interfaceModule) {
+                    // 放開才補啟動：補完進度、開啟關機視覺
+                    const uint32_t holdDurationMs = BUTTON_LONGPRESS_MS ? BUTTON_LONGPRESS_MS : 1;
+                    startShutdownVisuals(holdDurationMs);
+                } else {
+                    if (screen) {
+                        screen->startAlert("Shutting down...");
+                    }
+                    playBeep();
+                    s_shutdownAnimArmed = interfaceModule;
+                    s_shutdownDeadlineMs = millis() + shutdownDelayMs;
+                    if (interfaceModule) {
+                        interfaceModule->startLEDAnimation(LEDAnimation::ShutdownEffect);
+                    }
+                    s_shutdownSequenceStarted = true;
                 }
-                playBeep();
             }
 #else
             if (screen) {
@@ -492,6 +512,7 @@ int32_t ButtonThread::runOnce()
             s_shutdownAnimArmed = false;
 #if !MESHTASTIC_EXCLUDE_HERMESX
             s_deferShutdownUi = false;
+            s_shutdownSequenceStarted = false;
 #endif
             break;
         }
@@ -525,6 +546,22 @@ int32_t ButtonThread::runOnce()
         }
         btnEvent = BUTTON_EVENT_NONE;
     }
+
+#if !MESHTASTIC_EXCLUDE_HERMESX
+    // 若已經啟動關機動畫，但遲遲沒有收到長按放開事件，逾時後強制收尾並進入關機
+    if (s_shutdownAnimArmed && s_shutdownDeadlineMs > 0) {
+        uint32_t now = millis();
+        if (now >= s_shutdownDeadlineMs) {
+            if (HermesXInterfaceModule::instance) {
+                HermesXInterfaceModule::instance->forceAllLedsOff();
+            }
+            power->shutdown();
+            s_shutdownAnimArmed = false;
+            s_shutdownSequenceStarted = false;
+            s_deferShutdownUi = false;
+        }
+    }
+#endif
 
     return 50;
 }
@@ -683,6 +720,11 @@ void ButtonThread::resetLongPressState()
     s_holdPressStartMs = 0;
 #if !MESHTASTIC_EXCLUDE_HERMESX
     s_deferShutdownUi = false;
+    s_shutdownSequenceStarted = false;
+#endif
+#if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT) ||                \
+    defined(BUTTON_PIN_TOUCH)
+    holdAnimationStarted = false;
 #endif
 }
 
@@ -697,6 +739,9 @@ void ButtonThread::resetWakeHoldGate()
     if (HermesXInterfaceModule::instance && hadWakeAnim) {
         HermesXInterfaceModule::instance->stopPowerHoldAnimation(false);
     }
+#endif
+#if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT) || defined(BUTTON_PIN_TOUCH)
+    holdAnimationStarted = false;
 #endif
 }
 
@@ -850,12 +895,17 @@ void ButtonThread::updatePowerHoldAnimation()
 {
 #if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT) || defined(BUTTON_PIN_TOUCH)
     auto *interfaceModule = HermesXInterfaceModule::instance;
-    if (!interfaceModule) {
-        if (holdAnimationActive) {
-            LOG_INFO("PowerHold: interface missing, stop local state");
+    bool interfaceReady = interfaceModule != nullptr;
+
+    // 已經進入關機序列時，不再繼續進度動畫，避免再次啟動或重跑
+    if (s_shutdownSequenceStarted) {
+        // 進度動畫停掉，但不要重置計時；等待關機
+        if (holdAnimationActive && holdAnimationStarted) {
+            if (auto *interfaceModule = HermesXInterfaceModule::instance) {
+                interfaceModule->stopPowerHoldAnimation(false);
+            }
             holdAnimationActive = false;
-            holdAnimationMode = HoldAnimationMode::None;
-            holdAnimationLastMs = 0;
+            holdAnimationStarted = false;
         }
         return;
     }
@@ -863,11 +913,15 @@ void ButtonThread::updatePowerHoldAnimation()
     const uint32_t holdDurationMs = BUTTON_LONGPRESS_MS ? BUTTON_LONGPRESS_MS : 1;
     bool anyPressed = false;
     uint32_t pressedMs = 0;
+    uint32_t userPressedMs = 0;
+    uint32_t altPressedMs = 0;
+    uint32_t touchPressedMs = 0;
 
 #if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN)
     if (userButton.pin() >= 0 && userButton.debouncedValue()) {
         anyPressed = true;
         uint32_t candidate = userButton.getPressedMs();
+        userPressedMs = candidate;
         if (candidate > pressedMs) {
             pressedMs = candidate;
         }
@@ -877,6 +931,7 @@ void ButtonThread::updatePowerHoldAnimation()
     if (userButtonAlt.pin() >= 0 && userButtonAlt.debouncedValue()) {
         anyPressed = true;
         uint32_t candidate = userButtonAlt.getPressedMs();
+        altPressedMs = candidate;
         if (candidate > pressedMs) {
             pressedMs = candidate;
         }
@@ -886,16 +941,28 @@ void ButtonThread::updatePowerHoldAnimation()
     if (userButtonTouch.pin() >= 0 && userButtonTouch.debouncedValue()) {
         anyPressed = true;
         uint32_t candidate = userButtonTouch.getPressedMs();
+        touchPressedMs = candidate;
         if (candidate > pressedMs) {
             pressedMs = candidate;
         }
     }
 #endif
 
-    // 忽略按住但計時仍為 0 的情況，避免 release 後的抖動重啟動畫
+    // 如果剛按下，OneButton 的 pressedMs 可能仍為 0；仍然要啟動動畫
     if (anyPressed && pressedMs == 0) {
-        anyPressed = false;
+        pressedMs = 1;
     }
+
+    static bool s_prevAnyPressed = false;
+    static uint32_t s_lastPressTimestamp = 0;
+    if (anyPressed && !s_prevAnyPressed) {
+        LOG_INFO("PowerHold: press detected (user=%" PRIu32 " alt=%" PRIu32 " touch=%" PRIu32 ")", userPressedMs, altPressedMs,
+                 touchPressedMs);
+    }
+    if (anyPressed) {
+        s_lastPressTimestamp = millis();
+    }
+    s_prevAnyPressed = anyPressed;
 
     if (anyPressed) {
         const uint32_t nowMs = millis();
@@ -904,11 +971,19 @@ void ButtonThread::updatePowerHoldAnimation()
         }
         uint32_t elapsedMs = nowMs - s_holdPressStartMs;
         holdAnimationLastMs = elapsedMs;
+        const uint32_t visualGateMs =
+#if !MESHTASTIC_EXCLUDE_HERMESX
+            static_cast<uint32_t>(static_cast<float>(holdDurationMs) * kPowerHoldVisualStretch + 0.5f);
+#else
+            holdDurationMs;
+#endif
+        const uint32_t shutdownGateMs = visualGateMs ? visualGateMs : holdDurationMs;
 
         if (!holdAnimationActive) {
             holdAnimationMode = resolveHoldMode();
             if (holdAnimationMode != HoldAnimationMode::None) {
                 holdAnimationActive = true;
+                holdAnimationStarted = false;
                 holdAnimationLastMs = 0;          // 動畫進度從 0 開始
                 holdAnimationBaseMs = 0;           // 改用累計時間
                 const auto moduleMode = (holdAnimationMode == HoldAnimationMode::PowerOn)
@@ -916,20 +991,99 @@ void ButtonThread::updatePowerHoldAnimation()
                                             : HermesXInterfaceModule::PowerHoldMode::PowerOff;
                 LOG_INFO("PowerHold: auto-start mode=%s ms=%" PRIu32,
                          moduleMode == HermesXInterfaceModule::PowerHoldMode::PowerOn ? "on" : "off", pressedMs);
-                interfaceModule->startPowerHoldAnimation(moduleMode, holdDurationMs);
+                if (interfaceReady) {
+                    interfaceModule->startPowerHoldAnimation(moduleMode, holdDurationMs);
+                    holdAnimationStarted = true;
+                } else {
+                    LOG_INFO("PowerHold: interface not ready, defer start");
+                }
             }
+        } else if (pressedMs >= holdDurationMs && holdAnimationLastMs == 0) {
+            // 進入時已經累積很久，記錄遲到偵測
+            LOG_INFO("PowerHold: late detection, pressedMs=%" PRIu32 " holdDuration=%" PRIu32, pressedMs, holdDurationMs);
         }
 
         if (holdAnimationActive) {
+            // 若發現 LED 管理的當前動畫已被其他事件蓋掉，立即恢復 PowerHoldProgress
+            if (interfaceReady && holdAnimationStarted &&
+                interfaceModule->getCurrentAnimation() != LEDAnimation::PowerHoldProgress) {
+                LOG_INFO("PowerHold: animation lost, restoring");
+                interfaceModule->startLEDAnimation(LEDAnimation::PowerHoldProgress);
+                interfaceModule->updatePowerHoldAnimation(holdAnimationLastMs);
+            }
+
+            // 達標即啟動關機視覺，避免重跑或提前被 stop
+            if (holdAnimationMode == HoldAnimationMode::PowerOff && holdAnimationLastMs >= shutdownGateMs) {
+                startShutdownVisuals(shutdownGateMs);
+                return;
+            }
+
+            // 關機長按已經進行且累積達標後，不再接受後續 long-start 重置
+            if (holdAnimationMode == HoldAnimationMode::PowerOff && holdAnimationLastMs >= shutdownGateMs) {
+                holdAnimationActive = false; // 交由關機流程收尾
+                return;
+            }
+
+            // 若尚未在 LED 模組啟動且接口已就緒，立即啟動並套用累計時間
+            if (!holdAnimationStarted && interfaceReady) {
+                const auto moduleMode = (holdAnimationMode == HoldAnimationMode::PowerOn)
+                                            ? HermesXInterfaceModule::PowerHoldMode::PowerOn
+                                            : HermesXInterfaceModule::PowerHoldMode::PowerOff;
+                interfaceModule->startPowerHoldAnimation(moduleMode, holdDurationMs);
+                holdAnimationStarted = true;
+                interfaceModule->updatePowerHoldAnimation(holdAnimationLastMs);
+            }
+
             holdAnimationLastMs = elapsedMs;
             LOG_INFO("PowerHold: update ms=%" PRIu32, holdAnimationLastMs);
-            interfaceModule->updatePowerHoldAnimation(holdAnimationLastMs);
+            if (holdAnimationStarted && interfaceReady) {
+                interfaceModule->updatePowerHoldAnimation(holdAnimationLastMs);
+            }
+
+            // 達標即進入關機視覺，避免進度重跑第二輪
+            if (holdAnimationMode == HoldAnimationMode::PowerOff && holdAnimationLastMs >= holdDurationMs) {
+                startShutdownVisuals(holdDurationMs);
+                return;
+            }
+
+            // 關機長按：逐格轉紅達標就啟動關機視覺（不必等放開）
+            if (s_deferShutdownUi && holdAnimationMode == HoldAnimationMode::PowerOff &&
+                holdAnimationLastMs >= holdDurationMs) {
+                startShutdownVisuals(holdDurationMs);
+            }
         }
 
         return;
     }
 
-    // 不在此處停止，等待釋放事件處理，避免抖動導致立即關閉動畫
+    // 釋放後立即停止逐格動畫，釋放資源給其他動畫使用（留一點容錯避免短暫抖動）
+    const uint32_t nowMs = millis();
+    const uint32_t releaseGraceMs = 180;
+    if (holdAnimationActive && s_lastPressTimestamp && (nowMs - s_lastPressTimestamp) < releaseGraceMs) {
+        return;
+    }
+
+    if (holdAnimationActive) {
+        holdAnimationActive = false;
+        holdAnimationMode = HoldAnimationMode::None;
+        holdAnimationLastMs = 0;
+        holdAnimationStarted = false;
+        s_holdPressStartMs = 0;
+        if (auto *interfaceModule = HermesXInterfaceModule::instance) {
+            interfaceModule->stopPowerHoldAnimation(false);
+        }
+    } else {
+        s_holdPressStartMs = 0;
+    }
+
+    // 若已經進入關機序列，確保長按閘門狀態清掉，避免提前發生 shutdown
+#if !MESHTASTIC_EXCLUDE_HERMESX
+    if (s_shutdownSequenceStarted || s_shutdownAnimArmed) {
+        s_longGateArmed = false;
+        s_longEventPending = false;
+        s_longStartMillis = 0;
+    }
+#endif
 #endif
 }
 
@@ -1002,6 +1156,16 @@ bool ButtonThread::handleBootHold()
 void ButtonThread::userButtonPressedLongStart()
 {
 #if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT)
+    // 已啟動關機序列時忽略後續長按開始，避免中途再次觸發導致提前關機
+#if !MESHTASTIC_EXCLUDE_HERMESX
+    if (s_shutdownSequenceStarted || s_shutdownAnimArmed) {
+        return;
+    }
+    // 已有任何逐燈動畫在跑（開/關機皆然），避免 OneButton 重複觸發 long start 造成重置
+    if (buttonThread && buttonThread->holdAnimationActive) {
+        return;
+    }
+#endif
     uint32_t pressedMs = 0;
 #if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN)
     pressedMs = userButton.getPressedMs();
@@ -1023,6 +1187,10 @@ void ButtonThread::userButtonPressedLongStart()
 #else
     bool holdAllowed = true;
 #endif
+
+    if (s_shutdownSequenceStarted || s_shutdownAnimArmed) {
+        return;
+    }
 
     if (!holdAllowed)
         return;
@@ -1073,6 +1241,15 @@ void ButtonThread::userButtonPressedLongStart()
 void ButtonThread::userButtonPressedLongStop()
 {
 #if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT)
+    // 已啟動關機序列時忽略，避免提前 shutdown
+#if !MESHTASTIC_EXCLUDE_HERMESX
+    if (s_shutdownSequenceStarted || s_shutdownAnimArmed) {
+        s_longGateArmed = false;
+        s_longEventPending = false;
+        s_longStartMillis = 0;
+        return;
+    }
+#endif
     const uint32_t now = millis();
     bool holdAllowed =
 #if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS) &&                                                   \
@@ -1133,3 +1310,34 @@ void ButtonThread::userButtonPressedLongStop()
     btnEvent = BUTTON_EVENT_LONG_RELEASED;
 #endif
 }
+#if !MESHTASTIC_EXCLUDE_HERMESX
+void ButtonThread::clearHoldAnimationState()
+{
+#if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT) || defined(BUTTON_PIN_TOUCH)
+    if (buttonThread) {
+        buttonThread->holdAnimationActive = false;
+        buttonThread->holdAnimationMode = HoldAnimationMode::None;
+        buttonThread->holdAnimationStarted = false;
+        buttonThread->holdAnimationLastMs = 0;
+    }
+    s_holdPressStartMs = 0;
+#endif
+}
+
+bool ButtonThread::isHoldButtonPressed()
+{
+#if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN)
+    if (userButton.pin() >= 0 && userButton.debouncedValue())
+        return true;
+#endif
+#ifdef BUTTON_PIN_ALT
+    if (buttonThread && buttonThread->userButtonAlt.pin() >= 0 && buttonThread->userButtonAlt.debouncedValue())
+        return true;
+#endif
+#ifdef BUTTON_PIN_TOUCH
+    if (buttonThread && buttonThread->userButtonTouch.pin() >= 0 && buttonThread->userButtonTouch.debouncedValue())
+        return true;
+#endif
+    return false;
+}
+#endif

@@ -1711,6 +1711,8 @@ void Screen::handleSetOn(bool on, FrameCallback einkScreensaver)
             enabled = true;
             setInterval(0); // Draw ASAP
             runASAP = true;
+            // 重新開啟後強制更新畫面，避免黑屏
+            forceDisplay(true);
         } else {
             powerMon->clearState(meshtastic_PowerMon_State_Screen_On);
 #ifdef USE_EINK
@@ -2962,4 +2964,3 @@ int Screen::handleAdminMessage(const meshtastic_AdminMessage *arg)
 #else
 graphics::Screen::Screen(ScanI2C::DeviceAddress, meshtastic_Config_DisplayConfig_OledType, OLEDDISPLAY_GEOMETRY) {}
 #endif // HAS_SCREEN
-

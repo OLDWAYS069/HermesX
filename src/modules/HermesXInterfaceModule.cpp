@@ -110,11 +110,18 @@ constexpr uint32_t kShutdownAnimationStepMs = 20;
 
 constexpr uint32_t kPowerHoldFadeDurationMs = 1200;
 constexpr uint32_t kPowerHoldRedColor = 0xFF0000;
+// 放慢逐格進度的視覺速度，但邏輯門檻仍在原本的 holdDuration。
+// 視覺完成時間 = holdDuration * kPowerHoldVisualStretch，達門檻或關機時會直接鎖紅。
+constexpr float kPowerHoldVisualStretch = 1.0f;
 
 } // namespace
 
 LEDAnimation HermesXInterfaceModule::selectActiveAnimation() const
 {
+    HERMESX_LOG_INFO("LED selectActiveAnimation: startup=%d shutdown=%d ph=%d fade=%d latched=%d ack=%d nack=%d send=%d recv=%d info=%d",
+                     startupEffectActive ? 1 : 0, shutdownEffectActive ? 1 : 0, powerHoldActive ? 1 : 0, powerHoldFadeActive ? 1 : 0,
+                     powerHoldLatchedRed ? 1 : 0, ackFlashActive ? 1 : 0, nackFlashActive ? 1 : 0, sendAnimActive ? 1 : 0,
+                     recvAnimActive ? 1 : 0, infoAnimActive ? 1 : 0);
     if (powerHoldActive)
         return LEDAnimation::PowerHoldProgress;
     if (powerHoldFadeActive)
@@ -444,14 +451,16 @@ void HermesXInterfaceModule::renderPowerHoldProgress(uint32_t now)
     if (powerHoldDurationMs == 0)
         powerHoldDurationMs = BUTTON_LONGPRESS_MS ? BUTTON_LONGPRESS_MS : 1;
 
-    float progress = 0.0f;
-    if (powerHoldDurationMs > 0) {
-        progress = static_cast<float>(powerHoldElapsedMs) / static_cast<float>(powerHoldDurationMs);
+    // 視覺速度放慢，但邏輯門檻仍依 powerHoldDurationMs
+    const float visualDuration = static_cast<float>(powerHoldDurationMs) * kPowerHoldVisualStretch;
+    float visualProgress = 0.0f;
+    if (visualDuration > 0.0f) {
+        visualProgress = static_cast<float>(powerHoldElapsedMs) / visualDuration;
     }
-    if (progress < 0.0f)
-        progress = 0.0f;
-    if (progress > 1.0f)
-        progress = 1.0f;
+    if (visualProgress < 0.0f)
+        visualProgress = 0.0f;
+    if (visualProgress > 1.0f)
+        visualProgress = 1.0f;
 
     rgb.clear();
     const uint32_t activeColor = kPowerHoldRedColor;
@@ -460,16 +469,12 @@ void HermesXInterfaceModule::renderPowerHoldProgress(uint32_t now)
     for (int step = 0; step < NUM_LEDS; ++step) {
         const int ledIndex = (NUM_LEDS - 1) - step;
         const float threshold = static_cast<float>(step + 1) / static_cast<float>(NUM_LEDS);
-        bool segmentLatched = progress >= threshold;
+        bool segmentLatched = visualProgress >= threshold;
         const uint32_t color = segmentLatched ? activeColor : idleColor;
         rgb.setPixelColor(ledIndex, color);
     }
 
     rgb.show();
-
-    if (progress >= 1.0f) {
-        startPowerHoldFade(now);
-    }
 }
 
 void HermesXInterfaceModule::renderPowerHoldFade(uint32_t now)
@@ -583,6 +588,11 @@ void HermesXInterfaceModule::forceAllLedsOff()
     gLedState.isRunning = false;
     rgb.clear();
     rgb.show();
+}
+
+LEDAnimation HermesXInterfaceModule::getCurrentAnimation() const
+{
+    return gLedState.activeAnimation;
 }
 
 void HermesXInterfaceModule::beginPowerHoldProgress()
@@ -1503,13 +1513,16 @@ void HermesXInterfaceModule::updatePowerHoldAnimation(uint32_t elapsedMs) {
     if (powerHoldMode == PowerHoldMode::None) {
         return;
     }
+    const float visualDuration = static_cast<float>(powerHoldDurationMs) * kPowerHoldVisualStretch;
+    uint32_t visualDurationMs = visualDuration > 0.0f ? static_cast<uint32_t>(visualDuration + 0.5f) : powerHoldDurationMs;
     powerHoldElapsedMs = elapsedMs;
-    HERMESX_LOG_INFO("LED power-hold update elapsed=%" PRIu32 " dur=%" PRIu32, powerHoldElapsedMs, powerHoldDurationMs);
-    if (powerHoldDurationMs > 0 && powerHoldElapsedMs > powerHoldDurationMs) {
-        powerHoldElapsedMs = powerHoldDurationMs;
+    HERMESX_LOG_INFO("LED power-hold update elapsed=%" PRIu32 " dur=%" PRIu32 " visual=%" PRIu32, powerHoldElapsedMs,
+                     powerHoldDurationMs, visualDurationMs);
+    if (visualDurationMs > 0 && powerHoldElapsedMs > visualDurationMs) {
+        powerHoldElapsedMs = visualDurationMs;
     }
 
-    if (powerHoldActive && powerHoldDurationMs > 0 && powerHoldElapsedMs >= powerHoldDurationMs) {
+    if (powerHoldActive && visualDurationMs > 0 && powerHoldElapsedMs >= visualDurationMs) {
         startPowerHoldFade(millis());
     }
 }
@@ -1522,6 +1535,14 @@ void HermesXInterfaceModule::stopPowerHoldAnimation(bool completed) {
         return;
     }
 
+#if !MESHTASTIC_EXCLUDE_HERMESX
+    // 長按關機時，若按鍵仍壓著則忽略早於達標的 stop，避免進度在中途被清掉重置
+    if (powerHoldMode == PowerHoldMode::PowerOff && ButtonThread::isHoldButtonPressed() && !forceStopPowerOff) {
+        HERMESX_LOG_INFO("LED power-hold stop ignored (button still pressed)");
+        return;
+    }
+#endif
+
     powerHoldActive = false;
     HermesXInterfaceModule::setPowerHoldReady(false);
     powerHoldFadeActive = false;
@@ -1529,6 +1550,13 @@ void HermesXInterfaceModule::stopPowerHoldAnimation(bool completed) {
     powerHoldMode = PowerHoldMode::None;
     powerHoldDurationMs = 0;
     powerHoldElapsedMs = 0;
+}
+
+void HermesXInterfaceModule::forceStopPowerHoldAnimation()
+{
+    forceStopPowerOff = true;
+    stopPowerHoldAnimation(false);
+    forceStopPowerOff = false;
 }
 
 void HermesXInterfaceModule::startPowerHoldFade(uint32_t now) {
