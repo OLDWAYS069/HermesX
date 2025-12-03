@@ -1708,6 +1708,11 @@ void Screen::handleSetOn(bool on, FrameCallback einkScreensaver)
             digitalWrite(VTFT_LEDA, TFT_BACKLIGHT_ON);
 #endif
 #endif
+// Some TFTs (e.g. ST7735/ILI9xxx/ST77xx) lose GRAM when VEXT/backlight is cut; re-init UI on wake to avoid blank lit screen.
+#if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||     \
+    defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
+            ui->init();
+#endif
             enabled = true;
             setInterval(0); // Draw ASAP
             runASAP = true;
