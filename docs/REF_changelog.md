@@ -1,15 +1,22 @@
 # HermesX 變更紀錄 (REF_changelog.md)
 
 ## 範圍
-- 日期：2025-11-30
-- 項目：電源鍵長按喚醒異常紀錄
+- 日期：2025-12-05
+- 版本：App 回報 2.6.11 / 螢幕顯示 0.2.6
+- 項目：版號顯示分離、TFT 喚醒重繪、清理冗長 LED log
 - 檔案：
-  - docs/REF_status.md
-  - docs/ISSUE_powerhold_longpress.md
+  - bin/platformio-custom.py
+  - src/configuration.h
+  - src/graphics/Screen.cpp
+  - src/graphics/niche/InkHUD/Applets/System/Logo/LogoApplet.cpp
+  - src/modules/HermesXInterfaceModule.cpp
+  - docs/CHANGELOG_MINI.md
 - 說明：
-  - 在分支 `hermesX_b0.2.6` 紀錄 Heltec Wireless Tracker (GPIO04) 上長按喚醒失效：按住會反覆重啟、無 ButtonThread 事件與 power-hold 動畫，3 秒喚醒閘門未生效。列出環境、症狀、可能原因與排查方向。
+  - 透過 `APP_VERSION_DISPLAY` 將螢幕顯示定為 0.2.6，同時維持對 App 的 2.6.11 回報。
+  - ST77xx/ILI9xxx 等 TFT 在 VEXT 斷電後醒來強制 `ui->init()`＋`forceDisplay(true)`，避免亮背光但黑屏。
+  - 移除 HermesX LED `selectActiveAnimation` 的冗長狀態列印。
 - 測試：
-  - 無（純文件更新）。
+  - 手動驗證螢幕顯示版號、App 連線版本識別；實機檢查 TFT 喚醒是否正常重繪。
 
 ## 範圍
 - 日期：2025-11-29

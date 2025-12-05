@@ -92,6 +92,9 @@ prefsLoc = projenv["PROJECT_DIR"] + "/version.properties"
 verObj = readProps(prefsLoc)
 print("Using meshtastic platformio-custom.py, firmware version " + verObj["long"] + " on " + env.get("PIOENV"))
 
+# Display version override: keep transport/App version at verObj, but allow a different on-screen string.
+display_short = "0.2.6"
+
 jsonLoc = env["PROJECT_DIR"] + "/userPrefs.jsonc"
 with open(jsonLoc) as f:
     jsonStr = re.sub("//.*","", f.read(), flags=re.MULTILINE)
@@ -116,6 +119,7 @@ for pref in userPrefs:
 flags = [
         "-DAPP_VERSION=" + verObj["long"],
         "-DAPP_VERSION_SHORT=" + verObj["short"],
+        "-DAPP_VERSION_DISPLAY=" + display_short,
         "-DAPP_ENV=" + env.get("PIOENV"),
     ] + pref_flags
 

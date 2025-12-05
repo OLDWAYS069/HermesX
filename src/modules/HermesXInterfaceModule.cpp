@@ -118,10 +118,6 @@ constexpr float kPowerHoldVisualStretch = 1.0f;
 
 LEDAnimation HermesXInterfaceModule::selectActiveAnimation() const
 {
-    HERMESX_LOG_INFO("LED selectActiveAnimation: startup=%d shutdown=%d ph=%d fade=%d latched=%d ack=%d nack=%d send=%d recv=%d info=%d",
-                     startupEffectActive ? 1 : 0, shutdownEffectActive ? 1 : 0, powerHoldActive ? 1 : 0, powerHoldFadeActive ? 1 : 0,
-                     powerHoldLatchedRed ? 1 : 0, ackFlashActive ? 1 : 0, nackFlashActive ? 1 : 0, sendAnimActive ? 1 : 0,
-                     recvAnimActive ? 1 : 0, infoAnimActive ? 1 : 0);
     if (powerHoldActive)
         return LEDAnimation::PowerHoldProgress;
     if (powerHoldFadeActive)

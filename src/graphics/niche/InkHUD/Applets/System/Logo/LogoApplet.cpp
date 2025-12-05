@@ -15,14 +15,14 @@ InkHUD::LogoApplet::LogoApplet() : concurrency::OSThread("LogoApplet")
     // This behavior assists manufacturers during mass production, and should not be modified without good reason
     if (!settings->tips.safeShutdownSeen) {
         fontTitle = fontLarge;
-        textLeft = xstr(APP_VERSION_SHORT);
+        textLeft = xstr(APP_VERSION_DISPLAY);
         textRight = owner.short_name;
         textTitle = "Meshtastic";
     } else {
         fontTitle = fontSmall;
         textLeft = "";
         textRight = "";
-        textTitle = xstr(APP_VERSION_SHORT);
+        textTitle = xstr(APP_VERSION_DISPLAY);
     }
 
     bringToForeground();
