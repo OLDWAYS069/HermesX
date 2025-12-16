@@ -16,6 +16,8 @@
 #include "mesh/Channels.h"
 #include "mesh/Router.h"
 #include "modules/HermesEmergencyState.h"
+#include "PowerStatus.h"
+#include <cstdio>
 
 
 static const char *bootFile = "/prefs/lighthouse_boot.bin";
@@ -74,6 +76,18 @@ void showLocalStatusOverlay(bool emergencyModeActive, bool pollingModeRequested)
     HermesXInterfaceModule::instance->showEmergencyBanner(true, text, color, durationMs);
     // Nudge UI so banner renders promptly using the same face pipeline as send/recv
     HermesXInterfaceModule::instance->startReceiveAnim();
+}
+
+void appendNodeId(String &msg)
+{
+    const char *sn = owner.short_name;
+    char buf[24];
+    if (sn && sn[0]) {
+        snprintf(buf, sizeof(buf), "\nID:%s", sn);
+    } else {
+        snprintf(buf, sizeof(buf), "\nID:%04x", myNodeInfo.my_node_num & 0x0ffff);
+    }
+    msg += String(buf);
 }
 
 } // namespace
@@ -349,6 +363,8 @@ void LighthouseModule::broadcastStatusMessage()
     msg = u8"[HermeS]\n模式：中繼站";
     }   
 
+    appendNodeId(msg);
+
     if (msg.length() == 0) return;
 
     meshtastic_MeshPacket *p = allocDataPacket();
@@ -373,6 +389,7 @@ void LighthouseModule::IntroduceMessage()
     msg = u8"[HermeS]\n大家好，我是 HermeS Shine1，一台可以遠端控制的無人管理站點\n"
               u8"使用說明：https://www.facebook.com/share/p/1EEThBhZeR/";
   
+    appendNodeId(msg);
 
     if (msg.length() == 0) return;
 
@@ -431,18 +448,25 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
     HERMESX_LOG_INFO("[Lighthouse] Received text=[%s] strlen=%d", txt, strlen(txt));
 
 
-    if (strcmp(txt, "@ResetLighthouse") == 0) {
+    if (strcmp(txt, "@Repeater") == 0) {
         emergencyModeActive = false;
         pollingModeRequested = false;
         firstBootMillis = millis();
         saveBoot();
+
+        // 切換為固定中繼站並拉高發射功率
+        config.has_device = true;
+        config.device.role = meshtastic_Config_DeviceConfig_Role_REPEATER;
+        config.has_lora = true;
+        config.lora.tx_power = 27;
+        config.has_power = true;
+        config.power.is_power_saving = false;
+
         saveState();
-        config.device.role = meshtastic_Config_DeviceConfig_Role_ROUTER_LATE;
         nodeDB->saveToDisk(SEGMENT_CONFIG);
-        saveState();
         roleCorrected = true;
                      
-        HERMESX_LOG_INFO("CLOSE LIGHTHOUSE,RESTARING");
+        HERMESX_LOG_INFO("Switch LIGHTHOUSE to REPEATER (tx_power=27dBm), restarting...");
         
         delay(15000);  // 確保 log 有時間送出
         ESP.restart();
@@ -504,6 +528,43 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
                 HERMESX_LOG_WARN("no HermesX interface; skip local status");
             }
         }
+        return ProcessMessage::CONTINUE;
+    }
+
+    if (strcmp(txt, "@BAT") == 0) {
+        String msg;
+        if (!powerStatus || !powerStatus->getHasBattery()) {
+            msg = u8"[HermeS]\n電池：無電池或未檢測";
+        } else {
+            const int pct = powerStatus->getBatteryChargePercent();
+            const int mv = powerStatus->getBatteryVoltageMv();
+            const bool charging = powerStatus->getIsCharging();
+
+            char buf[96];
+            const int v_int = mv / 1000;
+            const int v_dec = (mv % 1000) / 10;
+            snprintf(buf, sizeof(buf), "[HermeS]\n電池：%d%%%s\n電壓：%d.%02dV",
+                     pct, charging ? "(充電中)" : "", v_int, v_dec);
+            msg = String(buf);
+        }
+
+        appendNodeId(msg);
+
+        meshtastic_MeshPacket *p = allocDataPacket();
+        if (p) {
+            p->to = NODENUM_BROADCAST;
+            p->channel = 2;
+            p->decoded.portnum = meshtastic_PortNum_TEXT_MESSAGE_APP;
+            p->want_ack = false;
+            p->decoded.payload.size = strlen(msg.c_str());
+            memcpy(p->decoded.payload.bytes, msg.c_str(), p->decoded.payload.size);
+
+            service->sendToMesh(p, RX_SRC_LOCAL, false);
+            HERMESX_LOG_INFO("Broadcast battery status: %s", msg.c_str());
+        } else {
+            HERMESX_LOG_WARN("Unable to alloc packet for battery status");
+        }
+
         return ProcessMessage::CONTINUE;
     }
 

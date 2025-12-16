@@ -9,7 +9,7 @@
 #include <Arduino.h>
 
 #ifndef HERMESX_LH_BROADCAST_ON_BOOT
-#define HERMESX_LH_BROADCAST_ON_BOOT 0
+#define HERMESX_LH_BROADCAST_ON_BOOT 1
 #endif
 
 class LighthouseModule : public SinglePortModule, private concurrency::OSThread

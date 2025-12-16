@@ -273,6 +273,10 @@ void setupModules()
 #if !MESHTASTIC_EXCLUDE_TRACEROUTE
         traceRouteModule = new TraceRouteModule();
 #endif
+#if !MESHTASTIC_EXCLUDE_LIGHTHOUSE
+        // 固定中繼站仍需處理 Lighthouse 指令
+        lighthouseModule = new LighthouseModule();
+#endif
     }
     // NOTE! This module must be added LAST because it likes to check for replies from other modules and avoid sending extra
     // acks

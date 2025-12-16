@@ -3,7 +3,7 @@
 
 ## 2025-11-29
 - Lighthouse EMACT：支援全形＠的 `@EmergencyActive:<pass>`，並在拒絕/通過時寫 log（密碼/白名單狀態）。
-- 開機版號：改用 `HXB_<語意版號><git>` 的 APP_VERSION_DISPLAY，從分支名推語意版號，方便現場辨識。
+- 開機版號：改用 `HXB_<語意版號><git>` 的 APP_VERSION_DISPLAY
 
 ## 2025-10-30
 - 恢復 HermesX CN12 混排的 ASCII 分流，英數回到半形寬度，中文仍交由 CN12 繪製。
