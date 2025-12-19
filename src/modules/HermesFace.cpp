@@ -4,6 +4,11 @@
 #if MESHTASTIC_EXCLUDE_HERMESX
 #include "HermesXLog.h"
 
+bool HermesX_IsUiEnabled()
+{
+    return false;
+}
+
 bool HermesX_TryGetFaceRenderContext(HermesFaceRenderContext &ctx)
 {
     (void)ctx;

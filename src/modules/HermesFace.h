@@ -24,3 +24,6 @@ struct HermesFaceRenderContext {
 bool HermesX_TryGetFaceRenderContext(HermesFaceRenderContext &ctx) __attribute__((weak));
 
 __attribute__((weak)) void HermesX_DrawFace(OLEDDisplay *display, int16_t x, int16_t y, HermesFaceMode mode);
+
+// Runtime capability check: HermesX UI can be compiled in but still disabled by policy (e.g. based on role).
+bool HermesX_IsUiEnabled();

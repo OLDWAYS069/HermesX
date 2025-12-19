@@ -1,6 +1,12 @@
 # HermesX Mini Change Log
 （每次只寫極簡亮點，便於快速回顧）
 
+## 2025-12-18
+- TAK/TAK_TRACKER：預設停用 HermesX UI（NeoPixel LED 動畫 + HermesX 音效），讓 TAK profile 保持低可視/低干擾。
+- TAK/TAK_TRACKER：同時抑制 `LED_PIN` heartbeat 與 AmbientLighting（RGB/NeoPixel 氛圍燈），盡量確保整機不發光。
+- Emergency override：等待 SAFE 的 EM 狀態允許 HermesX UI 啟用，用於顯示/提示 EM 流程。
+- CannedMessage：在 HermesX UI runtime 停用時自動回退到原本的文字 UI，避免畫面空白。
+
 ## 2025-11-29
 - Lighthouse EMACT：支援全形＠的 `@EmergencyActive:<pass>`，並在拒絕/通過時寫 log（密碼/白名單狀態）。
 - 開機版號：改用 `HXB_<語意版號><git>` 的 APP_VERSION_DISPLAY，從分支名推語意版號，方便現場辨識。

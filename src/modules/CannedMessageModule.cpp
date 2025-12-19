@@ -1130,7 +1130,14 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
     if (temporaryMessage.length() != 0) {
         requestFocus(); // Tell Screen::setFrames to move to our module's frame
 #if !MESHTASTIC_EXCLUDE_HERMESX
-        HermesX_DrawFace(display, x, y, HermesFaceMode::Thinking);
+        if (HermesX_IsUiEnabled()) {
+            HermesX_DrawFace(display, x, y, HermesFaceMode::Thinking);
+        } else {
+            LOG_DEBUG("Draw temporary message: %s", temporaryMessage.c_str());
+            display->setTextAlignment(TEXT_ALIGN_CENTER);
+            display->setFont(FONT_MEDIUM);
+            drawMixedCentered(*display, display->getWidth() / 2 + x, y + 12, temporaryMessage, FONT_HEIGHT_MEDIUM);
+        }
 #else
         LOG_DEBUG("Draw temporary message: %s", temporaryMessage.c_str());
         display->setTextAlignment(TEXT_ALIGN_CENTER);
@@ -1141,9 +1148,17 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
         requestFocus();                        // Tell Screen::setFrames to move to our module's frame
         EINK_ADD_FRAMEFLAG(display, COSMETIC); // Clean after this popup. Layout makes ghosting particularly obvious
 #if !MESHTASTIC_EXCLUDE_HERMESX
-        const HermesFaceMode faceMode = this->ack ? HermesFaceMode::AckSuccess : HermesFaceMode::AckFailed;
-        HermesX_DrawFace(display, x, y, faceMode);
+        const bool useHermesUi = HermesX_IsUiEnabled();
 #else
+        const bool useHermesUi = false;
+#endif
+
+        if (useHermesUi) {
+#if !MESHTASTIC_EXCLUDE_HERMESX
+            const HermesFaceMode faceMode = this->ack ? HermesFaceMode::AckSuccess : HermesFaceMode::AckFailed;
+            HermesX_DrawFace(display, x, y, faceMode);
+#endif
+        } else {
 #ifdef USE_EINK
         display->setFont(FONT_SMALL); // No chunky text
         const int ackLineHeight = FONT_HEIGHT_SMALL;
@@ -1186,15 +1201,23 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
                 drawMixedCentered(*display, display->getWidth() / 2 + x, rssiY + y, buffer, statsLineHeight);
             }
         }
-#endif
+        }
     } else if (cannedMessageModule->runState == CANNED_MESSAGE_RUN_STATE_SENDING_ACTIVE) {
         // E-Ink: clean the screen *after* this pop-up
         EINK_ADD_FRAMEFLAG(display, COSMETIC);
 
         requestFocus(); // Tell Screen::setFrames to move to our module's frame
 #if !MESHTASTIC_EXCLUDE_HERMESX
-        HermesX_DrawFace(display, x, y, HermesFaceMode::Sending);
+        const bool useHermesUi = HermesX_IsUiEnabled();
 #else
+        const bool useHermesUi = false;
+#endif
+
+        if (useHermesUi) {
+#if !MESHTASTIC_EXCLUDE_HERMESX
+            HermesX_DrawFace(display, x, y, HermesFaceMode::Sending);
+#endif
+        } else {
 #ifdef USE_EINK
         display->setFont(FONT_SMALL); // No chunky text
 #else
@@ -1202,16 +1225,24 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
 #endif
         display->setTextAlignment(TEXT_ALIGN_CENTER);
         drawMixedCentered(*display, display->getWidth() / 2 + x, y + 12, "Sending...", FONT_HEIGHT_MEDIUM);
-#endif
+        }
     } else if (cannedMessageModule->runState == CANNED_MESSAGE_RUN_STATE_DISABLED) {
 #if !MESHTASTIC_EXCLUDE_HERMESX
-        requestFocus();
-        HermesX_DrawFace(display, x, y, HermesFaceMode::Disabled);
+        const bool useHermesUi = HermesX_IsUiEnabled();
 #else
+        const bool useHermesUi = false;
+#endif
+
+        if (useHermesUi) {
+#if !MESHTASTIC_EXCLUDE_HERMESX
+            requestFocus();
+            HermesX_DrawFace(display, x, y, HermesFaceMode::Disabled);
+#endif
+        } else {
         display->setTextAlignment(TEXT_ALIGN_LEFT);
         display->setFont(FONT_SMALL);
         drawMixedText(*display, 10 + x, y + FONT_HEIGHT_SMALL, "Canned Message\nModule disabled.", FONT_HEIGHT_SMALL);
-#endif
+        }
     } else if (cannedMessageModule->runState == CANNED_MESSAGE_RUN_STATE_FREETEXT) {
         requestFocus(); // Tell Screen::setFrames to move to our module's frame
 #if defined(USE_EINK) && defined(USE_EINK_DYNAMICDISPLAY)

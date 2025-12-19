@@ -33,7 +33,10 @@ class AmbientLightingThread : public concurrency::OSThread
 // Enables Ambient Lighting by default if conditions are meet.
 #ifdef HAS_RGB_LED
 #ifdef ENABLE_AMBIENTLIGHTING
-        moduleConfig.ambient_lighting.led_state = true;
+        if (!IS_ONE_OF(config.device.role, meshtastic_Config_DeviceConfig_Role_TAK,
+                       meshtastic_Config_DeviceConfig_Role_TAK_TRACKER)) {
+            moduleConfig.ambient_lighting.led_state = true;
+        }
 #endif
 #endif
         // Uncomment to test module
@@ -53,6 +56,13 @@ class AmbientLightingThread : public concurrency::OSThread
         }
 #endif
 #ifdef HAS_RGB_LED
+        if (IS_ONE_OF(config.device.role, meshtastic_Config_DeviceConfig_Role_TAK,
+                      meshtastic_Config_DeviceConfig_Role_TAK_TRACKER)) {
+            setLightingOff(nullptr);
+            LOG_DEBUG("AmbientLighting Disable due to TAK role policy");
+            disable();
+            return;
+        }
         if (!moduleConfig.ambient_lighting.led_state) {
             LOG_DEBUG("AmbientLighting Disable due to moduleConfig.ambient_lighting.led_state OFF");
             disable();

@@ -114,6 +114,11 @@ const FaceAnimation &selectAnimation(HermesFaceMode mode)
 }
 }
 
+bool HermesX_IsUiEnabled()
+{
+    return HermesXInterfaceModule::instance != nullptr;
+}
+
 bool HermesX_TryGetFaceRenderContext(HermesFaceRenderContext &ctx)
 {
     if (!g_faceContext.valid) {

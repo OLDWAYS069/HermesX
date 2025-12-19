@@ -28,6 +28,9 @@
 #include "HermesXLog.h"
 #include "modules/HermesXInterfaceModule.h"
 #endif
+#if !MESHTASTIC_EXCLUDE_EMERGENCY
+#include "modules/HermesEmergencyState.h"
+#endif
 #if !MESHTASTIC_EXCLUDE_NEIGHBORINFO
 #include "modules/NeighborInfoModule.h"
 #endif
@@ -163,8 +166,23 @@ void setupModules()
 #if defined(HERMESX_GUARD_POWER_ANIMATIONS)
         HermesXInterfaceModule::deferStartupVisuals();
 #endif
-        globalHermes = new HermesXInterfaceModule();
-        HERMESX_LOG_INFO("new HermesInterface");
+        // HermesX UI is a local UI layer (LED animations, sounds, face frames).
+        // For TAK / TAK_TRACKER roles we keep the node "quiet/dark" by not starting HermesX UI.
+        bool skipHermesUi = IS_ONE_OF(config.device.role, meshtastic_Config_DeviceConfig_Role_TAK,
+                                      meshtastic_Config_DeviceConfig_Role_TAK_TRACKER);
+#if !MESHTASTIC_EXCLUDE_EMERGENCY
+        // Emergency state is allowed to override quiet mode so the device can present EM prompts.
+        if (skipHermesUi && HermesIsEmergencyAwaitingSafe()) {
+            skipHermesUi = false;
+        }
+#endif
+
+        if (skipHermesUi) {
+            HERMESX_LOG_INFO("skip HermesInterface (role=%d)", static_cast<int>(config.device.role));
+        } else {
+            globalHermes = new HermesXInterfaceModule();
+            HERMESX_LOG_INFO("new HermesInterface");
+        }
 #endif
         // Example: Put your module here
         // new ReplyModule();

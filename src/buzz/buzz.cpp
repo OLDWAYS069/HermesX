@@ -1,6 +1,7 @@
 #include "buzz.h"
 #include "NodeDB.h"
 #include "configuration.h"
+#include "meshUtils.h"
 
 #if !defined(ARCH_ESP32) && !defined(ARCH_RP2040) && !defined(ARCH_PORTDUINO)
 #include "Tone.h"
@@ -38,6 +39,15 @@ const int DURATION_1_1 = 1000; // 1/1 note
 
 void playTones(const ToneDuration *tone_durations, int size)
 {
+    if (IS_ONE_OF(config.device.role, meshtastic_Config_DeviceConfig_Role_TAK,
+                  meshtastic_Config_DeviceConfig_Role_TAK_TRACKER)) {
+        return;
+    }
+
+    if (config.device.buzzer_mode == meshtastic_Config_DeviceConfig_BuzzerMode_DISABLED) {
+        return;
+    }
+
 #ifdef PIN_BUZZER
     if (!config.device.buzzer_gpio)
         config.device.buzzer_gpio = PIN_BUZZER;

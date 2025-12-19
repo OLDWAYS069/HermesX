@@ -229,6 +229,15 @@ static int32_t ledBlinkCount = 0;
 
 static int32_t elecrowLedBlinker()
 {
+    if (IS_ONE_OF(config.device.role, meshtastic_Config_DeviceConfig_Role_TAK,
+                  meshtastic_Config_DeviceConfig_Role_TAK_TRACKER)) {
+        ledBlink.set(false);
+#if defined(PIN_BUZZER)
+        noTone(PIN_BUZZER);
+#endif
+        return 1000;
+    }
+
     // are we in alert buzzer mode?
 #if HAS_BUTTON
     if (buttonThread->isBuzzing()) {
@@ -284,6 +293,12 @@ static int32_t elecrowLedBlinker()
 #else
 static int32_t ledBlinker()
 {
+    if (IS_ONE_OF(config.device.role, meshtastic_Config_DeviceConfig_Role_TAK,
+                  meshtastic_Config_DeviceConfig_Role_TAK_TRACKER)) {
+        ledBlink.set(false);
+        return 1000;
+    }
+
     // Still set up the blinking (heartbeat) interval but skip code path below, so LED will blink if
     // config.device.led_heartbeat_disabled is changed
     if (config.device.led_heartbeat_disabled)
