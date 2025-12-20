@@ -10,6 +10,11 @@ from readprops import readProps
 
 Import("env")
 platform = env.PioPlatform()
+try:
+    Import("projenv")
+except Exception:
+    # Fallback for targets (e.g. -t nobuild) where projenv isn't provided
+    projenv = env
 
 
 def esp32_create_combined_bin(source, target, env):
