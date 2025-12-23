@@ -10,6 +10,11 @@ from readprops import readProps
 
 Import("env")
 platform = env.PioPlatform()
+try:
+    Import("projenv")
+except Exception:
+    # Fallback for targets (e.g. -t nobuild) where projenv isn't provided
+    projenv = env
 
 
 def esp32_create_combined_bin(source, target, env):
@@ -86,11 +91,12 @@ if platform.name == "nordicnrf52":
                       env.VerboseAction(f"\"{sys.executable}\" ./bin/uf2conv.py $BUILD_DIR/firmware.hex -c -f 0xADA52840 -o $BUILD_DIR/firmware.uf2",
                                         "Generating UF2 file"))
 
-Import("projenv")
-
 prefsLoc = projenv["PROJECT_DIR"] + "/version.properties"
 verObj = readProps(prefsLoc)
 print("Using meshtastic platformio-custom.py, firmware version " + verObj["long"] + " on " + env.get("PIOENV"))
+
+# Display version override: keep transport/App version at verObj, but allow a different on-screen string.
+display_short = verObj.get("display", verObj["short"])
 
 jsonLoc = env["PROJECT_DIR"] + "/userPrefs.jsonc"
 with open(jsonLoc) as f:
@@ -116,7 +122,7 @@ for pref in userPrefs:
 flags = [
         "-DAPP_VERSION=" + verObj["long"],
         "-DAPP_VERSION_SHORT=" + verObj["short"],
-        "-DAPP_VERSION_DISPLAY=" + env.StringifyMacro(verObj["display"]),
+        "-DAPP_VERSION_DISPLAY=" + env.StringifyMacro(display_short),
         "-DAPP_ENV=" + env.get("PIOENV"),
     ] + pref_flags
 

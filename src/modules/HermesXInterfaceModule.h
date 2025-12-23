@@ -34,6 +34,29 @@ struct LedTheme {
 
 enum class LedAnimState { IDLE, SEND_L2R, RECV_R2L, INFO2_R2L, ACK_FLASH, NACK_FLASH };
 
+// 集中式 LED 動畫列舉
+enum class LEDAnimation : uint8_t {
+    None,
+    PowerHoldProgress,
+    PowerHoldFade,
+    PowerHoldLatchedRed,
+    ShutdownEffect,
+    StartupEffect,
+    AckFlash,
+    NackFlash,
+    SendL2R,
+    ReceiveR2L,
+    InfoR2L,
+    IdleBreath,
+    IdleRunner
+};
+
+struct LEDState {
+    LEDAnimation activeAnimation = LEDAnimation::None;
+    uint32_t animStartTime = 0;
+    bool isRunning = false;
+};
+
 class HermesXInterfaceModule : public SinglePortModule, public concurrency::OSThread, public Observer<uint32_t> {
 public:
     enum class HermesButtonSource { Primary, Alt };
@@ -46,6 +69,10 @@ public:
 
     Adafruit_NeoPixel rgb;
     MusicModule music;
+
+    // 集中式 LED 狀態管理
+    LEDState ledState;
+    bool useCentralLedManager = false; // 預設先關閉，遷移時可切換
 
     static HermesXInterfaceModule *instance;
     static void onLocalTextMessageSent();
@@ -71,6 +98,33 @@ public:
     void playSendSuccessFeedback();
     void playNodeInfoFeedback();
 
+    // 集中式 LED 控制 API（後續逐步遷移）
+    void startLEDAnimation(LEDAnimation anim);
+    void stopLEDAnimation(LEDAnimation anim);
+    void tickLEDAnimation(uint32_t now);
+    LEDAnimation selectActiveAnimation() const;
+
+    // 中央渲染 helpers（逐步遷移舊邏輯用）
+    void renderPowerHoldProgress(uint32_t now);
+    void renderPowerHoldFade(uint32_t now);
+    void renderPowerHoldLatchedRed();
+    void renderAckFlash(uint32_t now);
+    void renderNackFlash(uint32_t now);
+    void renderSendAnim(uint32_t now);
+    void renderReceiveAnim(uint32_t now);
+    void renderInfoAnim(uint32_t now);
+    void renderIdleBreath(uint32_t now);
+    void renderIdleRunner(uint32_t now);
+    void renderStartupEffect();
+    void renderShutdownEffect();
+
+    // legacy 畫燈流程拆出 helper，集中模式調用避免遞迴
+    void legacyStartupAnimation(uint32_t color);
+    void legacyShutdownAnimation(uint32_t durationMs);
+    void forceAllLedsOff(); // 關機前強制關閉所有 LED 狀態
+    // 立即啟動 PowerHold 進度（按下當下）
+    void beginPowerHoldProgress();
+
     void playStartupLEDAnimation(uint32_t color);
     void playShutdownEffect(uint32_t durationMs);   // << ?��???
 
@@ -85,6 +139,8 @@ public:
     void startPowerHoldAnimation(PowerHoldMode mode, uint32_t holdDurationMs);
     void updatePowerHoldAnimation(uint32_t elapsedMs);
     void stopPowerHoldAnimation(bool completed);
+    void forceStopPowerHoldAnimation();
+    LEDAnimation getCurrentAnimation() const;
     void startPowerHoldFade(uint32_t now);
 
     static void deferStartupVisuals();
@@ -184,12 +240,22 @@ private:
     bool flashOn = false;
     uint32_t lastFlashToggle = 0;
 
+    // 中央管理旗標
+    bool ackFlashActive = false;
+    bool nackFlashActive = false;
+    bool sendAnimActive = false;
+    bool recvAnimActive = false;
+    bool infoAnimActive = false;
+    bool startupEffectActive = false;
+    bool shutdownEffectActive = false;
+
     // ?��?
     bool powerHoldActive = false;
     PowerHoldMode powerHoldMode = PowerHoldMode::None;
     uint32_t powerHoldDurationMs = 0;
     uint32_t powerHoldElapsedMs = 0;
     bool powerHoldReady = false;
+    bool forceStopPowerOff = false;
     bool powerHoldFadeActive = false;
     bool powerHoldLatchedRed = false;
     uint32_t powerHoldFadeStartMs = 0;

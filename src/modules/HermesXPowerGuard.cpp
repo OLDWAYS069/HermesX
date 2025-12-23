@@ -71,17 +71,14 @@ void initialize(bool usbPresent, bool wokeFromTimer, bool wokeFromExt)
     }
 #endif
 
-    if (gQuietBoot || wokeFromExt) {
-        gRequireLongPress = true;
-        gWaitingForPress = true;
-        gStartupVisualsAllowed = false;
-        gPowerHoldReady = false;
-    }
+    // 一律要求長按才能完成開機，避免短按意外啟動；視覺/按鍵就緒在長按達門檻後才釋放
+    gRequireLongPress = true;
+    gWaitingForPress = true;
+    gStartupVisualsAllowed = false;
+    gPowerHoldReady = false;
 
 #if DEBUG_BUTTONS
-    if (gQuietBoot || wokeFromExt) {
-        LOG_DEBUG("BootHold: armed (usb=%d, wokeFromExt=%d)", usbPresent ? 1 : 0, wokeFromExt ? 1 : 0);
-    }
+    LOG_DEBUG("BootHold: armed (usb=%d, wokeFromExt=%d)", usbPresent ? 1 : 0, wokeFromExt ? 1 : 0);
 #endif
 }
 
@@ -180,7 +177,7 @@ void markBootHoldAborted()
     gWaitingForPress = false;
     gStartupVisualsAllowed = false;
     gPowerHoldReady = false;
-    gSuppressShutdownAnim = true;
+    gSuppressShutdownAnim = false; // 關機動畫不要被抑制
 #if DEBUG_BUTTONS
     LOG_DEBUG("BootHold: aborted (sleep)");
 #endif
@@ -188,18 +185,18 @@ void markBootHoldAborted()
 
 void requestShutdownAnimationSuppression()
 {
+    // 保留接口但不再抑制關機動畫
     if (!gGuardEnabled)
         return;
-    gSuppressShutdownAnim = true;
+    gSuppressShutdownAnim = false;
 }
 
 bool consumeShutdownAnimationSuppression()
 {
     if (!gGuardEnabled)
         return false;
-    bool value = gSuppressShutdownAnim;
     gSuppressShutdownAnim = false;
-    return value;
+    return false;
 }
 
 void setPowerHoldReady(bool ready)

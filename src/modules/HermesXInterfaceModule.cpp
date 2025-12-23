@@ -36,6 +36,7 @@
 #include "graphics/ScreenFonts.h"
 #include "modules/HermesXPowerGuard.h"
 #include "graphics/fonts/HermesX_zh/HermesX_CN12.h"
+#include "ButtonThread.h" // for BUTTON_LONGPRESS_MS
 
 #include "ReliableRouter.h"
 #include "Default.h"
@@ -112,6 +113,38 @@ constexpr uint32_t kShutdownAnimationStepMs = 20;
 
 constexpr uint32_t kPowerHoldFadeDurationMs = 1200;
 constexpr uint32_t kPowerHoldRedColor = 0xFF0000;
+// 放慢逐格進度的視覺速度，但邏輯門檻仍在原本的 holdDuration。
+// 視覺完成時間 = holdDuration * kPowerHoldVisualStretch，達門檻或關機時會直接鎖紅。
+constexpr float kPowerHoldVisualStretch = 1.0f;
+
+} // namespace
+
+LEDAnimation HermesXInterfaceModule::selectActiveAnimation() const
+{
+    if (powerHoldActive)
+        return LEDAnimation::PowerHoldProgress;
+    if (powerHoldFadeActive)
+        return LEDAnimation::PowerHoldFade;
+    if (powerHoldLatchedRed)
+        return LEDAnimation::PowerHoldLatchedRed;
+    if (startupEffectActive)
+        return LEDAnimation::StartupEffect;
+    if (shutdownEffectActive)
+        return LEDAnimation::ShutdownEffect;
+    if (ackFlashActive)
+        return LEDAnimation::AckFlash;
+    if (nackFlashActive)
+        return LEDAnimation::NackFlash;
+    if (sendAnimActive)
+        return LEDAnimation::SendL2R;
+    if (recvAnimActive)
+        return LEDAnimation::ReceiveR2L;
+    if (infoAnimActive)
+        return LEDAnimation::InfoR2L;
+
+    // TODO: 後續補上 ACK/NACK/send/recv 等狀態選擇
+    return LEDAnimation::IdleBreath;
+}
 
 struct ShutdownToneSegment {
     float freq;
@@ -246,15 +279,472 @@ void fallbackShutdownEffect(uint32_t durationMs)
 
     performShutdownAnimation(durationMs, fallbackStrip, kPowerHoldRedColor, &fallbackMusic);
 }
-}
-
-
 
 HermesXInterfaceModule* globalHermes = nullptr;
 HermesXInterfaceModule *HermesXInterfaceModule::instance = nullptr;
 uint32_t safeTimeout = 5000;
 
 HermesXFeedbackCallback hermesXCallback = nullptr;
+
+// 集中式 LED 狀態
+static LEDState gLedState;
+
+void HermesXInterfaceModule::startLEDAnimation(LEDAnimation anim)
+{
+    if (!useCentralLedManager) {
+        // fallback legacy 路徑
+        switch (anim) {
+        case LEDAnimation::AckFlash:
+            startAckFlash();
+            return;
+        case LEDAnimation::NackFlash:
+            startNackFlash();
+            return;
+        case LEDAnimation::SendL2R:
+            startSendAnim();
+            return;
+        case LEDAnimation::ReceiveR2L:
+            startReceiveAnim();
+            return;
+        case LEDAnimation::InfoR2L:
+            startInfoReceiveAnimTwoDots();
+            return;
+        case LEDAnimation::StartupEffect:
+            playStartupLEDAnimation(currentTheme.colorIdleBreathBase);
+            return;
+        case LEDAnimation::ShutdownEffect:
+            playShutdownEffect(BUTTON_LONGPRESS_MS);
+            return;
+        default:
+            break;
+        }
+    }
+
+    if (gLedState.activeAnimation != anim) {
+        gLedState.activeAnimation = anim;
+        gLedState.animStartTime = millis();
+        gLedState.isRunning = true;
+    }
+
+    // 設置集中管理旗標
+    switch (anim) {
+    case LEDAnimation::AckFlash:
+        ackFlashActive = true;
+        if (useCentralLedManager && !flashOn) {
+            music.playSuccessSound();
+        }
+        break;
+    case LEDAnimation::NackFlash:
+        nackFlashActive = true;
+        if (useCentralLedManager && !flashOn) {
+            music.playFailedSound();
+        }
+        break;
+    case LEDAnimation::SendL2R:
+        sendAnimActive = true;
+        break;
+    case LEDAnimation::ReceiveR2L:
+        recvAnimActive = true;
+        break;
+    case LEDAnimation::InfoR2L:
+        infoAnimActive = true;
+        break;
+    case LEDAnimation::StartupEffect:
+        startupEffectActive = true;
+        break;
+    case LEDAnimation::ShutdownEffect:
+        shutdownEffectActive = true;
+        break;
+    default:
+        break;
+    }
+}
+
+void HermesXInterfaceModule::stopLEDAnimation(LEDAnimation anim)
+{
+    if (gLedState.activeAnimation == anim) {
+        gLedState.activeAnimation = LEDAnimation::None;
+        gLedState.isRunning = false;
+    }
+
+    switch (anim) {
+    case LEDAnimation::AckFlash:
+        ackFlashActive = false;
+        flashCount = 0;
+        flashOn = false;
+        break;
+    case LEDAnimation::NackFlash:
+        nackFlashActive = false;
+        flashCount = 0;
+        flashOn = false;
+        break;
+    case LEDAnimation::SendL2R:
+        sendAnimActive = false;
+        break;
+    case LEDAnimation::ReceiveR2L:
+        recvAnimActive = false;
+        break;
+    case LEDAnimation::InfoR2L:
+        infoAnimActive = false;
+        break;
+    case LEDAnimation::StartupEffect:
+        startupEffectActive = false;
+        break;
+    case LEDAnimation::ShutdownEffect:
+        shutdownEffectActive = false;
+        break;
+    default:
+        break;
+    }
+}
+
+void HermesXInterfaceModule::tickLEDAnimation(uint32_t now)
+{
+    LEDAnimation selected = selectActiveAnimation();
+    if (selected != gLedState.activeAnimation) {
+        startLEDAnimation(selected);
+    }
+
+    switch (gLedState.activeAnimation) {
+    case LEDAnimation::IdleBreath:
+        renderIdleBreath(now);
+        renderIdleRunner(now);
+        break;
+    case LEDAnimation::PowerHoldProgress:
+        renderPowerHoldProgress(now);
+        break;
+    case LEDAnimation::PowerHoldFade:
+        renderPowerHoldFade(now);
+        break;
+    case LEDAnimation::PowerHoldLatchedRed:
+        renderPowerHoldLatchedRed();
+        break;
+    case LEDAnimation::AckFlash:
+        renderAckFlash(now);
+        break;
+    case LEDAnimation::NackFlash:
+        renderNackFlash(now);
+        break;
+    case LEDAnimation::SendL2R:
+        renderSendAnim(now);
+        break;
+    case LEDAnimation::ReceiveR2L:
+        renderReceiveAnim(now);
+        break;
+    case LEDAnimation::InfoR2L:
+        renderInfoAnim(now);
+        break;
+    case LEDAnimation::StartupEffect:
+        renderStartupEffect();
+        break;
+    case LEDAnimation::ShutdownEffect:
+        renderShutdownEffect();
+        break;
+    default:
+        break;
+    }
+}
+
+void HermesXInterfaceModule::renderPowerHoldProgress(uint32_t now)
+{
+    if (powerHoldDurationMs == 0)
+        powerHoldDurationMs = BUTTON_LONGPRESS_MS ? BUTTON_LONGPRESS_MS : 1;
+
+    // 視覺速度放慢，但邏輯門檻仍依 powerHoldDurationMs
+    const float visualDuration = static_cast<float>(powerHoldDurationMs) * kPowerHoldVisualStretch;
+    float visualProgress = 0.0f;
+    if (visualDuration > 0.0f) {
+        visualProgress = static_cast<float>(powerHoldElapsedMs) / visualDuration;
+    }
+    if (visualProgress < 0.0f)
+        visualProgress = 0.0f;
+    if (visualProgress > 1.0f)
+        visualProgress = 1.0f;
+
+    rgb.clear();
+    const uint32_t activeColor = kPowerHoldRedColor;
+    const uint32_t idleColor = currentTheme.colorIdleBreathBase;
+
+    for (int step = 0; step < NUM_LEDS; ++step) {
+        const int ledIndex = (NUM_LEDS - 1) - step;
+        const float threshold = static_cast<float>(step + 1) / static_cast<float>(NUM_LEDS);
+        bool segmentLatched = visualProgress >= threshold;
+        const uint32_t color = segmentLatched ? activeColor : idleColor;
+        rgb.setPixelColor(ledIndex, color);
+    }
+
+    rgb.show();
+}
+
+void HermesXInterfaceModule::renderPowerHoldFade(uint32_t now)
+{
+    float fadeProgress = 0.0f;
+    if (kPowerHoldFadeDurationMs > 0) {
+        fadeProgress = static_cast<float>(now - powerHoldFadeStartMs) / static_cast<float>(kPowerHoldFadeDurationMs);
+    }
+    if (fadeProgress < 0.0f)
+        fadeProgress = 0.0f;
+    if (fadeProgress > 1.0f)
+        fadeProgress = 1.0f;
+
+    uint32_t color = scaleColor(kPowerHoldRedColor, fadeProgress);
+    rgb.fill(color);
+    rgb.show();
+
+    if (fadeProgress >= 1.0f) {
+        powerHoldFadeActive = false;
+        powerHoldLatchedRed = true;
+    }
+}
+
+void HermesXInterfaceModule::renderPowerHoldLatchedRed()
+{
+    rgb.fill(kPowerHoldRedColor);
+    rgb.show();
+}
+
+void HermesXInterfaceModule::renderIdleBreath(uint32_t now)
+{
+    // 更新呼吸相位
+    if (now - lastBreathUpdate > 30) {
+        lastBreathUpdate = now;
+        breathPhase += breathDelta;
+        if (breathPhase >= 1.0f) {
+            breathPhase = 1.0f;
+            breathDelta = -breathDelta;
+        } else if (breathPhase <= 0.0f) {
+            breathPhase = 0.0f;
+            breathDelta = -breathDelta;
+        }
+    }
+
+    float bgScale = lerp(currentTheme.breathBrightnessMin, currentTheme.breathBrightnessMax, breathPhase);
+    uint32_t bgColor = scaleColor(currentTheme.colorIdleBreathBase, bgScale);
+    rgb.fill(bgColor);
+
+    // 若沒有 runner，就直接顯示背景
+    if (!idleRunnerEnabled) {
+        rgb.show();
+    }
+}
+
+void HermesXInterfaceModule::renderIdleRunner(uint32_t now)
+{
+    if (!idleRunnerEnabled) {
+        return;
+    }
+
+    float bgScale = lerp(currentTheme.breathBrightnessMin, currentTheme.breathBrightnessMax, breathPhase);
+
+    uint16_t interval = idleRunnerInterval;
+    if (idleRunnerVarSpeed) {
+        interval = (uint16_t)lerp((float)idleRunnerMaxInterval, (float)idleRunnerMinInterval, breathPhase);
+    }
+
+    bool atEdge = (idlePos == 0 && idleDir < 0) || (idlePos == NUM_LEDS - 1 && idleDir > 0);
+    uint16_t wait = atEdge ? idleRunnerEdgeDwell : interval;
+
+    if (now - lastIdleMove >= wait) {
+        lastIdleMove = now;
+        if (atEdge) {
+            idleDir = -idleDir;
+        }
+        idlePos += idleDir;
+    }
+
+    uint32_t dotColor = scaleColor(currentTheme.colorIdleBreathBase, bgScale * 2.2f);
+    rgb.setPixelColor(idlePos, dotColor);
+    rgb.show();
+}
+
+void HermesXInterfaceModule::renderStartupEffect()
+{
+    legacyStartupAnimation(currentTheme.colorIdleBreathBase);
+    startupEffectActive = false;
+    stopLEDAnimation(LEDAnimation::StartupEffect);
+}
+
+void HermesXInterfaceModule::renderShutdownEffect()
+{
+    legacyShutdownAnimation(BUTTON_LONGPRESS_MS);
+    shutdownEffectActive = false;
+    stopLEDAnimation(LEDAnimation::ShutdownEffect);
+}
+
+void HermesXInterfaceModule::forceAllLedsOff()
+{
+    powerHoldActive = false;
+    powerHoldFadeActive = false;
+    powerHoldLatchedRed = false;
+    ackFlashActive = false;
+    nackFlashActive = false;
+    sendAnimActive = false;
+    recvAnimActive = false;
+    infoAnimActive = false;
+    startupEffectActive = false;
+    shutdownEffectActive = false;
+    gLedState.activeAnimation = LEDAnimation::None;
+    gLedState.isRunning = false;
+    rgb.clear();
+    rgb.show();
+}
+
+LEDAnimation HermesXInterfaceModule::getCurrentAnimation() const
+{
+    return gLedState.activeAnimation;
+}
+
+void HermesXInterfaceModule::beginPowerHoldProgress()
+{
+    powerHoldActive = true;
+    powerHoldFadeActive = false;
+    powerHoldLatchedRed = false;
+    shutdownEffectActive = false;
+    startupEffectActive = false;
+    powerHoldElapsedMs = 0;
+    if (powerHoldDurationMs == 0) {
+        powerHoldDurationMs = BUTTON_LONGPRESS_MS ? BUTTON_LONGPRESS_MS : 1;
+    }
+    startLEDAnimation(LEDAnimation::PowerHoldProgress);
+}
+
+void HermesXInterfaceModule::renderAckFlash(uint32_t now)
+{
+    if (!ackFlashActive) {
+        stopLEDAnimation(LEDAnimation::AckFlash);
+        return;
+    }
+
+    uint32_t color = currentTheme.colorAck;
+
+    if (now - lastFlashToggle >= 120) {
+        lastFlashToggle = now;
+        flashOn = !flashOn;
+        if (!flashOn) {
+            flashCount++;
+        }
+    }
+    if (flashCount >= 4) {
+        flashCount = 0;
+        flashOn = false;
+        ackFlashActive = false;
+        stopLEDAnimation(LEDAnimation::AckFlash);
+        return;
+    }
+
+    rgb.fill(flashOn ? color : 0);
+    rgb.show();
+}
+
+void HermesXInterfaceModule::renderNackFlash(uint32_t now)
+{
+    if (!nackFlashActive) {
+        stopLEDAnimation(LEDAnimation::NackFlash);
+        return;
+    }
+
+    uint32_t color = currentTheme.colorFailed;
+
+    if (now - lastFlashToggle >= 120) {
+        lastFlashToggle = now;
+        flashOn = !flashOn;
+        if (!flashOn) {
+            flashCount++;
+        }
+    }
+    if (flashCount >= 4) {
+        flashCount = 0;
+        flashOn = false;
+        nackFlashActive = false;
+        stopLEDAnimation(LEDAnimation::NackFlash);
+        return;
+    }
+
+    rgb.fill(flashOn ? color : 0);
+    rgb.show();
+}
+
+void HermesXInterfaceModule::renderSendAnim(uint32_t now)
+{
+    if (!sendAnimActive) {
+        stopLEDAnimation(LEDAnimation::SendL2R);
+        return;
+    }
+
+    const uint16_t stepInterval = 80;
+    if (now - lastAnimStep >= stepInterval) {
+        lastAnimStep = now;
+        int next = animPos + animDir;
+        if (next < 0 || next >= NUM_LEDS) {
+            sendAnimActive = false;
+            stopLEDAnimation(LEDAnimation::SendL2R);
+            return;
+        } else {
+            animPos = next;
+        }
+    }
+
+    // 保留呼吸背景
+    renderIdleBreath(now);
+    rgb.setPixelColor(animPos, eventColor);
+    rgb.show();
+}
+
+void HermesXInterfaceModule::renderReceiveAnim(uint32_t now)
+{
+    if (!recvAnimActive) {
+        stopLEDAnimation(LEDAnimation::ReceiveR2L);
+        return;
+    }
+
+    const uint16_t stepInterval = 80;
+    if (now - lastAnimStep >= stepInterval) {
+        lastAnimStep = now;
+        int next = animPos + animDir;
+        if (next < 0 || next >= NUM_LEDS) {
+            recvAnimActive = false;
+            stopLEDAnimation(LEDAnimation::ReceiveR2L);
+            return;
+        } else {
+            animPos = next;
+        }
+    }
+
+    // 保留呼吸背景
+    renderIdleBreath(now);
+    rgb.setPixelColor(animPos, eventColor);
+    rgb.show();
+}
+
+void HermesXInterfaceModule::renderInfoAnim(uint32_t now)
+{
+    if (!infoAnimActive) {
+        stopLEDAnimation(LEDAnimation::InfoR2L);
+        return;
+    }
+
+    const uint16_t stepInterval = 80;
+    if (now - lastAnimStep >= stepInterval) {
+        lastAnimStep = now;
+        int next = animPos + animDir;
+        if (next < 0 || next >= NUM_LEDS) {
+            infoAnimActive = false;
+            stopLEDAnimation(LEDAnimation::InfoR2L);
+            return;
+        } else {
+            animPos = next;
+        }
+    }
+
+    // 保留呼吸背景
+    renderIdleBreath(now);
+    rgb.setPixelColor(animPos, eventColor);
+    int second = animPos + animDir;
+    if (second >= 0 && second < NUM_LEDS) {
+        rgb.setPixelColor(second, eventColor);
+    }
+    rgb.show();
+}
 
 void HermesXInterfaceModule::deferStartupVisuals()
 {
@@ -301,13 +791,26 @@ HermesXInterfaceModule::HermesXInterfaceModule()
     loopbackOk = true;
     initLED();
 
+    // 預設啟用集中式 LED 管理（必要時可改回 false 走 legacy）
+    useCentralLedManager = true;
+    // 清除任何殘留的 powerHold/latched 狀態
+    powerHoldActive = false;
+    powerHoldFadeActive = false;
+    powerHoldLatchedRed = false;
+    shutdownEffectActive = false;
+    // 啟動開機動畫
+    startupEffectActive = true;
+    startLEDAnimation(LEDAnimation::StartupEffect);
+
     HERMESX_LOG_DEBUG("constroct");
 #if defined(HERMESX_GUARD_POWER_ANIMATIONS)
     if (HermesXPowerGuard::startupVisualsAllowed()) {
-        playStartupLEDAnimation(currentTheme.colorIdleBreathBase);
+        startupEffectActive = true;
+        startLEDAnimation(LEDAnimation::StartupEffect);
     }
 #else
-    playStartupLEDAnimation(currentTheme.colorIdleBreathBase);
+    startupEffectActive = true;
+    startLEDAnimation(LEDAnimation::StartupEffect);
 #endif
 }
 
@@ -476,13 +979,18 @@ void HermesXInterfaceModule::drawFace(const char* face, uint16_t color) {
 void HermesXInterfaceModule::initLED() {
     rgb.begin();
     rgb.setBrightness(60);
-    rgb.fill(rgb.Color(0, 0, 20));
+    rgb.clear();   // 上電先關燈，等動畫/邏輯接管再亮
     rgb.show();
     HERMESX_LOG_INFO("LED setup\n");
 }
 
 
 void HermesXInterfaceModule::updateLED() {
+    if (useCentralLedManager) {
+        tickLEDAnimation(millis());
+        return;
+    }
+
     uint32_t now = millis();
 
     if (powerHoldActive) {
@@ -952,6 +1460,10 @@ void HermesXInterfaceModule::startSendAnim() {
     animDir = 1;
     eventColor = currentTheme.colorSendPrimary;
     lastAnimStep = millis();
+    sendAnimActive = true;
+    if (useCentralLedManager) {
+        startLEDAnimation(LEDAnimation::SendL2R);
+    }
 }
 
 void HermesXInterfaceModule::startReceiveAnim() {
@@ -960,6 +1472,10 @@ void HermesXInterfaceModule::startReceiveAnim() {
     animDir = -1;
     eventColor = currentTheme.colorReceivePrimary;
     lastAnimStep = millis();
+    recvAnimActive = true;
+    if (useCentralLedManager) {
+        startLEDAnimation(LEDAnimation::ReceiveR2L);
+    }
 }
 
 void HermesXInterfaceModule::startInfoReceiveAnimTwoDots() {
@@ -968,6 +1484,10 @@ void HermesXInterfaceModule::startInfoReceiveAnimTwoDots() {
     animDir = -1;
     eventColor = currentTheme.colorAck;
     lastAnimStep = millis();
+    infoAnimActive = true;
+    if (useCentralLedManager) {
+        startLEDAnimation(LEDAnimation::InfoR2L);
+    }
 }
 
 void HermesXInterfaceModule::startAckFlash() {
@@ -975,6 +1495,10 @@ void HermesXInterfaceModule::startAckFlash() {
     flashCount = 0;
     flashOn = true;
     lastFlashToggle = millis();
+    ackFlashActive = true;
+    if (useCentralLedManager) {
+        startLEDAnimation(LEDAnimation::AckFlash);
+    }
 }
 
 void HermesXInterfaceModule::startNackFlash() {
@@ -982,6 +1506,10 @@ void HermesXInterfaceModule::startNackFlash() {
     flashCount = 0;
     flashOn = true;
     lastFlashToggle = millis();
+    nackFlashActive = true;
+    if (useCentralLedManager) {
+        startLEDAnimation(LEDAnimation::NackFlash);
+    }
 }
 
 void HermesXInterfaceModule::startPowerHoldAnimation(PowerHoldMode mode, uint32_t holdDurationMs) {
@@ -989,6 +1517,7 @@ void HermesXInterfaceModule::startPowerHoldAnimation(PowerHoldMode mode, uint32_
         stopPowerHoldAnimation(false);
         return;
     }
+    HERMESX_LOG_INFO("LED power-hold start mode=%s dur=%" PRIu32, mode == PowerHoldMode::PowerOn ? "on" : "off", holdDurationMs);
 
     powerHoldActive = true;
     powerHoldMode = mode;
@@ -1009,17 +1538,23 @@ void HermesXInterfaceModule::updatePowerHoldAnimation(uint32_t elapsedMs) {
     if (powerHoldMode == PowerHoldMode::None) {
         return;
     }
+    const float visualDuration = static_cast<float>(powerHoldDurationMs) * kPowerHoldVisualStretch;
+    uint32_t visualDurationMs = visualDuration > 0.0f ? static_cast<uint32_t>(visualDuration + 0.5f) : powerHoldDurationMs;
     powerHoldElapsedMs = elapsedMs;
-    if (powerHoldDurationMs > 0 && powerHoldElapsedMs > powerHoldDurationMs) {
-        powerHoldElapsedMs = powerHoldDurationMs;
+    HERMESX_LOG_INFO("LED power-hold update elapsed=%" PRIu32 " dur=%" PRIu32 " visual=%" PRIu32, powerHoldElapsedMs,
+                     powerHoldDurationMs, visualDurationMs);
+    if (visualDurationMs > 0 && powerHoldElapsedMs > visualDurationMs) {
+        powerHoldElapsedMs = visualDurationMs;
     }
 
-    if (powerHoldActive && powerHoldDurationMs > 0 && powerHoldElapsedMs >= powerHoldDurationMs) {
+    if (powerHoldActive && visualDurationMs > 0 && powerHoldElapsedMs >= visualDurationMs) {
         startPowerHoldFade(millis());
     }
 }
 
 void HermesXInterfaceModule::stopPowerHoldAnimation(bool completed) {
+    HERMESX_LOG_INFO("LED power-hold stop completed=%d elapsed=%" PRIu32 " dur=%" PRIu32, completed ? 1 : 0, powerHoldElapsedMs,
+                     powerHoldDurationMs);
     if (completed) {
         startPowerHoldFade(millis());
         // EM SAFE long-press path: trigger SAFE when hold completes and we are awaiting SAFE.
@@ -1046,6 +1581,14 @@ void HermesXInterfaceModule::stopPowerHoldAnimation(bool completed) {
         return;
     }
 
+#if !MESHTASTIC_EXCLUDE_HERMESX
+    // 長按關機時，若按鍵仍壓著則忽略早於達標的 stop，避免進度在中途被清掉重置
+    if (powerHoldMode == PowerHoldMode::PowerOff && ButtonThread::isHoldButtonPressed() && !forceStopPowerOff) {
+        HERMESX_LOG_INFO("LED power-hold stop ignored (button still pressed)");
+        return;
+    }
+#endif
+
     powerHoldActive = false;
     HermesXInterfaceModule::setPowerHoldReady(false);
     powerHoldFadeActive = false;
@@ -1055,9 +1598,17 @@ void HermesXInterfaceModule::stopPowerHoldAnimation(bool completed) {
     powerHoldElapsedMs = 0;
 }
 
+void HermesXInterfaceModule::forceStopPowerHoldAnimation()
+{
+    forceStopPowerOff = true;
+    stopPowerHoldAnimation(false);
+    forceStopPowerOff = false;
+}
+
 void HermesXInterfaceModule::startPowerHoldFade(uint32_t now) {
 #if defined(HERMESX_GUARD_POWER_ANIMATIONS)
-    if (!HermesXPowerGuard::isPowerHoldReady()) {
+    // 開機長按需經過 BootHold，但關機長按動畫不應被 guard 擋住
+    if (powerHoldMode != PowerHoldMode::PowerOff && !HermesXPowerGuard::isPowerHoldReady()) {
         return;
     }
 #endif
@@ -1067,8 +1618,8 @@ void HermesXInterfaceModule::startPowerHoldFade(uint32_t now) {
 
     powerHoldActive = false;
     HermesXInterfaceModule::setPowerHoldReady(true);
-    powerHoldFadeActive = false;
-    powerHoldLatchedRed = true;
+    powerHoldFadeActive = true;   // 啟動漸變階段
+    powerHoldLatchedRed = false;
     powerHoldFadeStartMs = now;
     if (powerHoldDurationMs > 0 && powerHoldElapsedMs < powerHoldDurationMs) {
         powerHoldElapsedMs = powerHoldDurationMs;
@@ -1083,6 +1634,17 @@ void HermesXInterfaceModule::startPowerHoldFade(uint32_t now) {
 }
 
 void HermesXInterfaceModule::playStartupLEDAnimation(uint32_t color) {
+    if (useCentralLedManager) {
+        startupEffectActive = true;
+        startLEDAnimation(LEDAnimation::StartupEffect);
+        return;
+    }
+
+    legacyStartupAnimation(color);
+}
+
+void HermesXInterfaceModule::legacyStartupAnimation(uint32_t color)
+{
     rgb.clear();
     rgb.show();
     delay(100);
@@ -1108,34 +1670,18 @@ void HermesXInterfaceModule::playStartupLEDAnimation(uint32_t color) {
 
 void HermesXInterfaceModule::playShutdownEffect(uint32_t durationMs)
 {
-    const uint32_t effectiveDuration = durationMs ? durationMs : 700;
-
-#if defined(HERMESX_GUARD_POWER_ANIMATIONS)
-    if (HermesXPowerGuard::consumeShutdownAnimationSuppression()) {
-        HermesXPowerGuard::logBootHoldEvent("BootHold: shutdown animation suppressed");
-        pendingSuccessFeedback = false;
-        animState = LedAnimState::IDLE;
-        flashOn = false;
-        flashCount = 0;
-
-        powerHoldActive = false;
-        HermesXInterfaceModule::setPowerHoldReady(false);
-        powerHoldFadeActive = false;
-        powerHoldLatchedRed = false;
-        powerHoldMode = PowerHoldMode::None;
-        powerHoldDurationMs = 0;
-        powerHoldElapsedMs = 0;
-
-        rgb.clear();
-        rgb.show();
-
-        music.stopTone();
-        stopTone();
-
-        disableVisibleOutputsCommon();
+    if (useCentralLedManager) {
+        shutdownEffectActive = true;
+        startLEDAnimation(LEDAnimation::ShutdownEffect);
         return;
     }
-#endif
+
+    legacyShutdownAnimation(durationMs);
+}
+
+void HermesXInterfaceModule::legacyShutdownAnimation(uint32_t durationMs)
+{
+    const uint32_t effectiveDuration = durationMs ? durationMs : 700;
 
     pendingSuccessFeedback = false;
     animState = LedAnimState::IDLE;
@@ -1164,7 +1710,7 @@ void HermesXInterfaceModule::playShutdownEffect(uint32_t durationMs)
 
 void HermesXInterfaceModule::renderLEDs()
 {
-    // 保�?你現?��?對�?介面；內?�由 updateLED() 實�?（已?��? animState 流�?
+    // 保持現有對外介面；內部由 updateLED() 實作（已含 animState 流程）
     updateLED();
 }
 

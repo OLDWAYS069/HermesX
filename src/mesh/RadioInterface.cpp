@@ -551,6 +551,13 @@ void RadioInterface::applyModemConfig()
     RadioInterface::uses_default_frequency_slot =
         channel_num == hash(DisplayFormatters::getModemPresetDisplayName(config.lora.modem_preset, false)) % numChannels;
 
+    // TW expects the lowest slot (920.125 MHz) when the user hasn't explicitly chosen a channel number.
+    if (myRegion->code == meshtastic_Config_LoRaConfig_RegionCode_TW && loraConfig.use_preset && loraConfig.channel_num == 0 &&
+        !loraConfig.override_frequency) {
+        channel_num = 0;
+        RadioInterface::uses_default_frequency_slot = true;
+    }
+
     // Old frequency selection formula
     // float freq = myRegion->freqStart + ((((myRegion->freqEnd - myRegion->freqStart) / numChannels) / 2) * channel_num);
 

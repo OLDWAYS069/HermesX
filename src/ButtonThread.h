@@ -42,6 +42,8 @@ class ButtonThread : public concurrency::OSThread
 #if defined(HERMESX_GUARD_POWER_ANIMATIONS)
     bool handleBootHold();
 #endif
+    static void clearHoldAnimationState();
+    static bool isHoldButtonPressed();
 #endif
     bool isBuzzing() { return buzzer_flag; }
     void setScreenFlag(bool flag) { screen_flag = flag; }
@@ -58,7 +60,14 @@ class ButtonThread : public concurrency::OSThread
     enum class HoldAnimationMode { None, PowerOn, PowerOff };
     HoldAnimationMode holdAnimationMode = HoldAnimationMode::None;
     bool holdAnimationActive = false;
+    bool holdAnimationStarted = false; // 已在 LED 模組啟動
     uint32_t holdAnimationLastMs = 0;
+    uint32_t holdAnimationBaseMs = 0;
+    static constexpr uint32_t kWakeHoldMs = 3000; // 要按住多久才放行開機
+    bool wakeAnimStarted = false;
+    bool wakeHoldActive = false;
+    bool wakeTriggered = false;
+    uint32_t wakeHoldStart = 0;
     HoldAnimationMode resolveHoldMode() const;
 #if defined(HERMESX_GUARD_POWER_ANIMATIONS)
     bool bootHoldArmed = false;
@@ -110,6 +119,8 @@ class ButtonThread : public concurrency::OSThread
 
     void resetLongPressState();
     void updateLongGateTracking();
+    void resetWakeHoldGate();
+    void processWakeHoldGate();
 };
 
 extern ButtonThread *buttonThread;

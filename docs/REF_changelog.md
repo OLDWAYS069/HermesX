@@ -1,9 +1,27 @@
 # HermesX 變更紀錄 (REF_changelog.md)
 
 ## 範圍
-- 日期：251129
+- 日期：2025-12-05
+- 版本：App 回報 2.6.11 / 螢幕顯示 0.2.6
+- 項目：版號顯示分離、TFT 喚醒重繪、清理冗長 LED log
+- 檔案：
+  - bin/platformio-custom.py
+  - src/configuration.h
+  - src/graphics/Screen.cpp
+  - src/graphics/niche/InkHUD/Applets/System/Logo/LogoApplet.cpp
+  - src/modules/HermesXInterfaceModule.cpp
+  - docs/CHANGELOG_MINI.md
+- 說明：
+  - 透過 `APP_VERSION_DISPLAY` 將螢幕顯示定為 0.2.6，同時維持對 App 的 2.6.11 回報。
+  - ST77xx/ILI9xxx 等 TFT 在 VEXT 斷電後醒來強制 `ui->init()`＋`forceDisplay(true)`，避免亮背光但黑屏。
+  - 移除 HermesX LED `selectActiveAnimation` 的冗長狀態列印。
+- 測試：
+  - 手動驗證螢幕顯示版號、App 連線版本識別；實機檢查 TFT 喚醒是否正常重繪。
+
+## 範圍
+- 日期：2025-11-29
 - 版本：0.2.7
-- 項目：EMACT @EmergencyActive 授權、SAFE 長按、版號顯示、Lighthouse 改為隨身模式
+- 項目：EMACT 授權強化、SAFE 長按、版號顯示、Lighthouse 改為隨身模式
 - 檔案：
   - bin/readprops.py
   - bin/platformio-custom.py
@@ -21,8 +39,8 @@
   - Lighthouse 加入 passphrase/白名單授權日誌並支援全形＠前綴；EM 封鎖旗標持久化；SAFE 必須收到 ACK 才解除封鎖。
   - APP_VERSION_DISPLAY 以 branch 語意版號＋ git 短碼呈現，開機畫面顯示 `HXB_<tag><sha>`。
   - 收到 @EmergencyActive 後阻擋 TEXT_MESSAGE_APP（外部/本地）；長按觸發 SAFE Emergency 封包，ACK 後解除封鎖並退出 EM。
-  - Lighthouse 預設改為隨身模式：開機不再廣播，改在主螢幕顯示狀態；以宏 `HERMESX_LH_BROADCAST_ON_BOOT` 控制是否仍廣播（給中繼用）。
-  - 新增 `docs/REF_3021.md` 描述 302.1 流程與封包對應；`docs/Lighthouse_portable.md` 紀錄隨身模式調整與舊行為保留方法。
+  - Lighthouse 預設改為隨身模式：開機不再廣播，改在主螢幕顯示狀態；`HERMESX_LH_BROADCAST_ON_BOOT` 控制是否仍廣播（中繼用）。
+  - 新增 `docs/REF_3021.md` 描述 302.1 流程與封包；`docs/Lighthouse_portable.md` 紀錄隨身模式調整與舊行為保留方法。
   - 已知問題：開機後狀態 banner（EM/輪詢/行動）仍可能未顯示，雖有 log「show status banner」，需再對齊 HermesX face 刷新管線。
 - 測試：
   - 待執行：載入 `/prefs/lighthouse_passphrase.txt`，檢查未授權時的 log；EM 封鎖 TEXT_MESSAGE_APP；長按 SAFE 發送 Emergency 封包，收到 ACK 後解除封鎖並退出 EM；確認隨身模式開機只顯示狀態、不廣播。

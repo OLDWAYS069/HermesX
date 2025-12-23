@@ -636,6 +636,7 @@ void AdminModule::handleSetConfig(const meshtastic_Config &c)
     case meshtastic_Config_lora_tag:
         LOG_INFO("Set config: LoRa");
         config.has_lora = true;
+        const auto prevRegion = config.lora.region;
         // If no lora radio parameters change, don't need to reboot
         if (config.lora.use_preset == c.payload_variant.lora.use_preset && config.lora.region == c.payload_variant.lora.region &&
             config.lora.modem_preset == c.payload_variant.lora.modem_preset &&
@@ -659,6 +660,18 @@ void AdminModule::handleSetConfig(const meshtastic_Config &c)
         }
 #endif
         config.lora = c.payload_variant.lora;
+
+        // TW default channel should start at the bottom of the band (920.125 MHz).
+        // Make sure we don't hash into a higher slot when channel_num wasn't explicitly set.
+        if (config.lora.region == meshtastic_Config_LoRaConfig_RegionCode_TW && config.lora.channel_num == 0) {
+            config.lora.channel_num = 1; // 1-based index; maps to channel_num 0 internally
+        }
+
+        // Always refresh the region mapping if it changed
+        if (prevRegion != config.lora.region) {
+            initRegion();
+        }
+
         // If we're setting region for the first time, init the region
         if (isRegionUnset && config.lora.region > meshtastic_Config_LoRaConfig_RegionCode_UNSET) {
             if (!owner.is_licensed) {

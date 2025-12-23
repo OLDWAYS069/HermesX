@@ -41,6 +41,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #ifndef APP_VERSION
 #error APP_VERSION must be set by the build environment
 #endif
+#ifndef APP_VERSION_DISPLAY
+#define APP_VERSION_DISPLAY APP_VERSION_SHORT
+#endif
 
 // FIXME: This is still needed by the Bluetooth Stack and needs to be replaced by something better. Remnant of the old versioning
 // system.
