@@ -609,7 +609,7 @@ int32_t CannedMessageModule::runOnce()
         } else {
             if ((this->messagesCount > this->currentMessageIndex) && (strlen(this->messages[this->currentMessageIndex]) > 0)) {
                 if (strcmp(this->messages[this->currentMessageIndex], "~") == 0) {
-                    powerFSM.trigger(EVENT_PRESS);
+                    exitMenu();
                     return INT32_MAX;
                 } else {
 #if defined(USE_VIRTUAL_KEYBOARD)
@@ -636,6 +636,7 @@ int32_t CannedMessageModule::runOnce()
         this->notifyObservers(&e);
         return 2000;
     } else if ((this->runState != CANNED_MESSAGE_RUN_STATE_FREETEXT) && (this->currentMessageIndex == -1)) {
+        ensureCancelOption();
         this->currentMessageIndex = 0;
         LOG_DEBUG("First touch (%d):%s", this->currentMessageIndex, this->getCurrentMessage());
         e.action = UIFrameEvent::Action::REGENERATE_FRAMESET; // We want to change the list of frames shown on-screen
@@ -839,6 +840,11 @@ const char *CannedMessageModule::getMessageByIndex(int index)
     return (index >= 0 && index < this->messagesCount) ? this->messages[index] : "";
 }
 
+static const char *displayLabel(const char *msg)
+{
+    return (msg && strcmp(msg, "~") == 0) ? "Cancel" : msg;
+}
+
 const char *CannedMessageModule::getNodeName(NodeNum node)
 {
     if (node == NODENUM_BROADCAST) {
@@ -872,6 +878,39 @@ bool CannedMessageModule::shouldDraw()
 bool CannedMessageModule::hasMessages()
 {
     return (this->messagesCount > 0);
+}
+
+void CannedMessageModule::ensureCancelOption()
+{
+    // 插入一個虛擬的 Cancel 項，方便退出
+    if (this->messagesCount >= CANNED_MESSAGE_MODULE_MESSAGE_MAX_COUNT) {
+        return;
+    }
+    if (this->messagesCount > 0 && strcmp(this->messages[0], "~") == 0) {
+        return;
+    }
+    // 往後移一格，將 "~" 放在索引 0
+    for (int i = this->messagesCount; i > 0; --i) {
+        this->messages[i] = this->messages[i - 1];
+    }
+    this->messages[0] = "~";
+    this->messagesCount++;
+}
+
+void CannedMessageModule::exitMenu()
+{
+    UIFrameEvent e;
+    e.action = UIFrameEvent::Action::REGENERATE_FRAMESET;
+    this->runState = CANNED_MESSAGE_RUN_STATE_INACTIVE;
+    this->currentMessageIndex = -1;
+    this->freetext = "";
+    this->cursor = 0;
+    waitingForAck = false;
+#if !defined(T_WATCH_S3) && !defined(RAK14014) && !defined(USE_VIRTUAL_KEYBOARD)
+    this->destSelect = CANNED_MESSAGE_DESTINATION_TYPE_NONE;
+#endif
+    this->notifyObservers(&e);
+    setIntervalFromNow(INT32_MAX);
 }
 
 int CannedMessageModule::getNextIndex()
@@ -1132,7 +1171,7 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
         drawMixedCentered(*display, display->getWidth() / 2 + x, y + 12, temporaryMessage, FONT_HEIGHT_MEDIUM);
 #endif
     } else if (cannedMessageModule->runState == CANNED_MESSAGE_RUN_STATE_ACK_NACK_RECEIVED) {
-        requestFocus();                        // Tell Screen::setFrames to move to our module's frame
+        // 不強制 requestFocus，避免打斷使用者正在看的畫面
         EINK_ADD_FRAMEFLAG(display, COSMETIC); // Clean after this popup. Layout makes ghosting particularly obvious
 #if !MESHTASTIC_EXCLUDE_HERMESX
         const HermesFaceMode faceMode = this->ack ? HermesFaceMode::AckSuccess : HermesFaceMode::AckFailed;
@@ -1271,13 +1310,16 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
             if (lines == 3) {
                 display->fillRect(0 + x, 0 + y + FONT_HEIGHT_SMALL * 2, x + display->getWidth(), y + FONT_HEIGHT_SMALL);
                 display->setColor(BLACK);
-                drawMixedText(*display, 0 + x, 0 + y + FONT_HEIGHT_SMALL * 2, cannedMessageModule->getCurrentMessage(),
+                drawMixedText(*display, 0 + x, 0 + y + FONT_HEIGHT_SMALL * 2,
+                              displayLabel(cannedMessageModule->getCurrentMessage()),
                               smallLineHeight);
                 display->setColor(WHITE);
                 if (this->messagesCount > 1) {
-                    drawMixedText(*display, 0 + x, 0 + y + FONT_HEIGHT_SMALL, cannedMessageModule->getPrevMessage(),
+                    drawMixedText(*display, 0 + x, 0 + y + FONT_HEIGHT_SMALL,
+                                  displayLabel(cannedMessageModule->getPrevMessage()),
                                   smallLineHeight);
-                    drawMixedText(*display, 0 + x, 0 + y + FONT_HEIGHT_SMALL * 3, cannedMessageModule->getNextMessage(),
+                    drawMixedText(*display, 0 + x, 0 + y + FONT_HEIGHT_SMALL * 3,
+                                  displayLabel(cannedMessageModule->getNextMessage()),
                                   smallLineHeight);
                 }
             } else {
@@ -1287,18 +1329,18 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
 #ifdef USE_EINK
                         drawMixedText(*display, 0 + x, 0 + y + FONT_HEIGHT_SMALL * (i + 1), ">", smallLineHeight);
                         drawMixedText(*display, 12 + x, 0 + y + FONT_HEIGHT_SMALL * (i + 1),
-                                      cannedMessageModule->getCurrentMessage(), smallLineHeight);
+                                      displayLabel(cannedMessageModule->getCurrentMessage()), smallLineHeight);
 #else
                         display->fillRect(0 + x, 0 + y + FONT_HEIGHT_SMALL * (i + 1), x + display->getWidth(),
                                           y + FONT_HEIGHT_SMALL);
                         display->setColor(BLACK);
                         drawMixedText(*display, 0 + x, 0 + y + FONT_HEIGHT_SMALL * (i + 1),
-                                      cannedMessageModule->getCurrentMessage(), smallLineHeight);
+                                      displayLabel(cannedMessageModule->getCurrentMessage()), smallLineHeight);
                         display->setColor(WHITE);
 #endif
                     } else if (messagesCount > 1) { // Only draw others if there are multiple messages
                         drawMixedText(*display, 0 + x, 0 + y + FONT_HEIGHT_SMALL * (i + 1),
-                                      cannedMessageModule->getMessageByIndex(topMsg + i), smallLineHeight);
+                                      displayLabel(cannedMessageModule->getMessageByIndex(topMsg + i)), smallLineHeight);
                     }
                 }
             }
@@ -1313,8 +1355,7 @@ ProcessMessage CannedMessageModule::handleReceived(const meshtastic_MeshPacket &
         // look for a request_id
         if (mp.decoded.request_id != 0) {
             UIFrameEvent e;
-            e.action = UIFrameEvent::Action::REGENERATE_FRAMESET; // We want to change the list of frames shown on-screen
-            requestFocus(); // Tell Screen::setFrames that our module's frame should be shown, even if not "first" in the frameset
+            e.action = UIFrameEvent::Action::REGENERATE_FRAMESET;
             this->runState = CANNED_MESSAGE_RUN_STATE_ACK_NACK_RECEIVED;
             this->incoming = service->getNodenumFromRequestId(mp.decoded.request_id);
             meshtastic_Routing decoded = meshtastic_Routing_init_default;

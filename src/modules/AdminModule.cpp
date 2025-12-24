@@ -633,7 +633,7 @@ void AdminModule::handleSetConfig(const meshtastic_Config &c)
 #endif
         config.display = c.payload_variant.display;
         break;
-    case meshtastic_Config_lora_tag:
+    case meshtastic_Config_lora_tag: {
         LOG_INFO("Set config: LoRa");
         config.has_lora = true;
         const auto prevRegion = config.lora.region;
@@ -703,6 +703,7 @@ void AdminModule::handleSetConfig(const meshtastic_Config &c)
             }
         }
         break;
+    }
     case meshtastic_Config_bluetooth_tag:
         LOG_INFO("Set config: Bluetooth");
         config.has_bluetooth = true;

@@ -30,6 +30,7 @@
 #include "meshtastic/portnums.pb.h"
 #include "HermesXLog.h"
 #include "HermesFace.h"
+#include "mesh/generated/meshtastic/config.pb.h"
 #include "graphics/ScreenFonts.h"
 #include "modules/HermesXPowerGuard.h"
 #include "graphics/fonts/HermesX_zh/HermesX_CN12.h"
@@ -813,7 +814,20 @@ HermesXInterfaceModule::HermesXInterfaceModule()
 
 void HermesXInterfaceModule::setup()
 {
-    // Setup code here
+    applyRoleOutputPolicy();
+}
+
+void HermesXInterfaceModule::applyRoleOutputPolicy()
+{
+    const auto role = config.device.role;
+    const bool shouldDisable =
+        role == meshtastic_Config_DeviceConfig_Role_TAK || role == meshtastic_Config_DeviceConfig_Role_TAK_TRACKER;
+    outputsDisabled = shouldDisable;
+    if (outputsDisabled) {
+        forceAllLedsOff();
+        music.stopTone();
+        stopTone();
+    }
 }
 
 
@@ -983,6 +997,11 @@ void HermesXInterfaceModule::initLED() {
 
 
 void HermesXInterfaceModule::updateLED() {
+    if (outputsDisabled) {
+        forceAllLedsOff();
+        return;
+    }
+
     if (useCentralLedManager) {
         tickLEDAnimation(millis());
         return;
@@ -1160,6 +1179,9 @@ void HermesXInterfaceModule::updateLED() {
 
 
 void HermesXInterfaceModule::onPacketSent() {
+    if (outputsDisabled)
+        return;
+
     music.playSendSound();        // ?�出?��?
     startSendAnim();              // ?�出?�畫（R?�L）�?交給 updateLED()/animState 流�???
     HERMESX_LOG_DEBUG("Sent MSG");
@@ -1167,6 +1189,9 @@ void HermesXInterfaceModule::onPacketSent() {
 
 
 void HermesXInterfaceModule::playTone(float freq, uint32_t duration_ms) {
+    if (outputsDisabled)
+        return;
+
     if (freq > 0) {
         ledcWriteTone(0, freq);
         toneStopTime = millis() + duration_ms;
@@ -1201,25 +1226,33 @@ ProcessMessage HermesXInterfaceModule::handleReceived(const meshtastic_MeshPacke
 
         if (ok) {
             if (decoded.error_reason != meshtastic_Routing_Error_NONE) {
-                playSendFailedFeedback();
-                waitingForAck = false;
-                HERMESX_LOG_WARN("Routing NAK error=%d req_id=0x%08x id=%u from=%x to=%x",
-                    decoded.error_reason,
-                    packet.decoded.request_id,
-                    packet.id,
-                    packet.from,
-                    packet.to);
+                const bool ours = waitingForAck &&
+                    (packet.decoded.request_id == lastSentRequestId || packet.id == lastSentId);
+                if (ours) {
+                    playSendFailedFeedback();
+                    waitingForAck = false;
+                    HERMESX_LOG_WARN("Routing NAK error=%d req_id=0x%08x id=%u from=%x to=%x",
+                        decoded.error_reason,
+                        packet.decoded.request_id,
+                        packet.id,
+                        packet.from,
+                        packet.to);
+                } else {
+                    HERMESX_LOG_DEBUG("Ignore routing NAK req_id=0x%08x (expect=0x%08x)", packet.decoded.request_id,
+                                      lastSentRequestId);
+                }
             } else {
-                bool ours = waitingForAck ||
-                    packet.decoded.request_id == lastSentRequestId ||
-                    packet.id == lastSentId ||
-                    isFromUs(&packet);
+                const bool ours = waitingForAck &&
+                    (packet.decoded.request_id == lastSentRequestId || packet.id == lastSentId);
                 if (ours) {
                     ackReceived = true;
                     waitingForAck = false;
                     pendingSuccessFeedback = true;
                     successFeedbackTime = millis() + 300;
                     HERMESX_LOG_INFO("Routing ACK req_id=0x%08x id=%u", packet.decoded.request_id, packet.id);
+                } else {
+                    HERMESX_LOG_DEBUG("Ignore routing ACK req_id=0x%08x (expect=0x%08x)", packet.decoded.request_id,
+                                      lastSentRequestId);
                 }
             }
         } else {
@@ -1271,11 +1304,15 @@ int32_t HermesXInterfaceModule::runOnce() {
     static bool testPlayed = false;
     uint32_t now = millis();
 
+    applyRoleOutputPolicy();
+
     // === ?��??��?段�??�執行�?�?===
     if (firstTime) {
         firstTime = false;
         music.begin();
-        music.playStartupSound();
+        if (!outputsDisabled) {
+            music.playStartupSound();
+        }
         HERMESX_LOG_INFO("first runOnce() call");
 
         // 建�? feedback ?�呼
@@ -1288,7 +1325,7 @@ int32_t HermesXInterfaceModule::runOnce() {
     }
 
     // === 測試?��?（�?一次�?===
-    if (!testPlayed) {
+    if (!testPlayed && !outputsDisabled) {
         testPlayed = true;
         music.playSendSound();
     }
@@ -1310,9 +1347,11 @@ int32_t HermesXInterfaceModule::runOnce() {
     // === ACK ?��??�畫?�音?�觸??===
     if (pendingSuccessFeedback && now >= successFeedbackTime) {
         pendingSuccessFeedback = false;
-        music.playSuccessSound();
-        startAckFlash();
-        HERMESX_LOG_INFO("Success feedback triggered (ACK animation)");
+        if (!outputsDisabled) {
+            music.playSuccessSound();
+            startAckFlash();
+            HERMESX_LOG_INFO("Success feedback triggered (ACK animation)");
+        }
     }
 
     if (emergencyBannerVisible && emergencyBannerHideDeadline && now >= emergencyBannerHideDeadline) {
@@ -1355,30 +1394,40 @@ void HermesXInterfaceModule::handleExternalNotification(int index, bool state) {
 
 
 void HermesXInterfaceModule::playSendFeedback() {
+    if (outputsDisabled)
+        return;
     music.playSendSound();
     startSendAnim();
     HERMESX_LOG_INFO("Send feedback triggered");
 }
 
 void HermesXInterfaceModule::playReceiveFeedback() {
+    if (outputsDisabled)
+        return;
     music.playReceiveSound();
     startReceiveAnim();
     HERMESX_LOG_INFO("Receive feedback triggered");
 }
 
 void HermesXInterfaceModule::playSendSuccessFeedback() {
+    if (outputsDisabled)
+        return;
     pendingSuccessFeedback = true;
     successFeedbackTime = millis() + 1000;
     HERMESX_LOG_INFO("Success feedback scheduled");
 }
 
 void HermesXInterfaceModule::playNodeInfoFeedback() {
+    if (outputsDisabled)
+        return;
     music.playNodeInfoSound();
     startInfoReceiveAnimTwoDots();
     HERMESX_LOG_INFO("NodeInfo feedback triggered");
 }
 
 void HermesXInterfaceModule::playSendFailedFeedback() {
+    if (outputsDisabled)
+        return;
     music.playFailedSound();   
     startNackFlash();
     HERMESX_LOG_INFO("Failed feedback triggered");
@@ -1402,18 +1451,24 @@ void HermesXInterfaceModule::onEmergencyModeChanged(bool active)
 
 void HermesXInterfaceModule::playSOSFeedback()
 {
+    if (outputsDisabled)
+        return;
     music.playSendSound();
     startSendAnim();
 }
 
 void HermesXInterfaceModule::playAckSuccess()
 {
+    if (outputsDisabled)
+        return;
     music.playSuccessSound();
     startAckFlash();
 }
 
 void HermesXInterfaceModule::playNackFail()
 {
+    if (outputsDisabled)
+        return;
     music.playFailedSound();
     startNackFlash();
 }
@@ -1426,6 +1481,8 @@ void HermesXInterfaceModule::showEmergencyBanner(bool on, const __FlashStringHel
 }
 
 void HermesXInterfaceModule::startSendAnim() {
+    if (outputsDisabled)
+        return;
     animState = LedAnimState::SEND_L2R;
     animPos = 0;
     animDir = 1;
@@ -1438,6 +1495,8 @@ void HermesXInterfaceModule::startSendAnim() {
 }
 
 void HermesXInterfaceModule::startReceiveAnim() {
+    if (outputsDisabled)
+        return;
     animState = LedAnimState::RECV_R2L;
     animPos = NUM_LEDS - 1;
     animDir = -1;
@@ -1450,6 +1509,8 @@ void HermesXInterfaceModule::startReceiveAnim() {
 }
 
 void HermesXInterfaceModule::startInfoReceiveAnimTwoDots() {
+    if (outputsDisabled)
+        return;
     animState = LedAnimState::INFO2_R2L;
     animPos = NUM_LEDS - 1;
     animDir = -1;
@@ -1462,6 +1523,8 @@ void HermesXInterfaceModule::startInfoReceiveAnimTwoDots() {
 }
 
 void HermesXInterfaceModule::startAckFlash() {
+    if (outputsDisabled)
+        return;
     animState = LedAnimState::ACK_FLASH;
     flashCount = 0;
     flashOn = true;
@@ -1473,6 +1536,8 @@ void HermesXInterfaceModule::startAckFlash() {
 }
 
 void HermesXInterfaceModule::startNackFlash() {
+    if (outputsDisabled)
+        return;
     animState = LedAnimState::NACK_FLASH;
     flashCount = 0;
     flashOn = true;
@@ -1584,6 +1649,9 @@ void HermesXInterfaceModule::startPowerHoldFade(uint32_t now) {
 }
 
 void HermesXInterfaceModule::playStartupLEDAnimation(uint32_t color) {
+    if (outputsDisabled)
+        return;
+
     if (useCentralLedManager) {
         startupEffectActive = true;
         startLEDAnimation(LEDAnimation::StartupEffect);
@@ -1595,6 +1663,9 @@ void HermesXInterfaceModule::playStartupLEDAnimation(uint32_t color) {
 
 void HermesXInterfaceModule::legacyStartupAnimation(uint32_t color)
 {
+    if (outputsDisabled)
+        return;
+
     rgb.clear();
     rgb.show();
     delay(100);
@@ -1620,6 +1691,13 @@ void HermesXInterfaceModule::legacyStartupAnimation(uint32_t color)
 
 void HermesXInterfaceModule::playShutdownEffect(uint32_t durationMs)
 {
+    if (outputsDisabled) {
+        forceAllLedsOff();
+        music.stopTone();
+        stopTone();
+        return;
+    }
+
     if (useCentralLedManager) {
         shutdownEffectActive = true;
         startLEDAnimation(LEDAnimation::ShutdownEffect);

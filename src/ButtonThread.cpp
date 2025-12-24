@@ -18,6 +18,7 @@
 #if !MESHTASTIC_EXCLUDE_HERMESX
 #include "modules/HermesXInterfaceModule.h"
 #include "modules/HermesXPowerGuard.h"
+#include "modules/CannedMessageModule.h"
 #endif
 
 #include <inttypes.h>
@@ -50,6 +51,9 @@ static uint32_t s_shutdownDeadlineMs = 0;
 static constexpr uint32_t kShutdownAnimDurationMs = BUTTON_LONGPRESS_MS ? BUTTON_LONGPRESS_MS : 1000;
 static constexpr uint32_t kResumeGraceMs = 1200;
 static constexpr uint32_t kReleaseDebounceMs = 80;
+// 罐頭訊息選單：長按約 1 秒退出
+static bool s_exitCannedHold = false;
+static uint32_t s_exitCannedStartMs = 0;
 #if !MESHTASTIC_EXCLUDE_HERMESX
 // 逐格視覺放慢倍率（需等全部轉紅才觸發關機）
 static constexpr float kPowerHoldVisualStretch = 1.0f;
@@ -297,6 +301,19 @@ int32_t ButtonThread::runOnce()
 #if !MESHTASTIC_EXCLUDE_HERMESX
     updatePowerHoldAnimation();
 #endif
+    // 罐頭選單退出：按鍵放開則取消計時
+#if !MESHTASTIC_EXCLUDE_HERMESX
+    if (s_exitCannedHold) {
+        if (!isHoldButtonPressed()) {
+            s_exitCannedHold = false;
+        } else if (millis() - s_exitCannedStartMs >= 1000) {
+            if (cannedMessageModule && cannedMessageModule->getRunState() != CANNED_MESSAGE_RUN_STATE_INACTIVE) {
+                cannedMessageModule->exitMenu();
+            }
+            s_exitCannedHold = false;
+        }
+    }
+#endif
     updateLongGateTracking();
     if (btnEvent != BUTTON_EVENT_NONE) {
         switch (btnEvent) {
@@ -327,6 +344,13 @@ int32_t ButtonThread::runOnce()
                 buttonThread->holdAnimationBaseMs = 0;
                 s_holdPressStartMs = millis();
                 HermesXInterfaceModule::instance->beginPowerHoldProgress();
+            }
+#endif
+            // 罐頭訊息選單：記錄按下起點，後續長按 1 秒退出
+#if !MESHTASTIC_EXCLUDE_HERMESX
+            if (cannedMessageModule && cannedMessageModule->getRunState() != CANNED_MESSAGE_RUN_STATE_INACTIVE) {
+                s_exitCannedHold = true;
+                s_exitCannedStartMs = millis();
             }
 #endif
 #else
@@ -411,6 +435,15 @@ int32_t ButtonThread::runOnce()
         } // end multipress event
 
         case BUTTON_EVENT_LONG_PRESSED: {
+#if !MESHTASTIC_EXCLUDE_HERMESX
+            // 長按約 1 秒可退出罐頭訊息選單，不進入關機流程
+            if (cannedMessageModule && cannedMessageModule->getRunState() != CANNED_MESSAGE_RUN_STATE_INACTIVE &&
+                s_exitCannedHold && (millis() - s_exitCannedStartMs >= 1000)) {
+                cannedMessageModule->exitMenu();
+                s_exitCannedHold = false;
+                break;
+            }
+#endif
 #if !MESHTASTIC_EXCLUDE_HERMESX && (defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) ||          \
                                     defined(BUTTON_PIN_ALT) || defined(BUTTON_PIN_TOUCH))
             if (wakeTriggered) {
@@ -454,6 +487,10 @@ int32_t ButtonThread::runOnce()
                 resetWakeHoldGate();
                 break;
             }
+#endif
+            // 取消罐頭退出握持狀態
+#if !MESHTASTIC_EXCLUDE_HERMESX
+            s_exitCannedHold = false;
 #endif
             LOG_INFO("Shutdown from long press");
 #if !MESHTASTIC_EXCLUDE_HERMESX

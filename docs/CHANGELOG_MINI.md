@@ -1,6 +1,15 @@
 # HermesX Mini Change Log
 （每次只寫極簡亮點，便於快速回顧）
 
+## 2025-12-25 (b0.2.8)
+- 版號同步分支：APP_VERSION/SHORT/螢幕顯示改為 0.2.8。
+- Lighthouse 模組暫時排除編譯。
+- CannedMessage 增加內建 Cancel 項，長按約 1 秒可退出選單，ACK/NACK 不再強制搶焦。
+
+## 2025-12-25
+- TAK/TAK_TRACKER 角色靜默 HermesX 介面：關閉 LED 與蜂鳴器，包含啟動/關機動畫與各種提示音/動畫。
+- 版號維持 0.2.6 顯示，EMAC/SAFE 行為回復 0.2.6 流程。
+
 ## 2025-12-05
 - 顯示版號分離：對 App 回報 2.6.11（APP_VERSION/SHORT），螢幕顯示 0.2.6（APP_VERSION_DISPLAY），便於相容與現場辨識。
 - TFT 喚醒重繪：ST77xx/ILI9xxx 等面板在 VEXT 斷電後會遺失 GRAM，醒來時強制 `ui->init()` + `forceDisplay(true)`，避免亮背光但黑屏。

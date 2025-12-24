@@ -131,6 +131,8 @@ public:
     void renderLEDs();
     void updateLED();  // << ?��???
 
+    void applyRoleOutputPolicy();
+
     void startSendAnim();
     void startReceiveAnim();
     void startInfoReceiveAnimTwoDots();
@@ -177,7 +179,6 @@ private:
     uint16_t emergencyBannerColor = 0;
     uint32_t emergencyBannerHideDeadline = 0;
     bool ackReceived = false;
-    uint32_t waitingAckId = 0;
     uint32_t lastSentTime = 0;
     uint32_t lastSentId = 0;
     uint32_t lastSentRequestId = 0;
@@ -259,6 +260,7 @@ private:
     uint32_t powerHoldFadeStartMs = 0;
 
     uint32_t toneStopTime = 0;
+    bool outputsDisabled = false;
 
     LedTheme currentTheme {
         .colorSendPrimary = 0xFFFFFF,

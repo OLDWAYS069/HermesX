@@ -134,18 +134,8 @@ void ReliableRouter::sniffReceived(const meshtastic_MeshPacket *p, const meshtas
             LOG_DEBUG("Received a %s for 0x%x, stopping retransmissions", ackId ? "ACK" : "NAK", ackId);
             if (ackId) {
                 stopRetransmission(p->to, ackId);
-#if !MESHTASTIC_EXCLUDE_HERMESX
-                if (hermesXCallback) {
-                    hermesXCallback(3, true);
-                }
-#endif
             } else {
                 stopRetransmission(p->to, nakId);
-#if !MESHTASTIC_EXCLUDE_HERMESX
-                if (hermesXCallback) {
-                    hermesXCallback(4, true);
-                }
-#endif
             }
         }
     }
