@@ -91,12 +91,14 @@ if platform.name == "nordicnrf52":
                       env.VerboseAction(f"\"{sys.executable}\" ./bin/uf2conv.py $BUILD_DIR/firmware.hex -c -f 0xADA52840 -o $BUILD_DIR/firmware.uf2",
                                         "Generating UF2 file"))
 
+Import("projenv")
+
 prefsLoc = projenv["PROJECT_DIR"] + "/version.properties"
 verObj = readProps(prefsLoc)
 print("Using meshtastic platformio-custom.py, firmware version " + verObj["long"] + " on " + env.get("PIOENV"))
 
 # Display version override: keep transport/App version at verObj, but allow a different on-screen string.
-display_short = verObj.get("display", verObj["short"])
+display_short = "0.2.6"
 
 jsonLoc = env["PROJECT_DIR"] + "/userPrefs.jsonc"
 with open(jsonLoc) as f:
@@ -122,7 +124,7 @@ for pref in userPrefs:
 flags = [
         "-DAPP_VERSION=" + verObj["long"],
         "-DAPP_VERSION_SHORT=" + verObj["short"],
-        "-DAPP_VERSION_DISPLAY=" + env.StringifyMacro(display_short),
+        "-DAPP_VERSION_DISPLAY=" + display_short,
         "-DAPP_ENV=" + env.get("PIOENV"),
     ] + pref_flags
 

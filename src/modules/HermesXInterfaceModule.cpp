@@ -13,8 +13,6 @@
 #include "pb_encode.h"
 #include "HermesXPacketUtils.h"
 
-#include "modules/LighthouseModule.h"
-#include "modules/HermesEmergencyState.h"
 #include "MusicModule.h"
 #include "sleep_hooks.h"
 #include "Led.h"
@@ -32,7 +30,6 @@
 #include "meshtastic/portnums.pb.h"
 #include "HermesXLog.h"
 #include "HermesFace.h"
-#include "mesh/HermesPortnums.h"
 #include "graphics/ScreenFonts.h"
 #include "modules/HermesXPowerGuard.h"
 #include "graphics/fonts/HermesX_zh/HermesX_CN12.h"
@@ -100,7 +97,7 @@ int mixedStringWidth(OLEDDisplay &display, const char *text)
     return graphics::HermesX_zh::stringAdvance(text, graphics::HermesX_zh::GLYPH_WIDTH, &display);
 }
 
-__attribute__((unused)) int mixedStringWidth(OLEDDisplay &display, const String &text)
+int mixedStringWidth(OLEDDisplay &display, const String &text)
 {
     return mixedStringWidth(display, text.c_str());
 }
@@ -1003,13 +1000,11 @@ void HermesXInterfaceModule::updateLED() {
         if (progress > 1.0f) progress = 1.0f;
 
         rgb.clear();
-        const bool awaitingSafe = HermesIsEmergencyAwaitingSafe();
-        const uint32_t activeColor = awaitingSafe ? currentTheme.colorAck : kPowerHoldRedColor;
-        const uint32_t idleColor = awaitingSafe ? 0x000000 : currentTheme.colorIdleBreathBase;
+        const uint32_t activeColor = kPowerHoldRedColor;
+        const uint32_t idleColor = currentTheme.colorIdleBreathBase;
 
         for (int step = 0; step < NUM_LEDS; ++step) {
-            // power-off: red top->bottom; SAFE: green bottom->top
-            const int ledIndex = awaitingSafe ? step : (NUM_LEDS - 1 - step);
+            const int ledIndex = (NUM_LEDS - 1) - step;
             const float threshold = static_cast<float>(step + 1) / static_cast<float>(NUM_LEDS);
 
             bool segmentLatched = false;
@@ -1057,8 +1052,7 @@ void HermesXInterfaceModule::updateLED() {
     }
 
     if (powerHoldLatchedRed) {
-        const bool awaitingSafe = HermesIsEmergencyAwaitingSafe();
-        rgb.fill(awaitingSafe ? currentTheme.colorAck : kPowerHoldRedColor);
+        rgb.fill(kPowerHoldRedColor);
         rgb.show();
         return;
     }
@@ -1101,8 +1095,7 @@ void HermesXInterfaceModule::updateLED() {
 
     // === ?�吸?�景??===
     float bgScale = lerp(currentTheme.breathBrightnessMin, currentTheme.breathBrightnessMax, breathPhase);
-    const bool awaitingSafe = HermesIsEmergencyAwaitingSafe();
-    uint32_t bgColor = scaleColor(awaitingSafe ? kPowerHoldRedColor : currentTheme.colorIdleBreathBase, bgScale);
+    uint32_t bgColor = scaleColor(currentTheme.colorIdleBreathBase, bgScale);
     rgb.fill(bgColor);
 
     // === 事件?�畫（送出/?�收/?��?資�?�?==
@@ -1216,10 +1209,6 @@ ProcessMessage HermesXInterfaceModule::handleReceived(const meshtastic_MeshPacke
                     packet.id,
                     packet.from,
                     packet.to);
-                if (safeSendPending && packet.decoded.request_id == lastSafeRequestId) {
-                    HERMESX_LOG_WARN("SAFE NAK req_id=0x%08x keep EM awaiting", packet.decoded.request_id);
-                    safeSendPending = false;
-                }
             } else {
                 bool ours = waitingForAck ||
                     packet.decoded.request_id == lastSentRequestId ||
@@ -1231,15 +1220,6 @@ ProcessMessage HermesXInterfaceModule::handleReceived(const meshtastic_MeshPacke
                     pendingSuccessFeedback = true;
                     successFeedbackTime = millis() + 300;
                     HERMESX_LOG_INFO("Routing ACK req_id=0x%08x id=%u", packet.decoded.request_id, packet.id);
-#if !MESHTASTIC_EXCLUDE_LIGHTHOUSE
-                    if (safeSendPending && packet.decoded.request_id == lastSafeRequestId) {
-                        safeSendPending = false;
-                        HermesClearEmergencyAwaitingSafe();
-                        if (lighthouseModule) {
-                            lighthouseModule->exitEmergencyMode();
-                        }
-                    }
-#endif
                 }
             }
         } else {
@@ -1361,7 +1341,7 @@ int HermesXInterfaceModule::onNotify(uint32_t fromNum)
 
 bool HermesXInterfaceModule::isEmergencyUiActive() const
 {
-    return HermesIsEmergencyAwaitingSafe() || emergencyBannerVisible;
+    return false;
 }
 
 void HermesXInterfaceModule::handleExternalNotification(int index, bool state) {
@@ -1411,7 +1391,7 @@ void HermesXInterfaceModule::onTripleClick()
 
 void HermesXInterfaceModule::onDoubleClickWithin3s()
 {
-    // reserved
+   ///will comeback on beta_0.3.0
 }
 
 void HermesXInterfaceModule::onEmergencyModeChanged(bool active)
@@ -1441,17 +1421,8 @@ void HermesXInterfaceModule::playNackFail()
 void HermesXInterfaceModule::showEmergencyBanner(bool on, const __FlashStringHelper *text, uint16_t color,
                                                  uint32_t durationMs)
 {
-    if (on) {
-        emergencyBannerVisible = true;
-        emergencyBannerText = text ? String(text) : String();
-        emergencyBannerColor = color;
-        emergencyBannerHideDeadline = durationMs ? millis() + durationMs : 0;
-    } else {
-        emergencyBannerVisible = false;
-        emergencyBannerText = "";
-        emergencyBannerColor = 0;
-        emergencyBannerHideDeadline = 0;
-    }
+   ///coming soon (0.3.0)
+   
 }
 
 void HermesXInterfaceModule::startSendAnim() {
@@ -1557,27 +1528,6 @@ void HermesXInterfaceModule::stopPowerHoldAnimation(bool completed) {
                      powerHoldDurationMs);
     if (completed) {
         startPowerHoldFade(millis());
-        // EM SAFE long-press path: trigger SAFE when hold completes and we are awaiting SAFE.
-        if (HermesIsEmergencyAwaitingSafe()) {
-            meshtastic_MeshPacket *p = allocDataPacket();
-            if (p) {
-                const char *payload = "SAFE";
-                p->to = NODENUM_BROADCAST;
-                p->channel = 0;
-                p->want_ack = true;
-                p->decoded.portnum = PORTNUM_HERMESX_EMERGENCY;
-                p->decoded.payload.size = strlen(payload);
-                memcpy(p->decoded.payload.bytes, payload, p->decoded.payload.size);
-                service->sendToMesh(p, RX_SRC_LOCAL, true);
-                HERMESX_LOG_INFO("Send EM SAFE on long-press");
-                startSendAnim();
-                eventColor = currentTheme.colorAck;
-                lastSafeRequestId = p->id;
-                safeSendPending = true;
-            } else {
-                HERMESX_LOG_WARN("Failed to alloc SAFE packet");
-            }
-        }
         return;
     }
 

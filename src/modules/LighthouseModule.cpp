@@ -5,9 +5,6 @@
 #include "SPILock.h"
 #include "configuration.h"
 #include "sleep.h"
-#include "main.h"
-#include "graphics/Screen.h"
-#include "modules/HermesXInterfaceModule.h"
 #include <cstring>
 #include <algorithm>
 #include <cstdlib>
@@ -15,7 +12,6 @@
 #include "HermesXLog.h"
 #include "mesh/Channels.h"
 #include "mesh/Router.h"
-#include "modules/HermesEmergencyState.h"
 
 
 static const char *bootFile = "/prefs/lighthouse_boot.bin";
@@ -28,55 +24,6 @@ static const uint32_t POLLING_AWAKE_MS = 300000UL; // 醒來期間
 static const uint32_t POLLING_SLEEP_MS = 1800000UL; // 睡覺時間
 
 LighthouseModule *lighthouseModule = nullptr;
-static bool lighthouseStatusShown = false;
-static uint32_t lighthouseStatusDueMs = 0;
-
-namespace
-{
-// Normalize leading fullwidth '@' (U+FF20) to ASCII '@'
-void normalizeAtPrefix(char *txt, size_t &len)
-{
-    if (len < 3)
-        return;
-    const unsigned char b0 = static_cast<unsigned char>(txt[0]);
-    const unsigned char b1 = static_cast<unsigned char>(txt[1]);
-    const unsigned char b2 = static_cast<unsigned char>(txt[2]);
-    if (b0 == 0xEF && b1 == 0xBC && b2 == 0xA0) {
-        txt[0] = '@';
-        // shift left by two bytes
-        memmove(txt + 1, txt + 3, len - 2);
-        len -= 2;
-        txt[len] = '\0';
-    }
-}
-
-void showLocalStatusOverlay(bool emergencyModeActive, bool pollingModeRequested)
-{
-    if (!HermesXInterfaceModule::instance) {
-        HERMESX_LOG_WARN("skip status banner: HermesX interface not ready");
-        return;
-    }
-
-    const __FlashStringHelper *text = nullptr;
-    uint16_t color = 0;
-    uint32_t durationMs = 10000;
-    if (emergencyModeActive) {
-        text = F("EM：偵測到緊急狀態\n長按SAFE回報安全\nEM模式下禁用一般文字");
-        color = 0xF800; // red
-    } else if (pollingModeRequested) {
-        text = F("節能輪詢模式");
-        color = 0xFFE0; // yellow
-    } else {
-        text = F("行動模式");
-        color = 0x07E0; // green
-    }
-    HERMESX_LOG_INFO("Lighthouse show status banner: %s", emergencyModeActive ? "EM" : (pollingModeRequested ? "SILENT" : "IDLE"));
-    HermesXInterfaceModule::instance->showEmergencyBanner(true, text, color, durationMs);
-    // Nudge UI so banner renders promptly using the same face pipeline as send/recv
-    HermesXInterfaceModule::instance->startReceiveAnim();
-}
-
-} // namespace
 
 LighthouseModule::LighthouseModule()
     : SinglePortModule("lighthouse", meshtastic_PortNum_TEXT_MESSAGE_APP),
@@ -87,10 +34,6 @@ LighthouseModule::LighthouseModule()
     loadState();
     loadWhitelist();
     loadPassphrase();
-    HermesLoadEmergencyAwaitingSafe();
-    if (emergencyModeActive) {
-        HermesSetEmergencyAwaitingSafe(true, false); // ensure awaiting SAFE after reboot; no double-save
-    }
 
     // 僅當 boot file 沒載入成功時才設為現在時間
     if (firstBootMillis == 0) {
@@ -152,6 +95,7 @@ void LighthouseModule::loadState()
     concurrency::LockGuard g(spiLock);
     auto f = FSCom.open(modeFile, FILE_O_READ);
     if (f) {
+        uint8_t v = 0;
         if (f && f.available() >= 2) {
         uint8_t flags[2];
         f.read(flags, sizeof(flags));
@@ -247,7 +191,7 @@ void LighthouseModule::loadPassphrase()
     }
 
     emergencyPassphrase = content;
-    HERMESX_LOG_INFO("lighthouse passphrase loaded (len=%d)", emergencyPassphrase.length());
+    HERMESX_LOG_INFO("lighthouse passphrase loaded");
 #else
     HERMESX_LOG_INFO("FSCom not available; passphrase disabled");
 #endif
@@ -271,25 +215,7 @@ bool LighthouseModule::isEmergencyActiveAuthorized(const char *txt, NodeNum from
     }
 
     const bool whiteOk = isEmergencyActiveAllowed(from);
-    if (!passOk && !whiteOk) {
-        HERMESX_LOG_WARN("reject @EmergencyActive from 0x%x (pass %s, whitelist %s)", from,
-                         emergencyPassphrase.length() ? "mismatch" : "disabled",
-                         emergencyWhitelist.empty() ? "empty" : "miss");
-    }
     return passOk || whiteOk;
-}
-
-void LighthouseModule::exitEmergencyMode()
-{
-    emergencyModeActive = false;
-    pollingModeRequested = false;
-    HermesClearEmergencyAwaitingSafe();
-    saveState();
-    HERMESX_LOG_INFO("Lighthouse exit EM and clear awaiting SAFE; rebooting to normal mode");
-#ifdef ARDUINO_ARCH_ESP32
-    delay(500); // allow log flush
-    ESP.restart();
-#endif
 }
 
 void flushDelaySleep(uint32_t extraDelay = 1000, uint32_t sleepMs = 1800000UL)
@@ -327,6 +253,7 @@ void LighthouseModule::broadcastStatusMessage()
     
     String msg;
     uint32_t now = millis();
+    uint32_t elapsed = now - firstBootMillis;
 
     if (emergencyModeActive) {
         msg = u8"[HermeS]\n模式：Lighthouse Active\n緊急模式已啟動";
@@ -369,6 +296,8 @@ void LighthouseModule::IntroduceMessage()
 {
     
     String msg;
+    uint32_t now = millis();
+    uint32_t elapsed = now - firstBootMillis;
     
     msg = u8"[HermeS]\n大家好，我是 HermeS Shine1，一台可以遠端控制的無人管理站點\n"
               u8"使用說明：https://www.facebook.com/share/p/1EEThBhZeR/";
@@ -397,11 +326,7 @@ bool LighthouseModule::wantPacket(const meshtastic_MeshPacket *p)
     if (p->decoded.portnum != meshtastic_PortNum_TEXT_MESSAGE_APP)
         return false;
 
-    if (p->decoded.payload.size > 0 &&
-        (p->decoded.payload.bytes[0] == '@' ||
-         (p->decoded.payload.size >= 3 && static_cast<unsigned char>(p->decoded.payload.bytes[0]) == 0xEF &&
-          static_cast<unsigned char>(p->decoded.payload.bytes[1]) == 0xBC &&
-          static_cast<unsigned char>(p->decoded.payload.bytes[2]) == 0xA0)))
+    if (p->decoded.payload.size > 0 && p->decoded.payload.bytes[0] == '@')
         return true;
 
     if (emergencyModeActive)
@@ -421,8 +346,6 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
         len = sizeof(txt) - 1;
     memcpy(txt, mp.decoded.payload.bytes, len);
     txt[len] = '\0';
-
-    normalizeAtPrefix(txt, len);
 
      while (len > 0 && (txt[len - 1] == '\n' || txt[len - 1] == '\r' || txt[len - 1] == ' ')) {
         txt[--len] = '\0';
@@ -457,13 +380,11 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
         }
 
         if (!emergencyModeActive) {
-            HERMESX_LOG_INFO("Accept @EmergencyActive from 0x%x", mp.from);
             emergencyModeActive = true;
             pollingModeRequested = false;
             config.has_device = true;
             config.device.role = meshtastic_Config_DeviceConfig_Role_ROUTER;
             config.power.is_power_saving = false;
-            HermesSetEmergencyAwaitingSafe(true);
 
             roleCorrected = true;
 
@@ -494,16 +415,7 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
     }
 
     if (strcmp(txt, "@Status") == 0) {
-        if (HERMESX_LH_BROADCAST_ON_BOOT) {
-            broadcastStatusMessage();
-        } else {
-            if (HermesXInterfaceModule::instance) {
-                showLocalStatusOverlay(emergencyModeActive, pollingModeRequested);
-                lighthouseStatusShown = true;
-            } else {
-                HERMESX_LOG_WARN("no HermesX interface; skip local status");
-            }
-        }
+        broadcastStatusMessage();
         return ProcessMessage::CONTINUE;
     }
 
@@ -532,18 +444,8 @@ int32_t LighthouseModule::runOnce()
     if (firstTime) {
         firstTime = false;
         awakeStart = millis();
-        if (HERMESX_LH_BROADCAST_ON_BOOT) {
-            broadcastStatusMessage();
-            HERMESX_LOG_INFO("broadcasting...");
-        } else {
-            lighthouseStatusDueMs = millis() + 13000; // wait for boot screen to finish
-        }
-    }
-
-    if (!HERMESX_LH_BROADCAST_ON_BOOT && !lighthouseStatusShown && HermesXInterfaceModule::instance &&
-        lighthouseStatusDueMs && millis() >= lighthouseStatusDueMs) {
-        showLocalStatusOverlay(emergencyModeActive, pollingModeRequested);
-        lighthouseStatusShown = true;
+        broadcastStatusMessage();
+        HERMESX_LOG_INFO("broadcasting...");
     }
 
     if (pollingModeRequested && !emergencyModeActive) {

@@ -238,13 +238,9 @@ static void drawOEMIconScreen(const char *upperMsg, OLEDDisplay *display, OLEDDi
         // --- HermesX Remove TFT fast-path END
     }
 
-    // Draw display version (custom string) and shortname in upper right
-    char buf[48];
-#ifdef APP_VERSION_DISPLAY
-    snprintf(buf, sizeof(buf), "%s\n%s", xstr(APP_VERSION_DISPLAY), haveGlyphs(owner.short_name) ? owner.short_name : "");
-#else
+    // Draw full version (repo tag + build suffix) and shortname in upper right
+    char buf[40];
     snprintf(buf, sizeof(buf), "%s\n%s", xstr(APP_VERSION), haveGlyphs(owner.short_name) ? owner.short_name : "");
-#endif
 
     display->setTextAlignment(TEXT_ALIGN_RIGHT);
     // --- HermesX Remove TFT fast-path START

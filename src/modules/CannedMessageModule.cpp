@@ -15,7 +15,6 @@
 #include "mesh/generated/meshtastic/cannedmessages.pb.h"
 #include "modules/AdminModule.h"
 #include "HermesFace.h"
-#include "modules/HermesEmergencyState.h"
 
 #include "main.h"                               // for cardkb_found
 #include "modules/ExternalNotificationModule.h" // for buzzer control
@@ -537,11 +536,6 @@ int CannedMessageModule::handleInputEvent(const InputEvent *event)
 
 void CannedMessageModule::sendText(NodeNum dest, ChannelIndex channel, const char *message, bool wantReplies)
 {
-    if (gHermesEmergencyAwaitingSafe) {
-        LOG_WARN("EMACT block local text while awaiting SAFE");
-        return;
-    }
-
     meshtastic_MeshPacket *p = allocDataPacket();
     p->to = dest;
     p->channel = channel;
