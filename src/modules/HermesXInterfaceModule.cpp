@@ -1,5 +1,9 @@
 // HermesXInterfaceModule.cpp - Refactored without TinyScheduler
 
+#include "configuration.h"
+
+#if !MESHTASTIC_EXCLUDE_HERMESX
+
 #include "HermesXInterfaceModule.h"
 
 #include "mesh/MeshService.h"
@@ -42,7 +46,6 @@
 #include "MeshTypes.h"
 #include <algorithm>
 #include <cstring>
-#include "configuration.h"
 #include "mesh-pb-constants.h"
 #include "modules/NodeInfoModule.h"
 #include "modules/RoutingModule.h"
@@ -1178,3 +1181,5 @@ void runPreDeepSleepHook(const SleepPreHookParams &params)
         fallbackShutdownEffect(ms);
     }
 }
+
+#endif // !MESHTASTIC_EXCLUDE_HERMESX

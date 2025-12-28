@@ -380,5 +380,25 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define HAS_SCREEN 0
 #endif
 
+// Plugin toggles
+#ifndef MESHTASTIC_EXCLUDE_LOFS
+#define MESHTASTIC_EXCLUDE_LOFS 0
+#endif
+#ifndef MESHTASTIC_EXCLUDE_LODB
+#define MESHTASTIC_EXCLUDE_LODB 0
+#endif
+#ifndef MESHTASTIC_EXCLUDE_LOBBS
+#define MESHTASTIC_EXCLUDE_LOBBS 0
+#endif
+
+/* HermesX: default to excluding UI-heavy modules on headless builds */
+#ifndef MESHTASTIC_EXCLUDE_HERMESX
+#if HAS_SCREEN
+#define MESHTASTIC_EXCLUDE_HERMESX 0
+#else
+#define MESHTASTIC_EXCLUDE_HERMESX 1
+#endif
+#endif
+
 #include "DebugConfiguration.h"
 #include "RF95Configuration.h"

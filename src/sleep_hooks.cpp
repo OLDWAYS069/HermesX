@@ -1,4 +1,5 @@
 #include "sleep_hooks.h"
+#include "configuration.h"
 #include <Arduino.h>
 
 #if !MESHTASTIC_EXCLUDE_HERMESX

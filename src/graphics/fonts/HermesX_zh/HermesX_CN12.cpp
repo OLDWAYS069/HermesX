@@ -2,6 +2,8 @@
 
 #include "configuration.h"
 
+#if !MESHTASTIC_EXCLUDE_HERMESX && HAS_SCREEN
+
 #include <OLEDDisplay.h>
 #include <cstring>
 
@@ -319,3 +321,4 @@ int stringAdvance(const char *text, int advanceX, OLEDDisplay *display)
 
 } // namespace graphics::HermesX_zh
 
+#endif // !MESHTASTIC_EXCLUDE_HERMESX && HAS_SCREEN

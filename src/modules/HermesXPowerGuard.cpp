@@ -1,8 +1,8 @@
-#include "modules/HermesXPowerGuard.h"
+#include "configuration.h"
 
 #if defined(HERMESX_GUARD_POWER_ANIMATIONS) && !MESHTASTIC_EXCLUDE_HERMESX
 
-#include "configuration.h"
+#include "modules/HermesXPowerGuard.h"
 
 #ifndef DEBUG_BUTTONS
 #define DEBUG_BUTTONS 0

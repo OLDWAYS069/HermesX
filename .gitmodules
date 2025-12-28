@@ -4,3 +4,12 @@
 [submodule "meshtestic"]
 	path = meshtestic
 	url = https://github.com/meshtastic/meshTestic
+[submodule "lobbs"]
+	path = lobbs
+	url = https://github.com/MeshEnvy/lobbs.git
+[submodule "lodb"]
+	path = lodb
+	url = https://github.com/MeshEnvy/lodb.git
+[submodule "lofs"]
+	path = lofs
+	url = https://github.com/MeshEnvy/lofs.git

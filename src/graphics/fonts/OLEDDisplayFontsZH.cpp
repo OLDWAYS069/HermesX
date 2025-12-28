@@ -1,3 +1,7 @@
+#include "configuration.h"
+
+#if !MESHTASTIC_EXCLUDE_HERMESX && HAS_SCREEN
+
 #include "OLEDDisplayFontsZH.h"
 
 /*
@@ -43,3 +47,4 @@ const uint8_t HermesX_EM16_ZH[1091] PROGMEM =
   "\227\11r\332\60\14b\203\0\233\22\311\226\260\14\64\251D.\230\213\311\202yl\60\4\0\0\0\4\377"
   "\377\0";
 
+#endif // !MESHTASTIC_EXCLUDE_HERMESX && HAS_SCREEN

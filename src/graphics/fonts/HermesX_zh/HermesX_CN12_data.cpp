@@ -1,3 +1,7 @@
+#include "configuration.h"
+
+#if !MESHTASTIC_EXCLUDE_HERMESX && HAS_SCREEN
+
 #include <Arduino.h>
 
 #include "HermesX_CN12.h"
@@ -14,3 +18,5 @@ const std::uint8_t HermesX_CN12_GLYPHS[] PROGMEM = {
 };
 
 } // namespace graphics::HermesX_zh
+
+#endif // !MESHTASTIC_EXCLUDE_HERMESX && HAS_SCREEN

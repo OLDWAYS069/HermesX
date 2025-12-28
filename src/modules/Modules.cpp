@@ -40,6 +40,9 @@
 #if !MESHTASTIC_EXCLUDE_REMOTEHARDWARE
 #include "modules/RemoteHardwareModule.h"
 #endif
+#if !MESHTASTIC_EXCLUDE_LOBBS
+#include "LoBBSModule.h"
+#endif
 #if !MESHTASTIC_EXCLUDE_POWERSTRESS
 #include "modules/PowerStressModule.h"
 #endif
@@ -127,6 +130,9 @@ void setupModules()
 #endif
 #if !MESHTASTIC_EXCLUDE_TEXTMESSAGE
         textMessageModule = new TextMessageModule();
+#endif
+#if !MESHTASTIC_EXCLUDE_LOBBS
+        lobbsModule = new LoBBSModule();
 #endif
 #if !MESHTASTIC_EXCLUDE_TRACEROUTE
         traceRouteModule = new TraceRouteModule();
