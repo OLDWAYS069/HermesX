@@ -5,6 +5,7 @@ import sys
 from os.path import join
 import json
 import re
+import subprocess
 
 from readprops import readProps
 
@@ -97,8 +98,8 @@ prefsLoc = projenv["PROJECT_DIR"] + "/version.properties"
 verObj = readProps(prefsLoc)
 print("Using meshtastic platformio-custom.py, firmware version " + verObj["long"] + " on " + env.get("PIOENV"))
 
-# Display version override: keep transport/App version at verObj, but allow a different on-screen string.
-display_short = "0.2.8"
+# Display version: prefer branch-based HermesX tag without git suffix (HXB_<branch>), fallback to app version
+display_short = "HXB_0.2.8"
 
 jsonLoc = env["PROJECT_DIR"] + "/userPrefs.jsonc"
 with open(jsonLoc) as f:
