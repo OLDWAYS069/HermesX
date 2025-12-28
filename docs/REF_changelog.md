@@ -1,6 +1,45 @@
 # HermesX 變更紀錄 (REF_changelog.md)
 
 ## 範圍
+- 日期：2025-12-27
+- 項目：LoBBS 在 Repeater 角色啟用、啟動/收訊日誌補強
+- 檔案：
+  - docs/CHANGELOG_MINI.md
+  - src/modules/Modules.cpp
+  - lobbs/src/LoBBSModule.cpp
+- 說明：
+  - Repeater 角色現在也會建立 TextMessage/LoBBS/Welcome 模組，保留 DM 與歡迎訊息功能。
+  - Modules 啟動時輸出角色與 LoBBS/LoDB/LoFS 是否編入的日誌；LoBBS 啟動與收到 DM 時輸出 Info，便於現場確認模組活著。
+- 測試：
+  - 待執行：Repeater 角色編譯與開機確認 LoBBS 啟動日誌；DM 送達時確認 LoBBS 收訊日誌與回覆正常。
+
+## 範圍
+- 日期：2025-12-26
+- 項目：LoBBS 整合 / UTF-8 放寬 / HermesX headless 精簡
+- 檔案：
+  - .gitmodules
+  - platformio.ini
+  - docs/CHANGELOG_MINI.md
+  - src/configuration.h
+  - src/modules/Modules.cpp
+  - lobbs/src/*
+  - lodb/src/*
+  - lofs/src/*
+  - src/mesh/generated/meshtastic/lobbs.pb.{c,h}
+  - src/graphics/fonts/HermesX_zh/HermesX_CN12*.{cpp,h}
+  - src/graphics/fonts/OLEDDisplayFontsZH.{cpp,h}
+  - src/modules/HermesXInterfaceModule.cpp
+  - src/modules/HermesXPowerGuard.cpp
+  - src/sleep_hooks.cpp
+- 說明：
+  - 新增 LoBBS/LoDB/LoFS 子模組並納入編譯（PlatformIO include/build filter）；LoBBS 於 Modules 註冊，nanopb 產物生成在 `src/mesh/generated/meshtastic/`。
+  - LoBBS 中文化與 UTF-8 放寬：帳號/密碼不再限 ASCII，訊息截斷改 UTF-8 安全；登入成功自動推送中文指令速查，所有回覆改為中文。
+  - HermesX 介面與中文字型改為條件編譯：無螢幕時自動排除 HermesX/UI/字型，減少 headless 佈建負擔。
+  - 新增 WelcomeModule：監聽位置更新，預設以本機座標為圓心 20km 內的新節點在頻道廣播歡迎；可用 `/welcome on|off|radius <公里>` 調整。
+- 測試：
+  - 待執行：LoBBS 註冊/登入（中英混排帳密）、/mail 與 /news 中英文內容收發；WelcomeModule 觸發（位置距離判定、廣播內容）；headless 組態確認 HermesX/字型排除且可編譯。
+
+## 範圍
 - 日期：251129
 - 版本：0.2.7
 - 項目：EMACT @EmergencyActive 授權、SAFE 長按、版號顯示、Lighthouse 改為隨身模式

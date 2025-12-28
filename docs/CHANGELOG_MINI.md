@@ -1,6 +1,16 @@
 # HermesX Mini Change Log
 （每次只寫極簡亮點，便於快速回顧）
 
+## 2025-12-26
+- 整合 LoBBS/LoDB/LoFS 子模組：補齊 nanopb 產物、PlatformIO include/filter 並在 Modules 註冊 LoBBS，預設會編入。
+- LoBBS 中文化與 UTF-8 放寬：帳號/密碼不再限 ASCII，指令回覆改中文且新用戶登入時推送中文速查。
+- HermesX UI/字型條件編譯：無螢幕時自動排除 HermesX/中文字型，減少 headless 佈建負擔。
+- 歡迎訊息：新增 WelcomeModule 監聽位置更新，預設 20km 內新節點會在頻道廣播歡迎；/welcome on|off|radius <公里> 可調整。
+
+## 2025-12-27
+- LoBBS 可在 Repeater 角色運行：Repeater 分支也建立 TextMessage/LoBBS/Welcome，保留 DM 與歡迎訊息功能。
+- 啟動/收包日誌加強：Modules 會印出角色與 LoBBS/L0FS/L0DB 是否編入；LoBBS 啟動與收到 DM 時印 Info，便於確認模組活著。
+
 ## 2025-11-29
 - Lighthouse EMACT：支援全形＠的 `@EmergencyActive:<pass>`，並在拒絕/通過時寫 log（密碼/白名單狀態）。
 - 開機版號：改用 `HXB_<語意版號><git>` 的 APP_VERSION_DISPLAY

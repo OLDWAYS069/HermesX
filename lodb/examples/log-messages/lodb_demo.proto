@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package meshtastic;
+
+option csharp_namespace = "Meshtastic.Protobufs";
+option go_package = "github.com/meshtastic/go/generated";
+option java_outer_classname = "LoDBDemoProtos";
+option java_package = "com.geeksville.mesh";
+option swift_prefix = "";
+
+message LoDBDemoMessage {
+  uint32 timestamp = 1;
+  uint32 from_node = 2;
+  uint32 to_node = 3;
+  string text = 4;
+}
+

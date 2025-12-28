@@ -43,6 +43,7 @@
 #if !MESHTASTIC_EXCLUDE_LOBBS
 #include "LoBBSModule.h"
 #endif
+#include "modules/WelcomeModule.h"
 #if !MESHTASTIC_EXCLUDE_POWERSTRESS
 #include "modules/PowerStressModule.h"
 #endif
@@ -112,6 +113,34 @@
  */
 void setupModules()
 {
+    constexpr int kExclText =
+#ifdef MESHTASTIC_EXCLUDE_TEXTMESSAGE
+        MESHTASTIC_EXCLUDE_TEXTMESSAGE;
+#else
+        0;
+#endif
+    constexpr int kExclLoBBS =
+#ifdef MESHTASTIC_EXCLUDE_LOBBS
+        MESHTASTIC_EXCLUDE_LOBBS;
+#else
+        0;
+#endif
+    constexpr int kExclLoDB =
+#ifdef MESHTASTIC_EXCLUDE_LODB
+        MESHTASTIC_EXCLUDE_LODB;
+#else
+        0;
+#endif
+    constexpr int kExclLoFS =
+#ifdef MESHTASTIC_EXCLUDE_LOFS
+        MESHTASTIC_EXCLUDE_LOFS;
+#else
+        0;
+#endif
+
+    LOG_INFO("[Modules] role=%d, textmsg_excl=%d, lobbs_excl=%d, lodb_excl=%d, lofs_excl=%d", config.device.role, kExclText,
+             kExclLoBBS, kExclLoDB, kExclLoFS);
+
     if (config.device.role != meshtastic_Config_DeviceConfig_Role_REPEATER) {
 #if (HAS_BUTTON || ARCH_PORTDUINO) && !MESHTASTIC_EXCLUDE_INPUTBROKER
         inputBroker = new InputBroker();
@@ -133,7 +162,9 @@ void setupModules()
 #endif
 #if !MESHTASTIC_EXCLUDE_LOBBS
         lobbsModule = new LoBBSModule();
+        LOG_INFO("[Modules] LoBBS module constructed");
 #endif
+        new WelcomeModule();
 #if !MESHTASTIC_EXCLUDE_TRACEROUTE
         traceRouteModule = new TraceRouteModule();
 #endif
@@ -283,6 +314,14 @@ void setupModules()
         // 固定中繼站仍需處理 Lighthouse 指令
         lighthouseModule = new LighthouseModule();
 #endif
+#if !MESHTASTIC_EXCLUDE_TEXTMESSAGE
+        textMessageModule = new TextMessageModule();
+#endif
+#if !MESHTASTIC_EXCLUDE_LOBBS
+        lobbsModule = new LoBBSModule();
+        LOG_INFO("[Modules] LoBBS module constructed (repeater)");
+#endif
+        new WelcomeModule();
     }
     // NOTE! This module must be added LAST because it likes to check for replies from other modules and avoid sending extra
     // acks
