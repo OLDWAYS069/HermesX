@@ -2,14 +2,20 @@
 
 ## 範圍
 - 日期：2025-12-27
-- 項目：LoBBS 在 Repeater 角色啟用、啟動/收訊日誌補強
+- 項目：LoBBS 在 Repeater 角色啟用、啟動/收訊日誌補強、子模組改內嵌並關閉 LoDB 測試檔編譯
 - 檔案：
+  - .gitmodules
   - docs/CHANGELOG_MINI.md
+  - platformio.ini
   - src/modules/Modules.cpp
   - lobbs/src/LoBBSModule.cpp
+  - lobbs/src/*
+  - lodb/src/*
+  - lofs/src/*
 - 說明：
   - Repeater 角色現在也會建立 TextMessage/LoBBS/Welcome 模組，保留 DM 與歡迎訊息功能。
   - Modules 啟動時輸出角色與 LoBBS/LoDB/LoFS 是否編入的日誌；LoBBS 啟動與收到 DM 時輸出 Info，便於現場確認模組活著。
+  - lobbs/lodb/lofs 改為內嵌目錄，不再使用 git submodule；平台編譯時排除 `lodb/src/diagnostics.cpp`，避免缺少 nanopb 產物造成編譯失敗。
 - 測試：
   - 待執行：Repeater 角色編譯與開機確認 LoBBS 啟動日誌；DM 送達時確認 LoBBS 收訊日誌與回覆正常。
 

@@ -10,6 +10,7 @@
 ## 2025-12-27
 - LoBBS 可在 Repeater 角色運行：Repeater 分支也建立 TextMessage/LoBBS/Welcome，保留 DM 與歡迎訊息功能。
 - 啟動/收包日誌加強：Modules 會印出角色與 LoBBS/L0FS/L0DB 是否編入；LoBBS 啟動與收到 DM 時印 Info，便於確認模組活著。
+- 子模組改為內嵌：lobbs/lodb/lofs 直接收進倉庫，PlatformIO 移除 lodb/diagnostics.cpp 編譯以避免缺少 nanopb 產物。
 
 ## 2025-11-29
 - Lighthouse EMACT：支援全形＠的 `@EmergencyActive:<pass>`，並在拒絕/通過時寫 log（密碼/白名單狀態）。
