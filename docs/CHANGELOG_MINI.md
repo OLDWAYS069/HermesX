@@ -1,6 +1,11 @@
 # HermesX Mini Change Log
 （每次只寫極簡亮點，便於快速回顧）
 
+## 2025-01-19
+- Welcome：僅在已有對方 NodeInfo 時歡迎；文案更新並加入 HermesBase 介紹與連結；仍每節點只歡迎一次、半徑可調。
+- Lighthouse：廣播/自介改用主頻；新增 `@戳`、`@HermesBase` 公頻回覆，含 HermesBase 介紹與連結；`@BAT` 保持原頻道。
+- HermesBase 使用說明：新增 docs/HermesBase.md，整理 Welcome/LoBBS/Lighthouse 的使用方式與指令。
+
 ## 2025-12-26
 - 整合 LoBBS/LoDB/LoFS 子模組：補齊 nanopb 產物、PlatformIO include/filter 並在 Modules 註冊 LoBBS，預設會編入。
 - LoBBS 中文化與 UTF-8 放寬：帳號/密碼不再限 ASCII，指令回覆改中文且新用戶登入時推送中文速查。

@@ -1,51 +1,60 @@
-# HermesX Firmware
+## 本分支（HermesBASE_b0.1.0）重點
+- Welcome 廣播改為需有 NodeInfo 才觸發，訊息文案更新，走主頻道 0、每節點只歡迎一次。
+- Lighthouse 廣播與自我介紹改走主頻道 0，新增 `@戳`、`@HermesBase` 公頻回覆；`@BAT` 仍在 channel 2。
+- LoBBS `/welcome` 指令可查詢/開關/調整半徑，配合上述歡迎行為。
 
-HermesX 是一款建立在 Meshtastic 協作網路上的定製韌體，專注於讓離線通訊更直覺。這一代的核心任務是強化人機介面：即使使用者不拿出手機，也能透過裝置本體的旋鈕、LED 與音效快速掌握狀態並完成訊息傳遞。
+## 快速開始
+- 環境需求：PlatformIO（VS Code 擴充或 `pio` CLI）、Python 3。
+- 預設編譯環境：`platformio.ini` 的 `default_envs = tbeam`。若使用其他板子，改成對應的 env（位於 `arch/*/*.ini` 或 `variants/*/platformio.ini`）。
+- 建置：`pio run -e <env>`  
+  燒錄：`pio run -t upload -e <env>`
+- 序列埠監看：`pio device monitor -e <env>`（預設 115200）。
 
-## 功能亮點
-- **專注的操作體驗**：強調「抬手即用」的交互，不需手機即可瀏覽罐頭訊息並完成發送。
-- **視覺 + 聽覺雙通知**：LED 狀態條與對應音效共同回饋，讓訊息狀態一目了然、耳聞即知。
-- **HermesX 品牌化 UI**：面板表情、動畫與命名全面統一，打造一致的介面識別。
+## 主要特性
+- 模組化擴充：Welcome 歡迎訊息、LoBBS 指令、Lighthouse 緊急模式/站台告示等。
 
-## 外觀設計
-外殼預留勾槽，可搭配 D 扣或掛繩將 HermesX 固定於背包、胸掛、皮帶或褲子，真正做到隨身攜帶、隨時使用。
+## 模組與指令
+### WelcomeModule（歡迎訊息）
+- 觸發：收到 `POSITION_APP` 且已有該節點的 NodeInfo（`has_user`），距離在設定半徑內（預設 20km，channel 0，hop_limit=3），每個 NodeNum 只歡迎一次。
+- 訊息內容：
+  ```
+  歡迎 <對方暱稱或「新朋友」> 進入台灣妹婿-花蓮分區!
 
-## LED 狀態條行為
-| 狀態 | 顏色與動畫 | 說明 |
-| --- | --- | --- |
-| 待機 | 橘色燈條、有一顆亮點來回移動 | 裝置處於待命但可立即操作。 |
-| 發送訊息 | 白色亮點自下而上流動 | 目前正在發送使用者選定的訊息。 |
-| 接收訊息 | 白色亮點自上而下流動 | 收到其他節點的訊息。 |
-| 收到節點資訊 | 綠色亮點自上而下流動 | 發現或更新網路節點資訊。 |
-| 傳訊成功 | 綠燈閃爍三次 | 訊息已獲確認。 |
-| 傳訊失敗 | 紅燈閃爍三次 | 訊息未成功送達，請重試。 |
+  LoBBS 指令（請私訊我）：
+  登入： /hi <帳號> <密碼> 
 
-同時搭配對應音效通知，使用者無需盯著燈條也能即時掌握狀態。
+  公頻指令：
+  @BAT： 查看伺服器電量
+  ＠戳 ：戳一下我
+  ＠HermesBase：有關於HermesBase
+  ```
+- LoBBS 已登入用戶可用 `/welcome on|off|radius <公里>` 開關或調整半徑。
 
-## 旋鈕操作
-- **旋轉**：瀏覽並選擇欲發送的罐頭訊息。
-- **按下**：立即發送目前選定的訊息。
-- **長按**：控制開機與關機。
+### Lighthouse
+- 廣播管道：狀態/介紹、`@戳` 回覆、`@HermesBase` 回覆走 channel 0；`@BAT` 仍在 channel 2。
+- 指令（公頻）：
+  - `@Status`：顯示 Lighthouse 狀態（非廣播模式時會在本機顯示）。
+  - `@BAT`：回報電池狀態（channel 2）。
+  - `@戳`：回覆「討厭><」（channel 0）。
+  - `@HermesBase`：回覆「HermesBase是一套可以提供遠端管理、離網布告欄的系統\n更多資訊：連結」（channel 0，連結待補）。
+  - `@HiHermes`：廣播自我介紹。
+  - `@EmergencyActive:<pass>` 或白名單來源 `@EmergencyActive`：啟動緊急模式；`@GoToSleep` 進入節能輪詢；`@Repeater` 轉固定中繼站。
 
-## 其他特點
-- 支援 18650 電池快速更換，延長外勤續航。
-- 防潑水設計（請勿浸泡；若不慎泡水導致損壞，可寄回更換電路板 ??）。
+### LoBBS（帳號登入與訊息）
+- 私訊 `/hi <帳號> <密碼>` 登入或註冊；登入後可用 `/welcome ...` 管理歡迎訊息。
+- 公頻常用指令：`@BAT`（伺服器電量）、`＠戳`（戳一下）、`＠HermesBase`（系統介紹）。
 
-## 售價
-先行者套件價格為 3000 元 / 台，含完整保固服務。
+## 頻道與廣播習慣
+- 主頻道（channel 0）：Welcome 廣播、Lighthouse 狀態/介紹與新增的公頻回覆。
+- 預設半徑與去重：Welcome 半徑 20km，可調；同一 NodeNum 只歡迎一次，裝置重啟後重計。
 
-這是 HermesX 的第一步，我們期待把它帶到真實場域與每一個日常場景。
+## 專案結構速覽
+- `src/modules/`：各模組（WelcomeModule、LighthouseModule、LoBBS 等）。
+- `graphics/`：面板 UI、動畫與顯示邏輯。
+- `arch/`、`variants/`：各板子與組態的 PlatformIO 設定。
+- `data/prefs/`：Lighthouse 白名單、passphrase 等預設檔。
 
-## HermesX Agents 指南
-- **核心命名習慣**：以 HermesX 為主要前綴，涵蓋類別（如 `HermesXInterfaceModule`、`HermesFace`）、工具（`HermesXPacketUtils`）與記錄（`HermesXLog`）；功能掛鉤採語意化命名（`setNextSleepPreHookParams`、`runPreDeepSleepHook`）；以大寫宏 `MESHTASTIC_EXCLUDE_HERMESX` 控制編譯範圍。
-- **Hermes 介面 Agent** (`src/modules/HermesXInterfaceModule.*`、`HermesFace*`、`TinyScheduler.h`)：處理表情動畫、旋鈕交互與電源提示，公共 API 包含 `startPowerHoldAnimation`/`updatePowerHoldAnimation`/`stopPowerHoldAnimation`，資源依 `HermesFaceMode` enum 命名。
-- **按鍵與輸入 Agent** (`ButtonThread.*`、`input/RotaryEncoderInterruptBase.*`)：擴充 `HermesOneButton` 型別別名、`HoldAnimationMode` 狀態與備援 `BUTTON_PIN_ALT` 喚醒；事件函式統一為 `userButtonPressedLongStart/Stop`、`rotaryStateCW` 命名，並透過 Hermes 介面更新動畫。
-- **通信可靠度 Agent** (`mesh/ReliableRouter.*`)：新增 `ReliableEventType` enum、`ReliableEvent` 結構與 `setNotify`/`emit` 回呼，命名以用途為主（`ImplicitAck`、`GiveUp`），`hermesXCallback` 事件橋接 ACK/NACK。
-- **模組註冊 Agent** (`modules/Modules.cpp`)：維持 Hermes 模組建立序列，命名遵循 `moduleName = new Hermes...`，加入 `LighthouseModule`、`MusicModule` 等依功能命名的模組。
-- **睡眠控制 Agent** (`sleep.*`、`sleep_hooks.*`、`Power.cpp`、`platform/esp32/main-esp32.cpp`)：調整喚醒路徑，公開變數 `g_ext1WakeMask`/`g_ext1WakeMode`，函式以動作描述命名（`setNextSleepPreHookParams`、`consumeSleepPreHookParams`），`BUTTON_PIN_ALT` 判斷邏輯獨立。
-- **UI 與資源 Agent** (`graphics/Screen.cpp`、`graphics/img/icon.xbm`、`modules/CannedMessageModule.*`)：統一 Hermes 面板、圖示與提示文字命名（`HermesX_DrawFace`、`HermesFaceMode::Sending`），訊息發送改走 `RX_SRC_USER`，臨時訊息以 `temporaryMessage` 命名。
-- **外部通知 Agent** (`modules/ExternalNotificationModule.cpp`)：保留 `hermesXCallback` 呼叫點與 `setExternalState` 命名，確保與 Hermes UI/LED 同步。
-- **設定與總覽** (`platformio.ini`、`.vscode/settings.json`、`README.md`)：命名以環境或品牌為核心（`default_envs = heltec-wireless-tracker`、README 標題 `HermesX Firmware`），新增旗標時使用 `BUTTON_PIN_ALT`、`LIGHTHOUSE_DEBUG` 等突顯用途的名稱。
-- 後續延伸時，保持上述前綴、語意化函式與枚舉的命名模式，即可維持 HermesX 分支的一致性。
-
-
+## 開發提示
+- 編譯旗標集中於 `platformio.ini` 的 `[env]`，Meshtastic/HermesX 的包含/排除宏可由此調整。
+- Welcome/Lighthouse 相關常數與訊息可在各自模組檔內修改（`src/modules/WelcomeModule.cpp`、`src/modules/LighthouseModule.cpp`）。
+- 建議先以預設 `tbeam` 或目標板子的 env 編譯確認環境 OK，再切換實機上傳。

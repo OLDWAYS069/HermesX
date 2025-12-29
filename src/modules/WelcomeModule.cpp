@@ -128,7 +128,8 @@ void WelcomeModule::broadcastWelcome(NodeNum target)
              "公頻指令：\n"
              "@BAT： 查看伺服器電量\n"
              "＠戳 ：戳一下我\n"
-             "＠HermesBase：有關於HermesBase",
+             "＠HermesBase：HermesBase是一台可以提供遠端控制的節點系統，同時提供類似BBS的看板功能（還有使用者管理系統）\n"
+             "更多資訊：https://hackmd.io/@SIjb3UETQjmaM5wGeAHXnQ/SylWsul4Zg",
              shortName);
 
     size_t len = strnlen(msg, sizeof(p->decoded.payload.bytes));

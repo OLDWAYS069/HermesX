@@ -598,8 +598,8 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
     }
 
     if (strcmp(txt, "@HermesBase") == 0) {
-        const char *reply =
-            u8"HermesBase是一套可以提供遠端管理、離網布告欄的系統\n更多資訊：連結";
+        const char *reply = u8"HermesBase是一台可以提供遠端控制的節點系統，同時提供類似BBS的看板功能（還有使用者管理系統）\n"
+                             "更多資訊：https://hackmd.io/@SIjb3UETQjmaM5wGeAHXnQ/SylWsul4Zg";
         meshtastic_MeshPacket *p = allocDataPacket();
         if (p) {
             p->to = NODENUM_BROADCAST;
