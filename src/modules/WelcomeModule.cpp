@@ -60,6 +60,11 @@ ProcessMessage WelcomeModule::handleReceived(const meshtastic_MeshPacket &mp)
         return ProcessMessage::CONTINUE;
     }
 
+    const meshtastic_NodeInfoLite *info = nodeDB->getMeshNode(mp.from);
+    if (!info || !info->has_user) {
+        return ProcessMessage::CONTINUE;
+    }
+
     meshtastic_Position pos = meshtastic_Position_init_zero;
     if (!decodePosition(mp, pos)) {
         return ProcessMessage::CONTINUE;
@@ -115,7 +120,15 @@ void WelcomeModule::broadcastWelcome(NodeNum target)
 
     char msg[200];
     snprintf(msg, sizeof(msg),
-             "歡迎 %s 進入花蓮Mesh網路!\nLoBBS 指令：/hi <帳號> <密碼> 登入，/news 看公告，@user <msg> 傳私信",
+             "歡迎 %s 進入台灣妹婿-花蓮分區!\n"
+             "\n"
+             "LoBBS 指令（請私訊我）：\n"
+             "登入： /hi <帳號> <密碼> \n"
+             "\n"
+             "公頻指令：\n"
+             "@BAT： 查看伺服器電量\n"
+             "＠戳 ：戳一下我\n"
+             "＠HermesBase：有關於HermesBase",
              shortName);
 
     size_t len = strnlen(msg, sizeof(p->decoded.payload.bytes));

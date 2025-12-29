@@ -371,7 +371,7 @@ void LighthouseModule::broadcastStatusMessage()
     if (!p) return;
 
     p->to = NODENUM_BROADCAST;
-    p->channel = 2;
+    p->channel = 0;
     p->decoded.portnum = meshtastic_PortNum_TEXT_MESSAGE_APP;
     p->want_ack = false;
     p->decoded.payload.size = strlen(msg.c_str());
@@ -397,7 +397,7 @@ void LighthouseModule::IntroduceMessage()
     if (!p) return;
 
     p->to = NODENUM_BROADCAST;
-    p->channel = 2;
+    p->channel = 0;
     p->decoded.portnum = meshtastic_PortNum_TEXT_MESSAGE_APP;
     p->want_ack = false;
     p->decoded.payload.size = strlen(msg.c_str());
@@ -575,6 +575,45 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
         IntroduceMessage();
         HERMESX_LOG_INFO("@HiHermes INTRODUCING");
 
+        return ProcessMessage::CONTINUE;
+    }
+
+    if (strcmp(txt, "@戳") == 0) {
+        const char *reply = u8"討厭><";
+        meshtastic_MeshPacket *p = allocDataPacket();
+        if (p) {
+            p->to = NODENUM_BROADCAST;
+            p->channel = 0;
+            p->decoded.portnum = meshtastic_PortNum_TEXT_MESSAGE_APP;
+            p->want_ack = false;
+            p->decoded.payload.size = strlen(reply);
+            memcpy(p->decoded.payload.bytes, reply, p->decoded.payload.size);
+
+            service->sendToMesh(p, RX_SRC_LOCAL, false);
+            HERMESX_LOG_INFO("Broadcast poke reply");
+        } else {
+            HERMESX_LOG_WARN("Unable to alloc packet for poke reply");
+        }
+        return ProcessMessage::CONTINUE;
+    }
+
+    if (strcmp(txt, "@HermesBase") == 0) {
+        const char *reply =
+            u8"HermesBase是一套可以提供遠端管理、離網布告欄的系統\n更多資訊：連結";
+        meshtastic_MeshPacket *p = allocDataPacket();
+        if (p) {
+            p->to = NODENUM_BROADCAST;
+            p->channel = 0;
+            p->decoded.portnum = meshtastic_PortNum_TEXT_MESSAGE_APP;
+            p->want_ack = false;
+            p->decoded.payload.size = strlen(reply);
+            memcpy(p->decoded.payload.bytes, reply, p->decoded.payload.size);
+
+            service->sendToMesh(p, RX_SRC_LOCAL, false);
+            HERMESX_LOG_INFO("Broadcast HermesBase info");
+        } else {
+            HERMESX_LOG_WARN("Unable to alloc packet for HermesBase reply");
+        }
         return ProcessMessage::CONTINUE;
     }
 
