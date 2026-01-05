@@ -1,19 +1,18 @@
 # HermesX 專案狀態 (REF_status.md)
 
 ## 專案總覽
-- 版本：BETA 0.2.1
+- 版本：BETA 0.3.0 (base oon 2.7.15)
 - 硬體：Heltec Wireless Tracker (ESP32-S3)
 
 ## 目標任務
 - [暫時移除] GPIO5 三擊觸發 SOS 功能整合(包括整合302.1協議的測試)
 - [完成] HermesXInterfaceModule LED 動畫（SEND/RECV/ACK/NACK + Idle 呼吸）(不過LED的發送接收邏輯左右要反過來)
-- [完成] EM 模式切換時自動導向緊急清單
+- [已移除] EM 模式切換時自動導向緊急清單
 - [已完成] EM 最小中文字型整合（HermesX_EM16_ZH 1bpp/16px，維持 UTF-8 顯示流程）
 - [暫時移除] 將CANNED UI功能轉90度的直式顯示(包括SENDING FACE ERROR FACE等)0.2.2回來
 
 
 ## 近期進度
-- 302.1 MVP 提交：EmergencyAdaptiveModule / HermesXInterface / ReliableRouter Patch
 - 302.1 Direct Sender 與 UI 鉤子於 0.2.1 暫時移除，預計 0.3.0 重新導入
 
 ## 已知議題

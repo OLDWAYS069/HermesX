@@ -2,9 +2,6 @@
 
 #include <GpioLogic.h>
 #include <OLEDDisplay.h>
-#if defined(HERMESX_TFT_FASTPATH)
-#include <cstdint>
-#endif
 
 /**
  * An adapter class that allows using the LovyanGFX library as if it was an OLEDDisplay implementation.
@@ -23,9 +20,13 @@ class TFTDisplay : public OLEDDisplay
     */
     TFTDisplay(uint8_t, int, int, OLEDDISPLAY_GEOMETRY, HW_I2C);
 
+    // Destructor to clean up allocated memory
+    ~TFTDisplay();
+
     // Write the buffer to the display memory
     virtual void display() override { display(false); };
     virtual void display(bool fromBlank);
+    void sdlLoop();
 
     // Turn the display upside down
     virtual void flipScreenVertically();
@@ -51,11 +52,6 @@ class TFTDisplay : public OLEDDisplay
      */
     static GpioPin *backlightEnable;
 
-#if defined(HERMESX_TFT_FASTPATH)
-    bool writeRow565(int16_t x, int16_t y, const uint16_t *row565, int len);
-    uint16_t mapColor(uint32_t logicalColor) const;
-#endif
-
   protected:
     // the header size of the buffer used, e.g. for the SPI command header
     virtual int getBufferOffset(void) override { return 0; }
@@ -65,4 +61,6 @@ class TFTDisplay : public OLEDDisplay
 
     // Connect to the display
     virtual bool connect() override;
+
+    uint16_t *linePixelBuffer = nullptr;
 };

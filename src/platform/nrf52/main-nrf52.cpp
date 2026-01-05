@@ -14,9 +14,10 @@
 #include "error.h"
 #include "main.h"
 #include "meshUtils.h"
-#if !MESHTASTIC_EXCLUDE_HERMESX
+#include "power.h"
 #include "modules/HermesXPowerGuard.h"
-#endif
+
+#include <hal/nrf_lpcomp.h>
 
 #ifdef BQ25703A_ADDR
 #include "BQ25713.h"
@@ -285,10 +286,14 @@ void cpuDeepSleep(uint32_t msecToWake)
 #if SPI_INTERFACES_COUNT > 1
     SPI1.end();
 #endif
-    // This may cause crashes as debug messages continue to flow.
-    Serial.end();
+    if (Serial)       // Another check in case of disabled default serial, does nothing bad
+        Serial.end(); // This may cause crashes as debug messages continue to flow.
+
+        // This causes troubles with waking up on nrf52 (on pro-micro in particular):
+        // we have no Serial1 in use on nrf52, check Serial and GPS modules.
 #ifdef PIN_SERIAL1_RX
-    Serial1.end();
+    if (Serial1) // A straightforward solution to the wake from deepsleep problem
+        Serial1.end();
 #endif
     setBluetoothEnable(false);
 
@@ -311,6 +316,9 @@ void cpuDeepSleep(uint32_t msecToWake)
     nrf_gpio_cfg_default(SCREEN_TOUCH_INT);
     nrf_gpio_cfg_default(WB_I2C1_SCL);
     nrf_gpio_cfg_default(WB_I2C1_SDA);
+
+    // nrf_gpio_cfg_default(WB_I2C2_SCL);
+    // nrf_gpio_cfg_default(WB_I2C2_SDA);
 #endif
 #endif
 #ifdef MESHLINK
@@ -319,7 +327,7 @@ void cpuDeepSleep(uint32_t msecToWake)
 #endif
 #endif
 
-#ifdef HELTEC_MESH_NODE_T114
+#if defined(HELTEC_MESH_NODE_T114) || defined(HELTEC_MESH_SOLAR)
     nrf_gpio_cfg_default(PIN_GPS_PPS);
     detachInterrupt(PIN_GPS_PPS);
     detachInterrupt(PIN_BUTTON1);
@@ -362,6 +370,7 @@ void cpuDeepSleep(uint32_t msecToWake)
         // Resume on user button press
         // https://github.com/lyusupov/SoftRF/blob/81c519ca75693b696752235d559e881f2e0511ee/software/firmware/source/SoftRF/src/platform/nRF52.cpp#L1738
         constexpr uint32_t DFU_MAGIC_SKIP = 0x6d;
+        sd_power_gpregret_clr(0, 0xFF);           // Clear the register before setting a new values in it for stability reasons
         sd_power_gpregret_set(0, DFU_MAGIC_SKIP); // Equivalent NRF_POWER->GPREGRET = DFU_MAGIC_SKIP
 
         // FIXME, use system off mode with ram retention for key state?
@@ -376,6 +385,29 @@ void cpuDeepSleep(uint32_t msecToWake)
         nrf_gpio_cfg_input(PIN_BUTTON2, NRF_GPIO_PIN_PULLUP);
         nrf_gpio_pin_sense_t sense1 = NRF_GPIO_PIN_SENSE_LOW;
         nrf_gpio_cfg_sense_set(PIN_BUTTON2, sense1);
+#endif
+
+#ifdef PROMICRO_DIY_TCXO
+        nrf_gpio_cfg_input(BUTTON_PIN, NRF_GPIO_PIN_PULLUP); // Enable internal pull-up on the button pin
+        nrf_gpio_pin_sense_t sense = NRF_GPIO_PIN_SENSE_LOW; // Configure SENSE signal on low edge
+        nrf_gpio_cfg_sense_set(BUTTON_PIN, sense);           // Apply SENSE to wake up the device from the deep sleep
+#endif
+
+#ifdef BATTERY_LPCOMP_INPUT
+        // Wake up if power rises again
+        nrf_lpcomp_config_t c;
+        c.reference = BATTERY_LPCOMP_THRESHOLD;
+        c.detection = NRF_LPCOMP_DETECT_UP;
+        c.hyst = NRF_LPCOMP_HYST_NOHYST;
+        nrf_lpcomp_configure(NRF_LPCOMP, &c);
+        nrf_lpcomp_input_select(NRF_LPCOMP, BATTERY_LPCOMP_INPUT);
+        nrf_lpcomp_enable(NRF_LPCOMP);
+
+        battery_adcEnable();
+
+        nrf_lpcomp_task_trigger(NRF_LPCOMP, NRF_LPCOMP_TASK_START);
+        while (!nrf_lpcomp_event_check(NRF_LPCOMP, NRF_LPCOMP_EVENT_READY))
+            ;
 #endif
 
         auto ok = sd_power_system_off();

@@ -127,6 +127,11 @@ void InkHUD::NodeListApplet::onRender()
     // Y value (top) of the current card. Increases as we draw.
     uint16_t cardTopY = headerDivY + padDivH;
 
+    // Clean up deleted nodes before drawing
+    cards.erase(
+        std::remove_if(cards.begin(), cards.end(), [](const CardInfo &c) { return nodeDB->getMeshNode(c.nodeNum) == nullptr; }),
+        cards.end());
+
     // -- Each node in list --
     for (auto card = cards.begin(); card != cards.end(); ++card) {
 
@@ -140,6 +145,11 @@ void InkHUD::NodeListApplet::onRender()
         uint8_t &hopsAway = card->hopsAway;
 
         meshtastic_NodeInfoLite *node = nodeDB->getMeshNode(nodeNum);
+
+        // Skip deleted nodes
+        if (!node) {
+            continue;
+        }
 
         // -- Shortname --
         // Parse special chars in the short name
@@ -168,11 +178,11 @@ void InkHUD::NodeListApplet::onRender()
 
         // Define two lines of text for the card
         // We will center our text on these lines
-        uint16_t lineAY = cardTopY + (fontLarge.lineHeight() / 2);
-        uint16_t lineBY = cardTopY + fontLarge.lineHeight() + (fontSmall.lineHeight() / 2);
+        uint16_t lineAY = cardTopY + (fontMedium.lineHeight() / 2);
+        uint16_t lineBY = cardTopY + fontMedium.lineHeight() + (fontSmall.lineHeight() / 2);
 
         // Print the short name
-        setFont(fontLarge);
+        setFont(fontMedium);
         printAt(0, lineAY, shortName, LEFT, MIDDLE);
 
         // Print the distance
@@ -182,13 +192,13 @@ void InkHUD::NodeListApplet::onRender()
         // If we have a direct connection to the node, draw the signal indicator
         if (hopsAway == 0 && signal != SIGNAL_UNKNOWN) {
             uint16_t signalW = getTextWidth("Xkm"); // Indicator should be similar width to distance label
-            uint16_t signalH = fontLarge.lineHeight() * 0.75;
-            int16_t signalY = lineAY + (fontLarge.lineHeight() / 2) - (fontLarge.lineHeight() * 0.75);
+            uint16_t signalH = fontMedium.lineHeight() * 0.75;
+            int16_t signalY = lineAY + (fontMedium.lineHeight() / 2) - (fontMedium.lineHeight() * 0.75);
             int16_t signalX = width() - signalW;
             drawSignalIndicator(signalX, signalY, signalW, signalH, signal);
         }
         // Otherwise, print "hops away" info, if available
-        else if (hopsAway != CardInfo::HOPS_UNKNOWN) {
+        else if (hopsAway != CardInfo::HOPS_UNKNOWN && node) {
             std::string hopString = to_string(node->hops_away);
             hopString += " Hop";
             if (node->hops_away != 1)

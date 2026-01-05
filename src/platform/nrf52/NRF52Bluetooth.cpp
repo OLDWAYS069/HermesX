@@ -28,6 +28,9 @@ static BLEDfuSecure bledfusecure;                                             //
 static uint8_t fromRadioBytes[meshtastic_FromRadio_size];
 static uint8_t toRadioBytes[meshtastic_ToRadio_size];
 
+// Last ToRadio value received from the phone
+static uint8_t lastToRadio[MAX_TO_FROM_RADIO_SIZE];
+
 static uint16_t connectionHandle;
 
 class BluetoothPhoneAPI : public PhoneAPI
@@ -45,6 +48,9 @@ class BluetoothPhoneAPI : public PhoneAPI
 
     /// Check the current underlying physical link to see if the client is currently connected
     virtual bool checkIsConnected() override { return Bluefruit.connected(connectionHandle); }
+
+  public:
+    BluetoothPhoneAPI() { api_type = TYPE_BLE; }
 };
 
 static BluetoothPhoneAPI *bluetoothPhoneAPI;
@@ -59,7 +65,8 @@ void onConnect(uint16_t conn_handle)
     LOG_INFO("BLE Connected to %s", central_name);
 
     // Notify UI (or any other interested firmware components)
-    bluetoothStatus->updateStatus(new meshtastic::BluetoothStatus(meshtastic::BluetoothStatus::ConnectionState::CONNECTED));
+    meshtastic::BluetoothStatus newStatus(meshtastic::BluetoothStatus::ConnectionState::CONNECTED);
+    bluetoothStatus->updateStatus(&newStatus);
 }
 /**
  * Callback invoked when a connection is dropped
@@ -73,8 +80,12 @@ void onDisconnect(uint16_t conn_handle, uint8_t reason)
         bluetoothPhoneAPI->close();
     }
 
+    // Clear the last ToRadio packet buffer to avoid rejecting first packet from new connection
+    memset(lastToRadio, 0, sizeof(lastToRadio));
+
     // Notify UI (or any other interested firmware components)
-    bluetoothStatus->updateStatus(new meshtastic::BluetoothStatus(meshtastic::BluetoothStatus::ConnectionState::DISCONNECTED));
+    meshtastic::BluetoothStatus newStatus(meshtastic::BluetoothStatus::ConnectionState::DISCONNECTED);
+    bluetoothStatus->updateStatus(&newStatus);
 }
 void onCccd(uint16_t conn_hdl, BLECharacteristic *chr, uint16_t cccd_value)
 {
@@ -143,8 +154,6 @@ void onFromRadioAuthorize(uint16_t conn_hdl, BLECharacteristic *chr, ble_gatts_e
     }
     authorizeRead(conn_hdl);
 }
-// Last ToRadio value received from the phone
-static uint8_t lastToRadio[MAX_TO_FROM_RADIO_SIZE];
 
 void onToRadioWrite(uint16_t conn_hdl, BLECharacteristic *chr, uint8_t *data, uint16_t len)
 {
@@ -314,7 +323,9 @@ void NRF52Bluetooth::onConnectionSecured(uint16_t conn_handle)
 }
 bool NRF52Bluetooth::onPairingPasskey(uint16_t conn_handle, uint8_t const passkey[6], bool match_request)
 {
-    LOG_INFO("BLE pair process started with passkey %.3s %.3s", passkey, passkey + 3);
+    char passkey1[4] = {passkey[0], passkey[1], passkey[2], '\0'};
+    char passkey2[4] = {passkey[3], passkey[4], passkey[5], '\0'};
+    LOG_INFO("BLE pair process started with passkey %s %s", passkey1, passkey2);
     powerFSM.trigger(EVENT_BLUETOOTH_PAIR);
 
     // Get passkey as string
@@ -324,34 +335,38 @@ bool NRF52Bluetooth::onPairingPasskey(uint16_t conn_handle, uint8_t const passke
         textkey += (char)passkey[i];
 
     // Notify UI (or other components) of pairing event and passkey
-    bluetoothStatus->updateStatus(new meshtastic::BluetoothStatus(textkey));
+    meshtastic::BluetoothStatus newStatus(textkey);
+    bluetoothStatus->updateStatus(&newStatus);
 
-#if !defined(MESHTASTIC_EXCLUDE_SCREEN) // Todo: migrate this display code back into Screen class, and observe bluetoothStatus
-    screen->startAlert([](OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y) -> void {
-        char btPIN[16] = "888888";
-        snprintf(btPIN, sizeof(btPIN), "%06u", configuredPasskey);
-        int x_offset = display->width() / 2;
-        int y_offset = display->height() <= 80 ? 0 : 32;
-        display->setTextAlignment(TEXT_ALIGN_CENTER);
-        display->setFont(FONT_MEDIUM);
-        display->drawString(x_offset + x, y_offset + y, "Bluetooth");
+#if HAS_SCREEN &&                                                                                                                \
+    !defined(MESHTASTIC_EXCLUDE_SCREEN) // Todo: migrate this display code back into Screen class, and observe bluetoothStatus
+    if (screen) {
+        screen->startAlert([](OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y) -> void {
+            char btPIN[16] = "888888";
+            snprintf(btPIN, sizeof(btPIN), "%06u", configuredPasskey);
+            int x_offset = display->width() / 2;
+            int y_offset = display->height() <= 80 ? 0 : 12;
+            display->setTextAlignment(TEXT_ALIGN_CENTER);
+            display->setFont(FONT_MEDIUM);
+            display->drawString(x_offset + x, y_offset + y, "Bluetooth");
 
-        display->setFont(FONT_SMALL);
-        y_offset = display->height() == 64 ? y_offset + FONT_HEIGHT_MEDIUM - 4 : y_offset + FONT_HEIGHT_MEDIUM + 5;
-        display->drawString(x_offset + x, y_offset + y, "Enter this code");
+            display->setFont(FONT_SMALL);
+            y_offset = display->height() == 64 ? y_offset + FONT_HEIGHT_MEDIUM - 4 : y_offset + FONT_HEIGHT_MEDIUM + 5;
+            display->drawString(x_offset + x, y_offset + y, "Enter this code");
 
-        display->setFont(FONT_LARGE);
-        String displayPin(btPIN);
-        String pin = displayPin.substring(0, 3) + " " + displayPin.substring(3, 6);
-        y_offset = display->height() == 64 ? y_offset + FONT_HEIGHT_SMALL - 5 : y_offset + FONT_HEIGHT_SMALL + 5;
-        display->drawString(x_offset + x, y_offset + y, pin);
+            display->setFont(FONT_LARGE);
+            String displayPin(btPIN);
+            String pin = displayPin.substring(0, 3) + " " + displayPin.substring(3, 6);
+            y_offset = display->height() == 64 ? y_offset + FONT_HEIGHT_SMALL - 5 : y_offset + FONT_HEIGHT_SMALL + 5;
+            display->drawString(x_offset + x, y_offset + y, pin);
 
-        display->setFont(FONT_SMALL);
-        String deviceName = "Name: ";
-        deviceName.concat(getDeviceName());
-        y_offset = display->height() == 64 ? y_offset + FONT_HEIGHT_LARGE - 6 : y_offset + FONT_HEIGHT_LARGE + 5;
-        display->drawString(x_offset + x, y_offset + y, deviceName);
-    });
+            display->setFont(FONT_SMALL);
+            String deviceName = "Name: ";
+            deviceName.concat(getDeviceName());
+            y_offset = display->height() == 64 ? y_offset + FONT_HEIGHT_LARGE - 6 : y_offset + FONT_HEIGHT_LARGE + 5;
+            display->drawString(x_offset + x, y_offset + y, deviceName);
+        });
+    }
 #endif
     if (match_request) {
         uint32_t start_time = millis();
@@ -394,17 +409,19 @@ void NRF52Bluetooth::onPairingCompleted(uint16_t conn_handle, uint8_t auth_statu
 {
     if (auth_status == BLE_GAP_SEC_STATUS_SUCCESS) {
         LOG_INFO("BLE pair success");
-        bluetoothStatus->updateStatus(
-            new meshtastic::BluetoothStatus(meshtastic::BluetoothStatus::ConnectionState::DISCONNECTED));
+        meshtastic::BluetoothStatus newConnectedStatus(meshtastic::BluetoothStatus::ConnectionState::CONNECTED);
+        bluetoothStatus->updateStatus(&newConnectedStatus);
     } else {
         LOG_INFO("BLE pair failed");
         // Notify UI (or any other interested firmware components)
-        bluetoothStatus->updateStatus(
-            new meshtastic::BluetoothStatus(meshtastic::BluetoothStatus::ConnectionState::DISCONNECTED));
+        meshtastic::BluetoothStatus newDisconnectedStatus(meshtastic::BluetoothStatus::ConnectionState::DISCONNECTED);
+        bluetoothStatus->updateStatus(&newDisconnectedStatus);
     }
 
     // Todo: migrate this display code back into Screen class, and observe bluetoothStatus
-    screen->endAlert();
+    if (screen) {
+        screen->endAlert();
+    }
 }
 
 void NRF52Bluetooth::sendLog(const uint8_t *logMessage, size_t length)

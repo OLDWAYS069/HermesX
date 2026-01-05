@@ -32,6 +32,23 @@ esp_sleep_source_t wakeCause; // the reason we booted this time
 #endif
 #include "Throttle.h"
 
+#ifndef HERMESX_WAKE_GPIO
+#define HERMESX_WAKE_GPIO 4
+#endif
+#ifndef HERMESX_WAKE_ACTIVE_LOW
+#define HERMESX_WAKE_ACTIVE_LOW 1
+#endif
+
+#ifdef USE_XL9555
+#include "ExtensionIOXL9555.hpp"
+extern ExtensionIOXL9555 io;
+#endif
+
+#ifdef HAS_PPM
+#include <XPowersLib.h>
+extern XPowersPPM *PPM;
+#endif
+
 #ifndef INCLUDE_vTaskSuspend
 #define INCLUDE_vTaskSuspend 0
 #endif
@@ -131,7 +148,7 @@ void initDeepSleep()
       support busted boards, assume button one was pressed wakeButtons = ((uint64_t)1) << buttons.gpios[0];
       */
 
-#ifdef DEBUG_PORT
+#if defined(DEBUG_PORT) && !defined(DEBUG_MUTE)
     // If we booted because our timer ran out or the user pressed reset, send those as fake events
     RESET_REASON hwReason = rtc_get_reset_reason(0);
 
@@ -161,6 +178,47 @@ void initDeepSleep()
         }
     }
 #endif
+
+    // 若由 GPIO4 喚醒，需持續按住滿一定時間才算有效，否則回睡
+    if (wakeCause == ESP_SLEEP_WAKEUP_EXT1) {
+        uint64_t extStatus = esp_sleep_get_ext1_wakeup_status();
+        uint64_t wakeMask = (1ULL << HERMESX_WAKE_GPIO);
+        if (extStatus & wakeMask) {
+            constexpr uint32_t kWakeHoldMs = 2000; // 需持續按住 2 秒才算有效喚醒
+            pinMode(HERMESX_WAKE_GPIO, HERMESX_WAKE_ACTIVE_LOW ? INPUT_PULLUP : INPUT_PULLDOWN);
+            // 若一開始就沒被按住，直接回睡
+            int level0 = digitalRead(HERMESX_WAKE_GPIO);
+            bool active0 = HERMESX_WAKE_ACTIVE_LOW ? (level0 == LOW) : (level0 == HIGH);
+            if (!active0) {
+                LOG_INFO("Wake pin inactive, back to deep sleep");
+                delay(100); // 確保 pin 穩定
+                doDeepSleep(portMAX_DELAY, true, true);
+            }
+
+            uint32_t start = millis();
+            while (millis() - start < kWakeHoldMs) {
+                int level = digitalRead(HERMESX_WAKE_GPIO);
+                bool active = HERMESX_WAKE_ACTIVE_LOW ? (level == LOW) : (level == HIGH);
+                if (!active) {
+                    LOG_INFO("Wake pin released before %u ms, back to deep sleep", kWakeHoldMs);
+                    // 等待放開且穩定，避免立即再被喚醒
+                    while (true) {
+                        int l = digitalRead(HERMESX_WAKE_GPIO);
+                        bool act = HERMESX_WAKE_ACTIVE_LOW ? (l == LOW) : (l == HIGH);
+                        if (!act) {
+                            delay(50);
+                        } else {
+                            break;
+                        }
+                    }
+                    delay(150);
+                    doDeepSleep(portMAX_DELAY, true, true);
+                }
+                delay(10);
+            }
+            LOG_INFO("Wake pin held for %u ms, continue boot", kWakeHoldMs);
+        }
+    }
 
 #endif
 }
@@ -221,8 +279,8 @@ void doDeepSleep(uint32_t msecToWake, bool skipPreflight = false, bool skipSaveN
 #endif
 
     powerMon->setState(meshtastic_PowerMon_State_CPU_DeepSleep);
-
-    screen->doDeepSleep(); // datasheet says this will draw only 10ua
+    if (screen)
+        screen->doDeepSleep(); // datasheet says this will draw only 10ua
 
     if (!skipSaveNodeDb) {
         nodeDB->saveToDisk();
@@ -232,6 +290,10 @@ void doDeepSleep(uint32_t msecToWake, bool skipPreflight = false, bool skipSaveN
     digitalWrite(PIN_POWER_EN, LOW);
     pinMode(PIN_POWER_EN, INPUT); // power off peripherals
     // pinMode(PIN_POWER_EN1, INPUT_PULLDOWN);
+#endif
+
+#ifdef RAK_WISMESH_TAP_V2
+    digitalWrite(SDCARD_CS, LOW);
 #endif
 
 #ifdef TRACKER_T1000_E
@@ -295,6 +357,14 @@ void doDeepSleep(uint32_t msecToWake, bool skipPreflight = false, bool skipSaveN
         gpio_hold_en((gpio_num_t)LORA_CS);
     }
 #endif
+#endif
+
+#ifdef HAS_PPM
+    if (PPM) {
+        LOG_INFO("PMM shutdown");
+        console->flush();
+        PPM->shutdown();
+    }
 #endif
 
 #ifdef HAS_PMU
@@ -393,12 +463,16 @@ esp_sleep_wakeup_cause_t doLightSleep(uint64_t sleepMsec) // FIXME, use a more r
     // assert(uart_set_wakeup_threshold(UART_NUM_0, 3) == ESP_OK);
     // assert(esp_sleep_enable_uart_wakeup(0) == ESP_OK);
 #endif
-#ifdef BUTTON_PIN
+#ifdef ROTARY_PRESS
     // The enableLoraInterrupt() method is using ext0_wakeup, so we are forced to use GPIO wakeup
+    gpio_wakeup_enable((gpio_num_t)ROTARY_PRESS, GPIO_INTR_LOW_LEVEL);
+#endif
+#ifdef KB_INT
+    gpio_wakeup_enable((gpio_num_t)KB_INT, GPIO_INTR_LOW_LEVEL);
+#endif
+#ifdef BUTTON_PIN
     gpio_num_t pin = (gpio_num_t)(config.device.button_gpio ? config.device.button_gpio : BUTTON_PIN);
-
     gpio_wakeup_enable(pin, GPIO_INTR_LOW_LEVEL);
-    esp_sleep_enable_gpio_wakeup();
 #endif
 #ifdef INPUTDRIVER_ENCODER_BTN
     gpio_wakeup_enable((gpio_num_t)INPUTDRIVER_ENCODER_BTN, GPIO_INTR_LOW_LEVEL);
@@ -412,6 +486,7 @@ esp_sleep_wakeup_cause_t doLightSleep(uint64_t sleepMsec) // FIXME, use a more r
     if (pmu_found)
         gpio_wakeup_enable((gpio_num_t)PMU_IRQ, GPIO_INTR_LOW_LEVEL); // pmu irq
 #endif
+
     auto res = esp_sleep_enable_gpio_wakeup();
     if (res != ESP_OK) {
         LOG_ERROR("esp_sleep_enable_gpio_wakeup result %d", res);
@@ -431,7 +506,12 @@ esp_sleep_wakeup_cause_t doLightSleep(uint64_t sleepMsec) // FIXME, use a more r
     // commented out because it's not that crucial;
     // if it sporadically happens the node will go into light sleep during the next round
     // assert(res == ESP_OK);
-
+#ifdef ROTARY_PRESS
+    gpio_wakeup_disable((gpio_num_t)ROTARY_PRESS);
+#endif
+#ifdef KB_INT
+    gpio_wakeup_disable((gpio_num_t)KB_INT);
+#endif
 #ifdef BUTTON_PIN
     // Disable wake-on-button interrupt. Re-attach normal button-interrupts
     gpio_wakeup_disable(pin);
@@ -504,8 +584,7 @@ void enableModemSleep()
 
 bool shouldLoraWake(uint32_t msecToWake)
 {
-    return msecToWake < portMAX_DELAY && (config.device.role == meshtastic_Config_DeviceConfig_Role_ROUTER ||
-                                          config.device.role == meshtastic_Config_DeviceConfig_Role_REPEATER);
+    return msecToWake < portMAX_DELAY && (config.device.role == meshtastic_Config_DeviceConfig_Role_ROUTER);
 }
 
 void enableLoraInterrupt()
@@ -524,6 +603,12 @@ void enableLoraInterrupt()
 #endif
 #if defined(LORA_CS) && (LORA_CS != RADIOLIB_NC) && !defined(ELECROW_PANEL)
     gpio_pullup_en((gpio_num_t)LORA_CS);
+#endif
+
+#if defined(USE_GC1109_PA)
+    gpio_pullup_en((gpio_num_t)LORA_PA_POWER);
+    gpio_pullup_en((gpio_num_t)LORA_PA_EN);
+    gpio_pulldown_en((gpio_num_t)LORA_PA_TX_EN);
 #endif
 
     LOG_INFO("setup LORA_DIO1 (GPIO%02d) with wakeup by gpio interrupt", LORA_DIO1);

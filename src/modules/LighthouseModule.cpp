@@ -95,7 +95,6 @@ void LighthouseModule::loadState()
     concurrency::LockGuard g(spiLock);
     auto f = FSCom.open(modeFile, FILE_O_READ);
     if (f) {
-        uint8_t v = 0;
         if (f && f.available() >= 2) {
         uint8_t flags[2];
         f.read(flags, sizeof(flags));
@@ -253,7 +252,6 @@ void LighthouseModule::broadcastStatusMessage()
     
     String msg;
     uint32_t now = millis();
-    uint32_t elapsed = now - firstBootMillis;
 
     if (emergencyModeActive) {
         msg = u8"[HermeS]\n模式：Lighthouse Active\n緊急模式已啟動";
@@ -296,8 +294,6 @@ void LighthouseModule::IntroduceMessage()
 {
     
     String msg;
-    uint32_t now = millis();
-    uint32_t elapsed = now - firstBootMillis;
     
     msg = u8"[HermeS]\n大家好，我是 HermeS Shine1，一台可以遠端控制的無人管理站點\n"
               u8"使用說明：https://www.facebook.com/share/p/1EEThBhZeR/";

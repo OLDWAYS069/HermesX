@@ -91,7 +91,19 @@ typedef enum _meshtastic_TelemetrySensorType {
     /* MAX17261 lipo battery gauge */
     meshtastic_TelemetrySensorType_MAX17261 = 38,
     /* PCT2075 Temperature Sensor */
-    meshtastic_TelemetrySensorType_PCT2075 = 39
+    meshtastic_TelemetrySensorType_PCT2075 = 39,
+    /* ADS1X15 ADC */
+    meshtastic_TelemetrySensorType_ADS1X15 = 40,
+    /* ADS1X15 ADC_ALT */
+    meshtastic_TelemetrySensorType_ADS1X15_ALT = 41,
+    /* Sensirion SFA30 Formaldehyde sensor */
+    meshtastic_TelemetrySensorType_SFA30 = 42,
+    /* SEN5X PM SENSORS */
+    meshtastic_TelemetrySensorType_SEN5X = 43,
+    /* TSL2561 light sensor */
+    meshtastic_TelemetrySensorType_TSL2561 = 44,
+    /* BH1750 light sensor */
+    meshtastic_TelemetrySensorType_BH1750 = 45
 } meshtastic_TelemetrySensorType;
 
 /* Struct definitions */
@@ -206,49 +218,115 @@ typedef struct _meshtastic_PowerMetrics {
     /* Current (Ch3) */
     bool has_ch3_current;
     float ch3_current;
+    /* Voltage (Ch4) */
+    bool has_ch4_voltage;
+    float ch4_voltage;
+    /* Current (Ch4) */
+    bool has_ch4_current;
+    float ch4_current;
+    /* Voltage (Ch5) */
+    bool has_ch5_voltage;
+    float ch5_voltage;
+    /* Current (Ch5) */
+    bool has_ch5_current;
+    float ch5_current;
+    /* Voltage (Ch6) */
+    bool has_ch6_voltage;
+    float ch6_voltage;
+    /* Current (Ch6) */
+    bool has_ch6_current;
+    float ch6_current;
+    /* Voltage (Ch7) */
+    bool has_ch7_voltage;
+    float ch7_voltage;
+    /* Current (Ch7) */
+    bool has_ch7_current;
+    float ch7_current;
+    /* Voltage (Ch8) */
+    bool has_ch8_voltage;
+    float ch8_voltage;
+    /* Current (Ch8) */
+    bool has_ch8_current;
+    float ch8_current;
 } meshtastic_PowerMetrics;
 
 /* Air quality metrics */
 typedef struct _meshtastic_AirQualityMetrics {
-    /* Concentration Units Standard PM1.0 */
+    /* Concentration Units Standard PM1.0 in ug/m3 */
     bool has_pm10_standard;
     uint32_t pm10_standard;
-    /* Concentration Units Standard PM2.5 */
+    /* Concentration Units Standard PM2.5 in ug/m3 */
     bool has_pm25_standard;
     uint32_t pm25_standard;
-    /* Concentration Units Standard PM10.0 */
+    /* Concentration Units Standard PM10.0 in ug/m3 */
     bool has_pm100_standard;
     uint32_t pm100_standard;
-    /* Concentration Units Environmental PM1.0 */
+    /* Concentration Units Environmental PM1.0 in ug/m3 */
     bool has_pm10_environmental;
     uint32_t pm10_environmental;
-    /* Concentration Units Environmental PM2.5 */
+    /* Concentration Units Environmental PM2.5 in ug/m3 */
     bool has_pm25_environmental;
     uint32_t pm25_environmental;
-    /* Concentration Units Environmental PM10.0 */
+    /* Concentration Units Environmental PM10.0 in ug/m3 */
     bool has_pm100_environmental;
     uint32_t pm100_environmental;
-    /* 0.3um Particle Count */
+    /* 0.3um Particle Count in #/0.1l */
     bool has_particles_03um;
     uint32_t particles_03um;
-    /* 0.5um Particle Count */
+    /* 0.5um Particle Count in #/0.1l */
     bool has_particles_05um;
     uint32_t particles_05um;
-    /* 1.0um Particle Count */
+    /* 1.0um Particle Count in #/0.1l */
     bool has_particles_10um;
     uint32_t particles_10um;
-    /* 2.5um Particle Count */
+    /* 2.5um Particle Count in #/0.1l */
     bool has_particles_25um;
     uint32_t particles_25um;
-    /* 5.0um Particle Count */
+    /* 5.0um Particle Count in #/0.1l */
     bool has_particles_50um;
     uint32_t particles_50um;
-    /* 10.0um Particle Count */
+    /* 10.0um Particle Count in #/0.1l */
     bool has_particles_100um;
     uint32_t particles_100um;
     /* CO2 concentration in ppm */
     bool has_co2;
     uint32_t co2;
+    /* CO2 sensor temperature in degC */
+    bool has_co2_temperature;
+    float co2_temperature;
+    /* CO2 sensor relative humidity in % */
+    bool has_co2_humidity;
+    float co2_humidity;
+    /* Formaldehyde sensor formaldehyde concentration in ppb */
+    bool has_form_formaldehyde;
+    float form_formaldehyde;
+    /* Formaldehyde sensor relative humidity in %RH */
+    bool has_form_humidity;
+    float form_humidity;
+    /* Formaldehyde sensor temperature in degrees Celsius */
+    bool has_form_temperature;
+    float form_temperature;
+    /* Concentration Units Standard PM4.0 in ug/m3 */
+    bool has_pm40_standard;
+    uint32_t pm40_standard;
+    /* 4.0um Particle Count in #/0.1l */
+    bool has_particles_40um;
+    uint32_t particles_40um;
+    /* PM Sensor Temperature */
+    bool has_pm_temperature;
+    float pm_temperature;
+    /* PM Sensor humidity */
+    bool has_pm_humidity;
+    float pm_humidity;
+    /* PM Sensor VOC Index */
+    bool has_pm_voc_idx;
+    float pm_voc_idx;
+    /* PM Sensor NOx Index */
+    bool has_pm_nox_idx;
+    float pm_nox_idx;
+    /* Typical Particle Size in um */
+    bool has_particles_tps;
+    float particles_tps;
 } meshtastic_AirQualityMetrics;
 
 /* Local device mesh statistics */
@@ -281,6 +359,8 @@ typedef struct _meshtastic_LocalStats {
     uint32_t heap_total_bytes;
     /* Number of bytes free in the heap */
     uint32_t heap_free_bytes;
+    /* Number of packets that were dropped because the transmit queue was full. */
+    uint16_t num_tx_dropped;
 } meshtastic_LocalStats;
 
 /* Health telemetry metrics */
@@ -360,8 +440,8 @@ extern "C" {
 
 /* Helper constants for enums */
 #define _meshtastic_TelemetrySensorType_MIN meshtastic_TelemetrySensorType_SENSOR_UNSET
-#define _meshtastic_TelemetrySensorType_MAX meshtastic_TelemetrySensorType_PCT2075
-#define _meshtastic_TelemetrySensorType_ARRAYSIZE ((meshtastic_TelemetrySensorType)(meshtastic_TelemetrySensorType_PCT2075+1))
+#define _meshtastic_TelemetrySensorType_MAX meshtastic_TelemetrySensorType_BH1750
+#define _meshtastic_TelemetrySensorType_ARRAYSIZE ((meshtastic_TelemetrySensorType)(meshtastic_TelemetrySensorType_BH1750+1))
 
 
 
@@ -376,18 +456,18 @@ extern "C" {
 /* Initializer values for message structs */
 #define meshtastic_DeviceMetrics_init_default    {false, 0, false, 0, false, 0, false, 0, false, 0}
 #define meshtastic_EnvironmentMetrics_init_default {false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0}
-#define meshtastic_PowerMetrics_init_default     {false, 0, false, 0, false, 0, false, 0, false, 0, false, 0}
-#define meshtastic_AirQualityMetrics_init_default {false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0}
-#define meshtastic_LocalStats_init_default       {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+#define meshtastic_PowerMetrics_init_default     {false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0}
+#define meshtastic_AirQualityMetrics_init_default {false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0}
+#define meshtastic_LocalStats_init_default       {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 #define meshtastic_HealthMetrics_init_default    {false, 0, false, 0, false, 0}
 #define meshtastic_HostMetrics_init_default      {0, 0, 0, false, 0, false, 0, 0, 0, 0, false, ""}
 #define meshtastic_Telemetry_init_default        {0, 0, {meshtastic_DeviceMetrics_init_default}}
 #define meshtastic_Nau7802Config_init_default    {0, 0}
 #define meshtastic_DeviceMetrics_init_zero       {false, 0, false, 0, false, 0, false, 0, false, 0}
 #define meshtastic_EnvironmentMetrics_init_zero  {false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0}
-#define meshtastic_PowerMetrics_init_zero        {false, 0, false, 0, false, 0, false, 0, false, 0, false, 0}
-#define meshtastic_AirQualityMetrics_init_zero   {false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0}
-#define meshtastic_LocalStats_init_zero          {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+#define meshtastic_PowerMetrics_init_zero        {false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0}
+#define meshtastic_AirQualityMetrics_init_zero   {false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0, false, 0}
+#define meshtastic_LocalStats_init_zero          {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 #define meshtastic_HealthMetrics_init_zero       {false, 0, false, 0, false, 0}
 #define meshtastic_HostMetrics_init_zero         {0, 0, 0, false, 0, false, 0, 0, 0, 0, false, ""}
 #define meshtastic_Telemetry_init_zero           {0, 0, {meshtastic_DeviceMetrics_init_zero}}
@@ -427,6 +507,16 @@ extern "C" {
 #define meshtastic_PowerMetrics_ch2_current_tag  4
 #define meshtastic_PowerMetrics_ch3_voltage_tag  5
 #define meshtastic_PowerMetrics_ch3_current_tag  6
+#define meshtastic_PowerMetrics_ch4_voltage_tag  7
+#define meshtastic_PowerMetrics_ch4_current_tag  8
+#define meshtastic_PowerMetrics_ch5_voltage_tag  9
+#define meshtastic_PowerMetrics_ch5_current_tag  10
+#define meshtastic_PowerMetrics_ch6_voltage_tag  11
+#define meshtastic_PowerMetrics_ch6_current_tag  12
+#define meshtastic_PowerMetrics_ch7_voltage_tag  13
+#define meshtastic_PowerMetrics_ch7_current_tag  14
+#define meshtastic_PowerMetrics_ch8_voltage_tag  15
+#define meshtastic_PowerMetrics_ch8_current_tag  16
 #define meshtastic_AirQualityMetrics_pm10_standard_tag 1
 #define meshtastic_AirQualityMetrics_pm25_standard_tag 2
 #define meshtastic_AirQualityMetrics_pm100_standard_tag 3
@@ -440,6 +530,18 @@ extern "C" {
 #define meshtastic_AirQualityMetrics_particles_50um_tag 11
 #define meshtastic_AirQualityMetrics_particles_100um_tag 12
 #define meshtastic_AirQualityMetrics_co2_tag     13
+#define meshtastic_AirQualityMetrics_co2_temperature_tag 14
+#define meshtastic_AirQualityMetrics_co2_humidity_tag 15
+#define meshtastic_AirQualityMetrics_form_formaldehyde_tag 16
+#define meshtastic_AirQualityMetrics_form_humidity_tag 17
+#define meshtastic_AirQualityMetrics_form_temperature_tag 18
+#define meshtastic_AirQualityMetrics_pm40_standard_tag 19
+#define meshtastic_AirQualityMetrics_particles_40um_tag 20
+#define meshtastic_AirQualityMetrics_pm_temperature_tag 21
+#define meshtastic_AirQualityMetrics_pm_humidity_tag 22
+#define meshtastic_AirQualityMetrics_pm_voc_idx_tag 23
+#define meshtastic_AirQualityMetrics_pm_nox_idx_tag 24
+#define meshtastic_AirQualityMetrics_particles_tps_tag 25
 #define meshtastic_LocalStats_uptime_seconds_tag 1
 #define meshtastic_LocalStats_channel_utilization_tag 2
 #define meshtastic_LocalStats_air_util_tx_tag    3
@@ -453,6 +555,7 @@ extern "C" {
 #define meshtastic_LocalStats_num_tx_relay_canceled_tag 11
 #define meshtastic_LocalStats_heap_total_bytes_tag 12
 #define meshtastic_LocalStats_heap_free_bytes_tag 13
+#define meshtastic_LocalStats_num_tx_dropped_tag 14
 #define meshtastic_HealthMetrics_heart_bpm_tag   1
 #define meshtastic_HealthMetrics_spO2_tag        2
 #define meshtastic_HealthMetrics_temperature_tag 3
@@ -518,7 +621,17 @@ X(a, STATIC,   OPTIONAL, FLOAT,    ch1_current,       2) \
 X(a, STATIC,   OPTIONAL, FLOAT,    ch2_voltage,       3) \
 X(a, STATIC,   OPTIONAL, FLOAT,    ch2_current,       4) \
 X(a, STATIC,   OPTIONAL, FLOAT,    ch3_voltage,       5) \
-X(a, STATIC,   OPTIONAL, FLOAT,    ch3_current,       6)
+X(a, STATIC,   OPTIONAL, FLOAT,    ch3_current,       6) \
+X(a, STATIC,   OPTIONAL, FLOAT,    ch4_voltage,       7) \
+X(a, STATIC,   OPTIONAL, FLOAT,    ch4_current,       8) \
+X(a, STATIC,   OPTIONAL, FLOAT,    ch5_voltage,       9) \
+X(a, STATIC,   OPTIONAL, FLOAT,    ch5_current,      10) \
+X(a, STATIC,   OPTIONAL, FLOAT,    ch6_voltage,      11) \
+X(a, STATIC,   OPTIONAL, FLOAT,    ch6_current,      12) \
+X(a, STATIC,   OPTIONAL, FLOAT,    ch7_voltage,      13) \
+X(a, STATIC,   OPTIONAL, FLOAT,    ch7_current,      14) \
+X(a, STATIC,   OPTIONAL, FLOAT,    ch8_voltage,      15) \
+X(a, STATIC,   OPTIONAL, FLOAT,    ch8_current,      16)
 #define meshtastic_PowerMetrics_CALLBACK NULL
 #define meshtastic_PowerMetrics_DEFAULT NULL
 
@@ -535,7 +648,19 @@ X(a, STATIC,   OPTIONAL, UINT32,   particles_10um,    9) \
 X(a, STATIC,   OPTIONAL, UINT32,   particles_25um,   10) \
 X(a, STATIC,   OPTIONAL, UINT32,   particles_50um,   11) \
 X(a, STATIC,   OPTIONAL, UINT32,   particles_100um,  12) \
-X(a, STATIC,   OPTIONAL, UINT32,   co2,              13)
+X(a, STATIC,   OPTIONAL, UINT32,   co2,              13) \
+X(a, STATIC,   OPTIONAL, FLOAT,    co2_temperature,  14) \
+X(a, STATIC,   OPTIONAL, FLOAT,    co2_humidity,     15) \
+X(a, STATIC,   OPTIONAL, FLOAT,    form_formaldehyde,  16) \
+X(a, STATIC,   OPTIONAL, FLOAT,    form_humidity,    17) \
+X(a, STATIC,   OPTIONAL, FLOAT,    form_temperature,  18) \
+X(a, STATIC,   OPTIONAL, UINT32,   pm40_standard,    19) \
+X(a, STATIC,   OPTIONAL, UINT32,   particles_40um,   20) \
+X(a, STATIC,   OPTIONAL, FLOAT,    pm_temperature,   21) \
+X(a, STATIC,   OPTIONAL, FLOAT,    pm_humidity,      22) \
+X(a, STATIC,   OPTIONAL, FLOAT,    pm_voc_idx,       23) \
+X(a, STATIC,   OPTIONAL, FLOAT,    pm_nox_idx,       24) \
+X(a, STATIC,   OPTIONAL, FLOAT,    particles_tps,    25)
 #define meshtastic_AirQualityMetrics_CALLBACK NULL
 #define meshtastic_AirQualityMetrics_DEFAULT NULL
 
@@ -552,7 +677,8 @@ X(a, STATIC,   SINGULAR, UINT32,   num_rx_dupe,       9) \
 X(a, STATIC,   SINGULAR, UINT32,   num_tx_relay,     10) \
 X(a, STATIC,   SINGULAR, UINT32,   num_tx_relay_canceled,  11) \
 X(a, STATIC,   SINGULAR, UINT32,   heap_total_bytes,  12) \
-X(a, STATIC,   SINGULAR, UINT32,   heap_free_bytes,  13)
+X(a, STATIC,   SINGULAR, UINT32,   heap_free_bytes,  13) \
+X(a, STATIC,   SINGULAR, UINT32,   num_tx_dropped,   14)
 #define meshtastic_LocalStats_CALLBACK NULL
 #define meshtastic_LocalStats_DEFAULT NULL
 
@@ -624,14 +750,14 @@ extern const pb_msgdesc_t meshtastic_Nau7802Config_msg;
 
 /* Maximum encoded size of messages (where known) */
 #define MESHTASTIC_MESHTASTIC_TELEMETRY_PB_H_MAX_SIZE meshtastic_Telemetry_size
-#define meshtastic_AirQualityMetrics_size        78
+#define meshtastic_AirQualityMetrics_size        150
 #define meshtastic_DeviceMetrics_size            27
 #define meshtastic_EnvironmentMetrics_size       113
 #define meshtastic_HealthMetrics_size            11
 #define meshtastic_HostMetrics_size              264
-#define meshtastic_LocalStats_size               72
+#define meshtastic_LocalStats_size               76
 #define meshtastic_Nau7802Config_size            16
-#define meshtastic_PowerMetrics_size             30
+#define meshtastic_PowerMetrics_size             81
 #define meshtastic_Telemetry_size                272
 
 #ifdef __cplusplus

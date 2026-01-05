@@ -1,11 +1,35 @@
 # HermesX 變更紀錄 (REF_changelog.md)
 
-## 版本比較：0.2.8 vs 0.2.7
-- 版本同步：APP_VERSION/SHORT/螢幕顯示皆改為 0.2.8（0.2.7 使用 branch 語意版＋ git 碼顯示）。
-- Lighthouse：0.2.8 預設停用（編譯排除 `MESHTASTIC_EXCLUDE_LIGHTHOUSE=1`），0.2.7 仍啟用且隨身模式廣播。
-- 罐頭訊息 UX：自動插入 `Cancel` 選項並支援長按約 1 秒退出；ACK/NACK 不再強制搶焦，避免跳回 ACK 臉。0.2.7 需選訊息或被 ACK 彈窗打斷，退出不便。
-- ACK/NACK 聲光：僅在 `waitingForAck` 且 request_id/封包 id 符合最後送出的訊息時觸發，避免設定/系統封包誤播（0.2.7 對其他可靠封包較敏感）。
-- 其他：集中式 LED 管理、TAK 靜默、EM/SAFE 回復 0.2.6 的行為延續自 0.2.7，未再變更。
+## 版本比較：0.3.0 後續修正（2.7.15 基底 vs 2.6.11）
+- 與 2.6.11 最大差異：官方 2.7.15 UI 對彩色/共享 UI 的輸入預設導向觸控，EC11 長按不再是關機。已強制保留 Rotary/CannedMessage 模組並將 EC11 長按改送 `INPUT_BROKER_SHUTDOWN`，恢復長按逐格＋關機動畫；長按門檻拉長至 5 秒，關機延遲 1.2 秒讓動畫跑完。
+- 深睡喚醒新增 GPIO4 ext1：需按住約 2 秒才算有效喚醒，若未達門檻或鬆手則立即回深睡並等待放開後再睡，避免每秒抖動喚醒。預設低態觸發、內建上拉，可用巨集 `HERMESX_WAKE_GPIO` / `HERMESX_WAKE_ACTIVE_LOW` 調整腳位/極性。
+- 開機畫面：恢復 0.2.8 樣式的 Meshtastic logo/版本開機畫面（含 HXB_0.3.0 顯示），Resuming 時仍顯示恢復提示。
+- 影響檔案：`src/input/RotaryEncoderInterruptBase.*`、`src/input/RotaryEncoderInterruptImpl1.cpp`、`src/modules/SystemCommandsModule.cpp`、`src/modules/HermesXInterfaceModule.cpp`、`src/platform/esp32/main-esp32.cpp`、`src/sleep.cpp`。
+- 建議測試：EC11 長按 5 秒應出現逐格進度→關機動畫；短按/不足 2 秒的 GPIO4 喚醒應直接回睡不再循環喚醒。
+
+## 版本比較：0.3.0 vs 0.2.8
+- 基底升級 Meshtastic 2.7.15（含新版 device-ui 與 Shared UI 繪圖管線：SharedUIDisplay、ScreenGlobals、TimeFormatters、graphics/draw、emotes）。
+- 版號同步：APP_VERSION/SHORT/螢幕顯示皆改為 0.3.0（0.2.8 顯示 0.2.8）。
+- Lighthouse：仍預設停用（`MESHTASTIC_EXCLUDE_LIGHTHOUSE=1`），避免不必要廣播；繼承 0.2.8 行為。
+- 罐頭訊息 UX：保持內建 `Cancel`、長按約 1 秒退出、ACK/NACK 不搶焦；ACK/NACK 聲光仍僅在等待自己封包且 id 符合時觸發。
+- 其他：集中式 LED 管理、TAK 靜默、EM/SAFE 行為延續 0.2.8。
+
+## 範圍
+- 日期：2026-01-01
+- 版本：App 回報 2.7.15.x / 螢幕顯示 HXB_0.3.0
+- 項目：基底升級 2.7.15、版號改為 0.3.0、導入官方新版 UI 管線
+- 檔案：
+  - version.properties
+  - bin/platformio-custom.py
+  - platformio.ini
+  - src/graphics/SharedUIDisplay.* / ScreenGlobals.* / TimeFormatters.* / graphics/draw/* / graphics/emotes.*
+  - src/modules/Modules.cpp（HermesX/Lighthouse 模組重新掛載）
+  - Readme、docs/CHANGELOG_MINI.md、docs/REF_changelog.md
+- 說明：
+  - 基底同步 Meshtastic 2.7.15，帶入官方 device-ui 與 Shared UI 繪圖更新（含 InkHUD/SDL/TFT/E-ink 驅動同步）。
+  - APP_VERSION / APP_VERSION_SHORT 維持 Meshtastic 官方回報格式/ID；螢幕顯示標註 HXB_0.3.0 供現場辨識 HermesX。
+  - 保留 HermesX 行為：Lighthouse 編譯排除、罐頭訊息可取消與長按退出、ACK/NACK 觸發條件收斂。
+- 測試：待以 2.7.15 基底編譯並實機驗證 UI 繪圖、罐頭退出與版本顯示。
 
 ## 範圍
 - 日期：2025-12-27

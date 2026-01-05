@@ -60,6 +60,12 @@ PB_BIND(meshtastic_KeyVerificationNumberRequest, meshtastic_KeyVerificationNumbe
 PB_BIND(meshtastic_KeyVerificationFinal, meshtastic_KeyVerificationFinal, AUTO)
 
 
+PB_BIND(meshtastic_DuplicatedPublicKey, meshtastic_DuplicatedPublicKey, AUTO)
+
+
+PB_BIND(meshtastic_LowEntropyKey, meshtastic_LowEntropyKey, AUTO)
+
+
 PB_BIND(meshtastic_FileInfo, meshtastic_FileInfo, AUTO)
 
 
@@ -91,6 +97,10 @@ PB_BIND(meshtastic_resend_chunks, meshtastic_resend_chunks, AUTO)
 
 
 PB_BIND(meshtastic_ChunkedPayloadResponse, meshtastic_ChunkedPayloadResponse, AUTO)
+
+
+
+
 
 
 

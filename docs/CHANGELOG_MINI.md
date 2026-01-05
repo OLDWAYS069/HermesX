@@ -1,6 +1,14 @@
 # HermesX Mini Change Log
 （每次只寫極簡亮點，便於快速回顧）
 
+## 2026-01-01 (b0.3.0)
+- 基底同步 Meshtastic 2.7.15，跟進新版 device-ui/Shared UI 繪圖管線（SharedUIDisplay、ScreenGlobals、TimeFormatters、graphics/draw、emotes）。
+- 版號顯示與回報統一為 0.3.0，維持 HermesX 分支識別。
+- 保持 Lighthouse 編譯排除、罐頭訊息內建 Cancel/長按退出、ACK/NACK 只在等待自身封包時觸發。
+- 與 2.6.11 差異：官方 2.7.15 將彩色 UI 主要導向觸控，EC11 長按不再預設關機；現已強制保留 Rotary/CannedMessage，長按送 `INPUT_BROKER_SHUTDOWN`，長按門檻 5 秒並保留逐格＋關機動畫（延遲 1.2s）。
+- 深睡喚醒新增 GPIO4 ext1，需按住約 2 秒才算有效；未達門檻會回深睡並等待放開，避免連續抖動喚醒。可透過 `HERMESX_WAKE_GPIO` / `HERMESX_WAKE_ACTIVE_LOW` 調腳位/極性。
+- 開機畫面：恢復與 0.2.8 相同的 Meshtastic logo/版本開機畫面（含 HXB_0.3.0 顯示），Resuming 時仍顯示恢復提示。
+
 ## 2025-12-25 (b0.2.8)
 - App 回報改為官方格式 2.6.11.x，螢幕顯示固定 `HXB_0.2.8`。
 - Lighthouse 模組暫時排除編譯。

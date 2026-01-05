@@ -14,11 +14,11 @@
 #include "HermesXPacketUtils.h"
 
 #include "MusicModule.h"
-#include "sleep_hooks.h"
 #include "Led.h"
 #include "buzz/buzz.h"
 #include "graphics/Screen.h"
 #include "main.h"
+#include "sleep.h"
 #ifdef ARCH_ESP32
 #include <driver/rtc_io.h>
 #endif
@@ -34,7 +34,7 @@
 #include "graphics/ScreenFonts.h"
 #include "modules/HermesXPowerGuard.h"
 #include "graphics/fonts/HermesX_zh/HermesX_CN12.h"
-#include "ButtonThread.h" // for BUTTON_LONGPRESS_MS
+#include "input/ButtonThread.h" // for BUTTON_LONGPRESS_MS
 
 #include "ReliableRouter.h"
 #include "Default.h"
@@ -49,6 +49,13 @@
 #include "pb_decode.h"
 #include "mesh/mesh-pb-constants.h"
 #include "mesh/generated/meshtastic/module_config.pb.h"
+
+#ifndef BUTTON_LONGPRESS_MS
+#define BUTTON_LONGPRESS_MS 5000
+#endif
+
+// Forward declarations for shutdown helpers used by sleep observer
+void fallbackShutdownEffect(uint32_t durationMs);
 
 #define PIN_LED 6
 #define NUM_LEDS 8
@@ -115,10 +122,35 @@ constexpr uint32_t kPowerHoldRedColor = 0xFF0000;
 // 視覺完成時間 = holdDuration * kPowerHoldVisualStretch，達門檻或關機時會直接鎖紅。
 constexpr float kPowerHoldVisualStretch = 1.0f;
 
+class HermesDeepSleepObserver : public Observer<void *>
+{
+  public:
+    int onNotify(void *unused) override
+    {
+#if defined(HERMESX_GUARD_POWER_ANIMATIONS)
+        if (HermesXPowerGuard::consumeShutdownAnimationSuppression()) {
+            return 0;
+        }
+#endif
+        constexpr uint32_t kDefaultShutdownMs = 700;
+        if (HermesXInterfaceModule::instance) {
+            HermesXInterfaceModule::instance->playShutdownEffect(kDefaultShutdownMs);
+        } else {
+            fallbackShutdownEffect(kDefaultShutdownMs);
+        }
+        return 0;
+    }
+};
+
+static HermesDeepSleepObserver s_deepSleepObserver;
+
 } // namespace
 
 LEDAnimation HermesXInterfaceModule::selectActiveAnimation() const
 {
+    // 關機動畫優先於任何 power-hold 狀態
+    if (shutdownEffectActive)
+        return LEDAnimation::ShutdownEffect;
     if (powerHoldActive)
         return LEDAnimation::PowerHoldProgress;
     if (powerHoldFadeActive)
@@ -127,8 +159,6 @@ LEDAnimation HermesXInterfaceModule::selectActiveAnimation() const
         return LEDAnimation::PowerHoldLatchedRed;
     if (startupEffectActive)
         return LEDAnimation::StartupEffect;
-    if (shutdownEffectActive)
-        return LEDAnimation::ShutdownEffect;
     if (ackFlashActive)
         return LEDAnimation::AckFlash;
     if (nackFlashActive)
@@ -801,6 +831,7 @@ HermesXInterfaceModule::HermesXInterfaceModule()
     startLEDAnimation(LEDAnimation::StartupEffect);
 
     HERMESX_LOG_DEBUG("constroct");
+    s_deepSleepObserver.observe(&notifyDeepSleep);
 #if defined(HERMESX_GUARD_POWER_ANIMATIONS)
     if (HermesXPowerGuard::startupVisualsAllowed()) {
         startupEffectActive = true;
@@ -1596,14 +1627,6 @@ void HermesXInterfaceModule::stopPowerHoldAnimation(bool completed) {
         return;
     }
 
-#if !MESHTASTIC_EXCLUDE_HERMESX
-    // 長按關機時，若按鍵仍壓著則忽略早於達標的 stop，避免進度在中途被清掉重置
-    if (powerHoldMode == PowerHoldMode::PowerOff && ButtonThread::isHoldButtonPressed() && !forceStopPowerOff) {
-        HERMESX_LOG_INFO("LED power-hold stop ignored (button still pressed)");
-        return;
-    }
-#endif
-
     powerHoldActive = false;
     HermesXInterfaceModule::setPowerHoldReady(false);
     powerHoldFadeActive = false;
@@ -1740,15 +1763,4 @@ void HermesXInterfaceModule::renderLEDs()
 {
     // 保持現有對外介面；內部由 updateLED() 實作（已含 animState 流程）
     updateLED();
-}
-
-void runPreDeepSleepHook(const SleepPreHookParams &params)
-{
-    uint32_t ms = params.suggested_duration_ms ? params.suggested_duration_ms : 700;
-    if (HermesXInterfaceModule::instance) {
-        HermesXInterfaceModule::instance->playShutdownEffect(ms);
-    } else {
-        // 沒�? HermesX ?�環境�??��?底方�?
-        fallbackShutdownEffect(ms);
-    }
 }

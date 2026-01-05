@@ -106,6 +106,7 @@ uint16_t ScanI2CTwoWire::getRegisterValue(const ScanI2CTwoWire::RegisterLocation
         if (i2cBus->available())
             i2cBus->read();
     }
+    LOG_DEBUG("Register value: 0x%x", value);
     return value;
 }
 
@@ -184,13 +185,21 @@ void ScanI2CTwoWire::scanPort(I2CPort port, uint8_t *address, uint8_t asize)
                 type = RTC_RV3028;
                 logFoundDevice("RV3028", (uint8_t)addr.address);
                 rtc.initI2C(*i2cBus);
-                rtc.writeToRegister(0x35, 0x07); // no Clkout
-                rtc.writeToRegister(0x37, 0xB4);
+                // Update RTC EEPROM settings, if necessary
+                if (rtc.readEEPROMRegister(0x35) != 0x07) {
+                    rtc.writeEEPROMRegister(0x35, 0x07); // no Clkout
+                }
+                if (rtc.readEEPROMRegister(0x37) != 0xB4) {
+                    rtc.writeEEPROMRegister(0x37, 0xB4);
+                }
                 break;
 #endif
 
 #ifdef PCF8563_RTC
                 SCAN_SIMPLE_CASE(PCF8563_RTC, RTC_PCF8563, "PCF8563", (uint8_t)addr.address)
+#endif
+#ifdef RX8130CE_RTC
+                SCAN_SIMPLE_CASE(RX8130CE_RTC, RTC_RX8130CE, "RX8130CE", (uint8_t)addr.address)
 #endif
 
             case CARDKB_ADDR:
@@ -206,7 +215,17 @@ void ScanI2CTwoWire::scanPort(I2CPort port, uint8_t *address, uint8_t asize)
                 }
                 break;
 
-                SCAN_SIMPLE_CASE(TDECK_KB_ADDR, TDECKKB, "T-Deck keyboard", (uint8_t)addr.address);
+            case TDECK_KB_ADDR:
+                // Do we have the T-Deck keyboard or the T-Deck Pro battery sensor?
+                registerValue = getRegisterValue(ScanI2CTwoWire::RegisterLocation(addr, 0x04), 1);
+                if (registerValue != 0) {
+                    logFoundDevice("BQ27220", (uint8_t)addr.address);
+                    type = BQ27220;
+                } else {
+                    logFoundDevice("TDECKKB", (uint8_t)addr.address);
+                    type = TDECKKB;
+                }
+                break;
                 SCAN_SIMPLE_CASE(BBQ10_KB_ADDR, BBQ10KB, "BB Q10", (uint8_t)addr.address);
 
                 SCAN_SIMPLE_CASE(ST7567_ADDRESS, SCREEN_ST7567, "ST7567", (uint8_t)addr.address);
@@ -279,6 +298,7 @@ void ScanI2CTwoWire::scanPort(I2CPort port, uint8_t *address, uint8_t asize)
                 type = AHT10;
                 break;
 #endif
+#if !defined(M5STACK_UNITC6L)
             case INA_ADDR:
             case INA_ADDR_ALTERNATE:
             case INA_ADDR_WAVESHARE_UPS:
@@ -325,6 +345,7 @@ void ScanI2CTwoWire::scanPort(I2CPort port, uint8_t *address, uint8_t asize)
                     // else: probably a RAK12500/UBLOX GPS on I2C
                 }
                 break;
+#endif
             case MCP9808_ADDR:
                 // We need to check for STK8BAXX first, since register 0x07 is new data flag for the z-axis and can produce some
                 // weird result. and register 0x00 doesn't seems to be colliding with MCP9808 and LIS3DH chips.
@@ -357,13 +378,13 @@ void ScanI2CTwoWire::scanPort(I2CPort port, uint8_t *address, uint8_t asize)
                 }
             case SHT31_4x_ADDR:     // same as OPT3001_ADDR_ALT
             case SHT31_4x_ADDR_ALT: // same as OPT3001_ADDR
-                registerValue = getRegisterValue(ScanI2CTwoWire::RegisterLocation(addr, 0x89), 2);
-                if (registerValue == 0x11a2 || registerValue == 0x11da || registerValue == 0xe9c) {
-                    type = SHT4X;
-                    logFoundDevice("SHT4X", (uint8_t)addr.address);
-                } else if (getRegisterValue(ScanI2CTwoWire::RegisterLocation(addr, 0x7E), 2) == 0x5449) {
+                registerValue = getRegisterValue(ScanI2CTwoWire::RegisterLocation(addr, 0x7E), 2);
+                if (registerValue == 0x5449) {
                     type = OPT3001;
                     logFoundDevice("OPT3001", (uint8_t)addr.address);
+                } else if (getRegisterValue(ScanI2CTwoWire::RegisterLocation(addr, 0x89), 2) != 0) { // unique SHT4x serial number
+                    type = SHT4X;
+                    logFoundDevice("SHT4X", (uint8_t)addr.address);
                 } else {
                     type = SHT31;
                     logFoundDevice("SHT31", (uint8_t)addr.address);
@@ -396,6 +417,12 @@ void ScanI2CTwoWire::scanPort(I2CPort port, uint8_t *address, uint8_t asize)
                     logFoundDevice("BQ24295", (uint8_t)addr.address);
                     break;
                 }
+                registerValue = getRegisterValue(ScanI2CTwoWire::RegisterLocation(addr, 0x14), 1); // get ID
+                if ((registerValue & 0b00000011) == 0b00000010) {
+                    type = BQ25896;
+                    logFoundDevice("BQ25896", (uint8_t)addr.address);
+                    break;
+                }
                 registerValue = getRegisterValue(ScanI2CTwoWire::RegisterLocation(addr, 0x0F), 1); // get ID
                 if (registerValue == 0x6A) {
                     type = LSM6DS3;
@@ -423,18 +450,79 @@ void ScanI2CTwoWire::scanPort(I2CPort port, uint8_t *address, uint8_t asize)
                     logFoundDevice("BMA423", (uint8_t)addr.address);
                 }
                 break;
+            case TCA9535_ADDR:
+            case RAK120352_ADDR:
+            case RAK120353_ADDR:
+                registerValue = getRegisterValue(ScanI2CTwoWire::RegisterLocation(addr, 0x02), 1);
+                if (registerValue == addr.address) { // RAK12035 returns its I2C address at 0x02 (eg 0x20)
+                    type = RAK12035;
+                    logFoundDevice("RAK12035", (uint8_t)addr.address);
+                } else {
+                    type = TCA9535;
+                    logFoundDevice("TCA9535", (uint8_t)addr.address);
+                }
+
+                break;
 
                 SCAN_SIMPLE_CASE(LSM6DS3_ADDR, LSM6DS3, "LSM6DS3", (uint8_t)addr.address);
-                SCAN_SIMPLE_CASE(TCA9535_ADDR, TCA9535, "TCA9535", (uint8_t)addr.address);
-                SCAN_SIMPLE_CASE(TCA9555_ADDR, TCA9555, "TCA9555", (uint8_t)addr.address);
                 SCAN_SIMPLE_CASE(VEML7700_ADDR, VEML7700, "VEML7700", (uint8_t)addr.address);
-                SCAN_SIMPLE_CASE(TSL25911_ADDR, TSL2591, "TSL2591", (uint8_t)addr.address);
+            case TCA9555_ADDR:
+                registerValue = getRegisterValue(ScanI2CTwoWire::RegisterLocation(addr, 0x01), 1);
+                if (registerValue == 0x13) {
+                    registerValue = getRegisterValue(ScanI2CTwoWire::RegisterLocation(addr, 0x00), 1);
+                    if (registerValue == 0x81) {
+                        type = DA217;
+                        logFoundDevice("DA217", (uint8_t)addr.address);
+                    } else {
+                        type = TCA9555;
+                        logFoundDevice("TCA9555", (uint8_t)addr.address);
+                    }
+                } else {
+                    type = TCA9555;
+                    logFoundDevice("TCA9555", (uint8_t)addr.address);
+                }
+                break;
+            case TSL25911_ADDR:
+                registerValue = getRegisterValue(ScanI2CTwoWire::RegisterLocation(addr, 0x12), 1);
+                if (registerValue == 0x50) {
+                    type = TSL2591;
+                    logFoundDevice("TSL25911", (uint8_t)addr.address);
+                } else {
+                    type = TSL2561;
+                    logFoundDevice("TSL2561", (uint8_t)addr.address);
+                }
+                break;
+
                 SCAN_SIMPLE_CASE(MLX90632_ADDR, MLX90632, "MLX90632", (uint8_t)addr.address);
                 SCAN_SIMPLE_CASE(NAU7802_ADDR, NAU7802, "NAU7802", (uint8_t)addr.address);
                 SCAN_SIMPLE_CASE(MAX1704X_ADDR, MAX17048, "MAX17048", (uint8_t)addr.address);
                 SCAN_SIMPLE_CASE(DFROBOT_RAIN_ADDR, DFROBOT_RAIN, "DFRobot Rain Gauge", (uint8_t)addr.address);
                 SCAN_SIMPLE_CASE(LTR390UV_ADDR, LTR390UV, "LTR390UV", (uint8_t)addr.address);
                 SCAN_SIMPLE_CASE(PCT2075_ADDR, PCT2075, "PCT2075", (uint8_t)addr.address);
+                SCAN_SIMPLE_CASE(CST328_ADDR, CST328, "CST328", (uint8_t)addr.address);
+                SCAN_SIMPLE_CASE(CHSC6X_ADDR, CHSC6X, "CHSC6X", (uint8_t)addr.address);
+            case LTR553ALS_ADDR:
+                registerValue = getRegisterValue(ScanI2CTwoWire::RegisterLocation(addr, 0x86), 1); // Part ID register
+                if (registerValue == 0x92) {                                                       // LTR553ALS Part ID
+                    type = LTR553ALS;
+                    logFoundDevice("LTR553ALS", (uint8_t)addr.address);
+                } else {
+                    // Test BH1750 - send power on command
+                    i2cBus->beginTransmission(addr.address);
+                    i2cBus->write(0x01); // Power On command
+                    uint8_t bh1750_error = i2cBus->endTransmission();
+                    if (bh1750_error == 0) {
+                        type = BH1750;
+                        logFoundDevice("BH1750", (uint8_t)addr.address);
+                    } else {
+                        LOG_INFO("Device found at address 0x%x was not able to be enumerated", (uint8_t)addr.address);
+                    }
+                }
+                break;
+
+                SCAN_SIMPLE_CASE(BHI260AP_ADDR, BHI260AP, "BHI260AP", (uint8_t)addr.address);
+                SCAN_SIMPLE_CASE(SCD4X_ADDR, SCD4X, "SCD4X", (uint8_t)addr.address);
+                SCAN_SIMPLE_CASE(BMM150_ADDR, BMM150, "BMM150", (uint8_t)addr.address);
 #ifdef HAS_TPS65233
                 SCAN_SIMPLE_CASE(TPS65233_ADDR, TPS65233, "TPS65233", (uint8_t)addr.address);
 #endif
@@ -445,8 +533,14 @@ void ScanI2CTwoWire::scanPort(I2CPort port, uint8_t *address, uint8_t asize)
                     type = MLX90614;
                     logFoundDevice("MLX90614", (uint8_t)addr.address);
                 } else {
-                    type = MPR121KB;
-                    logFoundDevice("MPR121KB", (uint8_t)addr.address);
+                    registerValue = getRegisterValue(ScanI2CTwoWire::RegisterLocation(addr, 0x00), 1); // DRV2605_REG_STATUS
+                    if (registerValue == 0xe0) {
+                        type = DRV2605;
+                        logFoundDevice("DRV2605", (uint8_t)addr.address);
+                    } else {
+                        type = MPR121KB;
+                        logFoundDevice("MPR121KB", (uint8_t)addr.address);
+                    }
                 }
                 break;
 
@@ -521,7 +615,7 @@ void ScanI2CTwoWire::scanPort(I2CPort port)
     scanPort(port, nullptr, 0);
 }
 
-TwoWire *ScanI2CTwoWire::fetchI2CBus(ScanI2C::DeviceAddress address) const
+TwoWire *ScanI2CTwoWire::fetchI2CBus(ScanI2C::DeviceAddress address)
 {
     if (address.port == ScanI2C::I2CPort::WIRE) {
         return &Wire;

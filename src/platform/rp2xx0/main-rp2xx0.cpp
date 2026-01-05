@@ -1,12 +1,10 @@
 #include "configuration.h"
+#include "modules/HermesXPowerGuard.h"
 #include "hardware/xosc.h"
 #include <hardware/clocks.h>
 #include <hardware/pll.h>
 #include <pico/stdlib.h>
 #include <pico/unique_id.h>
-#if !MESHTASTIC_EXCLUDE_HERMESX
-#include "modules/HermesXPowerGuard.h"
-#endif
 
 #ifdef __PLAT_RP2040__
 #include <pico/sleep.h>
