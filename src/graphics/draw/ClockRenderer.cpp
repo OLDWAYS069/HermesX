@@ -316,7 +316,7 @@ void drawDigitalClockFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int1
     }
 
     if (config.display.use_12h_clock) {
-        display->drawString(startingHourMinuteTextX + xOffset, (display->getHeight() - hourMinuteTextY) - 1, isPM ? "pm" : "am");
+        drawStringMixed(display,startingHourMinuteTextX + xOffset, (display->getHeight() - hourMinuteTextY) - 1, isPM ? "pm" : "am");
     }
 
 #ifndef USE_EINK
@@ -324,7 +324,7 @@ void drawDigitalClockFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int1
     if (scale >= 2.0f) {
         xOffset -= (int)(4.5f * scale);
     }
-    display->drawString(startingHourMinuteTextX + timeStringWidth - xOffset, (display->getHeight() - hourMinuteTextY) - 1,
+    drawStringMixed(display,startingHourMinuteTextX + timeStringWidth - xOffset, (display->getHeight() - hourMinuteTextY) - 1,
                         secondString);
 #endif
 
@@ -412,7 +412,7 @@ void drawAnalogClockFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16
 #ifdef USE_EINK
             yOffset += 3;
 #endif
-            display->drawString(centerX - (display->getStringWidth(isPM ? "pm" : "am") / 2), centerY + yOffset,
+            drawStringMixed(display,centerX - (stringWidthMixed(display,isPM ? "pm" : "am") / 2), centerY + yOffset,
                                 isPM ? "pm" : "am");
         }
         hour %= 12;

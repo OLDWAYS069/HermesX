@@ -35,6 +35,7 @@
 #endif
 
 #include "graphics/ScreenFonts.h"
+#include "graphics/fonts/HermesX_zh/HermesX_CN12.h"
 #include <Throttle.h>
 
 // Remove Canned message screen if no action is taken for some milliseconds
@@ -191,21 +192,26 @@ int CannedMessageModule::splitConfiguredMessages()
 
     return this->messagesCount;
 }
-void CannedMessageModule::drawHeader(OLEDDisplay *display, int16_t x, int16_t y, char *buffer)
+void CannedMessageModule::drawHeader(OLEDDisplay *display, int16_t x, int16_t y, char *buffer, size_t bufferSize)
 {
+    if (!buffer || bufferSize == 0)
+        return;
+
     if (graphics::isHighResolution) {
         if (this->dest == NODENUM_BROADCAST) {
-            display->drawStringf(x, y, buffer, "To: Broadcast@%s", channels.getName(this->channel));
+            snprintf(buffer, bufferSize, "To: Broadcast@%s", channels.getName(this->channel));
         } else {
-            display->drawStringf(x, y, buffer, "To: %s", getNodeName(this->dest));
+            snprintf(buffer, bufferSize, "To: %s", getNodeName(this->dest));
         }
     } else {
         if (this->dest == NODENUM_BROADCAST) {
-            display->drawStringf(x, y, buffer, "To: Broadc@%.5s", channels.getName(this->channel));
+            snprintf(buffer, bufferSize, "To: Broadc@%.5s", channels.getName(this->channel));
         } else {
-            display->drawStringf(x, y, buffer, "To: %s", getNodeName(this->dest));
+            snprintf(buffer, bufferSize, "To: %s", getNodeName(this->dest));
         }
     }
+
+    graphics::HermesX_zh::drawMixed(*display, x, y, buffer, graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
 }
 
 void CannedMessageModule::resetSearch()
@@ -1339,8 +1345,10 @@ void CannedMessageModule::drawKeyboard(OLEDDisplay *display, OLEDDisplayUiState 
 
     display->setColor(OLEDDISPLAY_COLOR::WHITE);
 
-    display->drawStringMaxWidth(0, 0, display->getWidth(),
-                                cannedMessageModule->drawWithCursor(cannedMessageModule->freetext, cannedMessageModule->cursor));
+    graphics::HermesX_zh::drawMixedBounded(
+        *display, 0, 0, display->getWidth(),
+        cannedMessageModule->drawWithCursor(cannedMessageModule->freetext, cannedMessageModule->cursor).c_str(),
+        graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
 
     display->setFont(FONT_MEDIUM);
 
@@ -1528,9 +1536,11 @@ void CannedMessageModule::drawDestinationSelectionScreen(OLEDDisplay *display, O
     int titleY = 2;
     String titleText = "Select Destination";
     titleText += searchQuery.length() > 0 ? " [" + searchQuery + "]" : " [ ]";
-    display->setTextAlignment(TEXT_ALIGN_CENTER);
-    display->drawString(display->getWidth() / 2, titleY, titleText);
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
+    int titleWidth =
+        graphics::HermesX_zh::stringAdvance(titleText.c_str(), graphics::HermesX_zh::GLYPH_WIDTH, display);
+    int titleX = (display->getWidth() / 2) - (titleWidth / 2);
+    graphics::HermesX_zh::drawMixed(*display, titleX, titleY, titleText.c_str(), graphics::HermesX_zh::GLYPH_WIDTH,
+                                    FONT_HEIGHT_SMALL, nullptr);
 
     // === List Items ===
     int rowYOffset = titleY + (FONT_HEIGHT_SMALL - 4);
@@ -1594,7 +1604,8 @@ void CannedMessageModule::drawDestinationSelectionScreen(OLEDDisplay *display, O
         }
 
         // === Draw entry text ===
-        display->drawString(xOffset + 2, yOffset, entryText);
+        graphics::HermesX_zh::drawMixed(*display, xOffset + 2, yOffset, entryText, graphics::HermesX_zh::GLYPH_WIDTH,
+                                        FONT_HEIGHT_SMALL, nullptr);
         display->setColor(WHITE);
 
         // === Draw key icon (after highlight) ===
@@ -1720,9 +1731,12 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
     if (temporaryMessage.length() != 0) {
         requestFocus(); // Tell Screen::setFrames to move to our module's frame
         LOG_DEBUG("Draw temporary message: %s", temporaryMessage.c_str());
-        display->setTextAlignment(TEXT_ALIGN_CENTER);
         display->setFont(FONT_MEDIUM);
-        display->drawString(display->getWidth() / 2 + x, 0 + y + 12, temporaryMessage);
+        int tempWidth =
+            graphics::HermesX_zh::stringAdvance(temporaryMessage.c_str(), graphics::HermesX_zh::GLYPH_WIDTH, display);
+        int tempX = (display->getWidth() / 2) + x - (tempWidth / 2);
+        graphics::HermesX_zh::drawMixed(*display, tempX, 0 + y + 12, temporaryMessage.c_str(),
+                                        graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_MEDIUM, nullptr);
         return;
     }
 
@@ -1777,7 +1791,26 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
                 lineCount++;
         }
 
-        display->drawString(display->getWidth() / 2 + x, yOffset, buffer);
+        // Center each line to handle mixed ASCII/Chinese strings
+        String deliveryMsg = buffer;
+        int lineIdx = 0;
+        int lineHeight = FONT_HEIGHT_MEDIUM;
+        int startPos = 0;
+        while (startPos < deliveryMsg.length()) {
+            int nextBreak = deliveryMsg.indexOf('\n', startPos);
+            String line =
+                (nextBreak == -1) ? deliveryMsg.substring(startPos) : deliveryMsg.substring(startPos, nextBreak);
+            int lineWidth =
+                graphics::HermesX_zh::stringAdvance(line.c_str(), graphics::HermesX_zh::GLYPH_WIDTH, display);
+            int drawX = (display->getWidth() / 2) + x - (lineWidth / 2);
+            graphics::HermesX_zh::drawMixed(*display, drawX, yOffset + lineIdx * lineHeight, line.c_str(),
+                                            graphics::HermesX_zh::GLYPH_WIDTH, lineHeight, nullptr);
+
+            if (nextBreak == -1)
+                break;
+            startPos = nextBreak + 1;
+            lineIdx++;
+        }
 #if defined(M5STACK_UNITC6L)
         yOffset += lineCount * FONT_HEIGHT_MEDIUM - 5; // only 1 line gap, no extra padding
 #else
@@ -1835,7 +1868,7 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
         display->setFont(FONT_SMALL);
 
         // --- Draw node/channel header at the top ---
-        drawHeader(display, x, y, buffer);
+        drawHeader(display, x, y, buffer, sizeof(buffer));
 
         // --- Char count right-aligned ---
         if (runState != CANNED_MESSAGE_RUN_STATE_DESTINATION_SELECTION) {
@@ -1927,7 +1960,8 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
                         int spacePos = text.indexOf(' ', pos);
                         int endPos = (spacePos == -1) ? text.length() : spacePos + 1; // Include space
                         String word = text.substring(pos, endPos);
-                        int wordWidth = display->getStringWidth(word);
+                        int wordWidth =
+                            graphics::HermesX_zh::stringAdvance(word.c_str(), graphics::HermesX_zh::GLYPH_WIDTH, display);
 
                         if (lineWidth + wordWidth > maxWidth && lineWidth > 0) {
                             lines.push_back(currentLine);
@@ -1939,7 +1973,8 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
                             uint16_t charPos = 0;
                             while (charPos < word.length()) {
                                 String oneChar = word.substring(charPos, charPos + 1);
-                                int charWidth = display->getStringWidth(oneChar);
+                                int charWidth = graphics::HermesX_zh::stringAdvance(oneChar.c_str(),
+                                                                                   graphics::HermesX_zh::GLYPH_WIDTH, display);
                                 if (lineWidth + charWidth > maxWidth && lineWidth > 0) {
                                     lines.push_back(currentLine);
                                     currentLine.clear();
@@ -1980,8 +2015,10 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
                             nextX += emote->width + 2;
                         }
                     } else {
-                        display->drawString(nextX, yLine, token.second);
-                        nextX += display->getStringWidth(token.second);
+                        const String &text = token.second;
+                        graphics::HermesX_zh::drawMixed(*display, nextX, yLine, text.c_str(),
+                                                        graphics::HermesX_zh::GLYPH_WIDTH, rowHeight, nullptr);
+                        nextX += graphics::HermesX_zh::stringAdvance(text.c_str(), graphics::HermesX_zh::GLYPH_WIDTH, display);
                     }
                 }
                 yLine += rowHeight;
@@ -2004,7 +2041,7 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
         int _visibleRows;
 
         // Draw header (To: ...)
-        drawHeader(display, x, y, buffer);
+        drawHeader(display, x, y, buffer, sizeof(buffer));
 
         // Shift message list upward by 3 pixels to reduce spacing between header and first message
         const int listYOffset = y + FONT_HEIGHT_SMALL - 3;
@@ -2124,8 +2161,10 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
                     }
                 } else {
                     // Text
-                    display->drawString(nextX, lineY + textYOffset, token.second);
-                    nextX += display->getStringWidth(token.second);
+                    const String &text = token.second;
+                    graphics::HermesX_zh::drawMixed(*display, nextX, lineY + textYOffset, text.c_str(),
+                                                    graphics::HermesX_zh::GLYPH_WIDTH, rowHeight, nullptr);
+                    nextX += graphics::HermesX_zh::stringAdvance(text.c_str(), graphics::HermesX_zh::GLYPH_WIDTH, display);
                 }
             }
 #ifndef USE_EINK

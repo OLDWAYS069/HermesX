@@ -1,5 +1,20 @@
 # HermesX 變更紀錄 (REF_changelog.md)
 
+## 版本比較：0.3.0 中文 UI 翻譯補強 & 開機版面調整（熱修）
+- 主要變更：擴充 SharedUIDisplay 中文對照表，將首頁/LoRa/時鐘/GPS 狀態/訊號跳數/在線數、罐頭訊息選項與 PSK 驗證等常用文案統一顯示中文。
+- 罐頭訊息：選單顯示「罐頭訊息」，避免與預設英文混用。
+- 開機畫面：右上改為 `Ver: HXB_0.3.0`，左下 HermesX、右下裝置 ID，中下方版本字樣，避免文字重疊與偏移。
+- 影響檔案：`src/graphics/SharedUIDisplay.*`、`src/graphics/draw/MenuHandler.cpp`、`src/graphics/draw/UIRenderer.cpp`。
+- 測試：`pio run -e heltec-wireless-tracker`（通過；僅第三方庫 ODR/NeoPixel 警告）。
+
+## 版本比較：0.3.0 中文字型/罐頭訊息修復（熱修）
+- 主要變更：恢復 CN12 字型管線（移除 OLED_ZH/EM16），並在 SharedUIDisplay 新增混排 helper，讓罐頭訊息、節點列表、訊息畫面等共用 UI 可直接顯示中文。
+- 罐頭訊息：列表、自由輸入、ACK/NACK、標題等路徑改用 CN12 混排；字寬換算修正以避免截斷。
+- 共用 UI：標題列、節點列表與訊息渲染改用 `drawStringMixed`/`stringWidthMixed`，中文不再變方框；未全面切換的畫面（UIRenderer/NotificationRenderer 等）待下一步。
+- 移除多餘編譯旗標：`-DOLED_ZH=1` 已移除，使用預設配置即可帶入中文字型。
+- 影響檔案：`src/modules/CannedMessageModule.*`、`src/graphics/SharedUIDisplay.*`、`src/graphics/draw/MessageRenderer.cpp`、`src/graphics/draw/NodeListRenderer.cpp`、`src/graphics/Screen.h`、`src/graphics/ScreenFonts.h`、`tools/fonts/*`。
+- 測試：`pio run -e heltec-wireless-tracker`（通過；僅剩未使用變數警告）。
+
 ## 版本比較：0.3.0 後續修正（2.7.15 基底 vs 2.6.11）
 - 與 2.6.11 最大差異：官方 2.7.15 UI 對彩色/共享 UI 的輸入預設導向觸控，EC11 長按不再是關機。已強制保留 Rotary/CannedMessage 模組並將 EC11 長按改送 `INPUT_BROKER_SHUTDOWN`，恢復長按逐格＋關機動畫；長按門檻拉長至 5 秒，關機延遲 1.2 秒讓動畫跑完。
 - 深睡喚醒新增 GPIO4 ext1：需按住約 2 秒才算有效喚醒，若未達門檻或鬆手則立即回深睡並等待放開後再睡，避免每秒抖動喚醒。預設低態觸發、內建上拉，可用巨集 `HERMESX_WAKE_GPIO` / `HERMESX_WAKE_ACTIVE_LOW` 調整腳位/極性。

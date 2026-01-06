@@ -132,16 +132,13 @@ void drawStringWithEmotes(OLEDDisplay *display, int x, int y, const std::string 
 
         if (nextControl > i) {
             std::string textChunk = line.substr(i, nextControl - i);
+            int chunkWidth = stringWidthMixed(display, textChunk.c_str(), HermesX_zh::GLYPH_WIDTH);
             if (inBold) {
                 // Faux bold: draw twice, offset by 1px
-                display->drawString(cursorX + 1, fontY, textChunk.c_str());
+                drawStringMixed(display, cursorX + 1, fontY, textChunk.c_str(), fontHeight);
             }
-            display->drawString(cursorX, fontY, textChunk.c_str());
-#if defined(OLED_UA) || defined(OLED_RU)
-            cursorX += display->getStringWidth(textChunk.c_str(), textChunk.length(), true);
-#else
-            cursorX += display->getStringWidth(textChunk.c_str());
-#endif
+            drawStringMixed(display, cursorX, fontY, textChunk.c_str(), fontHeight);
+            cursorX += chunkWidth;
             i = nextControl;
             continue;
         }
@@ -155,16 +152,12 @@ void drawStringWithEmotes(OLEDDisplay *display, int x, int y, const std::string 
         } else {
             // No more emotes — render the rest of the line
             std::string remaining = line.substr(i);
+            int chunkWidth = stringWidthMixed(display, remaining.c_str(), HermesX_zh::GLYPH_WIDTH);
             if (inBold) {
-                display->drawString(cursorX + 1, fontY, remaining.c_str());
+                drawStringMixed(display, cursorX + 1, fontY, remaining.c_str(), fontHeight);
             }
-            display->drawString(cursorX, fontY, remaining.c_str());
-#if defined(OLED_UA) || defined(OLED_RU)
-            cursorX += display->getStringWidth(remaining.c_str(), remaining.length(), true);
-#else
-            cursorX += display->getStringWidth(remaining.c_str());
-#endif
-
+            drawStringMixed(display, cursorX, fontY, remaining.c_str(), fontHeight);
+            cursorX += chunkWidth;
             break;
         }
     }
@@ -207,11 +200,12 @@ void drawTextMessageFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16
         // === Header ===
         graphics::drawCommonHeader(display, x, y, titleStr);
         const char *messageString = "No messages";
-        int center_text = (SCREEN_WIDTH / 2) - (display->getStringWidth(messageString) / 2);
+        int center_text = (SCREEN_WIDTH / 2) - (stringWidthMixed(display, messageString, HermesX_zh::GLYPH_WIDTH) / 2);
 #if defined(M5STACK_UNITC6L)
-        display->drawString(center_text, windowY + (windowHeight / 2) - (FONT_HEIGHT_SMALL / 2) - 5, messageString);
+        drawStringMixed(display, center_text, windowY + (windowHeight / 2) - (FONT_HEIGHT_SMALL / 2) - 5, messageString,
+                        FONT_HEIGHT_SMALL);
 #else
-        display->drawString(center_text, getTextPositions(display)[2], messageString);
+        drawStringMixed(display, center_text, getTextPositions(display)[2], messageString, FONT_HEIGHT_SMALL);
 #endif
         graphics::drawCommonFooter(display, x, y);
         return;
@@ -263,7 +257,7 @@ void drawTextMessageFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16
 #if defined(M5STACK_UNITC6L)
     graphics::drawCommonHeader(display, x, y, titleStr);
     int headerY = getTextPositions(display)[1];
-    display->drawString(x, headerY, headerStr);
+    drawStringMixed(display, x, headerY, headerStr, FONT_HEIGHT_SMALL);
     for (int separatorX = 0; separatorX < SCREEN_WIDTH; separatorX += 2) {
         display->setPixel(separatorX, fixedTopHeight - 1);
     }
@@ -323,9 +317,9 @@ void drawTextMessageFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16
         const Emote &e = emotes[i];
         if (strcmp(msg, e.label) == 0) {
             int headerY = getTextPositions(display)[1]; // same as scrolling header line
-            display->drawString(x + 3, headerY, headerStr);
+            drawStringMixed(display, x + 3, headerY, headerStr, FONT_HEIGHT_SMALL);
             if (isInverted && isBold)
-                display->drawString(x + 4, headerY, headerStr);
+                drawStringMixed(display, x + 4, headerY, headerStr, FONT_HEIGHT_SMALL);
 
             // Draw separator (same as scroll version)
             for (int separatorX = 1; separatorX <= (display->getStringWidth(headerStr) + 2); separatorX += 2) {
@@ -517,9 +511,9 @@ void renderMessageContent(OLEDDisplay *display, const std::vector<std::string> &
             lineY += rowHeights[j];
         if (lineY > -rowHeights[i] && lineY < scrollBottom) {
             if (i == 0 && isInverted) {
-                display->drawString(x, lineY, lines[i].c_str());
+                drawStringMixed(display, x, lineY, lines[i].c_str(), FONT_HEIGHT_SMALL);
                 if (isBold)
-                    display->drawString(x, lineY, lines[i].c_str());
+                    drawStringMixed(display, x, lineY, lines[i].c_str(), FONT_HEIGHT_SMALL);
             } else {
                 drawStringWithEmotes(display, x, lineY, lines[i], emotes, numEmotes);
             }

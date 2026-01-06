@@ -103,14 +103,9 @@ def read_charset() -> List[str]:
 
 
 def format_map(chars: Iterable[str], base: int = 0x80) -> str:
-    parts = ["32-126"]  # keep ASCII at native codepoints
-    offset = 0
-    for ch in chars:
-        code = ord(ch)
-        if 32 <= code <= 126:
-            continue  # ASCII stays mapped to itself
-        parts.append(f"${code:04x}>${base + offset:02x}")
-        offset += 1
+    parts = []
+    for offset, ch in enumerate(chars):
+        parts.append(f"${ord(ch):04x}>${base + offset:02x}")
     return ",".join(parts)
 
 

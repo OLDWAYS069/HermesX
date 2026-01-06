@@ -68,7 +68,7 @@ void NotificationRenderer::drawSSLScreen(OLEDDisplay *display, OLEDDisplayUiStat
 {
     display->setTextAlignment(TEXT_ALIGN_CENTER);
     display->setFont(FONT_SMALL);
-    display->drawString(64 + x, y, "Creating SSL certificate");
+    drawStringMixed(display,64 + x, y, "Creating SSL certificate");
 
 #ifdef ARCH_ESP32
     yield();
@@ -77,9 +77,9 @@ void NotificationRenderer::drawSSLScreen(OLEDDisplay *display, OLEDDisplayUiStat
 
     display->setFont(FONT_SMALL);
     if ((millis() / 1000) % 2) {
-        display->drawString(64 + x, FONT_HEIGHT_SMALL + y + 2, "Please wait . . .");
+        drawStringMixed(display,64 + x, FONT_HEIGHT_SMALL + y + 2, "Please wait . . .");
     } else {
-        display->drawString(64 + x, FONT_HEIGHT_SMALL + y + 2, "Please wait . .  ");
+        drawStringMixed(display,64 + x, FONT_HEIGHT_SMALL + y + 2, "Please wait . .  ");
     }
 }
 
@@ -334,7 +334,7 @@ void NotificationRenderer::drawAlertBannerOverlay(OLEDDisplay *display, OLEDDisp
 
     uint16_t optionWidths[alertBannerOptions] = {0};
     uint16_t maxWidth = 0;
-    uint16_t arrowsWidth = display->getStringWidth(">  <", 4, true);
+    uint16_t arrowsWidth = stringWidthMixed(display, ">  <");
     uint16_t lineWidths[MAX_LINES] = {0};
     uint16_t lineLengths[MAX_LINES] = {0};
     const char *lineStarts[MAX_LINES + 1] = {0};
@@ -350,7 +350,8 @@ void NotificationRenderer::drawAlertBannerOverlay(OLEDDisplay *display, OLEDDisp
         lineLengths[lineCount] = lineStarts[lineCount + 1] - lineStarts[lineCount];
         if (lineStarts[lineCount + 1][0] == '\n')
             lineStarts[lineCount + 1] += 1;
-        lineWidths[lineCount] = display->getStringWidth(lineStarts[lineCount], lineLengths[lineCount], true);
+        std::string tmpLine(lineStarts[lineCount], lineLengths[lineCount]);
+        lineWidths[lineCount] = stringWidthMixed(display, tmpLine.c_str());
         if (lineWidths[lineCount] > maxWidth)
             maxWidth = lineWidths[lineCount];
         lineCount++;
@@ -358,7 +359,7 @@ void NotificationRenderer::drawAlertBannerOverlay(OLEDDisplay *display, OLEDDisp
 
     // Measure option widths
     for (int i = 0; i < alertBannerOptions; i++) {
-        optionWidths[i] = display->getStringWidth(optionsArrayPtr[i], strlen(optionsArrayPtr[i]), true);
+        optionWidths[i] = stringWidthMixed(display, optionsArrayPtr[i]);
         if (optionWidths[i] > maxWidth)
             maxWidth = optionWidths[i];
         if (optionWidths[i] + arrowsWidth > maxWidth)
@@ -484,7 +485,9 @@ void NotificationRenderer::drawNotificationBox(OLEDDisplay *display, OLEDDisplay
             lineLengths[lineCount] = (newlinePointer - lines[lineCount]); // Check for newlines first
         else // if the newline wasn't found, then pull string length from strlen
             lineLengths[lineCount] = strlen(lines[lineCount]);
-        lineWidths[lineCount] = display->getStringWidth(lines[lineCount], lineLengths[lineCount], true);
+
+        std::string tmpLine(lines[lineCount], lineLengths[lineCount]);
+        lineWidths[lineCount] = stringWidthMixed(display, tmpLine.c_str());
         if (!is_picker) {
             needs_bell |= (strstr(alertBannerMessage, "Alert Received") != nullptr);
             if (lineWidths[lineCount] > maxWidth)
@@ -577,12 +580,12 @@ void NotificationRenderer::drawNotificationBox(OLEDDisplay *display, OLEDDisplay
                 display->setColor(BLACK);
                 display->fillRect(boxLeft, boxTop, boxWidth, effectiveLineHeight);
                 display->setColor(WHITE);
-                display->drawString(boxLeft + (boxWidth - lineWidths[i]) / 2, boxTop, lineBuffer);
+                drawStringMixed(display,boxLeft + (boxWidth - lineWidths[i]) / 2, boxTop, lineBuffer);
             } else {
                 display->setColor(WHITE);
                 display->fillRect(boxLeft, boxTop, boxWidth, effectiveLineHeight);
                 display->setColor(BLACK);
-                display->drawString(boxLeft + (boxWidth - lineWidths[i]) / 2, boxTop, lineBuffer);
+                drawStringMixed(display,boxLeft + (boxWidth - lineWidths[i]) / 2, boxTop, lineBuffer);
                 display->setColor(WHITE);
                 if (needs_bell) {
                     int bellY = boxTop + (FONT_HEIGHT_SMALL - 8) / 2;
@@ -597,9 +600,9 @@ void NotificationRenderer::drawNotificationBox(OLEDDisplay *display, OLEDDisplay
             display->setColor(BLACK);
             if (lineLengths[i] > 15 && lineWidths[i] > visibleWidth) {
                 int textX = boxLeft + hPadding + swingOffset;
-                display->drawString(textX, lineY - 1, lineBuffer);
+                drawStringMixed(display,textX, lineY - 1, lineBuffer);
             } else {
-                display->drawString(boxLeft + (boxWidth - lineWidths[i]) / 2, lineY - 1, lineBuffer);
+                drawStringMixed(display,boxLeft + (boxWidth - lineWidths[i]) / 2, lineY - 1, lineBuffer);
             }
             display->setColor(WHITE);
             lineY += effectiveLineHeight;
@@ -607,7 +610,7 @@ void NotificationRenderer::drawNotificationBox(OLEDDisplay *display, OLEDDisplay
             display->setColor(BLACK);
             display->fillRect(boxLeft, lineY, boxWidth, effectiveLineHeight);
             display->setColor(WHITE);
-            display->drawString(boxLeft + (boxWidth - lineWidths[i]) / 2, lineY, lineBuffer);
+            drawStringMixed(display,boxLeft + (boxWidth - lineWidths[i]) / 2, lineY, lineBuffer);
             lineY += effectiveLineHeight;
         }
     }
@@ -686,12 +689,12 @@ void NotificationRenderer::drawNotificationBox(OLEDDisplay *display, OLEDDisplay
             display->fillRect(boxLeft, boxTop + 1, boxWidth, effectiveLineHeight - background_yOffset);
             display->setColor(BLACK);
             int yOffset = 3;
-            display->drawString(textX, lineY - yOffset, lineBuffer);
+            drawStringMixed(display,textX, lineY - yOffset, lineBuffer);
             display->setColor(WHITE);
             lineY += (effectiveLineHeight - 2 - background_yOffset);
         } else {
             // Pop-up
-            display->drawString(textX, lineY, lineBuffer);
+            drawStringMixed(display,textX, lineY, lineBuffer);
             lineY += (effectiveLineHeight);
         }
     }
@@ -723,21 +726,21 @@ void NotificationRenderer::drawCriticalFaultFrame(OLEDDisplay *display, OLEDDisp
 
     char tempBuf[24];
     snprintf(tempBuf, sizeof(tempBuf), "Critical fault #%d", error_code);
-    display->drawString(0 + x, 0 + y, tempBuf);
+    drawStringMixed(display,0 + x, 0 + y, tempBuf);
     display->setTextAlignment(TEXT_ALIGN_LEFT);
     display->setFont(FONT_SMALL);
-    display->drawString(0 + x, FONT_HEIGHT_MEDIUM + y, "For help, please visit \nmeshtastic.org");
+    drawStringMixed(display,0 + x, FONT_HEIGHT_MEDIUM + y, "For help, please visit \nmeshtastic.org");
 }
 
 void NotificationRenderer::drawFrameFirmware(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
 {
     display->setTextAlignment(TEXT_ALIGN_CENTER);
     display->setFont(FONT_MEDIUM);
-    display->drawString(64 + x, y, "Updating");
+    drawStringMixed(display,64 + x, y, "Updating");
 
     display->setFont(FONT_SMALL);
     display->setTextAlignment(TEXT_ALIGN_LEFT);
-    display->drawStringMaxWidth(0 + x, 2 + y + FONT_HEIGHT_SMALL * 2, x + display->getWidth(),
+    drawStringMixedBounded(display,0 + x, 2 + y + FONT_HEIGHT_SMALL * 2, x + display->getWidth(),
                                 "Please be patient and do not power off.");
 }
 

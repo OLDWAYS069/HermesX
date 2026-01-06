@@ -188,7 +188,7 @@ void drawEntryLastHeard(OLEDDisplay *display, meshtastic_NodeInfoLite *node, int
 
     display->setTextAlignment(TEXT_ALIGN_LEFT);
     display->setFont(FONT_SMALL);
-    display->drawString(x + ((isHighResolution) ? 6 : 3), y, nodeName);
+    drawStringMixed(display, x + ((isHighResolution) ? 6 : 3), y, nodeName, FONT_HEIGHT_SMALL);
     if (node->is_favorite) {
         if (isHighResolution) {
             drawScaledXBitmap16x16(x, y + 6, smallbulletpoint_width, smallbulletpoint_height, smallbulletpoint, display);
@@ -200,8 +200,8 @@ void drawEntryLastHeard(OLEDDisplay *display, meshtastic_NodeInfoLite *node, int
     int rightEdge = x + columnWidth - timeOffset;
     if (timeStr[strlen(timeStr) - 1] == 'm') // Fix the fact that our fonts don't line up well all the time
         rightEdge -= 1;
-    int textWidth = display->getStringWidth(timeStr);
-    display->drawString(rightEdge - textWidth, y, timeStr);
+    int textWidth = stringWidthMixed(display, timeStr, HermesX_zh::GLYPH_WIDTH);
+    drawStringMixed(display, rightEdge - textWidth, y, timeStr, FONT_HEIGHT_SMALL);
 }
 
 void drawEntryHopSignal(OLEDDisplay *display, meshtastic_NodeInfoLite *node, int16_t x, int16_t y, int columnWidth)
@@ -219,7 +219,7 @@ void drawEntryHopSignal(OLEDDisplay *display, meshtastic_NodeInfoLite *node, int
     display->setTextAlignment(TEXT_ALIGN_LEFT);
     display->setFont(FONT_SMALL);
 
-    display->drawStringMaxWidth(x + ((isHighResolution) ? 6 : 3), y, nameMaxWidth, nodeName);
+    drawStringMixedBounded(display, x + ((isHighResolution) ? 6 : 3), y, nameMaxWidth, nodeName, FONT_HEIGHT_SMALL);
     if (node->is_favorite) {
         if (isHighResolution) {
             drawScaledXBitmap16x16(x, y + 6, smallbulletpoint_width, smallbulletpoint_height, smallbulletpoint, display);
@@ -248,8 +248,8 @@ void drawEntryHopSignal(OLEDDisplay *display, meshtastic_NodeInfoLite *node, int
 
     if (hopStr[0] != '\0') {
         int rightEdge = x + columnWidth - hopOffset;
-        int textWidth = display->getStringWidth(hopStr);
-        display->drawString(rightEdge - textWidth, y, hopStr);
+        int textWidth = stringWidthMixed(display, hopStr, HermesX_zh::GLYPH_WIDTH);
+        drawStringMixed(display, rightEdge - textWidth, y, hopStr, FONT_HEIGHT_SMALL);
     }
 }
 
@@ -311,7 +311,7 @@ void drawNodeDistance(OLEDDisplay *display, meshtastic_NodeInfoLite *node, int16
 
     display->setTextAlignment(TEXT_ALIGN_LEFT);
     display->setFont(FONT_SMALL);
-    display->drawStringMaxWidth(x + ((isHighResolution) ? 6 : 3), y, nameMaxWidth, nodeName);
+    drawStringMixedBounded(display, x + ((isHighResolution) ? 6 : 3), y, nameMaxWidth, nodeName, FONT_HEIGHT_SMALL);
     if (node->is_favorite) {
         if (isHighResolution) {
             drawScaledXBitmap16x16(x, y + 6, smallbulletpoint_width, smallbulletpoint_height, smallbulletpoint, display);
@@ -324,8 +324,8 @@ void drawNodeDistance(OLEDDisplay *display, meshtastic_NodeInfoLite *node, int16
         int offset = (isHighResolution) ? (isLeftCol ? 7 : 10) // Offset for Wide Screens (Left Column:Right Column)
                                         : (isLeftCol ? 4 : 7); // Offset for Narrow Screens (Left Column:Right Column)
         int rightEdge = x + columnWidth - offset;
-        int textWidth = display->getStringWidth(distStr);
-        display->drawString(rightEdge - textWidth, y, distStr);
+        int textWidth = stringWidthMixed(display, distStr, HermesX_zh::GLYPH_WIDTH);
+        drawStringMixed(display, rightEdge - textWidth, y, distStr, FONT_HEIGHT_SMALL);
     }
 }
 
@@ -357,7 +357,7 @@ void drawEntryCompass(OLEDDisplay *display, meshtastic_NodeInfoLite *node, int16
 
     display->setTextAlignment(TEXT_ALIGN_LEFT);
     display->setFont(FONT_SMALL);
-    display->drawStringMaxWidth(x + ((isHighResolution) ? 6 : 3), y, nameMaxWidth, nodeName);
+    drawStringMixedBounded(display, x + ((isHighResolution) ? 6 : 3), y, nameMaxWidth, nodeName, FONT_HEIGHT_SMALL);
     if (node->is_favorite) {
         if (isHighResolution) {
             drawScaledXBitmap16x16(x, y + 6, smallbulletpoint_width, smallbulletpoint_height, smallbulletpoint, display);
@@ -616,9 +616,9 @@ void drawColumns(OLEDDisplay *display, int16_t x, int16_t y, const char **fields
     const char **f = fields;
     int xo = x, yo = y;
     while (*f) {
-        display->drawString(xo, yo, *f);
+        drawStringMixed(display, xo, yo, *f, FONT_HEIGHT_SMALL);
         if ((display->getColor() == BLACK) && config.display.heading_bold)
-            display->drawString(xo + 1, yo, *f);
+            drawStringMixed(display, xo + 1, yo, *f, FONT_HEIGHT_SMALL);
 
         display->setColor(WHITE);
         yo += FONT_HEIGHT_SMALL;

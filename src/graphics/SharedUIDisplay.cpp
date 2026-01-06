@@ -6,6 +6,7 @@
 #include "graphics/ScreenFonts.h"
 #include "graphics/SharedUIDisplay.h"
 #include "graphics/draw/UIRenderer.h"
+#include "graphics/fonts/HermesX_zh/HermesX_CN12.h"
 #include "main.h"
 #include "meshtastic/config.pb.h"
 #include "power.h"
@@ -35,6 +36,154 @@ void determineResolution(int16_t screenheight, int16_t screenwidth)
 bool hasUnreadMessage = false;
 bool isMuted = false;
 bool isHighResolution = false;
+OLEDDISPLAY_TEXT_ALIGNMENT lastTextAlignment = TEXT_ALIGN_LEFT;
+
+struct ZhEntry {
+    const char *en;
+    const char *zh;
+};
+
+static const ZhEntry zhTable[] = {
+    {"Messages", "訊息"},                   {"Settings", "設定"},             {"Nodes", "節點"},
+    {"Select Destination", "選擇目的地"},    {"Select Emote", "選擇表情"},     {"No messages", "沒有訊息"},
+    {"Sending...", "傳送中..."},            {"Canned Message\nModule disabled.", "罐頭訊息模組已停用"},
+    {"HermesX", "HermesX"},                 {"Alert", "警示"},                {"Confirm", "確認"},
+    {"Cancel", "取消"},                     {"OK", "確定"},                   {"Please wait . . .", "請稍候..."},
+    {"Updating", "更新中"},                  {"Back", "返回"},                 {"System", "系統"},
+    {"System Action", "系統操作"},           {"Notifications", "通知"},        {"Display Options", "顯示選項"},
+    {"Bluetooth", "藍牙"},                  {"Bluetooth Toggle", "藍牙開關"}, {"Reboot/Shutdown", "重啟/關機"},
+    {"Reboot / Shutdown", "重啟 / 關機"},    {"Power", "電源"},                {"Test Menu", "測試選單"},
+    {"Favorites", "常用"},                  {"Favorites Action", "常用節點操作"},
+    {"New Preset Msg", "新增預設訊息"},      {"New Preset", "新增預設"},      {"New Freetext Msg", "新增自由文字"},
+    {"New Freetext", "新增自由文字"},       {"Trace Route", "路由追蹤"},      {"Remove Favorite", "移除最愛"},
+    {"Message Action", "訊息操作"},         {"Position Action", "定位操作"},   {"GPS Toggle", "GPS 開關"},
+    {"GPS Format", "GPS 格式"},            {"Compass", "羅盤"},              {"Compass Calibrate", "羅盤校正"},
+    {"North Directions?", "北向模式"},       {"Dynamic", "動態"},              {"Fixed Ring", "固定環"},
+    {"Freeze Heading", "凍結方位"},         {"Toggle GPS", "切換 GPS"},       {"Enabled", "啟用"},
+    {"Disabled", "停用"},                  {"Decimal Degrees", "十進位"},    {"Degrees Minutes Seconds", "度分秒"},
+    {"Universal Transverse Mercator", "UTM"}, {"Military Grid Reference System", "MGRS"},
+    {"Open Location Code", "OLC"},          {"Ordnance Survey Grid Ref", "OSGR"},
+    {"Maidenhead Locator", "MLS"},          {"Node Action", "節點操作"},      {"Add Favorite", "加入最愛"},
+    {"Key Verification", "鑰匙驗證"},       {"Reset NodeDB", "重置節點庫"},    {"Reset Node", "重置節點"},
+    {"Node Name Length", "節點名稱長度"},   {"Long", "長名稱"},               {"Short", "短名稱"},
+    {"Confirm Reset NodeDB", "確認重置節點庫"}, {"Reset All", "全部重置"},    {"Preserve Favorites", "保留最愛"},
+    {"Node Favorite", "選擇最愛節點"},      {"Node To Favorite", "選擇要收藏的節點"},
+    {"Unfavorite This Node?\n", "取消收藏此節點？\n"}, {"Node to Trace", "選擇路由追蹤節點"},
+    {"Node to Verify", "選擇驗證節點"},     {"Last seen", "上次看到"},        {"Distance", "距離"},
+    {"Hops", "跳數"},                       {"Clock", "時鐘"},                {"Compass", "羅盤"},
+    {"Buzzer Mode", "蜂鳴模式"},             {"All Enabled", "全部啟用"},      {"System Only", "僅系統"},
+    {"DMs Only", "僅私訊"},                 {"Brightness", "亮度"},           {"Low", "低"},
+    {"Medium", "中"},                       {"High", "高"},                   {"Very High", "很高"},
+    {"Switch to MUI?", "切換到 MUI？"},     {"No", "否"},                    {"Yes", "是"},
+    {"Select Screen Color", "選擇螢幕顏色"}, {"Default", "預設"},             {"Meshtastic Green", "Meshtastic 綠"},
+    {"Yellow", "黃"},                       {"Red", "紅"},                   {"Orange", "橘"},
+    {"Purple", "紫"},                       {"Teal", "青綠"},                {"Pink", "粉紅"},
+    {"White", "白"},                        {"Reboot", "重新啟動"},           {"Shutdown", "關機"},
+    {"Reboot Device?", "確定重新啟動？"},     {"Shutdown Device?", "確定關機？"},
+    {"Rebooting...", "重新啟動中..."},       {"WiFi Toggle", "WiFi 開關"},    {"WiFi Menu", "WiFi 選單"},
+    {"Disable Wifi and\nEnable Bluetooth?", "關閉 WiFi 並啟用藍牙？"}, {"Disable", "停用"},
+    {"Buzzer Actions", "蜂鳴設定"},         {"Show Long/Short Name", "顯示長/短名稱"},
+    {"Screen Color", "螢幕顏色"},           {"Frame Visiblity Toggle", "顯示/隱藏畫面"},
+    {"Display Units", "顯示單位"},          {"Show/Hide Frames", "顯示/隱藏框架"},
+    {"Show Node List", "顯示節點列表"},      {"Hide Node List", "隱藏節點列表"},
+    {"Show NL - Last Heard", "顯示 NL-最後聽到"}, {"Hide NL - Last Heard", "隱藏 NL-最後聽到"},
+    {"Show NL - Hops/Signal", "顯示 NL-跳數/訊號"}, {"Hide NL - Hops/Signal", "隱藏 NL-跳數/訊號"},
+    {"Show NL - Distance", "顯示 NL-距離"},   {"Hide NL - Distance", "隱藏 NL-距離"},
+    {"Show Bearings", "顯示方位"},          {"Hide Bearings", "隱藏方位"},
+    {"Show Position", "顯示位置"},          {"Hide Position", "隱藏位置"},
+    {"Show LoRa", "顯示 LoRa"},             {"Hide LoRa", "隱藏 LoRa"},
+    {"Show Clock", "顯示時鐘"},             {"Hide Clock", "隱藏時鐘"},
+    {"Show Favorites", "顯示最愛"},         {"Hide Favorites", "隱藏最愛"},
+    {"Show Telemetry", "顯示遙測"},         {"Hide Telemetry", "隱藏遙測"},
+    {"Show Power", "顯示電源"},             {"Hide Power", "隱藏電源"},
+    {"Finish", "完成"},                     {"Metric", "公制"},               {"Imperial", "英制"},
+    {" Select display units", "選擇顯示單位"}, {"Hidden Test Menu", "隱藏測試選單"},
+    {"Number Picker", "選擇數字"},          {"Show Chirpy", "顯示 Chirpy"},  {"Hide Chirpy", "隱藏 Chirpy"},
+    {"Pick a number\n ", "挑選一個數字\n "},
+    {"Home", "首頁"},                       {"Home Action", "首頁操作"},
+    {"Sleep Screen", "關閉螢幕"},           {"Send Position", "傳送位置"},    {"Send Node Info", "傳送節點資訊"},
+    {"LoRa Actions", "LoRa 操作"},          {"Clock Action", "時鐘設定"},     {"Which Face?", "選擇錶面"},
+    {"Pick 時區", "選擇時區"},              {"Set the LoRa region", "設定 LoRa 區域"},
+    {"Accept", "接受"},                     {"Reject", "拒絕"},              {"Dismiss", "關閉"},
+    {"Reply Preset", "回覆預設"},            {"Reply via Preset", "以預設回覆"}, {"Reply via Freetext", "以自由文字回覆"},
+    {"Read Aloud", "語音朗讀"},             {"Too Many Attempts\nTry again in 60 seconds.", "嘗試過多，60 秒後重試。"},
+    {"WiFi Menu", "WiFi 選單"},             {"Frame Visiblity Toggle", "顯示/隱藏畫面"},
+    {"Screen brightness set to %d", "螢幕亮度設為 %d"}, {"Home Action", "首頁操作"},
+    {"No Lock", "失去衛星定位"},            {"No Sats", "失去衛星定位"},     {"No sats", "失去衛星定位"},
+    {"No GPS", "未偵測到 GPS"},            {"GPS off", "GPS 關閉"},        {"GPS not present", "未偵測到 GPS"},
+    {"GPS is disabled", "GPS 已停用"},      {"Fixed", "固定"},               {"Fixed GPS", "固定座標"},
+    {"Altitude: %.0im", "高度: %.0im"},     {"Altitude: %.0fft", "高度: %.0fft"},
+    {"Alt: %.0im", "高度: %.0im"},          {"Alt: %.0fft", "高度: %.0fft"},
+    {"Up: %ud %uh", "上線: %ud 天 %uh 小時"}, {"Up: %uh %um", "上線: %uh 小時 %um 分"}, {"Up: %um", "上線: %um 分"},
+    {"Uptime: %ud %uh", "上線: %ud 天 %uh 小時"}, {"Uptime: %uh %um", "上線: %uh 小時 %um 分"},
+    {"Uptime: %um", "上線: %um 分"},        {"online", "在線"},
+    {"Sig", "訊號"},                        {"%u sats", "%u 顆衛星"},
+    {"[%d %s]", "[%d 跳]"},                 {"Hop", "跳"},                  {"Hops", "跳"},
+    {"ChUtil:", "頻寬使用率:"},             {"Home", "首頁"},               {"LoRa Actions", "LoRa 操作"},
+    {"Clock Action", "時鐘設定"},           {"Which Face?", "選擇錶面"},     {"Pick 時區", "選擇時區"},
+    {"Set the LoRa region", "設定 LoRa 區域"}, {"New Preset Msg", "罐頭訊息"},
+    {"Key Verification", "交換 PSK"},        {"Position", "位置"},
+    {"Position Action", "定位操作"},        {"Send Position", "傳送位置"},   {"Send Node Info", "傳送節點資訊"},
+    {"Verification: \\n", "交換 PSK：\\n"},
+};
+
+const char *translateZh(const char *text)
+{
+    if (!text)
+        return "";
+    // Trim leading/trailing whitespace/newlines for lookup
+    std::string key(text);
+    auto l = key.find_first_not_of(" \r\n\t");
+    if (l == std::string::npos)
+        return text;
+    auto r = key.find_last_not_of(" \r\n\t");
+    key = key.substr(l, r - l + 1);
+    for (const auto &e : zhTable) {
+        if (key == e.en)
+            return e.zh;
+    }
+    return text;
+}
+
+// =======================
+// HermesX mixed-text helpers
+// =======================
+int stringWidthMixed(OLEDDisplay *display, const char *text, int advanceX)
+{
+    if (!display || !text)
+        return 0;
+    const char *zh = translateZh(text);
+    return HermesX_zh::stringAdvance(zh, advanceX, display);
+}
+
+void drawStringMixed(OLEDDisplay *display, int16_t x, int16_t y, const char *text, int lineHeight)
+{
+    if (!display || !text)
+        return;
+
+    const char *zh = translateZh(text);
+    HermesX_zh::drawMixed(*display, x, y, zh, HermesX_zh::GLYPH_WIDTH, lineHeight, nullptr);
+}
+
+void drawStringMixedCentered(OLEDDisplay *display, int16_t centerX, int16_t y, const char *text, int lineHeight)
+{
+    if (!display || !text)
+        return;
+    const char *zh = translateZh(text);
+    int width = stringWidthMixed(display, zh, HermesX_zh::GLYPH_WIDTH);
+    int startX = centerX - (width / 2);
+    drawStringMixed(display, startX, y, zh, lineHeight);
+}
+
+void drawStringMixedBounded(OLEDDisplay *display, int16_t x, int16_t y, int16_t maxWidth, const char *text,
+                            int lineHeight)
+{
+    if (!display || !text)
+        return;
+
+    const char *zh = translateZh(text);
+    HermesX_zh::drawMixedBounded(*display, x, y, maxWidth, zh, HermesX_zh::GLYPH_WIDTH, lineHeight, nullptr);
+}
 
 // === Internal State ===
 bool isBoltVisibleShared = true;
@@ -99,9 +248,9 @@ void drawCommonHeader(OLEDDisplay *display, int16_t x, int16_t y, const char *ti
 
         // === Screen Title ===
         display->setTextAlignment(TEXT_ALIGN_CENTER);
-        display->drawString(SCREEN_WIDTH / 2, y, titleStr);
+        drawStringMixedCentered(display, SCREEN_WIDTH / 2, y, titleStr, FONT_HEIGHT_SMALL);
         if (config.display.heading_bold) {
-            display->drawString((SCREEN_WIDTH / 2) + 1, y, titleStr);
+            drawStringMixedCentered(display, (SCREEN_WIDTH / 2) + 1, y, titleStr, FONT_HEIGHT_SMALL);
         }
     }
     display->setTextAlignment(TEXT_ALIGN_LEFT);

@@ -2,6 +2,7 @@
 #if HAS_SCREEN
 #include "ProtobufModule.h"
 #include "input/InputBroker.h"
+#include <cstddef>
 
 // ============================
 //        Enums & Defines
@@ -110,7 +111,7 @@ class CannedMessageModule : public SinglePortModule, public Observable<const UIF
 
     // === Transmission ===
     void sendText(NodeNum dest, ChannelIndex channel, const char *message, bool wantReplies);
-    void drawHeader(OLEDDisplay *display, int16_t x, int16_t y, char *buffer);
+    void drawHeader(OLEDDisplay *display, int16_t x, int16_t y, char *buffer, size_t bufferSize);
     int splitConfiguredMessages();
     int getNextIndex();
     int getPrevIndex();

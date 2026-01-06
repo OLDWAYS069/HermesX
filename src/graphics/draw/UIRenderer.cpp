@@ -78,9 +78,9 @@ void UIRenderer::drawGps(OLEDDisplay *display, int16_t x, int16_t y, const mesht
         snprintf(textString, sizeof(textString), "%u sats", gps->getNumSatellites());
     }
     if (isHighResolution) {
-        display->drawString(x + 18, y, textString);
+        drawStringMixed(display,x + 18, y, textString);
     } else {
-        display->drawString(x + 11, y, textString);
+        drawStringMixed(display,x + 11, y, textString);
     }
 }
 
@@ -91,13 +91,13 @@ void UIRenderer::drawGpsPowerStatus(OLEDDisplay *display, int16_t x, int16_t y, 
     int pos;
     if (y < FONT_HEIGHT_SMALL) { // Line 1: use short string
         displayLine = config.position.gps_mode == meshtastic_Config_PositionConfig_GpsMode_NOT_PRESENT ? "No GPS" : "GPS off";
-        pos = display->getWidth() - display->getStringWidth(displayLine);
+        pos = display->getWidth() - stringWidthMixed(display,displayLine);
     } else {
         displayLine = config.position.gps_mode == meshtastic_Config_PositionConfig_GpsMode_NOT_PRESENT ? "GPS not present"
                                                                                                        : "GPS is disabled";
-        pos = (display->getWidth() - display->getStringWidth(displayLine)) / 2;
+        pos = (display->getWidth() - stringWidthMixed(display,displayLine)) / 2;
     }
-    display->drawString(x + pos, y, displayLine);
+    drawStringMixed(display,x + pos, y, displayLine);
 }
 
 void UIRenderer::drawGpsAltitude(OLEDDisplay *display, int16_t x, int16_t y, const meshtastic::GPSStatus *gps)
@@ -105,17 +105,17 @@ void UIRenderer::drawGpsAltitude(OLEDDisplay *display, int16_t x, int16_t y, con
     char displayLine[32];
     if (!gps->getIsConnected() && !config.position.fixed_position) {
         // displayLine = "No GPS Module";
-        // display->drawString(x + (SCREEN_WIDTH - (display->getStringWidth(displayLine))) / 2, y, displayLine);
+        // drawStringMixed(display,x + (SCREEN_WIDTH - (stringWidthMixed(display,displayLine))) / 2, y, displayLine);
     } else if (!gps->getHasLock() && !config.position.fixed_position) {
         // displayLine = "No GPS Lock";
-        // display->drawString(x + (SCREEN_WIDTH - (display->getStringWidth(displayLine))) / 2, y, displayLine);
+        // drawStringMixed(display,x + (SCREEN_WIDTH - (stringWidthMixed(display,displayLine))) / 2, y, displayLine);
     } else {
         geoCoord.updateCoords(int32_t(gps->getLatitude()), int32_t(gps->getLongitude()), int32_t(gps->getAltitude()));
         if (config.display.units == meshtastic_Config_DisplayConfig_DisplayUnits_IMPERIAL)
             snprintf(displayLine, sizeof(displayLine), "Altitude: %.0fft", geoCoord.getAltitude() * METERS_TO_FEET);
         else
             snprintf(displayLine, sizeof(displayLine), "Altitude: %.0im", geoCoord.getAltitude());
-        display->drawString(x + (display->getWidth() - (display->getStringWidth(displayLine))) / 2, y, displayLine);
+        drawStringMixed(display,x + (display->getWidth() - (stringWidthMixed(display,displayLine))) / 2, y, displayLine);
     }
 }
 
@@ -129,12 +129,12 @@ void UIRenderer::drawGpsCoordinates(OLEDDisplay *display, int16_t x, int16_t y, 
     if (!gps->getIsConnected() && !config.position.fixed_position) {
         if (strcmp(mode, "line1") == 0) {
             strcpy(displayLine, "No GPS present");
-            display->drawString(x, y, displayLine);
+            drawStringMixed(display,x, y, displayLine);
         }
     } else if (!gps->getHasLock() && !config.position.fixed_position) {
         if (strcmp(mode, "line1") == 0) {
             strcpy(displayLine, "No GPS Lock");
-            display->drawString(x, y, displayLine);
+            drawStringMixed(display,x, y, displayLine);
         }
     } else {
 
@@ -213,13 +213,13 @@ void UIRenderer::drawGpsCoordinates(OLEDDisplay *display, int16_t x, int16_t y, 
             }
 
             if (strcmp(mode, "line1") == 0) {
-                display->drawString(x, y, coordinateLine_1);
+                drawStringMixed(display,x, y, coordinateLine_1);
             } else if (strcmp(mode, "line2") == 0) {
-                display->drawString(x, y, coordinateLine_2);
+                drawStringMixed(display,x, y, coordinateLine_2);
             } else if (strcmp(mode, "combined") == 0) {
-                display->drawString(x, y, coordinateLine_1);
+                drawStringMixed(display,x, y, coordinateLine_1);
                 if (coordinateLine_2[0] != '\0') {
-                    display->drawString(x + display->getStringWidth(coordinateLine_1), y, coordinateLine_2);
+                    drawStringMixed(display,x + stringWidthMixed(display,coordinateLine_1), y, coordinateLine_2);
                 }
             }
 
@@ -231,12 +231,12 @@ void UIRenderer::drawGpsCoordinates(OLEDDisplay *display, int16_t x, int16_t y, 
             snprintf(coordinateLine_2, sizeof(coordinateLine_2), "Lon: %3i° %2i' %2u\" %1c", geoCoord.getDMSLonDeg(),
                      geoCoord.getDMSLonMin(), geoCoord.getDMSLonSec(), geoCoord.getDMSLonCP());
             if (strcmp(mode, "line1") == 0) {
-                display->drawString(x, y, coordinateLine_1);
+                drawStringMixed(display,x, y, coordinateLine_1);
             } else if (strcmp(mode, "line2") == 0) {
-                display->drawString(x, y, coordinateLine_2);
+                drawStringMixed(display,x, y, coordinateLine_2);
             } else { // both
-                display->drawString(x, y, coordinateLine_1);
-                display->drawString(x, y + 10, coordinateLine_2);
+                drawStringMixed(display,x, y, coordinateLine_1);
+                drawStringMixed(display,x, y + 10, coordinateLine_2);
             }
         }
     }
@@ -274,7 +274,7 @@ void UIRenderer::drawNodes(OLEDDisplay *display, int16_t x, int16_t y, const mes
     }
 #endif
     int string_offset = (isHighResolution) ? 9 : 0;
-    display->drawString(x + 10 + string_offset, y - 2, usersString);
+    drawStringMixed(display,x + 10 + string_offset, y - 2, usersString);
 }
 
 // **********************
@@ -330,7 +330,7 @@ void UIRenderer::drawNodeInfo(OLEDDisplay *display, const OLEDDisplayUiState *st
     if (username) {
         usernameStr = sanitizeString(username); // Sanitize the incoming long_name just in case
         // Print node's long name (e.g. "Backpack Node")
-        display->drawString(x, getTextPositions(display)[line++], usernameStr.c_str());
+        drawStringMixed(display,x, getTextPositions(display)[line++], usernameStr.c_str());
     }
 
     // === 2. Signal and Hops (combined on one line, if available) ===
@@ -361,7 +361,7 @@ void UIRenderer::drawNodeInfo(OLEDDisplay *display, const OLEDDisplayUiState *st
         }
     }
     if (signalHopsStr[0] && line < 5) {
-        display->drawString(x, getTextPositions(display)[line++], signalHopsStr);
+        drawStringMixed(display,x, getTextPositions(display)[line++], signalHopsStr);
     }
 
     // === 3. Heard (last seen, skip if node never seen) ===
@@ -379,7 +379,7 @@ void UIRenderer::drawNodeInfo(OLEDDisplay *display, const OLEDDisplayUiState *st
                           : 'm'));
     }
     if (seenStr[0] && line < 5) {
-        display->drawString(x, getTextPositions(display)[line++], seenStr);
+        drawStringMixed(display,x, getTextPositions(display)[line++], seenStr);
     }
 #if !defined(M5STACK_UNITC6L)
     // === 4. Uptime (only show if metric is present) ===
@@ -398,7 +398,7 @@ void UIRenderer::drawNodeInfo(OLEDDisplay *display, const OLEDDisplayUiState *st
             snprintf(uptimeStr, sizeof(uptimeStr), " Uptime: %um", mins);
     }
     if (uptimeStr[0] && line < 5) {
-        display->drawString(x, getTextPositions(display)[line++], uptimeStr);
+        drawStringMixed(display,x, getTextPositions(display)[line++], uptimeStr);
     }
 
     // === 5. Distance (only if both nodes have GPS position) ===
@@ -458,7 +458,7 @@ void UIRenderer::drawNodeInfo(OLEDDisplay *display, const OLEDDisplayUiState *st
     }
     // Only display if we actually have a value!
     if (haveDistance && distStr[0] && line < 5) {
-        display->drawString(x, getTextPositions(display)[line++], distStr);
+        drawStringMixed(display,x, getTextPositions(display)[line++], distStr);
     }
 
     // --- Compass Rendering: landscape (wide) screens use the original side-aligned logic ---
@@ -607,7 +607,7 @@ void UIRenderer::drawDeviceFocused(OLEDDisplay *display, OLEDDisplayUiState *sta
     else
         snprintf(uptimeStr, sizeof(uptimeStr), "Up: %um", mins);
 #endif
-    display->drawString(SCREEN_WIDTH - display->getStringWidth(uptimeStr), getTextPositions(display)[line++], uptimeStr);
+    drawStringMixed(display,SCREEN_WIDTH - stringWidthMixed(display,uptimeStr), getTextPositions(display)[line++], uptimeStr);
 
     // === Second Row: Satellites and Voltage ===
     config.display.heading_bold = false;
@@ -629,7 +629,7 @@ void UIRenderer::drawDeviceFocused(OLEDDisplay *display, OLEDDisplayUiState *sta
                              imgSatellite);
         }
         int xOffset = (isHighResolution) ? 6 : 0;
-        display->drawString(x + 11 + xOffset, getTextPositions(display)[line], displayLine);
+        drawStringMixed(display,x + 11 + xOffset, getTextPositions(display)[line], displayLine);
     } else {
         UIRenderer::drawGps(display, 0, getTextPositions(display)[line], gpsStatus);
     }
@@ -646,18 +646,18 @@ void UIRenderer::drawDeviceFocused(OLEDDisplay *display, OLEDDisplayUiState *sta
              graphics::UIRenderer::haveGlyphs(owner.short_name) ? owner.short_name : "");
 
     // === ShortName Centered ===
-    textWidth = display->getStringWidth(shortnameble);
+    textWidth = stringWidthMixed(display,shortnameble);
     nameX = (SCREEN_WIDTH - textWidth) / 2;
-    display->drawString(nameX, getTextPositions(display)[line++], shortnameble);
+    drawStringMixed(display,nameX, getTextPositions(display)[line++], shortnameble);
 #else
     if (powerStatus->getHasBattery()) {
         char batStr[20];
         int batV = powerStatus->getBatteryVoltageMv() / 1000;
         int batCv = (powerStatus->getBatteryVoltageMv() % 1000) / 10;
         snprintf(batStr, sizeof(batStr), "%01d.%02dV", batV, batCv);
-        display->drawString(x + SCREEN_WIDTH - display->getStringWidth(batStr), getTextPositions(display)[line++], batStr);
+        drawStringMixed(display,x + SCREEN_WIDTH - stringWidthMixed(display,batStr), getTextPositions(display)[line++], batStr);
     } else {
-        display->drawString(x + SCREEN_WIDTH - display->getStringWidth("USB"), getTextPositions(display)[line++], "USB");
+        drawStringMixed(display,x + SCREEN_WIDTH - stringWidthMixed(display,"USB"), getTextPositions(display)[line++], "USB");
     }
 
     config.display.heading_bold = origBold;
@@ -667,7 +667,7 @@ void UIRenderer::drawDeviceFocused(OLEDDisplay *display, OLEDDisplayUiState *sta
     char chUtilPercentage[10];
     snprintf(chUtilPercentage, sizeof(chUtilPercentage), "%2.0f%%", airTime->channelUtilizationPercent());
 
-    int chUtil_x = (isHighResolution) ? display->getStringWidth(chUtil) + 10 : display->getStringWidth(chUtil) + 5;
+    int chUtil_x = (isHighResolution) ? stringWidthMixed(display,chUtil) + 10 : stringWidthMixed(display,chUtil) + 5;
     int chUtil_y = getTextPositions(display)[line] + 3;
 
     int chutil_bar_width = (isHighResolution) ? 100 : 50;
@@ -686,13 +686,13 @@ void UIRenderer::drawDeviceFocused(OLEDDisplay *display, OLEDDisplayUiState *sta
     int chutil_percent = airTime->channelUtilizationPercent();
 
     int centerofscreen = SCREEN_WIDTH / 2;
-    int total_line_content_width = (chUtil_x + chutil_bar_width + display->getStringWidth(chUtilPercentage) + extraoffset) / 2;
+    int total_line_content_width = (chUtil_x + chutil_bar_width + stringWidthMixed(display,chUtilPercentage) + extraoffset) / 2;
     int starting_position = centerofscreen - total_line_content_width;
     if (!config.bluetooth.enabled) {
         starting_position = 0;
     }
 
-    display->drawString(starting_position, getTextPositions(display)[line], chUtil);
+    drawStringMixed(display,starting_position, getTextPositions(display)[line], chUtil);
 
     // Force 56% or higher to show a full 100% bar, text would still show related percent.
     if (chutil_percent >= 61) {
@@ -729,11 +729,11 @@ void UIRenderer::drawDeviceFocused(OLEDDisplay *display, OLEDDisplayUiState *sta
         display->fillRect(starting_position + chUtil_x, chUtil_y, fillRight, chutil_bar_height);
     }
 
-    display->drawString(starting_position + chUtil_x + chutil_bar_width + extraoffset, getTextPositions(display)[line],
+    drawStringMixed(display,starting_position + chUtil_x + chutil_bar_width + extraoffset, getTextPositions(display)[line],
                         chUtilPercentage);
 
     if (!config.bluetooth.enabled) {
-        display->drawString(SCREEN_WIDTH - display->getStringWidth("BT off"), getTextPositions(display)[line], "BT off");
+        drawStringMixed(display,SCREEN_WIDTH - stringWidthMixed(display,"BT off"), getTextPositions(display)[line], "BT off");
     }
 
     line += 1;
@@ -753,25 +753,25 @@ void UIRenderer::drawDeviceFocused(OLEDDisplay *display, OLEDDisplayUiState *sta
 
     char combinedName[50];
     snprintf(combinedName, sizeof(combinedName), "%s (%s)", longNameStr.empty() ? "" : longNameStr.c_str(), shortnameble);
-    if (SCREEN_WIDTH - (display->getStringWidth(combinedName)) > 10) {
+    if (SCREEN_WIDTH - (stringWidthMixed(display,combinedName)) > 10) {
         size_t len = strlen(combinedName);
         if (len >= 3 && strcmp(combinedName + len - 3, " ()") == 0) {
             combinedName[len - 3] = '\0'; // Remove the last three characters
         }
-        textWidth = display->getStringWidth(combinedName);
+        textWidth = stringWidthMixed(display,combinedName);
         nameX = (SCREEN_WIDTH - textWidth) / 2;
-        display->drawString(
+        drawStringMixed(display,
             nameX, ((rows == 4) ? getTextPositions(display)[line++] : getTextPositions(display)[line++]) + yOffset, combinedName);
     } else {
         // === LongName Centered ===
-        textWidth = display->getStringWidth(longNameStr.c_str());
+        textWidth = stringWidthMixed(display,longNameStr.c_str());
         nameX = (SCREEN_WIDTH - textWidth) / 2;
-        display->drawString(nameX, getTextPositions(display)[line++], longNameStr.c_str());
+        drawStringMixed(display,nameX, getTextPositions(display)[line++], longNameStr.c_str());
 
         // === ShortName Centered ===
-        textWidth = display->getStringWidth(shortnameble);
+        textWidth = stringWidthMixed(display,shortnameble);
         nameX = (SCREEN_WIDTH - textWidth) / 2;
-        display->drawString(nameX, getTextPositions(display)[line++], shortnameble);
+        drawStringMixed(display,nameX, getTextPositions(display)[line++], shortnameble);
     }
 #endif
     graphics::drawCommonFooter(display, x, y);
@@ -829,7 +829,7 @@ int UIRenderer::formatDateTime(char *buf, size_t bufSize, uint32_t rtc_sec, OLED
         snprintf(buf, bufSize, "%04d-%02d-%02d", year, month + 1, day);
     }
 
-    return display->getStringWidth(buf);
+    return stringWidthMixed(display,buf);
 }
 
 // Check if the display can render a string (detect special chars; emoji)
@@ -888,8 +888,8 @@ void UIRenderer::drawScreensaverOverlay(OLEDDisplay *display, OLEDDisplayUiState
     constexpr uint8_t dividerGap = 1;
 
     // Text widths
-    const uint16_t idTextWidth = display->getStringWidth(idText, strlen(idText), true);
-    const uint16_t pauseTextWidth = display->getStringWidth(pauseText, strlen(pauseText));
+    const uint16_t idTextWidth = stringWidthMixed(display,idText, strlen(idText), true);
+    const uint16_t pauseTextWidth = stringWidthMixed(display,pauseText, strlen(pauseText));
     const uint16_t boxWidth = padding + (useId ? idTextWidth + padding : 0) + pauseTextWidth + padding;
     const uint16_t boxHeight = FONT_HEIGHT_SMALL + (padding * 2);
 
@@ -913,9 +913,9 @@ void UIRenderer::drawScreensaverOverlay(OLEDDisplay *display, OLEDDisplayUiState
 
     // Draw: text
     if (useId)
-        display->drawString(idTextLeft, idTextTop, idText);
-    display->drawString(pauseTextLeft, pauseTextTop, pauseText);
-    display->drawString(pauseTextLeft + 1, pauseTextTop, pauseText); // Faux bold
+        drawStringMixed(display,idTextLeft, idTextTop, idText);
+    drawStringMixed(display,pauseTextLeft, pauseTextTop, pauseText);
+    drawStringMixed(display,pauseTextLeft + 1, pauseTextTop, pauseText); // Faux bold
 
     // Draw: divider
     if (useId)
@@ -940,17 +940,17 @@ void UIRenderer::drawIconScreen(const char *upperMsg, OLEDDisplay *display, OLED
     display->setFont(FONT_SMALL);
     // Draw region in upper left
     if (upperMsg) {
-        int msgWidth = display->getStringWidth(upperMsg);
+        int msgWidth = stringWidthMixed(display,upperMsg);
         int msgX = x + (SCREEN_WIDTH - msgWidth) / 2;
         int msgY = y;
-        display->drawString(msgX, msgY, upperMsg);
+        drawStringMixed(display,msgX, msgY, upperMsg);
     }
     // Draw version and short name in bottom middle
     char buf[25];
     snprintf(buf, sizeof(buf), "%s   %s", xstr(APP_VERSION_SHORT),
              graphics::UIRenderer::haveGlyphs(owner.short_name) ? owner.short_name : "");
 
-    display->drawString(x + getStringCenteredX(buf), y + SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM, buf);
+    drawStringMixed(display,x + getStringCenteredX(buf), y + SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM, buf);
     screen->forceDisplay();
 
     display->setTextAlignment(TEXT_ALIGN_LEFT); // Restore left align, just to be kind to any other unsuspecting code
@@ -961,11 +961,11 @@ void UIRenderer::drawIconScreen(const char *upperMsg, OLEDDisplay *display, OLED
     display->setFont(FONT_MEDIUM);
     display->setTextAlignment(TEXT_ALIGN_LEFT);
     const char *title = "meshtastic.org";
-    display->drawString(x + getStringCenteredX(title), y + SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM, title);
+    drawStringMixed(display,x + getStringCenteredX(title), y + SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM, title);
     display->setFont(FONT_SMALL);
     // Draw region in upper left
     if (upperMsg)
-        display->drawString(x + 0, y + 0, upperMsg);
+        drawStringMixed(display,x + 0, y + 0, upperMsg);
 
     // Draw version and short name in upper right
     char buf[25];
@@ -973,7 +973,7 @@ void UIRenderer::drawIconScreen(const char *upperMsg, OLEDDisplay *display, OLED
              graphics::UIRenderer::haveGlyphs(owner.short_name) ? owner.short_name : "");
 
     display->setTextAlignment(TEXT_ALIGN_RIGHT);
-    display->drawString(x + SCREEN_WIDTH, y + 0, buf);
+    drawStringMixed(display,x + SCREEN_WIDTH, y + 0, buf);
     screen->forceDisplay();
 
     display->setTextAlignment(TEXT_ALIGN_LEFT); // Restore left align, just to be kind to any other unsuspecting code
@@ -1017,7 +1017,7 @@ void UIRenderer::drawCompassAndLocationScreen(OLEDDisplay *display, OLEDDisplayU
                              imgSatellite);
         }
         int xOffset = (isHighResolution) ? 6 : 0;
-        display->drawString(x + 11 + xOffset, getTextPositions(display)[line++], displayLine);
+        drawStringMixed(display,x + 11 + xOffset, getTextPositions(display)[line++], displayLine);
     } else {
         // Onboard GPS
         UIRenderer::drawGps(display, 0, getTextPositions(display)[line++], gpsStatus);
@@ -1077,9 +1077,9 @@ void UIRenderer::drawCompassAndLocationScreen(OLEDDisplay *display, OLEDDisplayU
             }
 #endif
 
-            display->drawString(0, getTextPositions(display)[line++], buf);
+            drawStringMixed(display,0, getTextPositions(display)[line++], buf);
         } else {
-            display->drawString(0, getTextPositions(display)[line++], "Last: ?");
+            drawStringMixed(display,0, getTextPositions(display)[line++], "Last: ?");
         }
 
         // === Third Row: Line 1 GPS Info ===
@@ -1099,7 +1099,7 @@ void UIRenderer::drawCompassAndLocationScreen(OLEDDisplay *display, OLEDDisplayU
         } else {
             snprintf(altitudeLine, sizeof(altitudeLine), "Alt: %.0im", alt);
         }
-        display->drawString(x, getTextPositions(display)[line++], altitudeLine);
+        drawStringMixed(display,x, getTextPositions(display)[line++], altitudeLine);
     }
 #if !defined(M5STACK_UNITC6L)
     // === Draw Compass if heading is valid ===
@@ -1129,7 +1129,7 @@ void UIRenderer::drawCompassAndLocationScreen(OLEDDisplay *display, OLEDDisplayU
             float radius = compassRadius;
             int16_t nX = compassX + (radius - 1) * sin(northAngle);
             int16_t nY = compassY - (radius - 1) * cos(northAngle);
-            int16_t nLabelWidth = display->getStringWidth("N") + 2;
+            int16_t nLabelWidth = stringWidthMixed(display,"N") + 2;
             int16_t nLabelHeightBox = FONT_HEIGHT_SMALL + 1;
 
             display->setColor(BLACK);
@@ -1137,7 +1137,7 @@ void UIRenderer::drawCompassAndLocationScreen(OLEDDisplay *display, OLEDDisplayU
             display->setColor(WHITE);
             display->setFont(FONT_SMALL);
             display->setTextAlignment(TEXT_ALIGN_CENTER);
-            display->drawString(nX, nY - FONT_HEIGHT_SMALL / 2, "N");
+            drawStringMixed(display,nX, nY - FONT_HEIGHT_SMALL / 2, "N");
         } else {
             // Portrait or square: put compass at the bottom and centered, scaled to fit available space
             // For E-Ink screens, account for navigation bar at the bottom!
@@ -1172,7 +1172,7 @@ void UIRenderer::drawCompassAndLocationScreen(OLEDDisplay *display, OLEDDisplayU
             float radius = compassRadius;
             int16_t nX = compassX + (radius - 1) * sin(northAngle);
             int16_t nY = compassY - (radius - 1) * cos(northAngle);
-            int16_t nLabelWidth = display->getStringWidth("N") + 2;
+            int16_t nLabelWidth = stringWidthMixed(display,"N") + 2;
             int16_t nLabelHeightBox = FONT_HEIGHT_SMALL + 1;
 
             display->setColor(BLACK);
@@ -1180,7 +1180,7 @@ void UIRenderer::drawCompassAndLocationScreen(OLEDDisplay *display, OLEDDisplayU
             display->setColor(WHITE);
             display->setFont(FONT_SMALL);
             display->setTextAlignment(TEXT_ALIGN_CENTER);
-            display->drawString(nX, nY - FONT_HEIGHT_SMALL / 2, "N");
+            drawStringMixed(display,nX, nY - FONT_HEIGHT_SMALL / 2, "N");
         }
     }
 #endif
@@ -1219,20 +1219,20 @@ void UIRenderer::drawOEMIconScreen(const char *upperMsg, OLEDDisplay *display, O
     display->setTextAlignment(TEXT_ALIGN_LEFT);
     const char *title = USERPREFS_OEM_TEXT;
     if (isHighResolution) {
-        display->drawString(x + getStringCenteredX(title), y + SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM, title);
+        drawStringMixed(display,x + getStringCenteredX(title), y + SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM, title);
     }
     display->setFont(FONT_SMALL);
 
     // Draw region in upper left
     if (upperMsg)
-        display->drawString(x + 0, y + 0, upperMsg);
+        drawStringMixed(display,x + 0, y + 0, upperMsg);
 
     // Draw version and shortname in upper right
     char buf[25];
     snprintf(buf, sizeof(buf), "%s\n%s", xstr(APP_VERSION_SHORT), haveGlyphs(owner.short_name) ? owner.short_name : "");
 
     display->setTextAlignment(TEXT_ALIGN_RIGHT);
-    display->drawString(x + SCREEN_WIDTH, y + 0, buf);
+    drawStringMixed(display,x + SCREEN_WIDTH, y + 0, buf);
     screen->forceDisplay();
 
     display->setTextAlignment(TEXT_ALIGN_LEFT); // Restore left align, just to be kind to any other unsuspecting code
@@ -1400,7 +1400,7 @@ void UIRenderer::drawFrameText(OLEDDisplay *display, OLEDDisplayUiState *state, 
     uint16_t x_offset = display->width() / 2;
     display->setTextAlignment(TEXT_ALIGN_CENTER);
     display->setFont(FONT_MEDIUM);
-    display->drawString(x_offset + x, 26 + y, message);
+    drawStringMixed(display,x_offset + x, 26 + y, message);
 }
 
 void UIRenderer::drawHermesXBootScreen(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
@@ -1413,12 +1413,12 @@ void UIRenderer::drawHermesXBootScreen(OLEDDisplay *display, OLEDDisplayUiState 
     display->setFont(FONT_SMALL);
     const char *region = myRegion ? myRegion->name : nullptr;
     if (region) {
-        display->drawString(x + 0, y + 0, region);
+        drawStringMixed(display,x + 0, y + 0, region);
     }
-    // 右上角顯示 HermesX 版本（取代官方版本）
+    // 右上角顯示版本號
     display->setTextAlignment(TEXT_ALIGN_RIGHT);
     display->setFont(FONT_SMALL);
-    display->drawString(x + SCREEN_WIDTH, y + 0, "HXB_B0.3.0");
+    drawStringMixed(display, x + SCREEN_WIDTH - 2, y + 0, "Ver: HXB_0.3.0");
 
     // 中央：HermesX logo（原圖等比例）
     const int16_t cx = x + SCREEN_WIDTH / 2;
@@ -1426,20 +1426,21 @@ void UIRenderer::drawHermesXBootScreen(OLEDDisplay *display, OLEDDisplayUiState 
     display->drawXbm(cx - (HERMESX_ICON_WIDTH / 2), cy - (HERMESX_ICON_HEIGHT / 2) - 4, HERMESX_ICON_WIDTH,
                      HERMESX_ICON_HEIGHT, hermesx_icon_bits);
 
-    // 左下角顯示 HXB 版本
+    // 左下角顯示 HermesX 名稱（小字）
     display->setFont(FONT_SMALL);
     display->setTextAlignment(TEXT_ALIGN_LEFT);
-    display->drawString(x + 2, y + SCREEN_HEIGHT - 8, xstr(APP_VERSION_DISPLAY));
+    drawStringMixed(display, x + 2, y + SCREEN_HEIGHT - FONT_HEIGHT_SMALL - 2, "HermesX");
 
-    // 裝置 ID 放右側中段，小字
-    display->setFont(FONT_SMALL);
+    // 右下角顯示裝置 ID（小字）
+    char idBuf[40];
+    snprintf(idBuf, sizeof(idBuf), "%s", screen->ourId);
     display->setTextAlignment(TEXT_ALIGN_RIGHT);
-    display->drawString(x + SCREEN_WIDTH - 2, cy - 4, screen->ourId);
+    drawStringMixed(display, x + SCREEN_WIDTH - 2, y + SCREEN_HEIGHT - FONT_HEIGHT_SMALL - 2, idBuf);
 
-    // 底部置中顯示 HermesX（縮小並上移）
+    // 中下方顯示版本字樣
     display->setTextAlignment(TEXT_ALIGN_CENTER);
-    display->setFont(FONT_MEDIUM);
-    display->drawString(cx, y + SCREEN_HEIGHT - 18, "HermesX");
+    display->setFont(FONT_SMALL);
+    drawStringMixed(display, cx, y + SCREEN_HEIGHT - (FONT_HEIGHT_SMALL * 2) - 2, "HXB_0.3.0");
 }
 
 std::string UIRenderer::drawTimeDelta(uint32_t days, uint32_t hours, uint32_t minutes, uint32_t seconds)

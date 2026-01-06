@@ -83,7 +83,7 @@ void VirtualKeyboard::draw(OLEDDisplay *display, int16_t offsetX, int16_t offset
 
     // Determine last-column label max width
     display->setFont(FONT_SMALL);
-    const int wENTER = display->getStringWidth("ENTER");
+    const int wENTER = stringWidthMixed(display,"ENTER");
     int lastColLabelW = wENTER; // ENTER is usually the widest
     // Smaller padding on very small screens to avoid excessive whitespace
     const int lastColPad = (screenW <= 128 ? 2 : 6);
@@ -198,7 +198,7 @@ void VirtualKeyboard::drawInputArea(OLEDDisplay *display, int16_t offsetX, int16
     int headerHeight = 0;
     if (!headerText.empty()) {
         // Draw header and reserve exact font height (plus a tighter gap) to maximize input area
-        display->drawString(offsetX + 2, offsetY, headerText.c_str());
+        drawStringMixed(display,offsetX + 2, offsetY, headerText.c_str());
         if (screenHeight <= 64) {
             headerHeight = FONT_HEIGHT_SMALL - 2; // 11px
         } else {
@@ -255,7 +255,7 @@ void VirtualKeyboard::drawInputArea(OLEDDisplay *display, int16_t offsetX, int16
             while (!remaining.empty()) {
                 int bestLen = 0;
                 for (int len = 1; len <= (int)remaining.size(); ++len) {
-                    int w = display->getStringWidth(remaining.substr(0, len).c_str());
+                    int w = stringWidthMixed(display,remaining.substr(0, len).c_str());
                     if (w <= maxTextWidth)
                         bestLen = len;
                     else
@@ -299,8 +299,8 @@ void VirtualKeyboard::drawInputArea(OLEDDisplay *display, int16_t offsetX, int16
 
         for (int i = 0; i < linesToShow; ++i) {
             const std::string &chunk = lines[startIndex + i];
-            display->drawString(textX, lineY, chunk.c_str());
-            caretX = textX + display->getStringWidth(chunk.c_str());
+            drawStringMixed(display,textX, lineY, chunk.c_str());
+            caretX = textX + stringWidthMixed(display,chunk.c_str());
             caretY = lineY;
             lineY += lineStep;
         }
@@ -327,27 +327,27 @@ void VirtualKeyboard::drawInputArea(OLEDDisplay *display, int16_t offsetX, int16
         }
     } else {
         std::string displayText = inputText;
-        int textW = display->getStringWidth(displayText.c_str());
+        int textW = stringWidthMixed(display,displayText.c_str());
         std::string scrolled = displayText;
         if (textW > maxTextWidth) {
             // Trim from the left until it fits
             while (textW > maxTextWidth && !scrolled.empty()) {
                 scrolled.erase(0, 1);
-                textW = display->getStringWidth(scrolled.c_str());
+                textW = stringWidthMixed(display,scrolled.c_str());
             }
             // Add leading ellipsis and ensure it still fits
             if (scrolled != displayText) {
                 scrolled = "..." + scrolled;
-                textW = display->getStringWidth(scrolled.c_str());
+                textW = stringWidthMixed(display,scrolled.c_str());
                 // If adding ellipsis causes overflow, trim more after the ellipsis
                 while (textW > maxTextWidth && scrolled.size() > 3) {
                     scrolled.erase(3, 1); // remove chars after the ellipsis
-                    textW = display->getStringWidth(scrolled.c_str());
+                    textW = stringWidthMixed(display,scrolled.c_str());
                 }
             }
         } else {
             // Keep textW in sync with what we draw
-            textW = display->getStringWidth(scrolled.c_str());
+            textW = stringWidthMixed(display,scrolled.c_str());
         }
 
         int textY;
@@ -371,7 +371,7 @@ void VirtualKeyboard::drawInputArea(OLEDDisplay *display, int16_t offsetX, int16
         }
 
         if (!scrolled.empty()) {
-            display->drawString(textX, textY, scrolled.c_str());
+            drawStringMixed(display,textX, textY, scrolled.c_str());
         }
 
         int cursorX = textX + textW;
@@ -433,7 +433,7 @@ void VirtualKeyboard::drawKey(OLEDDisplay *display, const VirtualKey &key, bool 
         keyText = (key.character == ' ' || key.character == '_') ? "_" : std::string(1, c);
     }
 
-    int textWidth = display->getStringWidth(keyText.c_str());
+    int textWidth = stringWidthMixed(display,keyText.c_str());
     // Label alignment
     // - Rightmost action column: right-align text with a small right padding (~2px) so it hugs screen edge neatly.
     // - Other keys: center horizontally; use ceil-style rounding to avoid appearing left-biased on odd widths.
@@ -506,7 +506,7 @@ void VirtualKeyboard::drawKey(OLEDDisplay *display, const VirtualKey &key, bool 
             centeredTextY -= 1;
         }
     }
-    display->drawString(textX, centeredTextY, keyText.c_str());
+    drawStringMixed(display,textX, centeredTextY, keyText.c_str());
 }
 
 char VirtualKeyboard::getCharForKey(const VirtualKey &key, bool isLongPress)

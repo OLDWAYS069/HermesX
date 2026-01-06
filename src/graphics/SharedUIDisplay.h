@@ -3,8 +3,14 @@
 #include <OLEDDisplay.h>
 #include <string>
 
+#include "graphics/ScreenFonts.h" // for FONT_HEIGHT_* macros
+#include "graphics/fonts/HermesX_zh/HermesX_CN12.h"
+
 namespace graphics
 {
+
+// Track last alignment set through helper
+extern OLEDDISPLAY_TEXT_ALIGNMENT lastTextAlignment;
 
 // =======================
 // Shared UI Helpers
@@ -60,5 +66,16 @@ const int *getTextPositions(OLEDDisplay *display);
 bool isAllowedPunctuation(char c);
 
 std::string sanitizeString(const std::string &input);
+
+// Translation table (zh-TW)
+const char *translateZh(const char *text);
+
+// HermesX: centralized mixed-text helpers (CN12 for Hanzi, current font for ASCII)
+int stringWidthMixed(OLEDDisplay *display, const char *text, int advanceX = HermesX_zh::GLYPH_WIDTH);
+void drawStringMixed(OLEDDisplay *display, int16_t x, int16_t y, const char *text, int lineHeight = FONT_HEIGHT_SMALL);
+void drawStringMixedCentered(OLEDDisplay *display, int16_t centerX, int16_t y, const char *text,
+                             int lineHeight = FONT_HEIGHT_SMALL);
+void drawStringMixedBounded(OLEDDisplay *display, int16_t x, int16_t y, int16_t maxWidth, const char *text,
+                            int lineHeight = FONT_HEIGHT_SMALL);
 
 } // namespace graphics

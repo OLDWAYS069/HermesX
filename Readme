@@ -17,6 +17,11 @@
 - 引入官方 2.7.15 的 UI/繪圖更新：新的 device-ui 套件與 Shared UI 管線（`SharedUIDisplay`、`ScreenGlobals`、`TimeFormatters`、`graphics/draw/`、`graphics/emotes` 等）。
 - E-ink / TFT / SDL 面板支援隨 2.7.15 更新，InkHUD 與驅動器版本對齊。
 
+## 中文顯示
+- 內建 CN12 字型，編譯不需額外旗標；移除 OLED_ZH/EM16 流程。
+- 罐頭訊息、訊息頁面、節點列表與標題列已改用混排繪製，可顯示中文；其餘頁面將逐步切換。
+- 若看到方框或截斷，請提供畫面名稱以便優先切換。
+
 ## 延續
 - 集中式 LED 管理、TAK 角色靜默、EM/SAFE 行為延續自 0.2.8。
 
