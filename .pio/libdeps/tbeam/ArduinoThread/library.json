@@ -1,0 +1,13 @@
+{
+    "name": "ArduinoThread",
+    "keywords": "thread, task",
+    "description": "A library for managing the periodic execution of multiple tasks. Forked from ivanseidel/ArduinoThread",
+    "repository":
+    {
+        "type": "git",
+        "url": "https://github.com/meshtastic/ArduinoThread.git"
+    },
+    "frameworks": "arduino",
+    "headers": ["Thread.h", "ThreadController.h","StaticThreadController.h"],
+    "platforms": "atmelavr"
+}
