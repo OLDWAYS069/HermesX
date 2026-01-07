@@ -137,3 +137,7 @@ This project is licensed under the MIT License.
 ![GitHub forks](https://img.shields.io/github/forks/OLDWAYS069/HermesX)
 ![GitHub watchers](https://img.shields.io/github/watchers/OLDWAYS069/HermesX)
 
+## 特別感謝
+- 感謝codeX在這六個月以來陪我熬過了無數日夜，幫我寫了一堆東西出來，雖然很多時候讓我很抓狂，但沒有你我不可能一個人完成這個項目。
+- ChatGPT你也有份啦，還有HermesTrack團隊的所有人
+- 我不可能一個人又要寫code又要畫設計圖還要叫貨進貨出貨。
