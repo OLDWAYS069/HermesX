@@ -1408,39 +1408,34 @@ void UIRenderer::drawHermesXBootScreen(OLEDDisplay *display, OLEDDisplayUiState 
     (void)state;
     display->clear();
 
-    // 上方：區域與版本資訊
+    // 上方：區域
     display->setTextAlignment(TEXT_ALIGN_LEFT);
     display->setFont(FONT_SMALL);
     const char *region = myRegion ? myRegion->name : nullptr;
     if (region) {
-        drawStringMixed(display,x + 0, y + 0, region);
+        drawStringMixed(display, x + 0, y + 0, region);
     }
-    // 右上角顯示版本號
-    display->setTextAlignment(TEXT_ALIGN_RIGHT);
-    display->setFont(FONT_SMALL);
-    drawStringMixed(display, x + SCREEN_WIDTH - 2, y + 0, "Ver: HXB_0.3.0");
 
-    // 中央：HermesX logo（原圖等比例）
+    // 中央：HermesX logo（原圖等比例），與舊版對齊
     const int16_t cx = x + SCREEN_WIDTH / 2;
-    const int16_t cy = y + SCREEN_HEIGHT / 2;
-    display->drawXbm(cx - (HERMESX_ICON_WIDTH / 2), cy - (HERMESX_ICON_HEIGHT / 2) - 4, HERMESX_ICON_WIDTH,
+    const int16_t cy = y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM) / 2 + 2;
+    display->drawXbm(cx - (HERMESX_ICON_WIDTH / 2), cy - (HERMESX_ICON_HEIGHT / 2), HERMESX_ICON_WIDTH,
                      HERMESX_ICON_HEIGHT, hermesx_icon_bits);
 
-    // 左下角顯示 HermesX 名稱（小字）
-    display->setFont(FONT_SMALL);
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-    drawStringMixed(display, x + 2, y + SCREEN_HEIGHT - FONT_HEIGHT_SMALL - 2, "HermesX");
-
-    // 右下角顯示裝置 ID（小字）
-    char idBuf[40];
-    snprintf(idBuf, sizeof(idBuf), "%s", screen->ourId);
+    // 右上角：版本號 + Node ID（兩行靠右，舊版樣式）
     display->setTextAlignment(TEXT_ALIGN_RIGHT);
-    drawStringMixed(display, x + SCREEN_WIDTH - 2, y + SCREEN_HEIGHT - FONT_HEIGHT_SMALL - 2, idBuf);
-
-    // 中下方顯示版本字樣
-    display->setTextAlignment(TEXT_ALIGN_CENTER);
     display->setFont(FONT_SMALL);
-    drawStringMixed(display, cx, y + SCREEN_HEIGHT - (FONT_HEIGHT_SMALL * 2) - 2, "HXB_0.3.0");
+    char buf[48];
+    snprintf(buf, sizeof(buf), "HXB_0.3.0\n%s", screen->ourId);
+    int bufWidth = stringWidthMixed(display, buf);
+    drawStringMixed(display, x + SCREEN_WIDTH - bufWidth, y + 0, buf);
+
+    // 底部置中：HermesX 標題（舊版位置）
+    display->setTextAlignment(TEXT_ALIGN_CENTER);
+    display->setFont(FONT_MEDIUM);
+    drawStringMixed(display, cx, y + SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM, "HermesX");
+
+    display->setTextAlignment(TEXT_ALIGN_LEFT); // restore default
 }
 
 std::string UIRenderer::drawTimeDelta(uint32_t days, uint32_t hours, uint32_t minutes, uint32_t seconds)
