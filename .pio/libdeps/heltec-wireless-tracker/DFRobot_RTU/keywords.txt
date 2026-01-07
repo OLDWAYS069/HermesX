@@ -1,0 +1,50 @@
+#######################################
+# Syntax Map For DFRobot_SCT80S16B
+#######################################
+
+#######################################
+# Datatypes (KEYWORD1)
+#######################################
+
+DFRobot_RTU	KEYWORD1
+
+#######################################
+# Methods and Functions (KEYWORD2)
+#######################################
+
+readCoilsRegisterBit	KEYWORD2
+readDiscreteInputsRegisterBit	KEYWORD2
+writeCoilsRegister	KEYWORD2
+readCoilsRegister	KEYWORD2
+readDiscreteInputsRegister	KEYWORD2
+readHoldingRegister	KEYWORD2
+writeHoldingRegister	KEYWORD2
+
+
+
+#######################################
+# Instances (KEYWORD2)
+#######################################
+
+
+#######################################
+# Constants (LITERAL1)
+#######################################
+eRTU_EXCEPTION_ILLEGAL_FUNCTION	LITERAL1
+eRTU_EXCEPTION_ILLEGAL_DATA_ADDRESS	LITERAL1
+eRTU_EXCEPTION_ILLEGAL_DATA_VALUE	LITERAL1
+eRTU_EXCEPTION_SLAVE_FAILURE	LITERAL1
+eRTU_EXCEPTION_CRC_ERROR	LITERAL1
+eRTU_RECV_ERROR	LITERAL1
+eRTU_MEMORY_ERROR	LITERAL1
+eRTU_ID_ERROR	LITERAL1
+eRtuStatusExceptionCode_t	LITERAL1
+eCMD_READ_COILS	LITERAL1
+eCMD_READ_DISCRETE	LITERAL1
+eCMD_READ_HOLDING	LITERAL1
+eCMD_WRITE_COILS	LITERAL1
+eCMD_WRITE_HOLDING	LITERAL1
+eCMD_WRITE_MULTI_COILS	LITERAL1
+eCMD_WRITE_MULTI_HOLDING	LITERAL1
+eFunctionCommand_t	LITERAL1
+RTU_BROADCAST_ADDRESS	LITERAL1

@@ -1,0 +1,35 @@
+
+#######################################
+# Syntax Map For DFRobot_RainfallSensor
+#######################################
+
+#######################################
+# Datatypes (KEYWORD1)
+#######################################
+
+DFRobot_RainfallSensor	KEYWORD1
+DFRobot_RainfallSensor_UART	KEYWORD1
+DFRobot_RainfallSensor_I2C	KEYWORD1
+
+#######################################
+# Methods and Functions (KEYWORD2)
+#######################################
+
+begin	KEYWORD2
+getFirmwareVersion	KEYWORD2
+getRainfall	KEYWORD2
+getRawData	KEYWORD2
+setRainAccumulatedValue	KEYWORD2
+getSensorWorkingTime	KEYWORD2
+
+#######################################
+# Instances (KEYWORD2)
+#######################################
+
+
+#######################################
+# Constants (LITERAL1)
+#######################################
+vid	LITERAL1
+pid	LITERAL1
+

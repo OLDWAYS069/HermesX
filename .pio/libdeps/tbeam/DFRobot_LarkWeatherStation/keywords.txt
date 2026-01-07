@@ -1,0 +1,37 @@
+#######################################
+# Syntax Coloring Map For DFRobot_Atmospherlum
+#######################################
+
+#######################################
+# Datatypes (KEYWORD1)
+#######################################
+
+DFRobot_LarkWeatherStation	KEYWORD1
+DFRobot_LarkWeatherStation_I2C	KEYWORD1
+DFRobot_LarkWeatherStation_UART	KEYWORD1
+
+#######################################
+# Methods and Functions (KEYWORD2)
+#######################################
+
+begin	KEYWORD2
+getUnit	KEYWORD2
+getValue	KEYWORD2
+getInformation	KEYWORD2
+setTime	KEYWORD2
+getTimeStamp	KEYWORD2
+setRadius	KEYWORD2
+setSpeed1	KEYWORD2
+setSpeed2	KEYWORD2
+calibrationSpeed	KEYWORD2
+
+#######################################
+# Instances (KEYWORD3)
+#######################################
+
+
+
+#######################################
+# Constants (LITERAL1)
+#######################################
+

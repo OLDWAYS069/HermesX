@@ -1,0 +1,24 @@
+{
+    "name": "libpax",
+    "version":"1.1.0",
+    "keywords": "libpax",
+    "description": "Library for PAX counting using BLE and WiFi",
+    "repository":
+    {
+      "type": "git",
+      "url": "https://github.com/dbSuS/libpax"
+    },
+    "authors":
+    [
+      {
+        "name":"Grey Rook GmbH",
+        "email":"info@greyrook.com"
+      }
+    ],
+    "frameworks": ["espidf", "arduino"],
+    "platforms": "espressif32",
+    "build": {
+      "includeDir": "lib/libpax",
+      "srcDir": "lib/libpax"
+    }
+  }
