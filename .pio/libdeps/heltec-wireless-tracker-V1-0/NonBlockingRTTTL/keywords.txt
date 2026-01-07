@@ -1,5 +1,0 @@
-NonBlockingRtttl	KEYWORD1
-begin	KEYWORD2
-play	KEYWORD2
-done	KEYWORD2
-isPlaying	KEYWORD2
