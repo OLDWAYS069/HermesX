@@ -1,51 +1,139 @@
-# HermesX Firmware
+ï»¿<div align="center" markdown="1">
 
-HermesX ¬O¤@´Ú«Ø¥ß¦b Meshtastic ¨ó§@ºô¸ô¤Wªº©w»s¶´Åé¡A±Mª`©óÅýÂ÷½u³q°T§óª½Ä±¡C³o¤@¥Nªº®Ö¤ß¥ô°È¬O±j¤Æ¤H¾÷¤¶­±¡G§Y¨Ï¨Ï¥ÎªÌ¤£®³¥X¤â¾÷¡A¤]¯à³z¹L¸Ë¸m¥»Åéªº±Û¶s¡BLED »P­µ®Ä§Ö³t´x´¤ª¬ºA¨Ã§¹¦¨°T®§¶Ç»¼¡C
+<img src="images/face.png" alt="HermesX Logo" width="96"/>
+<h1>HermesX Firmware</h1>
 
-## ¥\¯à«GÂI
-- **±Mª`ªº¾Þ§@ÅéÅç**¡G±j½Õ¡u©ï¤â§Y¥Î¡vªº¥æ¤¬¡A¤£»Ý¤â¾÷§Y¥iÂsÄýÅøÀY°T®§¨Ã§¹¦¨µo°e¡C
-- **µøÄ± + Å¥Ä±Âù³qª¾**¡GLED ª¬ºA±ø»P¹ïÀ³­µ®Ä¦@¦P¦^õX¡AÅý°T®§ª¬ºA¤@¥Ø¤FµM¡B¦Õ»D§Yª¾¡C
-- **HermesX «~µP¤Æ UI**¡G­±ªOªí±¡¡B°Êµe»P©R¦W¥þ­±²Î¤@¡A¥´³y¤@­Pªº¤¶­±ÃÑ§O¡C
+![GitHub release downloads](https://img.shields.io/github/downloads/OLDWAYS069/HermesX/total)
+[![CI](https://img.shields.io/github/actions/workflow/status/OLDWAYS069/HermesX/main_matrix.yml?branch=master&label=actions&logo=github&color=yellow)](https://github.com/OLDWAYS069/HermesX/actions/workflows/main_matrix.yml)
+[![License](https://img.shields.io/github/license/OLDWAYS069/HermesX)](LICENSE)
 
-## ¥~Æ[³]­p
-¥~´ß¹w¯d¤Ä¼Ñ¡A¥i·f°t D ¦©©Î±¾Ã·±N HermesX ©T©w©ó­I¥]¡B¯Ý±¾¡B¥Ö±a©Î¿Ç¤l¡A¯u¥¿°µ¨ìÀH¨­Äâ±a¡BÀH®É¨Ï¥Î¡C
+</div>
 
-## LED ª¬ºA±ø¦æ¬°
-| ª¬ºA | ÃC¦â»P°Êµe | »¡©ú |
-| --- | --- | --- |
-| «Ý¾÷ | ¾ï¦â¿O±ø¡B¦³¤@Áû«GÂI¨Ó¦^²¾°Ê | ¸Ë¸m³B©ó«Ý©R¦ý¥i¥ß§Y¾Þ§@¡C |
-| µo°e°T®§ | ¥Õ¦â«GÂI¦Û¤U¦Ó¤W¬y°Ê | ¥Ø«e¥¿¦bµo°e¨Ï¥ÎªÌ¿ï©wªº°T®§¡C |
-| ±µ¦¬°T®§ | ¥Õ¦â«GÂI¦Û¤W¦Ó¤U¬y°Ê | ¦¬¨ì¨ä¥L¸`ÂIªº°T®§¡C |
-| ¦¬¨ì¸`ÂI¸ê°T | ºñ¦â«GÂI¦Û¤W¦Ó¤U¬y°Ê | µo²{©Î§ó·sºô¸ô¸`ÂI¸ê°T¡C |
-| ¶Ç°T¦¨¥\ | ºñ¿O°{Ã{¤T¦¸ | °T®§¤wÀò½T»{¡C |
-| ¶Ç°T¥¢±Ñ | ¬õ¿O°{Ã{¤T¦¸ | °T®§¥¼¦¨¥\°e¹F¡A½Ð­«¸Õ¡C |
+<div align="center">
+  <a href="https://github.com/OLDWAYS069/HermesX">Repository</a>
+  -
+  <a href="docs/README.md">Documentation</a>
+  -
+  <a href="docs/CHANGELOG_MINI.md">Changelog</a>
+</div>
 
-¦P®É·f°t¹ïÀ³­µ®Ä³qª¾¡A¨Ï¥ÎªÌµL»Ý¨nµÛ¿O±ø¤]¯à§Y®É´x´¤ª¬ºA¡C
+> åœ¨æ²’æœ‰ç¶²è·¯æˆ–è¡Œå‹•è¨Šè™Ÿçš„æ™‚å€™ï¼ŒHermesX è®“ LoRa è£ç½®ä»èƒ½ã€Œçœ‹å¾—è¦‹ã€æ“å¾—åˆ°ã€å‚³å¾—å‡ºåŽ»ã€ã€‚
 
-## ±Û¶s¾Þ§@
-- **±ÛÂà**¡GÂsÄý¨Ã¿ï¾Ü±ýµo°eªºÅøÀY°T®§¡C
-- **«ö¤U**¡G¥ß§Yµo°e¥Ø«e¿ï©wªº°T®§¡C
-- **ªø«ö**¡G±±¨î¶}¾÷»PÃö¾÷¡C
+**HermesX** æ˜¯åŸºæ–¼ [Meshtastic](https://github.com/meshtastic/Meshtastic-device) é–‹æºéŸŒé«”å»¶ä¼¸é–‹ç™¼çš„è‡ªè¨‚åˆ†æ”¯ï¼Œ
+å°ˆç‚º LoRa è£ç½®æ‰“é€ å…·æœ‰äº’å‹•è¡¨æƒ…é¡¯ç¤ºã€æ—‹éˆ•æ“ä½œã€è¨Šæ¯å›žè¦†èˆ‡ç·Šæ€¥æ‡‰è®Šçš„å€‹äººæˆ°è¡“é€šè¨Šç³»çµ±ã€‚
 
-## ¨ä¥L¯SÂI
-- ¤ä´© 18650 ¹q¦À§Ö³t§ó´«¡A©µªø¥~¶ÔÄò¯è¡C
-- ¨¾¼â¤ô³]­p¡]½Ð¤Å®ûªw¡F­Y¤£·Vªw¤ô¾É­P·lÃa¡A¥i±H¦^§ó´«¹q¸ôªO ??¡^¡C
+![Upstream](https://img.shields.io/badge/Upstream-Meshtastic-brightgreen)
+![Build](https://img.shields.io/badge/Build-PlatformIO-blue)
 
-## °â»ù
-¥ý¦æªÌ®M¥ó»ù®æ¬° 3000 ¤¸ / ¥x¡A§t§¹¾ã«O©TªA°È¡C
+## Overview
 
-³o¬O HermesX ªº²Ä¤@¨B¡A§Ú­Ì´Á«Ý§â¥¦±a¨ì¯u¹ê³õ°ì»P¨C¤@­Ó¤é±`³õ´º¡C
+HermesX çš„æ ¸å¿ƒç›®æ¨™æ˜¯æä¾›æ›´ç›´è¦ºçš„æ“ä½œä»‹é¢èˆ‡ç·Šæ€¥æ¨¡å¼æŽ§åˆ¶ï¼Œ
+è®“é›¢ç·šé€šè¨Šæ›´é©åˆæ—¥å¸¸äº’å‹•èˆ‡çªç™¼å ´æ™¯ã€‚
 
-## HermesX Agents «ü«n
-- **®Ö¤ß©R¦W²ßºD**¡G¥H HermesX ¬°¥D­n«eºó¡A²[»\Ãþ§O¡]¦p `HermesXInterfaceModule`¡B`HermesFace`¡^¡B¤u¨ã¡]`HermesXPacketUtils`¡^»P°O¿ý¡]`HermesXLog`¡^¡F¥\¯à±¾¹_±Ä»y·N¤Æ©R¦W¡]`setNextSleepPreHookParams`¡B`runPreDeepSleepHook`¡^¡F¥H¤j¼g§» `MESHTASTIC_EXCLUDE_HERMESX` ±±¨î½sÄ¶½d³ò¡C
-- **Hermes ¤¶­± Agent** (`src/modules/HermesXInterfaceModule.*`¡B`HermesFace*`¡B`TinyScheduler.h`)¡G³B²zªí±¡°Êµe¡B±Û¶s¥æ¤¬»P¹q·½´£¥Ü¡A¤½¦@ API ¥]§t `startPowerHoldAnimation`/`updatePowerHoldAnimation`/`stopPowerHoldAnimation`¡A¸ê·½¨Ì `HermesFaceMode` enum ©R¦W¡C
-- **«öÁä»P¿é¤J Agent** (`ButtonThread.*`¡B`input/RotaryEncoderInterruptBase.*`)¡GÂX¥R `HermesOneButton` «¬§O§O¦W¡B`HoldAnimationMode` ª¬ºA»P³Æ´© `BUTTON_PIN_ALT` ³ê¿ô¡F¨Æ¥ó¨ç¦¡²Î¤@¬° `userButtonPressedLongStart/Stop`¡B`rotaryStateCW` ©R¦W¡A¨Ã³z¹L Hermes ¤¶­±§ó·s°Êµe¡C
-- **³q«H¥i¾a«× Agent** (`mesh/ReliableRouter.*`)¡G·s¼W `ReliableEventType` enum¡B`ReliableEvent` µ²ºc»P `setNotify`/`emit` ¦^©I¡A©R¦W¥H¥Î³~¬°¥D¡]`ImplicitAck`¡B`GiveUp`¡^¡A`hermesXCallback` ¨Æ¥ó¾ô±µ ACK/NACK¡C
-- **¼Ò²Õµù¥U Agent** (`modules/Modules.cpp`)¡Gºû«ù Hermes ¼Ò²Õ«Ø¥ß§Ç¦C¡A©R¦W¿í´` `moduleName = new Hermes...`¡A¥[¤J `LighthouseModule`¡B`MusicModule` µ¥¨Ì¥\¯à©R¦Wªº¼Ò²Õ¡C
-- **ºÎ¯v±±¨î Agent** (`sleep.*`¡B`sleep_hooks.*`¡B`Power.cpp`¡B`platform/esp32/main-esp32.cpp`)¡G½Õ¾ã³ê¿ô¸ô®|¡A¤½¶}ÅÜ¼Æ `g_ext1WakeMask`/`g_ext1WakeMode`¡A¨ç¦¡¥H°Ê§@´y­z©R¦W¡]`setNextSleepPreHookParams`¡B`consumeSleepPreHookParams`¡^¡A`BUTTON_PIN_ALT` §PÂ_ÅÞ¿è¿W¥ß¡C
-- **UI »P¸ê·½ Agent** (`graphics/Screen.cpp`¡B`graphics/img/icon.xbm`¡B`modules/CannedMessageModule.*`)¡G²Î¤@ Hermes ­±ªO¡B¹Ï¥Ü»P´£¥Ü¤å¦r©R¦W¡]`HermesX_DrawFace`¡B`HermesFaceMode::Sending`¡^¡A°T®§µo°e§ï¨« `RX_SRC_USER`¡AÁ{®É°T®§¥H `temporaryMessage` ©R¦W¡C
-- **¥~³¡³qª¾ Agent** (`modules/ExternalNotificationModule.cpp`)¡G«O¯d `hermesXCallback` ©I¥sÂI»P `setExternalState` ©R¦W¡A½T«O»P Hermes UI/LED ¦P¨B¡C
-- **³]©w»PÁ`Äý** (`platformio.ini`¡B`.vscode/settings.json`¡B`README.md`)¡G©R¦W¥HÀô¹Ò©Î«~µP¬°®Ö¤ß¡]`default_envs = heltec-wireless-tracker`¡BREADME ¼ÐÃD `HermesX Firmware`¡^¡A·s¼WºX¼Ð®É¨Ï¥Î `BUTTON_PIN_ALT`¡B`LIGHTHOUSE_DEBUG` µ¥¬ðÅã¥Î³~ªº¦WºÙ¡C
-- «áÄò©µ¦ù®É¡A«O«ù¤W­z«eºó¡B»y·N¤Æ¨ç¦¡»PªTÁ|ªº©R¦W¼Ò¦¡¡A§Y¥iºû«ù HermesX ¤À¤äªº¤@­P©Ê¡C
+### Get Started
 
+- ðŸ§° **[Build Instructions](#å»ºç½®æ–¹å¼-build-instructions)** â€“ å®‰è£ PlatformIOã€é¸æ“‡ç’°å¢ƒä¸¦ç·¨è­¯éŸŒé«”ã€‚
+- âš¡ **[Auto Flash Script](bin/auto-flash-meshtastic.ps1)** â€“ ä½¿ç”¨ PowerShell è…³æœ¬å¿«é€Ÿç‡’éŒ„ã€‚
+- ðŸ“¦ **[Project Layout](#å°ˆæ¡ˆçµæ§‹-project-layout)** â€“ äº†è§£æ¨¡çµ„èˆ‡è‡ªè¨‚ proto çš„ä½ç½®ã€‚
+
+## å°ˆæ¡ˆç‰¹é»ž
+
+ç›®å‰ç‰ˆæœ¬å·²å…·å‚™ä»¥ä¸‹åŠŸèƒ½ï¼š
+
+* **äº’å‹•è¡¨æƒ…èˆ‡æ“ä½œä»‹é¢**ï¼š
+    * æ”¯æ´ ST7789 OLED è¡¨æƒ…é¡¯ç¤ºï¼ˆ`drawFace()` / `updateFace()`ï¼‰ã€‚
+    * Rotary Encoder æŽ§åˆ¶ canned messages é¸å–®èˆ‡ UI åˆ‡æ›ã€‚
+* **è¦–è¦ºèˆ‡è²éŸ³å›žé¥‹**ï¼š
+    * æ­é… WS2812 RGB LED æŒ‡ç¤ºç‡ˆèˆ‡è¢«å‹•å¼èœ‚é³´å™¨ï¼ˆGPIO å¯è¨­å®šï¼‰ã€‚
+* **å¿«é€Ÿè¨Šæ¯æ“ä½œ**ï¼š
+    * æŒ‰éµæŒ‰å£“è§¸ç™¼ canned message ç™¼é€ã€‚
+    * æ•´åˆ `sendCannedMessage()`ï¼Œå¯è‡ªè¨‚è¨Šæ¯ç™¼é€é‚è¼¯ã€‚
+    * è§£æ±ºç„¡æ³•é€€å‡ºé¸å–®çš„å•é¡Œã€‚
+* **ä¸­æ–‡å­—åž‹å¼•å…¥**ï¼š
+    * å¼•ç”¨æ•™è‚²éƒ¨æ¨™æº–å­—åž‹ï¼Œç„¡è«–æ˜¯è¨Šæ¯å…§å®¹\ç½é ­è¨Šæ¯æ¨¡çµ„éƒ½å¯é¡¯ç¤ºä¸­æ–‡å­—åž‹ã€‚
+
+## ç‰¹è‰²åŠŸèƒ½
+
+### HermesXInterfaceModule
+
+> è®“è£ç½®å…·æœ‰äº’å‹•è¡¨æƒ…èˆ‡æ“ä½œç•Œé¢ã€‚
+
+- æ”¯æ´ ST7789 OLED è¡¨æƒ…é¡¯ç¤ºï¼ˆ`drawFace()` / `updateFace()`ï¼‰
+- æ­é… WS2812 RGB LED æŒ‡ç¤ºç‡ˆã€è¢«å‹•å¼èœ‚é³´å™¨ï¼ˆGPIO å¯è¨­å®šï¼‰
+- Rotary Encoder æŽ§åˆ¶ canned messages é¸å–®
+- æŒ‰éµæŒ‰å£“è§¸ç™¼ canned message ç™¼é€
+- æ•´åˆ `sendCannedMessage()`ï¼Œè‡ªè¨‚è¨Šæ¯ç™¼é€é‚è¼¯
+
+
+## é€²åº¦æ¢
+
+### æœªä¾†è¦åŠƒ
+
+æœªä¾†å¯èƒ½åŠ å…¥ä»¥ä¸‹åŠŸèƒ½ï¼š
+
+- [ ] å¤šé »é“æ”¯æ´ï¼šç›®å‰æ‰€æœ‰è¨Šæ¯çš†è·‘åœ¨ LongFast ä¸»é »é“ï¼Œæœªä¾†æ”¯æ´åˆ‡æ›æˆ–é¡¯ç¤ºä¸åŒé »é“ã€‚
+- [ ] æµé‡æŽ§åˆ¶ï¼šå¢žåŠ ç•™è¨€é€Ÿåº¦é™åˆ¶èˆ‡è¨Šæ¯é•·åº¦åˆ†æ®µï¼Œé¿å… LoRa é »å¯¬é˜»å¡žã€‚
+- [ ] ç®¡ç†é é¢ï¼šæä¾› Web ä»‹é¢è¨­å®š WiFi SSIDã€LoRa åƒæ•¸ç­‰ã€‚
+- [ ] åŠŸèƒ½åˆ†çµ„ï¼šå€åˆ†ä¸€èˆ¬èŠå¤©ã€ç·Šæ€¥æ±‚æ•‘ã€å…¬å‘Šå»£æ’­ç­‰ä¸åŒé¡žåž‹çš„è¨Šæ¯æµã€‚
+- [ ] å¤šç¯€é»ž/å¤šé »çŽ‡ Presetï¼šæ”¯æ´åŒæ™‚ç®¡ç†å¤šå€‹ LoRa ç¯€é»žæˆ–é è¨­é »çŽ‡åˆ‡æ›ã€‚
+- [ ] é›»å­ç´™/ç•™è¨€æ¿æ”¯æ´ï¼šæ•´åˆ E-Paper é¡¯ç¤ºé‡è¦å…¬å‘Šã€‚
+- [ ] Local æœå‹™å»¶ä¼¸ï¼šæ•´åˆé›¢ç·šåœ°åœ–æˆ–ç‰©è³‡å›žå ±ç³»çµ±ã€‚
+- [ ] ç°¡æ˜“å®‰è£è…³æœ¬
+- [ ] ç³»çµ±æ›´æ–°
+- [ ] ç§»é™¤è…³æœ¬
+- [ ] è‹±æ–‡ç‰ˆæ–‡ä»¶
+- [ ] QRcode
+- [ ] é¡žBBSç³»çµ±
+- [ ] ç³»çµ±å…¬å‘Š
+- [ ] å±±å€é€šè¨ŠæŸ±?
+
+## å»ºç½®æ–¹å¼ (Build Instructions)
+
+1. å®‰è£ PlatformIOï¼ˆå»ºè­°æ­é… VSCodeï¼‰  
+   [https://platformio.org/install](https://platformio.org/install)
+2. Clone æ­¤å°ˆæ¡ˆ
+
+```bash
+git clone https://github.com/OLDWAYS069/HermesX.git
+cd HermesX
+```
+
+> [!IMPORTANT]
+> è«‹åˆ‡æ›åˆ° `master` åˆ†æ”¯ï¼ˆéžé è¨­çš„ `main`ï¼‰ã€‚
+
+3. ç·¨è­¯
+
+```bash
+platformio run -e heltec-wireless-tracker
+```
+
+## æ”¯æ´ç¡¬é«” (Supported Hardware)
+
+ç›®å‰å·²æ–¼ä»¥ä¸‹æ¿å­æ¸¬è©¦ï¼š
+
+- Heltec Wireless Tracker (ESP32S3)
+- å…¶ä»–è‡ªå®šæ¿å­è«‹æ ¹æ“šåŽŸè…³ä½è‡ªè¡Œä¿®æ”¹ `GPIO` è¨­å®š
+
+## è¨ˆåŠƒç›®æ¨™ (Roadmap)
+
+- [ ] æ°‘é˜²é€šè¨Šï¼ˆDisaster-Readyï¼‰
+- [ ] æœæ•‘å®šä½ï¼ˆRescue Beaconï¼‰
+- [ ] æƒ…æ„Ÿäº’å‹•ï¼ˆLoRa Companionï¼‰
+- [ ] è‡ªä¸»ç·Šæ€¥æ‡‰è®Šç¶²è·¯ï¼ˆEmergency LoRa Meshï¼‰
+
+## Maintainer
+
+> **OLDWAYS069**  
+> HermesTrack è¨ˆç•«ç™¼èµ·äºº  
+> GitHub: [github.com/OLDWAYS069](https://github.com/OLDWAYS069)
+
+## License
+
+This project is licensed under the MIT License.
+
+## Stats
+
+![GitHub Repo stars](https://img.shields.io/github/stars/OLDWAYS069/HermesX)
+![GitHub forks](https://img.shields.io/github/forks/OLDWAYS069/HermesX)
+![GitHub watchers](https://img.shields.io/github/watchers/OLDWAYS069/HermesX)
 
