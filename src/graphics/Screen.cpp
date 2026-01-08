@@ -152,6 +152,35 @@ static bool haveGlyphs(const char *str)
     return have;
 }
 
+static void drawMixedRightAligned(OLEDDisplay *display, int16_t rightX, int16_t y, const char *text, int lineHeight)
+{
+    if (!display || !text)
+        return;
+
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+
+    const char *lineStart = text;
+    int lineIndex = 0;
+    while (true) {
+        const char *newline = strchr(lineStart, '\n');
+        const size_t length = newline ? static_cast<size_t>(newline - lineStart) : strlen(lineStart);
+        String lineString(lineStart, length);
+        const int lineWidth =
+            HermesX_zh::stringAdvance(lineString.c_str(), HermesX_zh::GLYPH_WIDTH, display);
+        const int16_t drawX = rightX - lineWidth;
+        if (screen)
+            screen->drawMixed(display, drawX, y + lineIndex * lineHeight, lineString.c_str(),
+                              HermesX_zh::GLYPH_WIDTH, lineHeight);
+        else
+            HermesX_zh::drawMixed(*display, drawX, y + lineIndex * lineHeight, lineString.c_str(),
+                                  HermesX_zh::GLYPH_WIDTH, lineHeight, nullptr);
+        if (!newline)
+            break;
+        lineStart = newline + 1;
+        ++lineIndex;
+    }
+}
+
 /**
  * Draw the icon with extra info printed around the corners
  */
@@ -184,13 +213,8 @@ static void drawIconScreen(const char *upperMsg, OLEDDisplay *display, OLEDDispl
     char buf[25];
     snprintf(buf, sizeof(buf), "%s\n%s", xstr(APP_VERSION_DISPLAY), haveGlyphs(owner.short_name) ? owner.short_name : "");
 
-    display->setTextAlignment(TEXT_ALIGN_RIGHT);
     // --- HermesX Remove TFT fast-path START
-    const int bufWidth = HermesX_zh::stringAdvance(buf, HermesX_zh::GLYPH_WIDTH, display);
-    if (screen)
-        screen->drawMixed(display, x + SCREEN_WIDTH - bufWidth, y + 0, buf);
-    else
-        HermesX_zh::drawMixed(*display, x + SCREEN_WIDTH - bufWidth, y + 0, buf);
+    drawMixedRightAligned(display, x + SCREEN_WIDTH, y + 0, buf, FONT_HEIGHT_SMALL);
     // --- HermesX Remove TFT fast-path END
     screen->forceDisplay();
 
@@ -242,13 +266,8 @@ static void drawOEMIconScreen(const char *upperMsg, OLEDDisplay *display, OLEDDi
     char buf[40];
     snprintf(buf, sizeof(buf), "%s\n%s", xstr(APP_VERSION), haveGlyphs(owner.short_name) ? owner.short_name : "");
 
-    display->setTextAlignment(TEXT_ALIGN_RIGHT);
     // --- HermesX Remove TFT fast-path START
-    const int bufWidth = HermesX_zh::stringAdvance(buf, HermesX_zh::GLYPH_WIDTH, display);
-    if (screen)
-        screen->drawMixed(display, x + SCREEN_WIDTH - bufWidth, y + 0, buf);
-    else
-        HermesX_zh::drawMixed(*display, x + SCREEN_WIDTH - bufWidth, y + 0, buf);
+    drawMixedRightAligned(display, x + SCREEN_WIDTH, y + 0, buf, FONT_HEIGHT_SMALL);
     // --- HermesX Remove TFT fast-path END
     screen->forceDisplay();
 
@@ -2588,7 +2607,8 @@ void DebugInfo::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16
 #endif
     display->setColor(WHITE);
     // --- HermesX Remove TFT fast-path START
-    const int idWidth = HermesX_zh::stringAdvance(ourId, HermesX_zh::GLYPH_WIDTH, display);
+    const int16_t screenWidth = display->width();
+    const int idWidth = display->getStringWidth(ourId);
     // Draw the channel name
     if (screen)
         screen->drawMixed(display, x, y + FONT_HEIGHT_SMALL, channelStr);
@@ -2602,24 +2622,24 @@ void DebugInfo::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16
 #if (defined(USE_EINK) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7735_CS) ||      \
      defined(ST7789_CS) || defined(USE_ST7789) || defined(HX8357_CS) || defined(ILI9488_CS) || ARCH_PORTDUINO) &&                \
     !defined(DISPLAY_FORCE_SMALL_FONTS)
-            display->drawFastImage(x + SCREEN_WIDTH - 14 - idWidth, y + 3 + FONT_HEIGHT_SMALL, 12, 8,
+            display->drawFastImage(x + screenWidth - 14 - idWidth, y + 3 + FONT_HEIGHT_SMALL, 12, 8,
                                    imgQuestionL1);
-            display->drawFastImage(x + SCREEN_WIDTH - 14 - idWidth, y + 11 + FONT_HEIGHT_SMALL, 12, 8,
+            display->drawFastImage(x + screenWidth - 14 - idWidth, y + 11 + FONT_HEIGHT_SMALL, 12, 8,
                                    imgQuestionL2);
 #else
-            display->drawFastImage(x + SCREEN_WIDTH - 10 - idWidth, y + 2 + FONT_HEIGHT_SMALL, 8, 8,
+            display->drawFastImage(x + screenWidth - 10 - idWidth, y + 2 + FONT_HEIGHT_SMALL, 8, 8,
                                    imgQuestion);
 #endif
         } else {
 #if (defined(USE_EINK) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7735_CS) ||      \
      defined(ST7789_CS) || defined(USE_ST7789) || defined(ILI9488_CS) || defined(HX8357_CS)) &&                                  \
     !defined(DISPLAY_FORCE_SMALL_FONTS)
-            display->drawFastImage(x + SCREEN_WIDTH - 18 - idWidth, y + 3 + FONT_HEIGHT_SMALL, 16, 8,
+            display->drawFastImage(x + screenWidth - 18 - idWidth, y + 3 + FONT_HEIGHT_SMALL, 16, 8,
                                    imgSFL1);
-            display->drawFastImage(x + SCREEN_WIDTH - 18 - idWidth, y + 11 + FONT_HEIGHT_SMALL, 16, 8,
+            display->drawFastImage(x + screenWidth - 18 - idWidth, y + 11 + FONT_HEIGHT_SMALL, 16, 8,
                                    imgSFL2);
 #else
-            display->drawFastImage(x + SCREEN_WIDTH - 13 - idWidth, y + 2 + FONT_HEIGHT_SMALL, 11, 8,
+            display->drawFastImage(x + screenWidth - 13 - idWidth, y + 2 + FONT_HEIGHT_SMALL, 11, 8,
                                    imgSF);
 #endif
         }
@@ -2629,19 +2649,16 @@ void DebugInfo::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16
 #if (defined(USE_EINK) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7735_CS) ||      \
      defined(ST7789_CS) || defined(USE_ST7789) || defined(HX8357_CS) || defined(ILI9488_CS) || ARCH_PORTDUINO) &&                \
     !defined(DISPLAY_FORCE_SMALL_FONTS)
-        display->drawFastImage(x + SCREEN_WIDTH - 14 - idWidth, y + 3 + FONT_HEIGHT_SMALL, 12, 8,
+        display->drawFastImage(x + screenWidth - 14 - idWidth, y + 3 + FONT_HEIGHT_SMALL, 12, 8,
                                imgInfoL1);
-        display->drawFastImage(x + SCREEN_WIDTH - 14 - idWidth, y + 11 + FONT_HEIGHT_SMALL, 12, 8,
+        display->drawFastImage(x + screenWidth - 14 - idWidth, y + 11 + FONT_HEIGHT_SMALL, 12, 8,
                                imgInfoL2);
 #else
-        display->drawFastImage(x + SCREEN_WIDTH - 10 - idWidth, y + 2 + FONT_HEIGHT_SMALL, 8, 8, imgInfo);
+        display->drawFastImage(x + screenWidth - 10 - idWidth, y + 2 + FONT_HEIGHT_SMALL, 8, 8, imgInfo);
 #endif
     }
 
-    if (screen)
-        screen->drawMixed(display, x + SCREEN_WIDTH - idWidth, y + FONT_HEIGHT_SMALL, ourId);
-    else
-        HermesX_zh::drawMixed(*display, x + SCREEN_WIDTH - idWidth, y + FONT_HEIGHT_SMALL, ourId);
+    display->drawString(x + screenWidth - idWidth, y + FONT_HEIGHT_SMALL, ourId);
     // --- HermesX Remove TFT fast-path END
 
     // Draw any log messages
