@@ -9,6 +9,9 @@ param(
     [int]$ReapplyMaxPasses = 2,
     [int]$PortDetectTimeoutSeconds = 60,
     [int]$PortDetectIntervalSeconds = 2,
+    [int]$ReadyTimeoutSeconds = 30,
+    [int]$ReadyPollSeconds = 2,
+    [int]$ReadyCommandTimeoutSeconds = 10,
     [int]$MeshtasticTimeoutSeconds = 120,
     [int]$MeshtasticRetryCount = 3,
     [int]$MeshtasticRetryDelaySeconds = 5,
@@ -537,6 +540,47 @@ function Wait-ForSerialPort {
     } while ($true)
 }
 
+function Wait-ForMeshtasticReady {
+    param(
+        [string]$Port,
+        [int]$TimeoutSeconds,
+        [int]$PollSeconds,
+        [int]$CommandTimeoutSeconds
+    )
+
+    $timeout = if ($TimeoutSeconds -gt 0) { $TimeoutSeconds } else { 30 }
+    $poll = if ($PollSeconds -gt 0) { $PollSeconds } else { 2 }
+    $cmdTimeout = if ($CommandTimeoutSeconds -gt 0) { $CommandTimeoutSeconds } else { 10 }
+    $deadline = (Get-Date).AddSeconds($timeout)
+
+    do {
+        $outputLines = @()
+        $prevErrorActionPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            & meshtastic --port $Port --timeout $cmdTimeout --info 2>&1 | ForEach-Object {
+                $line = $_.ToString()
+                if ($null -ne $line) {
+                    $outputLines += $line
+                }
+            }
+        } finally {
+            $ErrorActionPreference = $prevErrorActionPreference
+        }
+
+        if ($LASTEXITCODE -eq 0 -and ($outputLines -join "`n") -match "(?i)connected to radio") {
+            Write-Log "Device ready."
+            return
+        }
+
+        if ((Get-Date) -ge $deadline) {
+            throw "Device not ready after ${timeout}s."
+        }
+        Write-Log "Device not ready yet. Waiting ${poll}s..."
+        Start-Sleep -Seconds $poll
+    } while ($true)
+}
+
 function Test-CommandExists {
     param([string]$Name)
     return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
@@ -950,6 +994,7 @@ function Invoke-MeshtasticCommands {
                 Start-Sleep -Seconds $RebootWaitSeconds
                 $Port = Wait-ForSerialPort -PreferredPort $Port -TimeoutSeconds $PortDetectTimeoutSeconds -PollSeconds $PortDetectIntervalSeconds
                 Write-Log "Port after reboot: $Port"
+                Wait-ForMeshtasticReady -Port $Port -TimeoutSeconds $ReadyTimeoutSeconds -PollSeconds $ReadyPollSeconds -CommandTimeoutSeconds $ReadyCommandTimeoutSeconds
             }
         }
     }
@@ -1242,6 +1287,7 @@ Start-Sleep -Seconds $PostFlashWaitSeconds
 
 $portAfter = Wait-ForSerialPort -PreferredPort $initialPort -TimeoutSeconds $PortDetectTimeoutSeconds -PollSeconds $PortDetectIntervalSeconds
 Write-Log "Using port after reboot: $portAfter"
+Wait-ForMeshtasticReady -Port $portAfter -TimeoutSeconds $ReadyTimeoutSeconds -PollSeconds $ReadyPollSeconds -CommandTimeoutSeconds $ReadyCommandTimeoutSeconds
 
 $commands = Get-MeshtasticCommands -Path $CliConfigPath
 if (-not $commands -or $commands.Count -eq 0) {
@@ -1259,6 +1305,7 @@ if ($RebootAfterConfig) {
     Start-Sleep -Seconds $PostConfigRebootWaitSeconds
     $portAfter = Wait-ForSerialPort -PreferredPort $portAfter -TimeoutSeconds $PortDetectTimeoutSeconds -PollSeconds $PortDetectIntervalSeconds
     Write-Log "Port after config reboot: $portAfter"
+    Wait-ForMeshtasticReady -Port $portAfter -TimeoutSeconds $ReadyTimeoutSeconds -PollSeconds $ReadyPollSeconds -CommandTimeoutSeconds $ReadyCommandTimeoutSeconds
 }
 
 $maxVerifyPasses = if ($ReapplyMaxPasses -gt 0) { $ReapplyMaxPasses } else { 1 }

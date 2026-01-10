@@ -51,3 +51,239 @@
 [08:23:18] Writing modified preferences to device
 [08:23:18] Writing canned_message configuration to device
 [08:23:18] Waiting 10s for reboot...
+[08:23:28] Port after reboot: COM43
+[08:23:28] Executing reboot batch #5 (2 commands)...
+[08:23:28] Queued: meshtastic --ch-set-url https://meshtastic.org/e/#CjcSIIrA4R6zaST5Rl9xgSQV-pI7iuykDaeGdDOzkw6Z1-TeGgZNZXNoVFclAQAAACgBMAE6AggPCjYSIMtR3IlYKZeR84dOSiVHv7pllB_F4Rt1I0da72R31BxVGgpTaWduYWxUZXN0KAEwAToCCA8KNBIgy2jnf86fTpf_4AFAf-mCwbzRoxpCV0P90dqJo0-w_SYaCkVtZXJnZW5jeSEoAToCCCAKCRIBASgBOgIIDxIVCAEQBBj6ASALKAU4CEADSAFQG1gB
+[08:23:28] Queued: meshtastic --set mqtt.address mqtt.meshtastic.org
+[08:23:28] Executing: meshtastic --port COM43 --ch-set-url https://meshtastic.org/e/#CjcSIIrA4R6zaST5Rl9xgSQV-pI7iuykDaeGdDOzkw6Z1-TeGgZNZXNoVFclAQAAACgBMAE6AggPCjYSIMtR3IlYKZeR84dOSiVHv7pllB_F4Rt1I0da72R31BxVGgpTaWduYWxUZXN0KAEwAToCCA8KNBIgy2jnf86fTpf_4AFAf-mCwbzRoxpCV0P90dqJo0-w_SYaCkVtZXJnZW5jeSEoAToCCCAKCRIBASgBOgIIDxIVCAEQBBj6ASALKAU4CEADSAFQG1gB --set mqtt.address mqtt.meshtastic.org
+[08:23:34] Connected to radio
+[08:23:34] Set mqtt.address to mqtt.meshtastic.org
+[08:23:34] Writing modified preferences to device
+[08:23:34] Writing mqtt configuration to device
+[08:23:34] Waiting 10s for reboot...
+[08:23:44] No serial ports detected yet. Waiting 2s...
+[08:23:46] Port after reboot: COM43
+[08:23:46] Executing reboot batch #6 (2 commands)...
+[08:23:46] Queued: meshtastic --set mqtt.username meshdev
+[08:23:46] Queued: meshtastic --set mqtt.password large4cats
+[08:23:46] Executing: meshtastic --port COM43 --set mqtt.username meshdev --set mqtt.password large4cats
+[08:23:50] Connected to radio
+[08:23:50] Set mqtt.username to meshdev
+[08:23:50] Set mqtt.password to large4cats
+[08:23:50] Writing modified preferences to device
+[08:23:50] Writing mqtt configuration to device
+[08:23:50] Waiting 10s for reboot...
+[08:24:00] Port after reboot: COM43
+[08:24:00] Executing reboot batch #7 (2 commands)...
+[08:24:00] Queued: meshtastic --set mqtt.encryptionEnabled true
+[08:24:00] Queued: meshtastic --set mqtt.root msh/TW
+[08:24:00] Executing: meshtastic --port COM43 --set mqtt.encryptionEnabled true --set mqtt.root msh/TW
+[08:24:31] meshtastic failed (attempt 1/3). Retrying in 5s...
+[08:24:41] Connected to radio
+[08:24:41] Set mqtt.encryption_enabled to true
+[08:24:41] Set mqtt.root to msh/TW
+[08:24:41] Writing modified preferences to device
+[08:24:41] Writing mqtt configuration to device
+[08:24:41] Waiting 10s for reboot...
+[08:24:51] Port after reboot: COM43
+[08:24:51] Executing reboot batch #8 (2 commands)...
+[08:24:51] Queued: meshtastic --set mqtt.enabled false
+[08:24:51] Queued: meshtastic --set mqtt.jsonEnabled false
+[08:24:51] Executing: meshtastic --port COM43 --set mqtt.enabled false --set mqtt.jsonEnabled false
+[08:25:22] meshtastic failed (attempt 1/3). Retrying in 5s...
+[08:25:28] Connected to radio
+[08:25:28] Set mqtt.enabled to false
+[08:25:28] Set mqtt.json_enabled to false
+[08:25:28] Writing modified preferences to device
+[08:25:28] Writing mqtt configuration to device
+[08:25:28] Waiting 10s for reboot...
+[08:25:39] Port after reboot: COM43
+[08:25:39] Executing reboot batch #9 (2 commands)...
+[08:25:39] Queued: meshtastic --set mqtt.tlsEnabled false
+[08:25:39] Queued: meshtastic --set mqtt.proxyToClientEnabled false
+[08:25:39] Executing: meshtastic --port COM43 --set mqtt.tlsEnabled false --set mqtt.proxyToClientEnabled false
+[08:25:43] Connected to radio
+[08:25:43] Set mqtt.tls_enabled to false
+[08:25:43] Set mqtt.proxy_to_client_enabled to false
+[08:25:43] Writing modified preferences to device
+[08:25:43] Writing mqtt configuration to device
+[08:25:43] Waiting 10s for reboot...
+[08:25:53] Port after reboot: COM43
+[08:25:53] Executing reboot batch #10 (2 commands)...
+[08:25:53] Queued: meshtastic --set mqtt.mapReportingEnabled false
+[08:25:53] Queued: meshtastic --set lora.usePreset true
+[08:25:53] Executing: meshtastic --port COM43 --set mqtt.mapReportingEnabled false --set lora.usePreset true
+[08:25:54] meshtastic failed (attempt 1/3). Retrying in 5s...
+[08:26:04] INFO file:node.py beginSettingsTransaction line:580 Telling open a transaction to edit settings
+[08:26:04] INFO file:node.py commitSettingsTransaction line:594 Telling node to commit open transaction for editing settings
+[08:26:04] Connected to radio
+[08:26:04] Set mqtt.map_reporting_enabled to false
+[08:26:04] Set lora.use_preset to true
+[08:26:04] Writing modified preferences to device
+[08:26:04] Using a configuration transaction
+[08:26:04] Writing mqtt configuration to device
+[08:26:04] Writing lora configuration to device
+[08:26:04] Waiting 10s for reboot...
+[08:26:14] Port after reboot: COM43
+[08:26:14] Executing reboot batch #11 (2 commands)...
+[08:26:14] Queued: meshtastic --set lora.modemPreset MEDIUM_FAST
+[08:26:14] Queued: meshtastic --set lora.bandwidth 250
+[08:26:14] Executing: meshtastic --port COM43 --set lora.modemPreset MEDIUM_FAST --set lora.bandwidth 250
+[08:26:16] Connected to radio
+[08:26:16] Set lora.modem_preset to MEDIUM_FAST
+[08:26:16] Set lora.bandwidth to 250
+[08:26:16] Writing modified preferences to device
+[08:26:16] Writing lora configuration to device
+[08:26:16] Waiting 10s for reboot...
+[08:26:26] Port after reboot: COM43
+[08:26:26] Executing reboot batch #12 (2 commands)...
+[08:26:26] Queued: meshtastic --set lora.spreadFactor 11
+[08:26:26] Queued: meshtastic --set lora.codingRate 5
+[08:26:26] Executing: meshtastic --port COM43 --set lora.spreadFactor 11 --set lora.codingRate 5
+[08:26:28] Connected to radio
+[08:26:28] Set lora.spread_factor to 11
+[08:26:28] Set lora.coding_rate to 5
+[08:26:28] Writing modified preferences to device
+[08:26:28] Writing lora configuration to device
+[08:26:28] Waiting 10s for reboot...
+[08:26:38] Port after reboot: COM43
+[08:26:38] Executing reboot batch #13 (2 commands)...
+[08:26:38] Queued: meshtastic --set lora.region TW
+[08:26:38] Queued: meshtastic --set lora.hopLimit 3
+[08:26:38] Executing: meshtastic --port COM43 --set lora.region TW --set lora.hopLimit 3
+[08:26:40] Connected to radio
+[08:26:40] Set lora.region to TW
+[08:26:40] Set lora.hop_limit to 3
+[08:26:40] Writing modified preferences to device
+[08:26:40] Writing lora configuration to device
+[08:26:40] Waiting 10s for reboot...
+[08:26:51] Port after reboot: COM43
+[08:26:51] Executing reboot batch #14 (2 commands)...
+[08:26:51] Queued: meshtastic --set lora.txEnabled true
+[08:26:51] Queued: meshtastic --set lora.txPower 27
+[08:26:51] Executing: meshtastic --port COM43 --set lora.txEnabled true --set lora.txPower 27
+[08:26:53] Connected to radio
+[08:26:53] Set lora.tx_enabled to true
+[08:26:53] Set lora.tx_power to 27
+[08:26:53] Writing modified preferences to device
+[08:26:53] Writing lora configuration to device
+[08:26:53] Waiting 10s for reboot...
+[08:27:03] Port after reboot: COM43
+[08:27:03] Executing reboot batch #15 (2 commands)...
+[08:27:03] Queued: meshtastic --set lora.channelNum 1
+[08:27:03] Queued: meshtastic --set lora.frequencyOffset 0.0
+[08:27:03] Executing: meshtastic --port COM43 --set lora.channelNum 1 --set lora.frequencyOffset 0.0
+[08:27:05] Connected to radio
+[08:27:05] Set lora.channel_num to 1
+[08:27:05] Set lora.frequency_offset to 0.0
+[08:27:05] Writing modified preferences to device
+[08:27:05] Writing lora configuration to device
+[08:27:05] Waiting 10s for reboot...
+[08:27:15] Port after reboot: COM43
+[08:27:15] Executing reboot batch #16 (2 commands)...
+[08:27:15] Queued: meshtastic --set lora.overrideDutyCycle false
+[08:27:15] Queued: meshtastic --set lora.sx126xRxBoostedGain false
+[08:27:15] Executing: meshtastic --port COM43 --set lora.overrideDutyCycle false --set lora.sx126xRxBoostedGain false
+[08:27:17] Connected to radio
+[08:27:17] Set lora.override_duty_cycle to false
+[08:27:17] Set lora.sx126x_rx_boosted_gain to false
+[08:27:17] Writing modified preferences to device
+[08:27:17] Writing lora configuration to device
+[08:27:17] Waiting 10s for reboot...
+[08:27:27] Port after reboot: COM43
+[08:27:27] Executing reboot batch #17 (2 commands)...
+[08:27:27] Queued: meshtastic --set lora.overrideFrequency 0.0
+[08:27:27] Queued: meshtastic --set lora.paFanDisabled false
+[08:27:27] Executing: meshtastic --port COM43 --set lora.overrideFrequency 0.0 --set lora.paFanDisabled false
+[08:27:29] Connected to radio
+[08:27:29] Set lora.override_frequency to 0.0
+[08:27:29] Set lora.pa_fan_disabled to false
+[08:27:29] Writing modified preferences to device
+[08:27:29] Writing lora configuration to device
+[08:27:29] Waiting 10s for reboot...
+[08:27:39] Port after reboot: COM43
+[08:27:39] Executing reboot batch #18 (2 commands)...
+[08:27:39] Queued: meshtastic --set lora.ignoreMqtt false
+[08:27:39] Queued: meshtastic --set lora.configOkToMqtt false
+[08:27:39] Executing: meshtastic --port COM43 --set lora.ignoreMqtt false --set lora.configOkToMqtt false
+[08:27:42] Connected to radio
+[08:27:42] Set lora.ignore_mqtt to false
+[08:27:42] Set lora.config_ok_to_mqtt to false
+[08:27:42] Writing modified preferences to device
+[08:27:42] Writing lora configuration to device
+[08:27:42] Waiting 10s for reboot...
+[08:27:52] Port after reboot: COM43
+[08:27:52] Executing reboot batch #19 (2 commands)...
+[08:27:52] Queued: meshtastic --set position.positionBroadcastSecs 60
+[08:27:52] Queued: meshtastic --set position.positionBroadcastSmartEnabled true
+[08:27:52] Executing: meshtastic --port COM43 --set position.positionBroadcastSecs 60 --set position.positionBroadcastSmartEnabled true
+[08:27:54] Connected to radio
+[08:27:54] Set position.position_broadcast_secs to 60
+[08:27:54] Set position.position_broadcast_smart_enabled to true
+[08:27:54] Writing modified preferences to device
+[08:27:54] Writing position configuration to device
+[08:27:54] Waiting 10s for reboot...
+[08:28:04] Port after reboot: COM43
+[08:28:04] Executing reboot batch #20 (2 commands)...
+[08:28:04] Queued: meshtastic --set position.gpsUpdateInterval 60
+[08:28:04] Queued: meshtastic --set position.positionFlags 811
+[08:28:04] Executing: meshtastic --port COM43 --set position.gpsUpdateInterval 60 --set position.positionFlags 811
+[08:28:06] Connected to radio
+[08:28:06] Set position.gps_update_interval to 60
+[08:28:06] Set position.position_flags to 811
+[08:28:06] Writing modified preferences to device
+[08:28:06] Writing position configuration to device
+[08:28:06] Waiting 10s for reboot...
+[08:28:16] Port after reboot: COM43
+[08:28:16] Executing reboot batch #21 (2 commands)...
+[08:28:16] Queued: meshtastic --set position.broadcastSmartMinimumDistance 100
+[08:28:16] Queued: meshtastic --set position.broadcastSmartMinimumIntervalSecs 30
+[08:28:16] Executing: meshtastic --port COM43 --set position.broadcastSmartMinimumDistance 100 --set position.broadcastSmartMinimumIntervalSecs 30
+[08:28:18] Connected to radio
+[08:28:18] Set position.broadcast_smart_minimum_distance to 100
+[08:28:18] Set position.broadcast_smart_minimum_interval_secs to 30
+[08:28:18] Writing modified preferences to device
+[08:28:18] Writing position configuration to device
+[08:28:18] Waiting 10s for reboot...
+[08:28:28] Port after reboot: COM43
+[08:28:28] Executing reboot batch #22 (2 commands)...
+[08:28:28] Queued: meshtastic --set position.gpsMode ENABLED
+[08:28:28] Queued: meshtastic --set position.fixedPosition false
+[08:28:28] Executing: meshtastic --port COM43 --set position.gpsMode ENABLED --set position.fixedPosition false
+[08:28:31] Connected to radio
+[08:28:31] Set position.gps_mode to ENABLED
+[08:28:31] Set position.fixed_position to false
+[08:28:31] Writing modified preferences to device
+[08:28:31] Writing position configuration to device
+[08:28:31] Waiting 10s for reboot...
+[08:28:41] Port after reboot: COM43
+[08:28:41] Executing reboot batch #23 (2 commands)...
+[08:28:41] Queued: meshtastic --set position.gpsEnabled false
+[08:28:41] Queued: meshtastic --set position.gpsAttemptTime 0
+[08:28:41] Executing: meshtastic --port COM43 --set position.gpsEnabled false --set position.gpsAttemptTime 0
+[08:28:43] Connected to radio
+[08:28:43] Set position.gps_enabled to false
+[08:28:43] Set position.gps_attempt_time to 0
+[08:28:43] Writing modified preferences to device
+[08:28:43] Writing position configuration to device
+[08:28:43] Waiting 10s for reboot...
+[08:28:53] Port after reboot: COM43
+[08:28:53] Executing reboot batch #24 (2 commands)...
+[08:28:53] Queued: meshtastic --set position.rxGpio 0
+[08:28:53] Queued: meshtastic --set position.txGpio 0
+[08:28:53] Executing: meshtastic --port COM43 --set position.rxGpio 0 --set position.txGpio 0
+[08:28:55] Connected to radio
+[08:28:55] Set position.rx_gpio to 0
+[08:28:55] Set position.tx_gpio to 0
+[08:28:55] Writing modified preferences to device
+[08:28:55] Writing position configuration to device
+[08:28:55] Waiting 10s for reboot...
+[08:29:05] Port after reboot: COM43
+[08:29:05] Executing reboot batch #25 (1 commands)...
+[08:29:05] Queued: meshtastic --set position.gpsEnGpio 0
+[08:29:05] Executing: meshtastic --port COM43 --set position.gpsEnGpio 0
+[08:29:07] Connected to radio
+[08:29:07] Set position.gps_en_gpio to 0
+[08:29:07] Writing modified preferences to device
+[08:29:07] Writing position configuration to device
+[08:29:07] Waiting 10s for reboot...
