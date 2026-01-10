@@ -12,9 +12,10 @@ python -m esptool --chip esp32s3 --port COM8 --baud 460800 write_flash -z 0x0 "G
 meshtastic --set canned_message.inputbroker_pin_a 37
 meshtastic --set canned_message.inputbroker_pin_b 26
 meshtastic --set canned_message.inputbroker_pin_press 4
-meshtastic --set canned_message.inputbroker_event_cw 2
-meshtastic --set canned_message.inputbroker_event_ccw 1
-meshtastic --set canned_message.inputbroker_event_press 0
+meshtastic --set canned_message.inputbroker_event_cw UP
+meshtastic --set canned_message.inputbroker_event_ccw DOWN
+meshtastic --set canned_message.inputbroker_event_press SELECT
+meshtastic --set canned_message.enabled true
 meshtastic --set canned_message.rotary1_enabled true
 meshtastic --set-canned-message "這是HermesXB0.2.8|你好|有人在嗎?"
 
