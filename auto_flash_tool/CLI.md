@@ -17,6 +17,7 @@ meshtastic --set canned_message.inputbroker_event_ccw DOWN
 meshtastic --set canned_message.inputbroker_event_press SELECT
 meshtastic --set canned_message.enabled true
 meshtastic --set canned_message.rotary1_enabled true
+meshtastic --set canned_message.allow_input_source rotEnc1
 meshtastic --set-canned-message "這是HermesXB0.2.8|你好|有人在嗎?"
 
 Channels:
@@ -80,9 +81,9 @@ lora": {
 inputbroker_pin_a	Rotary A 相（通常是 CLK 腳）
 inputbroker_pin_b	Rotary B 相（通常是 DT 腳）
 inputbroker_pin_press	Rotary 按鈕
-inputbroker_event_cw	順時針時觸發哪個 canned message index（如 2）
-inputbroker_event_ccw	逆時針觸發哪個 message index（如 1）
-inputbroker_event_press	按下按鈕觸發哪個 message index（如 0）
+inputbroker_event_cw	
+inputbroker_event_ccw	
+inputbroker_event_press	
 rotary1_enabled	是否啟用 Rotary Encoder 支援
 
 

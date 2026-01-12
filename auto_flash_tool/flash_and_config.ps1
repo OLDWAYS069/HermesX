@@ -12,9 +12,10 @@ param(
     [int]$ReadyTimeoutSeconds = 30,
     [int]$ReadyPollSeconds = 2,
     [int]$ReadyCommandTimeoutSeconds = 10,
+    [int]$ReadyRetryCount = 2,
     [int]$MeshtasticTimeoutSeconds = 120,
     [int]$MeshtasticRetryCount = 3,
-    [int]$MeshtasticRetryDelaySeconds = 5,
+    [int]$MeshtasticRetryDelaySeconds = 0,
     [string]$LogPath = "",
     [bool]$RebootAfterConfig = $true,
     [int]$PostConfigRebootWaitSeconds = 10,
@@ -32,7 +33,41 @@ function Initialize-Log {
     }
     $Script:LogPath = $Path
     $header = ("==== {0} ====" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"))
-    Set-Content -LiteralPath $Script:LogPath -Value $header
+    Set-Content -LiteralPath $Script:LogPath -Value $header -Encoding UTF8
+}
+
+function Append-LogLine {
+    param([string]$Line)
+
+    if (-not $Script:LogPath) {
+        return
+    }
+
+    $maxAttempts = 5
+    $delayMs = 200
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        try {
+            $fs = [System.IO.File]::Open($Script:LogPath, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+            try {
+                $sw = New-Object System.IO.StreamWriter($fs, [System.Text.Encoding]::UTF8)
+                try {
+                    $sw.WriteLine($Line)
+                } finally {
+                    $sw.Flush()
+                    $sw.Dispose()
+                }
+            } finally {
+                $fs.Dispose()
+            }
+            return
+        } catch {
+            if ($attempt -lt $maxAttempts) {
+                Start-Sleep -Milliseconds $delayMs
+                continue
+            }
+            Write-Host ("[{0}] WARNING: Log write failed after {1} attempts: {2}" -f (Get-Date -Format "HH:mm:ss"), $maxAttempts, $_.Exception.Message)
+        }
+    }
 }
 
 function Write-Log {
@@ -41,7 +76,7 @@ function Write-Log {
     $line = ("[{0}] {1}" -f (Get-Date -Format "HH:mm:ss"), $Message)
     Write-Host $line
     if ($Script:LogPath) {
-        Add-Content -LiteralPath $Script:LogPath -Value $line
+        Append-LogLine -Line $line
     }
 }
 
@@ -202,6 +237,161 @@ function Get-ChannelUrlsFromText {
         Primary = $primary
         Complete = $complete
     }
+}
+
+function Convert-ChannelValueToString {
+    param($Value)
+
+    if ($null -eq $Value) {
+        return $null
+    }
+    if ($Value -is [bool]) {
+        return $Value.ToString().ToLowerInvariant()
+    }
+    $text = $Value.ToString()
+    if ($text -eq "") {
+        return $null
+    }
+    return $text
+}
+
+function Format-ChannelRawValue {
+    param([string]$Value)
+
+    if ($null -eq $Value) {
+        return ""
+    }
+    if ($Value -eq "") {
+        return '""'
+    }
+    if ($Value -match '\s') {
+        return '"' + ($Value -replace '"', '\"') + '"'
+    }
+    return $Value
+}
+
+function Parse-ChannelLine {
+    param([string]$Line)
+
+    $match = [regex]::Match($Line, '^Index\s+(\d+):\s+(\w+)\s+psk=([^\s]+)\s+(\{.*\})$')
+    if (-not $match.Success) {
+        return $null
+    }
+
+    $jsonText = $match.Groups[4].Value.Trim()
+    $settings = $null
+    try {
+        $settings = $jsonText | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        $settings = $null
+    }
+
+    return [PSCustomObject]@{
+        Index = [int]$match.Groups[1].Value
+        Role = $match.Groups[2].Value
+        PskTag = $match.Groups[3].Value
+        Settings = $settings
+        Raw = $Line
+    }
+}
+
+function New-ChannelSetCommand {
+    param(
+        [int]$Index,
+        [string]$Field,
+        $Value
+    )
+
+    $valueText = Convert-ChannelValueToString -Value $Value
+    if ($null -eq $valueText) {
+        return $null
+    }
+    $rawValue = Format-ChannelRawValue -Value $valueText
+    return [PSCustomObject]@{
+        Type = "SetChannelField"
+        Index = $Index
+        Field = $Field
+        Value = $valueText
+        Raw = "meshtastic --ch-set $Field $rawValue --ch-index $Index"
+    }
+}
+
+function Get-ChannelDefaultCommandsFromText {
+    param(
+        [string]$Text,
+        [int]$Index
+    )
+
+    $block = Get-ChannelsBlockFromText -Text $Text
+    if ($block.Count -eq 0) {
+        return @()
+    }
+
+    $entry = $null
+    foreach ($line in $block) {
+        $parsed = Parse-ChannelLine -Line $line
+        if ($parsed -and $parsed.Index -eq $Index) {
+            $entry = $parsed
+            break
+        }
+    }
+    if (-not $entry) {
+        return @()
+    }
+
+    $commands = @()
+    if ($entry.PskTag) {
+        $pskTag = $entry.PskTag.ToLowerInvariant()
+        if ($pskTag -in @("default", "none", "random")) {
+            $commands += New-ChannelSetCommand -Index $Index -Field "psk" -Value $pskTag
+        } elseif ($entry.Settings -and $entry.Settings.psk) {
+            $commands += New-ChannelSetCommand -Index $Index -Field "psk" -Value $entry.Settings.psk
+        }
+    }
+
+    if ($entry.Settings) {
+        $commands += New-ChannelSetCommand -Index $Index -Field "name" -Value $entry.Settings.name
+        $commands += New-ChannelSetCommand -Index $Index -Field "uplink_enabled" -Value $entry.Settings.uplinkEnabled
+        $commands += New-ChannelSetCommand -Index $Index -Field "downlink_enabled" -Value $entry.Settings.downlinkEnabled
+        $commands += New-ChannelSetCommand -Index $Index -Field "channel_num" -Value $entry.Settings.channelNum
+        $commands += New-ChannelSetCommand -Index $Index -Field "id" -Value $entry.Settings.id
+        if ($entry.Settings.moduleSettings) {
+            $commands += New-ChannelSetCommand -Index $Index -Field "module_settings.position_precision" -Value $entry.Settings.moduleSettings.positionPrecision
+            $commands += New-ChannelSetCommand -Index $Index -Field "module_settings.is_client_muted" -Value $entry.Settings.moduleSettings.isClientMuted
+        }
+    }
+
+    return @($commands | Where-Object { $_ })
+}
+
+function Insert-ChannelCommandsAfterUrl {
+    param(
+        [array]$Commands,
+        [array]$ChannelCommands
+    )
+
+    if (-not $ChannelCommands -or $ChannelCommands.Count -eq 0) {
+        return @($Commands)
+    }
+
+    $lastChannelIndex = -1
+    for ($i = 0; $i -lt $Commands.Count; $i++) {
+        $type = $Commands[$i].Type
+        if ($type -eq "SetChannelUrl" -or $type -eq "AddChannelUrl") {
+            $lastChannelIndex = $i
+        }
+    }
+
+    if ($lastChannelIndex -lt 0) {
+        return @($Commands) + @($ChannelCommands)
+    }
+
+    $head = @($Commands[0..$lastChannelIndex])
+    $tail = @()
+    if ($lastChannelIndex + 1 -le $Commands.Count - 1) {
+        $tail = @($Commands[($lastChannelIndex + 1)..($Commands.Count - 1)])
+    }
+    return @($head) + @($ChannelCommands) + @($tail)
 }
 
 function Normalize-ChannelUrl {
@@ -545,40 +735,54 @@ function Wait-ForMeshtasticReady {
         [string]$Port,
         [int]$TimeoutSeconds,
         [int]$PollSeconds,
-        [int]$CommandTimeoutSeconds
+        [int]$CommandTimeoutSeconds,
+        [int]$RetryCount
     )
 
     $timeout = if ($TimeoutSeconds -gt 0) { $TimeoutSeconds } else { 30 }
     $poll = if ($PollSeconds -gt 0) { $PollSeconds } else { 2 }
     $cmdTimeout = if ($CommandTimeoutSeconds -gt 0) { $CommandTimeoutSeconds } else { 10 }
-    $deadline = (Get-Date).AddSeconds($timeout)
+    $tries = if ($RetryCount -gt 0) { $RetryCount } else { 1 }
+    $currentPort = $Port
 
-    do {
-        $outputLines = @()
-        $prevErrorActionPreference = $ErrorActionPreference
-        $ErrorActionPreference = "Continue"
-        try {
-            & meshtastic --port $Port --timeout $cmdTimeout --info 2>&1 | ForEach-Object {
-                $line = $_.ToString()
-                if ($null -ne $line) {
-                    $outputLines += $line
+    for ($attempt = 1; $attempt -le $tries; $attempt++) {
+        $deadline = (Get-Date).AddSeconds($timeout)
+        do {
+            $outputLines = @()
+            $prevErrorActionPreference = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            try {
+                & meshtastic --port $currentPort --timeout $cmdTimeout --info 2>&1 | ForEach-Object {
+                    $line = $_.ToString()
+                    if ($null -ne $line) {
+                        $outputLines += $line
+                    }
                 }
+            } finally {
+                $ErrorActionPreference = $prevErrorActionPreference
             }
-        } finally {
-            $ErrorActionPreference = $prevErrorActionPreference
-        }
 
-        if ($LASTEXITCODE -eq 0 -and ($outputLines -join "`n") -match "(?i)connected to radio") {
-            Write-Log "Device ready."
-            return
-        }
+            if ($LASTEXITCODE -eq 0 -and ($outputLines -join "`n") -match "(?i)connected to radio") {
+                Write-Log "Device ready."
+                return $currentPort
+            }
 
-        if ((Get-Date) -ge $deadline) {
-            throw "Device not ready after ${timeout}s."
+            if ((Get-Date) -ge $deadline) {
+                break
+            }
+            Write-Log "Device not ready yet. Waiting ${poll}s..."
+            Start-Sleep -Seconds $poll
+        } while ($true)
+
+        if ($attempt -lt $tries) {
+            Write-Log "Device not ready after ${timeout}s. Retrying detection..."
+            $currentPort = Wait-ForSerialPort -PreferredPort $currentPort -TimeoutSeconds $PortDetectTimeoutSeconds -PollSeconds $PortDetectIntervalSeconds
+            Write-Log "Using port after reconnect: $currentPort"
         }
-        Write-Log "Device not ready yet. Waiting ${poll}s..."
-        Start-Sleep -Seconds $poll
-    } while ($true)
+    }
+
+    Write-Log "Device not ready after ${timeout}s. Continuing without ready confirmation."
+    return $currentPort
 }
 
 function Test-CommandExists {
@@ -793,33 +997,8 @@ function Test-RebootCommand {
         $field = $Command.Field
         if ($field) {
             $field = $field.ToLowerInvariant()
-            $rebootPrefixes = @(
-                "device.",
-                "position.",
-                "power.",
-                "network.",
-                "display.",
-                "lora.",
-                "bluetooth.",
-                "security.",
-                "mqtt.",
-                "serial.",
-                "external_notification.",
-                "store_forward.",
-                "range_test.",
-                "telemetry.",
-                "canned_message.",
-                "audio.",
-                "remote_hardware.",
-                "neighbor_info.",
-                "ambient_lighting.",
-                "detection_sensor.",
-                "paxcounter."
-            )
-            foreach ($prefix in $rebootPrefixes) {
-                if ($field.StartsWith($prefix)) {
-                    return $true
-                }
+            if ($field.StartsWith("lora.")) {
+                return $true
             }
         }
     }
@@ -827,10 +1006,12 @@ function Test-RebootCommand {
     return $false
 }
 
+
 function Build-MeshtasticArgs {
     param([array]$Commands)
 
     $args = @()
+    $channelIndex = $null
     foreach ($cmd in $Commands) {
         if ($cmd.Type -eq "SetField") {
             $args += @("--set", $cmd.Field, $cmd.Value)
@@ -840,7 +1021,17 @@ function Build-MeshtasticArgs {
             $args += @("--ch-set-url", $cmd.Url)
         } elseif ($cmd.Type -eq "AddChannelUrl") {
             $args += @("--ch-add-url", $cmd.Url)
+        } elseif ($cmd.Type -eq "SetChannelField") {
+            $args += @("--ch-set", $cmd.Field, $cmd.Value)
+            if ($null -eq $channelIndex) {
+                $channelIndex = $cmd.Index
+            } elseif ($channelIndex -ne $cmd.Index) {
+                throw "Multiple channel indices in the same meshtastic batch are not supported."
+            }
         }
+    }
+    if ($null -ne $channelIndex) {
+        $args += @("--ch-index", $channelIndex)
     }
 
     return $args
@@ -870,6 +1061,9 @@ function Get-CommandAckPatterns {
         }
         "AddChannelUrl" {
             # meshtastic CLI does not print a set/ack line for ch-add-url in v2.6.x
+        }
+        "SetChannelField" {
+            # meshtastic CLI does not print a per-field set/ack line for ch-set in v2.6.x
         }
     }
 
@@ -956,6 +1150,50 @@ function Test-MeshtasticOutputForCommands {
     return ($missing.Count -eq 0)
 }
 
+function Test-MeshtasticConnectionIssue {
+    param([string]$Output)
+
+    if (-not $Output) {
+        return $false
+    }
+
+    if ($Output -match "(?i)serial port disconnected") {
+        return $true
+    }
+    if ($Output -match "(?i)timed out waiting for connection completion") {
+        return $true
+    }
+    if ($Output -match "(?i)ClearCommError failed") {
+        return $true
+    }
+    if ($Output -match "(?i)PermissionError\\(13\\)") {
+        return $true
+    }
+    return $false
+}
+
+function Test-MeshtasticManualReconnectRequired {
+    param([string]$Output)
+
+    if (-not $Output) {
+        return $false
+    }
+
+    if ($Output -match "(?i)serial device couldn't be opened") {
+        return $true
+    }
+    if ($Output -match "(?i)could not open port") {
+        return $true
+    }
+    if ($Output -match "(?i)filenotfounderror") {
+        return $true
+    }
+    if ($Output -match "(?i)in use by another process") {
+        return $true
+    }
+    return $false
+}
+
 function Invoke-MeshtasticCommands {
     param(
         [string]$Port,
@@ -987,14 +1225,14 @@ function Invoke-MeshtasticCommands {
             }
             $meshtasticArgs = Build-MeshtasticArgs -Commands $batch
             Write-Log ("Executing: meshtastic --port {0} {1}" -f $Port, ($meshtasticArgs -join " "))
-            Invoke-MeshtasticWithRetry -Port $Port -MeshtasticArgs $meshtasticArgs -Raw ($batch | ForEach-Object { $_.Raw } | Out-String) -ExpectedCommands $batch -RequireAck $true
+            $Port = Invoke-MeshtasticWithRetry -Port $Port -MeshtasticArgs $meshtasticArgs -Raw ($batch | ForEach-Object { $_.Raw } | Out-String) -ExpectedCommands $batch -RequireAck $true
             $batchIndex++
             if ($RebootWaitSeconds -gt 0) {
                 Write-Log "Waiting ${RebootWaitSeconds}s for reboot..."
                 Start-Sleep -Seconds $RebootWaitSeconds
                 $Port = Wait-ForSerialPort -PreferredPort $Port -TimeoutSeconds $PortDetectTimeoutSeconds -PollSeconds $PortDetectIntervalSeconds
                 Write-Log "Port after reboot: $Port"
-                Wait-ForMeshtasticReady -Port $Port -TimeoutSeconds $ReadyTimeoutSeconds -PollSeconds $ReadyPollSeconds -CommandTimeoutSeconds $ReadyCommandTimeoutSeconds
+                $Port = Wait-ForMeshtasticReady -Port $Port -TimeoutSeconds $ReadyTimeoutSeconds -PollSeconds $ReadyPollSeconds -CommandTimeoutSeconds $ReadyCommandTimeoutSeconds -RetryCount $ReadyRetryCount
             }
         }
     }
@@ -1003,7 +1241,7 @@ function Invoke-MeshtasticCommands {
         $needsTransaction = $UseTransaction -and ($normalCommands | Where-Object { $_.Type -eq "SetField" -or $_.Type -eq "SetCannedMessage" }).Count -gt 0
         if ($needsTransaction) {
             Write-Log "Opening settings transaction..."
-            Invoke-MeshtasticWithRetry -Port $Port -MeshtasticArgs @("--begin-edit") -Raw "meshtastic --begin-edit"
+            $Port = Invoke-MeshtasticWithRetry -Port $Port -MeshtasticArgs @("--begin-edit") -Raw "meshtastic --begin-edit"
         }
 
         Write-Log ("Executing non-reboot batch ({0} commands)..." -f $normalCommands.Count)
@@ -1012,11 +1250,11 @@ function Invoke-MeshtasticCommands {
         }
         $meshtasticArgs = Build-MeshtasticArgs -Commands $normalCommands
         Write-Log ("Executing: meshtastic --port {0} {1}" -f $Port, ($meshtasticArgs -join " "))
-        Invoke-MeshtasticWithRetry -Port $Port -MeshtasticArgs $meshtasticArgs -Raw ($normalCommands | ForEach-Object { $_.Raw } | Out-String) -ExpectedCommands $normalCommands -RequireAck $true
+        $Port = Invoke-MeshtasticWithRetry -Port $Port -MeshtasticArgs $meshtasticArgs -Raw ($normalCommands | ForEach-Object { $_.Raw } | Out-String) -ExpectedCommands $normalCommands -RequireAck $true
 
         if ($needsTransaction) {
             Write-Log "Committing settings transaction..."
-            Invoke-MeshtasticWithRetry -Port $Port -MeshtasticArgs @("--commit-edit") -Raw "meshtastic --commit-edit"
+            $Port = Invoke-MeshtasticWithRetry -Port $Port -MeshtasticArgs @("--commit-edit") -Raw "meshtastic --commit-edit"
         }
     }
 
@@ -1032,12 +1270,13 @@ function Invoke-MeshtasticWithRetry {
         [bool]$RequireAck = $false
     )
 
+    $currentPort = $Port
     for ($attempt = 1; $attempt -le $MeshtasticRetryCount; $attempt++) {
         $outputLines = @()
         $prevErrorActionPreference = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         try {
-            & meshtastic --port $Port --timeout $MeshtasticTimeoutSeconds @MeshtasticArgs 2>&1 | ForEach-Object {
+            & meshtastic --port $currentPort --timeout $MeshtasticTimeoutSeconds @MeshtasticArgs 2>&1 | ForEach-Object {
                 $line = $_.ToString()
                 if ($null -ne $line) {
                     $outputLines += $line
@@ -1066,11 +1305,36 @@ function Invoke-MeshtasticWithRetry {
             }
         }
         if ($success) {
-            return
+            return $currentPort
         }
+        $manualReconnect = Test-MeshtasticManualReconnectRequired -Output $output
+        $connectionIssue = Test-MeshtasticConnectionIssue -Output $output
         if ($attempt -lt $MeshtasticRetryCount) {
-            Write-Log "meshtastic failed (attempt $attempt/$MeshtasticRetryCount). Retrying in ${MeshtasticRetryDelaySeconds}s..."
-            Start-Sleep -Seconds $MeshtasticRetryDelaySeconds
+            if ($manualReconnect) {
+                Write-Log "Serial port open failed. Waiting for manual reconnect..."
+                Write-Host "[!!!] SERIAL PORT OPEN FAILED: CLOSE APPS OR RECONNECT DEVICE, THEN PRESS ENTER [!!!]" -ForegroundColor Red
+                Read-Host "Press Enter to continue after reconnect"
+                $currentPort = Wait-ForSerialPort -PreferredPort $currentPort -TimeoutSeconds $PortDetectTimeoutSeconds -PollSeconds $PortDetectIntervalSeconds
+                Write-Log "Using port after reconnect: $currentPort"
+                $currentPort = Wait-ForMeshtasticReady -Port $currentPort -TimeoutSeconds $ReadyTimeoutSeconds -PollSeconds $ReadyPollSeconds -CommandTimeoutSeconds $ReadyCommandTimeoutSeconds -RetryCount $ReadyRetryCount
+                Write-Log "meshtastic failed (attempt $attempt/$MeshtasticRetryCount). Retrying after manual reconnect..."
+                continue
+            }
+            if ($connectionIssue) {
+                Write-Log "Serial connection issue detected. Waiting for device to re-enumerate..."
+                Write-Host "[!!!] SERIAL CONNECTION ISSUE: PLEASE REBOOT THE DEVICE [!!!]" -ForegroundColor Red
+                $currentPort = Wait-ForSerialPort -PreferredPort $currentPort -TimeoutSeconds $PortDetectTimeoutSeconds -PollSeconds $PortDetectIntervalSeconds
+                Write-Log "Using port after reconnect: $currentPort"
+                $currentPort = Wait-ForMeshtasticReady -Port $currentPort -TimeoutSeconds $ReadyTimeoutSeconds -PollSeconds $ReadyPollSeconds -CommandTimeoutSeconds $ReadyCommandTimeoutSeconds -RetryCount $ReadyRetryCount
+                Write-Log "meshtastic failed (attempt $attempt/$MeshtasticRetryCount). Retrying after reconnect..."
+                continue
+            }
+            if ($MeshtasticRetryDelaySeconds -gt 0) {
+                Write-Log "meshtastic failed (attempt $attempt/$MeshtasticRetryCount). Retrying in ${MeshtasticRetryDelaySeconds}s..."
+                Start-Sleep -Seconds $MeshtasticRetryDelaySeconds
+            } else {
+                Write-Log "meshtastic failed (attempt $attempt/$MeshtasticRetryCount). Retrying immediately..."
+            }
             continue
         }
         throw "meshtastic command failed: $Raw`n$output"
@@ -1099,7 +1363,7 @@ function Get-CannedMessageFromOutput {
         return $match.Groups[1].Value.Trim()
     }
 
-    $lines = $Output -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $_ -notmatch '(?i)^connected to radio$' }
+    $lines = @($Output -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $_ -notmatch '(?i)^connected to radio$' })
     if ($lines.Count -gt 0) {
         return $lines[-1]
     }
@@ -1175,7 +1439,8 @@ function Convert-InfoToMap {
 
             $stack = @($stack | Where-Object { $_.Indent -lt $indent })
 
-            if ($value -eq "") {
+            $normalizedValue = $value.Trim().TrimEnd(',')
+            if ($normalizedValue -eq "" -or $normalizedValue -eq "{" -or $normalizedValue -eq "[") {
                 $stack += [PSCustomObject]@{ Indent = $indent; Key = $key }
             } else {
                 $path = @()
@@ -1185,7 +1450,7 @@ function Convert-InfoToMap {
                     }
                 }
                 $path += $key
-                $normalizedValue = $value.Trim().Trim('"').TrimEnd(',')
+                $normalizedValue = $normalizedValue.Trim('"')
                 $fullPath = Normalize-InfoPath -Path ($path -join ".")
                 if ($fullPath) {
                     $map[$fullPath] = $normalizedValue
@@ -1206,6 +1471,15 @@ function Normalize-Value {
         return ("num:{0:R}" -f $number)
     }
     return $normalized
+}
+
+function Get-ListCount {
+    param($Value)
+
+    if ($null -eq $Value) {
+        return 0
+    }
+    return @($Value).Count
 }
 
 function Get-MissingCommands {
@@ -1277,6 +1551,7 @@ Write-Log "CLI config file: $CliConfigPath"
 $cliText = Read-TextFileBestEncoding -Path $CliConfigPath
 $expectedChannelUrls = Get-ChannelUrlsFromText -Text $cliText
 $expectedChannelUrl = Get-PreferredChannelUrl -Urls $expectedChannelUrls
+$channelDefaultCommands = Get-ChannelDefaultCommandsFromText -Text $cliText -Index 3
 
 $initialPort = Select-SerialPort
 Write-Log "Using port: $initialPort"
@@ -1287,12 +1562,13 @@ Start-Sleep -Seconds $PostFlashWaitSeconds
 
 $portAfter = Wait-ForSerialPort -PreferredPort $initialPort -TimeoutSeconds $PortDetectTimeoutSeconds -PollSeconds $PortDetectIntervalSeconds
 Write-Log "Using port after reboot: $portAfter"
-Wait-ForMeshtasticReady -Port $portAfter -TimeoutSeconds $ReadyTimeoutSeconds -PollSeconds $ReadyPollSeconds -CommandTimeoutSeconds $ReadyCommandTimeoutSeconds
+$portAfter = Wait-ForMeshtasticReady -Port $portAfter -TimeoutSeconds $ReadyTimeoutSeconds -PollSeconds $ReadyPollSeconds -CommandTimeoutSeconds $ReadyCommandTimeoutSeconds -RetryCount $ReadyRetryCount
 
 $commands = Get-MeshtasticCommands -Path $CliConfigPath
 if (-not $commands -or $commands.Count -eq 0) {
     throw "No meshtastic --set commands found in $CliConfigPath"
 }
+$commands = Insert-ChannelCommandsAfterUrl -Commands $commands -ChannelCommands $channelDefaultCommands
 
 Write-Log "Total commands queued: $($commands.Count)"
 
@@ -1300,12 +1576,12 @@ $portAfter = Invoke-MeshtasticCommands -Port $portAfter -Commands $commands -Reb
 
 if ($RebootAfterConfig) {
     Write-Log "Rebooting device to apply config..."
-    Invoke-MeshtasticWithRetry -Port $portAfter -MeshtasticArgs @("--reboot") -Raw "meshtastic --reboot"
+    $portAfter = Invoke-MeshtasticWithRetry -Port $portAfter -MeshtasticArgs @("--reboot") -Raw "meshtastic --reboot"
     Write-Log "Waiting ${PostConfigRebootWaitSeconds}s for device to reboot..."
     Start-Sleep -Seconds $PostConfigRebootWaitSeconds
     $portAfter = Wait-ForSerialPort -PreferredPort $portAfter -TimeoutSeconds $PortDetectTimeoutSeconds -PollSeconds $PortDetectIntervalSeconds
     Write-Log "Port after config reboot: $portAfter"
-    Wait-ForMeshtasticReady -Port $portAfter -TimeoutSeconds $ReadyTimeoutSeconds -PollSeconds $ReadyPollSeconds -CommandTimeoutSeconds $ReadyCommandTimeoutSeconds
+    $portAfter = Wait-ForMeshtasticReady -Port $portAfter -TimeoutSeconds $ReadyTimeoutSeconds -PollSeconds $ReadyPollSeconds -CommandTimeoutSeconds $ReadyCommandTimeoutSeconds -RetryCount $ReadyRetryCount
 }
 
 $maxVerifyPasses = if ($ReapplyMaxPasses -gt 0) { $ReapplyMaxPasses } else { 1 }
@@ -1317,35 +1593,44 @@ for ($pass = 1; $pass -le $maxVerifyPasses; $pass++) {
     $unverified = $null
     $missing = Get-MissingCommands -Commands $commands -InfoMap $infoMap -UnverifiedRef ([ref]$unverified)
     $details = Get-MismatchDetails -Missing $missing -InfoMap $infoMap
+    $missingList = @($missing)
+    $detailsList = @($details)
+    $unverifiedList = @($unverified)
+    $missingCount = Get-ListCount $missingList
+    $detailsCount = Get-ListCount $detailsList
+    $unverifiedCount = Get-ListCount $unverifiedList
 
     $actualChannelUrl = Get-InfoChannelUrl -InfoText $infoText
     $channelCommand = Get-ChannelUrlCommandIfMismatch -ExpectedUrl $expectedChannelUrl -ActualUrl $actualChannelUrl
 
-    if (($missing.Count -eq 0) -and (-not $channelCommand)) {
+    if (($missingCount -eq 0) -and (-not $channelCommand)) {
         Write-Log "Device settings verified."
-        if ($unverified -and $unverified.Count -gt 0) {
-            Write-Log ("Skipped verification for settings not present in --info: {0}" -f $unverified.Count)
+        if ($unverifiedCount -gt 0) {
+            Write-Log ("Skipped verification for settings not present in --info: {0}" -f $unverifiedCount)
         }
         $verifyOk = $true
         break
     }
 
-    if ($details.Count -gt 0) {
-        Write-MismatchDetails -Details $details
+    if ($detailsCount -gt 0) {
+        Write-MismatchDetails -Details $detailsList
     }
     if ($channelCommand) {
         Write-Log ("Channel URL mismatch detected; will reapply: {0}" -f $channelCommand.Raw)
     }
-    if ($unverified -and $unverified.Count -gt 0) {
-        Write-Log ("Skipped verification for settings not present in --info: {0}" -f $unverified.Count)
+    if ($unverifiedCount -gt 0) {
+        Write-Log ("Skipped verification for settings not present in --info: {0}" -f $unverifiedCount)
     }
 
     $reapply = @()
-    if ($missing.Count -gt 0) {
-        $reapply += $missing
+    if ($missingCount -gt 0) {
+        $reapply += $missingList
     }
     if ($channelCommand) {
         $reapply += $channelCommand
+        if ($channelDefaultCommands -and $channelDefaultCommands.Count -gt 0) {
+            $reapply += $channelDefaultCommands
+        }
     }
     if ($reapply.Count -eq 0) {
         break
@@ -1382,7 +1667,7 @@ if ($expectedCannedMessage) {
                 Raw = "meshtastic --set-canned-message $expectedCannedMessage"
             }
             Write-Log "Reapplying canned message..."
-            Invoke-MeshtasticWithRetry -Port $portAfter -MeshtasticArgs @("--set-canned-message", $expectedCannedMessage) -Raw $setCmd.Raw -ExpectedCommands @($setCmd) -RequireAck $true
+            $portAfter = Invoke-MeshtasticWithRetry -Port $portAfter -MeshtasticArgs @("--set-canned-message", $expectedCannedMessage) -Raw $setCmd.Raw -ExpectedCommands @($setCmd) -RequireAck $true
             Start-Sleep -Seconds 2
         }
     }
@@ -1390,5 +1675,29 @@ if ($expectedCannedMessage) {
         throw "Canned message verification failed after $maxPasses attempt(s)."
     }
 }
+
+$forceCannedFields = @(
+    @{ Field = "canned_message.inputbroker_pin_a"; Value = "37" },
+    @{ Field = "canned_message.inputbroker_pin_b"; Value = "26" },
+    @{ Field = "canned_message.inputbroker_pin_press"; Value = "4" },
+    @{ Field = "canned_message.inputbroker_event_cw"; Value = "UP" },
+    @{ Field = "canned_message.inputbroker_event_ccw"; Value = "DOWN" },
+    @{ Field = "canned_message.inputbroker_event_press"; Value = "SELECT" },
+    @{ Field = "canned_message.enabled"; Value = "true" },
+    @{ Field = "canned_message.rotary1_enabled"; Value = "true" },
+    @{ Field = "canned_message.allow_input_source"; Value = "rotEnc1" }
+)
+$forceCommands = @($forceCannedFields | ForEach-Object {
+        [PSCustomObject]@{
+            Type = "SetField"
+            Field = $_.Field
+            Value = $_.Value
+            Raw = "meshtastic --set $($_.Field) $($_.Value)"
+        }
+    })
+$forceArgs = Build-MeshtasticArgs -Commands $forceCommands
+$forceRaw = "meshtastic --set canned_message.inputbroker_pin_a 37 --set canned_message.inputbroker_pin_b 26 --set canned_message.inputbroker_pin_press 4 --set canned_message.inputbroker_event_cw UP --set canned_message.inputbroker_event_ccw DOWN --set canned_message.inputbroker_event_press SELECT --set canned_message.enabled true --set canned_message.rotary1_enabled true --set canned_message.allow_input_source rotEnc1"
+Write-Log "Forcing canned_message input broker settings..."
+$portAfter = Invoke-MeshtasticWithRetry -Port $portAfter -MeshtasticArgs $forceArgs -Raw $forceRaw -ExpectedCommands $forceCommands -RequireAck $true
 
 Write-Log "Command execution complete."
