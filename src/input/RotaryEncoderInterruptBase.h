@@ -30,6 +30,7 @@ class RotaryEncoderInterruptBase : public Observable<const InputEvent *>, public
     volatile int rotaryLevelA = LOW;
     volatile int rotaryLevelB = LOW;
     volatile RotaryEncoderInterruptBaseActionType action = ROTARY_ACTION_NONE;
+    volatile uint32_t lastRotaryEdgeMs = 0;
 
   private:
     uint8_t _pinA = 0;

@@ -1,6 +1,11 @@
 #include "RotaryEncoderInterruptBase.h"
 #include "configuration.h"
 
+namespace
+{
+constexpr uint32_t kRotaryDebounceMs = 30; // Guard against rapid edge bounce on mechanical encoders.
+}
+
 RotaryEncoderInterruptBase::RotaryEncoderInterruptBase(const char *name) : concurrency::OSThread(name)
 {
     this->_originName = name;
@@ -102,8 +107,13 @@ RotaryEncoderInterruptBaseStateType RotaryEncoderInterruptBase::intHandler(bool 
     if (actualPinRaising && (otherPinLevel == LOW)) {
         if (state == ROTARY_EVENT_CLEARED) {
             newState = ROTARY_EVENT_OCCURRED;
-            if ((this->action != ROTARY_ACTION_PRESSED) && (this->action != action)) {
-                this->action = action;
+            if (this->action != ROTARY_ACTION_PRESSED) {
+                uint32_t now = millis();
+                bool withinDebounce = (this->lastRotaryEdgeMs != 0) && ((now - this->lastRotaryEdgeMs) < kRotaryDebounceMs);
+                this->lastRotaryEdgeMs = now;
+                if (!withinDebounce && (this->action != action)) {
+                    this->action = action;
+                }
             }
         }
     } else if (!actualPinRaising && (otherPinLevel == HIGH)) {
