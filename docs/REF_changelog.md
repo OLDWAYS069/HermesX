@@ -1,5 +1,19 @@
 # HermesX 變更紀錄 (REF_changelog.md)
 
+## 範圍
+- 日期：2026-01-25
+- 版本：HXB_0.2.8
+- 項目：BootHold 喚醒等待期、提示動畫與喚醒原因記錄
+- 檔案：
+  - src/ButtonThread.cpp
+  - src/ButtonThread.h
+  - src/modules/HermesXPowerGuard.cpp
+- 說明：
+  - 短按喚醒後進入 5 秒等待期，期間需長按才放行開機。
+  - 長按期間進度條由暗轉亮，並顯示「. .. ... ....」循環提示。
+  - 開機時輸出喚醒原因（timer/ext/reset）。
+- 測試：未執行；需實機確認。
+
 ## 版本比較：0.2.8 vs 0.2.7
 - 版本同步：APP_VERSION/SHORT/螢幕顯示皆改為 0.2.8（0.2.7 使用 branch 語意版＋ git 碼顯示）。
 - Lighthouse：0.2.8 預設停用（編譯排除 `MESHTASTIC_EXCLUDE_LIGHTHOUSE=1`），0.2.7 仍啟用且隨身模式廣播。

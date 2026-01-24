@@ -141,6 +141,7 @@ ButtonThread::ButtonThread() : OSThread("Button")
             bootHoldPressActive = pressedAtBoot;
             bootHoldWaitingForPress = !pressedAtBoot;
             bootHoldStartMs = pressedAtBoot ? millis() : 0;
+            bootHoldArmedAtMs = millis();
             holdOffBypassed = true;
             LOG_BUTTON("BootHold: armed (usb=%d, pressed=%d)", HermesXPowerGuard::usbPresentAtBoot() ? 1 : 0,
                        pressedAtBoot ? 1 : 0);
@@ -1133,33 +1134,94 @@ bool ButtonThread::handleBootHold()
     if (!bootHoldArmed)
         return false;
 
+    static const char *const kBootHoldDots[] = {".", "..", "...", "...."};
+    // BootHold runs after a deep-sleep wake (it does not wake the device) and enforces a long press to resume.
     bool currentlyPressed = userButton.debouncedValue();
+    const uint32_t now = millis();
 
     if (bootHoldWaitingForPress) {
-        if (!currentlyPressed)
+        if (!currentlyPressed) {
+            if (bootHoldArmedAtMs != 0 && (now - bootHoldArmedAtMs) >= kBootHoldIdleSleepMs) {
+                LOG_INFO("BootHold idle timeout, return to deep sleep");
+                if (bootHoldAnimStarted && HermesXInterfaceModule::instance) {
+                    HermesXInterfaceModule::instance->stopPowerHoldAnimation(false);
+                }
+                bootHoldAnimStarted = false;
+                bootHoldDotsPhase = 0;
+                if (screen) {
+                    screen->endAlert();
+                }
+                HermesXPowerGuard::markBootHoldAborted();
+                bootHoldArmed = false;
+                bootHoldPressActive = false;
+                bootHoldWaitingForPress = false;
+                bootHoldStartMs = 0;
+                bootHoldArmedAtMs = 0;
+                HermesXInterfaceModule::setPowerHoldReady(false);
+                power->shutdown();
+            }
             return true;
+        }
 
         bootHoldWaitingForPress = false;
         bootHoldPressActive = true;
+        bootHoldAnimStarted = false;
+        bootHoldDotsPhase = 0xFF;
         HermesXPowerGuard::markPressDetected();
-        bootHoldStartMs = millis();
+        bootHoldStartMs = now;
         LOG_BUTTON("BootHold: press detected");
     }
 
     if (!bootHoldPressActive && currentlyPressed) {
         bootHoldPressActive = true;
-        bootHoldStartMs = millis();
+        bootHoldStartMs = now;
+        bootHoldAnimStarted = false;
+        bootHoldDotsPhase = 0xFF;
+    }
+
+    if (bootHoldPressActive && currentlyPressed) {
+        uint32_t pressedMs = userButton.getPressedMs();
+        if (pressedMs == 0) {
+            pressedMs = 1;
+        }
+        if (auto *interfaceModule = HermesXInterfaceModule::instance) {
+            if (!bootHoldAnimStarted) {
+                interfaceModule->startPowerHoldAnimation(HermesXInterfaceModule::PowerHoldMode::PowerOn, BUTTON_LONGPRESS_MS);
+                bootHoldAnimStarted = true;
+            }
+            interfaceModule->updatePowerHoldAnimation(pressedMs);
+        }
+        if (screen) {
+            const uint32_t elapsedMs = now - bootHoldStartMs;
+            const uint8_t newPhase = static_cast<uint8_t>((elapsedMs / kBootHoldDotsIntervalMs) % 4);
+            if (newPhase != bootHoldDotsPhase) {
+                bootHoldDotsPhase = newPhase;
+                screen->startAlert(kBootHoldDots[newPhase]);
+            }
+        }
     }
 
     if (!currentlyPressed) {
         uint32_t pressedMs = userButton.getPressedMs();
-        if (!bootHoldPressActive || pressedMs < BUTTON_LONGPRESS_MS) {
-            // 短按未達門檻：保持武裝，等待下一次長按，不標記 abort 以免關機動畫被抑制
-            LOG_BUTTON("BootHold: short press ignored, still armed (pressed=%" PRIu32 ")", pressedMs);
+        if (!bootHoldPressActive) {
+            return true;
+        }
+        if (pressedMs < BUTTON_LONGPRESS_MS) {
+            // 短按喚醒後進入等待期：在視窗內再次長按才放行開機
+            LOG_INFO("BootHold short press, waiting for long press (pressed=%" PRIu32 ")", pressedMs);
+            if (bootHoldAnimStarted && HermesXInterfaceModule::instance) {
+                HermesXInterfaceModule::instance->stopPowerHoldAnimation(false);
+            }
+            bootHoldAnimStarted = false;
+            bootHoldDotsPhase = 0;
+            if (screen) {
+                screen->endAlert();
+            }
             bootHoldArmed = true;
             bootHoldPressActive = false;
             bootHoldWaitingForPress = true;
             bootHoldStartMs = 0;
+            bootHoldArmedAtMs = now;
             holdOffBypassed = false;
             HermesXInterfaceModule::setPowerHoldReady(false);
             return true;
@@ -1167,6 +1229,12 @@ bool ButtonThread::handleBootHold()
         bootHoldArmed = false;
         bootHoldPressActive = false;
         bootHoldWaitingForPress = false;
+        bootHoldArmedAtMs = 0;
+        bootHoldAnimStarted = false;
+        bootHoldDotsPhase = 0;
+        if (screen) {
+            screen->endAlert();
+        }
         holdOffBypassed = true; // Boot 已經完成，允許立即使用長按關機
         LOG_BUTTON("BootHold: passed (pressed=%" PRIu32 ")", pressedMs);
         return false;
@@ -1180,6 +1248,12 @@ bool ButtonThread::handleBootHold()
         bootHoldArmed = false;
         bootHoldPressActive = false;
         bootHoldWaitingForPress = false;
+        bootHoldArmedAtMs = 0;
+        bootHoldAnimStarted = false;
+        bootHoldDotsPhase = 0;
+        if (screen) {
+            screen->endAlert();
+        }
         holdOffBypassed = true; // Boot 已經完成，允許立即使用長按關機
         HermesXInterfaceModule::setPowerHoldReady(true);
         return false;

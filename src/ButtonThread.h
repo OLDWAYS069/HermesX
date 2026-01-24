@@ -74,6 +74,11 @@ class ButtonThread : public concurrency::OSThread
     bool bootHoldPressActive = false;
     bool bootHoldWaitingForPress = false;
     uint32_t bootHoldStartMs = 0;
+    uint32_t bootHoldArmedAtMs = 0;
+    bool bootHoldAnimStarted = false;
+    uint8_t bootHoldDotsPhase = 0;
+    static constexpr uint32_t kBootHoldIdleSleepMs = 5000;
+    static constexpr uint32_t kBootHoldDotsIntervalMs = 500;
     static bool holdOffBypassed;
 #endif
 #endif

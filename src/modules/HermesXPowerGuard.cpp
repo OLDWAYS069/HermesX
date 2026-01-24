@@ -47,8 +47,6 @@ static void clearDfuFlagIfSet()
 
 void initialize(bool usbPresent, bool wokeFromTimer, bool wokeFromExt)
 {
-    (void)wokeFromTimer;
-
     gUsbPresent = usbPresent;
     gSuppressShutdownAnim = false;
     gBootHoldArmed = false;
@@ -61,6 +59,14 @@ void initialize(bool usbPresent, bool wokeFromTimer, bool wokeFromExt)
     gGuardEnabled = !gDfuBypass;
     gStartupVisualsAllowed = true;
     gPowerHoldReady = true;
+
+    const char *wakeReason = "reset";
+    if (wokeFromTimer) {
+        wakeReason = "timer";
+    } else if (wokeFromExt) {
+        wakeReason = "ext";
+    }
+    LOG_INFO("BootHold wake reason: %s (usb=%d, guard=%d)", wakeReason, usbPresent ? 1 : 0, gGuardEnabled ? 1 : 0);
 
     if (!gGuardEnabled)
         return;

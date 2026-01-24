@@ -4,6 +4,7 @@
 - EM 模式必備詞彙：緊急模式／我受困了／需要醫療／需要物資／我在這（我在這裡）／你好／收到／我平安，與標點：：，。！？（）《》。
 - 僅內嵌 1bpp、約 16px 的中文字，容量控制在 40 KB 以下（目前約 3.5 KB）。
 - 不使用 SPIFFS/LittleFS，直接編入韌體；顯示流程維持 UTF-8。
+ - 用途：HermesX_EM16_ZH 僅供 OLED_ZH 下的 EM UI 最小字集；一般介面仍以 HermesX_CN12 為主。
 
 ## 步驟
 1. **維護字集清單**：編輯 `tools/fonts/hermesx_em_charset.txt`（UTF-8、無 BOM）。每一行放入句子或標點。
