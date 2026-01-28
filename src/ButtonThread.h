@@ -41,7 +41,10 @@ class ButtonThread : public concurrency::OSThread
     void updatePowerHoldAnimation();
 #if defined(HERMESX_GUARD_POWER_ANIMATIONS)
     bool handleBootHold();
+    void disableBootHold();
 #endif
+    static void requireReleaseBeforeLongPress();
+    static bool isReleaseRequiredForLongPress();
     static void clearHoldAnimationState();
     static bool isHoldButtonPressed();
 #endif

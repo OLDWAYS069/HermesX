@@ -23,12 +23,14 @@ static bool gGuardEnabled = false;
 static bool gStartupVisualsAllowed = true;
 static bool gSuppressShutdownAnim = false;
 static bool gPowerHoldReady = true;
+static bool gBootHoldPending = false;
 static bool gRequireLongPress = false;
 static bool gWaitingForPress = false;
 static bool gUsbPresent = false;
 static bool gBootHoldArmed = false;
 static bool gQuietBoot = false;
 static bool gDfuBypass = false;
+static bool gWokeFromSleep = false;
 
 void requestDfuBypassForNextBoot()
 {
@@ -59,6 +61,8 @@ void initialize(bool usbPresent, bool wokeFromTimer, bool wokeFromExt)
     gGuardEnabled = !gDfuBypass;
     gStartupVisualsAllowed = true;
     gPowerHoldReady = true;
+    gWokeFromSleep = wokeFromTimer || wokeFromExt;
+    gBootHoldPending = false;
 
     const char *wakeReason = "reset";
     if (wokeFromTimer) {
@@ -77,15 +81,23 @@ void initialize(bool usbPresent, bool wokeFromTimer, bool wokeFromExt)
     }
 #endif
 
-    // 一律要求長按才能完成開機，避免短按意外啟動；視覺/按鍵就緒在長按達門檻後才釋放
-    gRequireLongPress = true;
-    gWaitingForPress = true;
-    gStartupVisualsAllowed = false;
-    gPowerHoldReady = false;
+    // 只有從睡眠喚醒時才要求長按，避免冷開機被攔住
+    if (gWokeFromSleep) {
+        gRequireLongPress = true;
+        gWaitingForPress = true;
+        gStartupVisualsAllowed = false;
+        gPowerHoldReady = false;
+        gBootHoldPending = true;
+    }
 
 #if DEBUG_BUTTONS
     LOG_DEBUG("BootHold: armed (usb=%d, wokeFromExt=%d)", usbPresent ? 1 : 0, wokeFromExt ? 1 : 0);
 #endif
+}
+
+bool wokeFromSleep()
+{
+    return gWokeFromSleep;
 }
 
 bool guardEnabled()
@@ -117,7 +129,7 @@ void setStartupVisualsAllowed(bool allowed)
 
 bool registerInitialButtonState(bool pressed)
 {
-    if (!gGuardEnabled)
+    if (!gGuardEnabled || gPowerHoldReady)
         return false;
 
     if (pressed) {
@@ -169,6 +181,7 @@ void markBootHoldCommitted()
     gWaitingForPress = false;
     gStartupVisualsAllowed = true;
     gPowerHoldReady = true;
+    gBootHoldPending = false;
 #if DEBUG_BUTTONS
     LOG_DEBUG("BootHold: committed (ready)");
 #endif
@@ -183,6 +196,7 @@ void markBootHoldAborted()
     gWaitingForPress = false;
     gStartupVisualsAllowed = false;
     gPowerHoldReady = false;
+    gBootHoldPending = false;
     gSuppressShutdownAnim = false; // 關機動畫不要被抑制
 #if DEBUG_BUTTONS
     LOG_DEBUG("BootHold: aborted (sleep)");
@@ -217,6 +231,11 @@ bool isPowerHoldReady()
     return !gGuardEnabled || gPowerHoldReady;
 }
 
+bool bootHoldPending()
+{
+    return gGuardEnabled && gBootHoldPending;
+}
+
 bool usbPresentAtBoot()
 {
     return gUsbPresent;
@@ -229,6 +248,16 @@ void logBootHoldEvent(const char *event)
         LOG_DEBUG("%s", event);
 #else
     (void)event;
+#endif
+}
+
+void enterGateDeepSleep(bool skipSave)
+{
+#if defined(ARCH_ESP32) || defined(ARCH_RP2040) || defined(ARCH_NRF52)
+    suppressPmuShutdownOnce();
+    doDeepSleep(UINT32_MAX, true, skipSave);
+#else
+    (void)skipSave;
 #endif
 }
 

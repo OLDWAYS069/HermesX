@@ -796,9 +796,7 @@ HermesXInterfaceModule::HermesXInterfaceModule()
     powerHoldFadeActive = false;
     powerHoldLatchedRed = false;
     shutdownEffectActive = false;
-    // 啟動開機動畫
-    startupEffectActive = true;
-    startLEDAnimation(LEDAnimation::StartupEffect);
+    startupEffectActive = false;
 
     HERMESX_LOG_DEBUG("constroct");
 #if defined(HERMESX_GUARD_POWER_ANIMATIONS)
@@ -1306,11 +1304,18 @@ int32_t HermesXInterfaceModule::runOnce() {
 
     applyRoleOutputPolicy();
 
+    bool outputsAllowed = !outputsDisabled;
+#if defined(HERMESX_GUARD_POWER_ANIMATIONS)
+    if (HermesXPowerGuard::guardEnabled() && HermesXPowerGuard::bootHoldPending()) {
+        outputsAllowed = false;
+    }
+#endif
+
     // === ?��??��?段�??�執行�?�?===
     if (firstTime) {
         firstTime = false;
         music.begin();
-        if (!outputsDisabled) {
+        if (outputsAllowed) {
             music.playStartupSound();
         }
         HERMESX_LOG_INFO("first runOnce() call");
@@ -1325,7 +1330,7 @@ int32_t HermesXInterfaceModule::runOnce() {
     }
 
     // === 測試?��?（�?一次�?===
-    if (!testPlayed && !outputsDisabled) {
+    if (!testPlayed && outputsAllowed) {
         testPlayed = true;
         music.playSendSound();
     }
@@ -1623,7 +1628,7 @@ void HermesXInterfaceModule::forceStopPowerHoldAnimation()
 void HermesXInterfaceModule::startPowerHoldFade(uint32_t now) {
 #if defined(HERMESX_GUARD_POWER_ANIMATIONS)
     // 開機長按需經過 BootHold，但關機長按動畫不應被 guard 擋住
-    if (powerHoldMode != PowerHoldMode::PowerOff && !HermesXPowerGuard::isPowerHoldReady()) {
+    if (powerHoldMode != PowerHoldMode::PowerOff && HermesXPowerGuard::bootHoldPending()) {
         return;
     }
 #endif

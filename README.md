@@ -6,7 +6,7 @@ HermesX 是一款建立在 Meshtastic 協作網路上的定製韌體，專注於
 - **專注的操作體驗**：強調「抬手即用」的交互，不需手機即可瀏覽罐頭訊息並完成發送。
 - **視覺 + 聽覺雙通知**：LED 狀態條與對應音效共同回饋，讓訊息狀態一目了然、耳聞即知。
 - **HermesX 品牌化 UI**：面板表情、動畫與命名全面統一，打造一致的介面識別。
-- **安全喚醒流程**：短按喚醒後進入 5 秒長按等待期，進度條由暗轉亮並搭配點點提示，避免誤觸開機。
+- **安全喚醒流程**：短按喚醒後進入 5 秒長按等待期，未達門檻前不進入 Mesh；長按顯示由暗轉亮進度與點點提示，避免誤觸開機。
 
 ## 外觀設計
 外殼預留勾槽，可搭配 D 扣或掛繩將 HermesX 固定於背包、胸掛、皮帶或褲子，真正做到隨身攜帶、隨時使用。
@@ -48,4 +48,3 @@ HermesX 是一款建立在 Meshtastic 協作網路上的定製韌體，專注於
 - **外部通知 Agent** (`modules/ExternalNotificationModule.cpp`)：保留 `hermesXCallback` 呼叫點與 `setExternalState` 命名，確保與 Hermes UI/LED 同步。
 - **設定與總覽** (`platformio.ini`、`.vscode/settings.json`、`README.md`)：命名以環境或品牌為核心（`default_envs = heltec-wireless-tracker`、README 標題 `HermesX Firmware`），新增旗標時使用 `BUTTON_PIN_ALT`、`LIGHTHOUSE_DEBUG` 等突顯用途的名稱。
 - 後續延伸時，保持上述前綴、語意化函式與枚舉的命名模式，即可維持 HermesX 分支的一致性。
-

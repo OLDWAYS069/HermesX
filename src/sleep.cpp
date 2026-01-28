@@ -55,6 +55,19 @@ Observable<esp_sleep_wakeup_cause_t> notifyLightSleepEnd;
 
 // deep sleep support
 RTC_DATA_ATTR int bootCount = 0;
+static bool gSkipPmuShutdownOnce = false;
+
+void suppressPmuShutdownOnce()
+{
+    gSkipPmuShutdownOnce = true;
+}
+
+static bool consumePmuShutdownOnce()
+{
+    const bool skip = gSkipPmuShutdownOnce;
+    gSkipPmuShutdownOnce = false;
+    return skip;
+}
 
 // -----------------------------------------------------------------------------
 // Application
@@ -222,11 +235,16 @@ void doDeepSleep(uint32_t msecToWake, bool skipPreflight = false, bool skipSaveN
 
     powerMon->setState(meshtastic_PowerMon_State_CPU_DeepSleep);
 
-    screen->doDeepSleep(); // datasheet says this will draw only 10ua
-
     if (!skipSaveNodeDb) {
-        nodeDB->saveToDisk();
+        if (nodeDB) {
+            nodeDB->saveToDisk();
+        } else {
+            LOG_WARN("Skip saveToDisk (nodeDB not ready)");
+        }
     }
+
+    // Turn off screen after save completes to avoid truncating prefs on power-off.
+    screen->doDeepSleep(); // datasheet says this will draw only 10ua
 
 #ifdef PIN_POWER_EN
     digitalWrite(PIN_POWER_EN, LOW);
@@ -325,9 +343,14 @@ void doDeepSleep(uint32_t msecToWake, bool skipPreflight = false, bool skipSaveN
             PMU->disablePowerOutput(XPOWERS_LDO2); // lora radio power channel
         }
         if (msecToWake == portMAX_DELAY) {
-            LOG_INFO("PMU shutdown");
-            console->flush();
-            PMU->shutdown();
+            const bool skipPmuShutdown = consumePmuShutdownOnce();
+            if (skipPmuShutdown) {
+                LOG_INFO("PMU shutdown suppressed");
+            } else {
+                LOG_INFO("PMU shutdown");
+                console->flush();
+                PMU->shutdown();
+            }
         }
     }
 #endif

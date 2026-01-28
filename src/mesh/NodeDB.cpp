@@ -1089,6 +1089,11 @@ void NodeDB::loadFromDisk()
     devicestate.version = 0;
 
     meshtastic_Config_SecurityConfig backupSecurity = meshtastic_Config_SecurityConfig_init_zero;
+    bool configLoadFailed = false;
+    bool configVersionInvalid = false;
+    bool moduleConfigFailed = false;
+    bool channelFileFailed = false;
+    bool deviceStateFailed = false;
 
 #ifdef ARCH_ESP32
     spiLock->lock();
@@ -1147,7 +1152,7 @@ void NodeDB::loadFromDisk()
     //} else {
     if ((state != LoadFileResult::LOAD_SUCCESS) || (devicestate.version < DEVICESTATE_MIN_VER)) {
         LOG_WARN("Devicestate %d is old or invalid, discard", devicestate.version);
-        installDefaultDeviceState();
+        deviceStateFailed = true;
     } else {
         LOG_INFO("Loaded saved devicestate version %d", devicestate.version);
     }
@@ -1155,19 +1160,72 @@ void NodeDB::loadFromDisk()
     state = loadProto(configFileName, meshtastic_LocalConfig_size, sizeof(meshtastic_LocalConfig), &meshtastic_LocalConfig_msg,
                       &config);
     if (state != LoadFileResult::LOAD_SUCCESS) {
-        installDefaultConfig(); // Our in RAM copy might now be corrupt
+        configLoadFailed = true;
+    } else if (config.version < DEVICESTATE_MIN_VER) {
+        LOG_WARN("config %d is old, discard", config.version);
+        configVersionInvalid = true;
     } else {
-        if (config.version < DEVICESTATE_MIN_VER) {
-            LOG_WARN("config %d is old, discard", config.version);
-            installDefaultConfig(true);
-        } else {
-            LOG_INFO("Loaded saved config version %d", config.version);
-        }
+        LOG_INFO("Loaded saved config version %d", config.version);
     }
     if (backupSecurity.private_key.size > 0) {
         LOG_DEBUG("Restoring backup of security config");
         config.security = backupSecurity;
         saveToDisk(SEGMENT_CONFIG);
+    }
+
+    state = loadProto(moduleConfigFileName, meshtastic_LocalModuleConfig_size, sizeof(meshtastic_LocalModuleConfig),
+                      &meshtastic_LocalModuleConfig_msg, &moduleConfig);
+    if (state != LoadFileResult::LOAD_SUCCESS) {
+        moduleConfigFailed = true;
+    } else if (moduleConfig.version < DEVICESTATE_MIN_VER) {
+        LOG_WARN("moduleConfig %d is old, discard", moduleConfig.version);
+        moduleConfigFailed = true;
+    } else {
+        LOG_INFO("Loaded saved moduleConfig version %d", moduleConfig.version);
+    }
+
+    state = loadProto(channelFileName, meshtastic_ChannelFile_size, sizeof(meshtastic_ChannelFile), &meshtastic_ChannelFile_msg,
+                      &channelFile);
+    if (state != LoadFileResult::LOAD_SUCCESS) {
+        channelFileFailed = true;
+    } else if (channelFile.version < DEVICESTATE_MIN_VER) {
+        LOG_WARN("channelFile %d is old, discard", channelFile.version);
+        channelFileFailed = true;
+    } else {
+        LOG_INFO("Loaded saved channelFile version %d", channelFile.version);
+    }
+
+    const bool prefsInvalid = configLoadFailed || configVersionInvalid || moduleConfigFailed || channelFileFailed || deviceStateFailed;
+    if (prefsInvalid) {
+        int restoreMask = 0;
+        if (configLoadFailed || configVersionInvalid)
+            restoreMask |= SEGMENT_CONFIG;
+        if (moduleConfigFailed)
+            restoreMask |= SEGMENT_MODULECONFIG;
+        if (channelFileFailed)
+            restoreMask |= SEGMENT_CHANNELS;
+        if (deviceStateFailed)
+            restoreMask |= SEGMENT_DEVICESTATE;
+
+        LOG_WARN("Prefs invalid, attempting restore from backup (mask=%d)", restoreMask);
+        bool restored = restorePreferences(meshtastic_AdminMessage_BackupLocation_FLASH, restoreMask);
+        if (!restored) {
+            LOG_WARN("Prefs restore failed, falling back to defaults");
+            if (deviceStateFailed) {
+                installDefaultDeviceState();
+            }
+            if (configLoadFailed) {
+                installDefaultConfig();
+            } else if (configVersionInvalid) {
+                installDefaultConfig(true);
+            }
+            if (moduleConfigFailed) {
+                installDefaultModuleConfig();
+            }
+            if (channelFileFailed) {
+                installDefaultChannels();
+            }
+        }
     }
 
     // Make sure we load hard coded admin keys even when the configuration file has none.
@@ -1221,32 +1279,6 @@ void NodeDB::loadFromDisk()
         saveToDisk(SEGMENT_CONFIG);
     }
 
-    state = loadProto(moduleConfigFileName, meshtastic_LocalModuleConfig_size, sizeof(meshtastic_LocalModuleConfig),
-                      &meshtastic_LocalModuleConfig_msg, &moduleConfig);
-    if (state != LoadFileResult::LOAD_SUCCESS) {
-        installDefaultModuleConfig(); // Our in RAM copy might now be corrupt
-    } else {
-        if (moduleConfig.version < DEVICESTATE_MIN_VER) {
-            LOG_WARN("moduleConfig %d is old, discard", moduleConfig.version);
-            installDefaultModuleConfig();
-        } else {
-            LOG_INFO("Loaded saved moduleConfig version %d", moduleConfig.version);
-        }
-    }
-
-    state = loadProto(channelFileName, meshtastic_ChannelFile_size, sizeof(meshtastic_ChannelFile), &meshtastic_ChannelFile_msg,
-                      &channelFile);
-    if (state != LoadFileResult::LOAD_SUCCESS) {
-        installDefaultChannels(); // Our in RAM copy might now be corrupt
-    } else {
-        if (channelFile.version < DEVICESTATE_MIN_VER) {
-            LOG_WARN("channelFile %d is old, discard", channelFile.version);
-            installDefaultChannels();
-        } else {
-            LOG_INFO("Loaded saved channelFile version %d", channelFile.version);
-        }
-    }
-
     state = loadProto(uiconfigFileName, meshtastic_DeviceUIConfig_size, sizeof(meshtastic_DeviceUIConfig),
                       &meshtastic_DeviceUIConfig_msg, &uiconfig);
     if (state == LoadFileResult::LOAD_SUCCESS) {
@@ -1271,6 +1303,18 @@ void NodeDB::loadFromDisk()
             moduleConfig.paxcounter.paxcounter_update_interval = 0;
 
         saveToDisk(SEGMENT_MODULECONFIG);
+    }
+
+    if (!prefsInvalid) {
+#ifdef FSCom
+        bool backupExists = false;
+        spiLock->lock();
+        backupExists = FSCom.exists(backupFileName);
+        spiLock->unlock();
+        if (!backupExists) {
+            backupPreferences(meshtastic_AdminMessage_BackupLocation_FLASH);
+        }
+#endif
     }
 }
 
@@ -1408,6 +1452,16 @@ bool NodeDB::saveToDisk(int saveWhat)
         RECORD_CRITICALERROR(success ? meshtastic_CriticalErrorCode_FLASH_CORRUPTION_RECOVERABLE
                                      : meshtastic_CriticalErrorCode_FLASH_CORRUPTION_UNRECOVERABLE);
     }
+
+#ifdef FSCom
+    if (success && (saveWhat & (SEGMENT_CONFIG | SEGMENT_MODULECONFIG | SEGMENT_CHANNELS | SEGMENT_DEVICESTATE))) {
+        static constexpr uint32_t kAutoBackupIntervalMs = 10UL * 60UL * 1000UL;
+        const uint32_t now = millis();
+        if ((now - lastBackupAttempt) >= kAutoBackupIntervalMs) {
+            backupPreferences(meshtastic_AdminMessage_BackupLocation_FLASH);
+        }
+    }
+#endif
 
     return success;
 }

@@ -23,6 +23,9 @@ void initDeepSleep();
 
 void setCPUFast(bool on);
 
+// Skip PMU shutdown on the next deep sleep (used to avoid full power-off in guard flows).
+void suppressPmuShutdownOnce();
+
 /** return true if sleep is allowed right now */
 bool doPreflightSleep();
 

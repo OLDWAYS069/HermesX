@@ -40,6 +40,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // --- HermesX Remove TFT fast-path START
 #include "graphics/fonts/HermesX_zh/HermesX_CN12.h"
 #include <inttypes.h>
+#include <math.h>
 // --- HermesX Remove TFT fast-path END
 #include "graphics/images.h"
 #include "input/ScanAndSelect.h"
@@ -53,6 +54,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "modules/ExternalNotificationModule.h"
 #include "modules/TextMessageModule.h"
 #include "modules/WaypointModule.h"
+#if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS)
+#include "modules/HermesXPowerGuard.h"
+#endif
 #include "sleep.h"
 #include "target_specific.h"
 
@@ -87,7 +91,7 @@ namespace graphics
 FrameCallback *normalFrames;
 static uint32_t targetFramerate = IDLE_FRAMERATE;
 
-uint32_t logo_timeout = 5000; // 4 seconds for EACH logo
+uint32_t logo_timeout = 3000; // 3 seconds for EACH logo
 
 uint32_t hours_in_month = 730;
 
@@ -191,18 +195,33 @@ static void drawIconScreen(const char *upperMsg, OLEDDisplay *display, OLEDDispl
     // needs to be drawn relative to x and y
 
     // draw centered icon left to right and centered above the one line of app text
+#if defined(M5STACK_UNITC6L)
+    display->drawXbm(x + (SCREEN_WIDTH - 50) / 2, y + (SCREEN_HEIGHT - 28) / 2, icon_width, icon_height, icon_bits);
+    display->setFont(FONT_MEDIUM);
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+    display->setFont(FONT_SMALL);
+    // Draw region in upper left (centered for this layout)
+    if (upperMsg) {
+        int msgWidth = display->getStringWidth(upperMsg);
+        int msgX = x + (SCREEN_WIDTH - msgWidth) / 2;
+        int msgY = y;
+        display->drawString(msgX, msgY, upperMsg);
+    }
+    // Draw version and short name in bottom middle
+    char buf[25];
+    snprintf(buf, sizeof(buf), "%s   %s", xstr(APP_VERSION_SHORT), haveGlyphs(owner.short_name) ? owner.short_name : "");
+    display->drawString(x + getStringCenteredX(buf), y + SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM, buf);
+    screen->forceDisplay();
+
+    display->setTextAlignment(TEXT_ALIGN_LEFT); // Restore left align, just to be kind to any other unsuspecting code
+#else
     display->drawXbm(x + (SCREEN_WIDTH - icon_width) / 2, y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - icon_height) / 2 + 2,
                      icon_width, icon_height, icon_bits);
 
     display->setFont(FONT_MEDIUM);
     display->setTextAlignment(TEXT_ALIGN_LEFT);
-    const char *title = "HermesX";
-    // --- HermesX Remove TFT fast-path START
-    if (screen)
-        screen->drawMixed(display, x + getStringCenteredX(title), y + SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM, title);
-    else
-        HermesX_zh::drawMixed(*display, x + getStringCenteredX(title), y + SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM, title);
-    // --- HermesX Remove TFT fast-path END
+    const char *title = "meshtastic.org";
+    display->drawString(x + getStringCenteredX(title), y + SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM, title);
     display->setFont(FONT_SMALL);
 
     // Draw region in upper left
@@ -211,14 +230,14 @@ static void drawIconScreen(const char *upperMsg, OLEDDisplay *display, OLEDDispl
 
     // Draw version and short name in upper right
     char buf[25];
-    snprintf(buf, sizeof(buf), "%s\n%s", xstr(APP_VERSION_DISPLAY), haveGlyphs(owner.short_name) ? owner.short_name : "");
+    snprintf(buf, sizeof(buf), "%s\n%s", xstr(APP_VERSION_SHORT), haveGlyphs(owner.short_name) ? owner.short_name : "");
 
-    // --- HermesX Remove TFT fast-path START
-    drawMixedRightAligned(display, x + SCREEN_WIDTH, y + 0, buf, FONT_HEIGHT_SMALL);
-    // --- HermesX Remove TFT fast-path END
+    display->setTextAlignment(TEXT_ALIGN_RIGHT);
+    display->drawString(x + SCREEN_WIDTH, y + 0, buf);
     screen->forceDisplay();
 
     display->setTextAlignment(TEXT_ALIGN_LEFT); // Restore left align, just to be kind to any other unsuspecting code
+#endif
 }
 
 #ifdef USERPREFS_OEM_TEXT
@@ -244,31 +263,19 @@ static void drawOEMIconScreen(const char *upperMsg, OLEDDisplay *display, OLEDDi
 
     display->setTextAlignment(TEXT_ALIGN_LEFT);
     const char *title = USERPREFS_OEM_TEXT;
-    // --- HermesX Remove TFT fast-path START
-    if (screen)
-        screen->drawMixed(display, x + getStringCenteredX(title), y + SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM, title);
-    else
-        HermesX_zh::drawMixed(*display, x + getStringCenteredX(title), y + SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM, title);
-    // --- HermesX Remove TFT fast-path END
+    display->drawString(x + getStringCenteredX(title), y + SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM, title);
     display->setFont(FONT_SMALL);
 
     // Draw region in upper left
-    if (upperMsg) {
-        // --- HermesX Remove TFT fast-path START
-        if (screen)
-            screen->drawMixed(display, x + 0, y + 0, upperMsg);
-        else
-            HermesX_zh::drawMixed(*display, x + 0, y + 0, upperMsg);
-        // --- HermesX Remove TFT fast-path END
-    }
+    if (upperMsg)
+        display->drawString(x + 0, y + 0, upperMsg);
 
-    // Draw full version (repo tag + build suffix) and shortname in upper right
-    char buf[40];
-    snprintf(buf, sizeof(buf), "%s\n%s", xstr(APP_VERSION), haveGlyphs(owner.short_name) ? owner.short_name : "");
+    // Draw version and shortname in upper right
+    char buf[25];
+    snprintf(buf, sizeof(buf), "%s\n%s", xstr(APP_VERSION_SHORT), haveGlyphs(owner.short_name) ? owner.short_name : "");
 
-    // --- HermesX Remove TFT fast-path START
-    drawMixedRightAligned(display, x + SCREEN_WIDTH, y + 0, buf, FONT_HEIGHT_SMALL);
-    // --- HermesX Remove TFT fast-path END
+    display->setTextAlignment(TEXT_ALIGN_RIGHT);
+    display->drawString(x + SCREEN_WIDTH, y + 0, buf);
     screen->forceDisplay();
 
     display->setTextAlignment(TEXT_ALIGN_LEFT); // Restore left align, just to be kind to any other unsuspecting code
@@ -1692,7 +1699,9 @@ void Screen::handleSetOn(bool on, FrameCallback einkScreensaver)
     if (on != screenOn) {
         if (on) {
             LOG_INFO("Turn on screen");
-            buttonThread->setScreenFlag(true);
+            if (buttonThread) {
+                buttonThread->setScreenFlag(true);
+            }
             powerMon->setState(meshtastic_PowerMon_State_Screen_On);
 #ifdef T_WATCH_S3
             PMU->enablePowerOutput(XPOWERS_ALDO2);
@@ -1744,7 +1753,9 @@ void Screen::handleSetOn(bool on, FrameCallback einkScreensaver)
             setScreensaverFrames(einkScreensaver);
 #endif
             LOG_INFO("Turn off screen");
-            buttonThread->setScreenFlag(false);
+            if (buttonThread) {
+                buttonThread->setScreenFlag(false);
+            }
 #ifdef ELECROW_ThinkNode_M1
             if (digitalRead(PIN_EINK_EN) == HIGH) {
                 digitalWrite(PIN_EINK_EN, LOW);
@@ -1776,6 +1787,11 @@ void Screen::handleSetOn(bool on, FrameCallback einkScreensaver)
         screenOn = on;
     }
 }
+
+static FrameCallback bootScreenFrames[1];
+static bool bootScreenForceLogo = false;
+static bool bootScreenShowHermesWelcome = false;
+static void drawHermesXBootHoldFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
 
 void Screen::setup()
 {
@@ -1817,15 +1833,41 @@ void Screen::setup()
     // Set the utf8 conversion function
     dispdev->setFontTableLookupFunction(customFontTableLookup);
 
+    const bool showHermesWelcome =
+#if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS)
+        HermesXPowerGuard::guardEnabled() && !HermesXPowerGuard::bootHoldPending() && !HermesXPowerGuard::wokeFromSleep();
+#else
+        false;
+#endif
+
 #ifdef USERPREFS_OEM_TEXT
     logo_timeout *= 2; // Double the time if we have a custom logo
 #endif
+#if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS)
+    // HermesX expects a strict 3s boot logo window.
+    logo_timeout = 3000;
+#endif
+    bootScreenShowHermesWelcome = showHermesWelcome;
 
     // Add frames.
     EINK_ADD_FRAMEFLAG(dispdev, DEMAND_FAST);
-    alertFrames[0] = [this](OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y) -> void {
+    bootScreenFrames[0] = [this](OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y) -> void {
+#if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS)
+        if (bootScreenShowHermesWelcome) {
+            drawHermesXBootHoldFrame(display, state, x, y);
+            return;
+        }
+#endif
+#if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS)
+        if (HermesXPowerGuard::guardEnabled() && HermesXPowerGuard::bootHoldPending()) {
+            static const char *const kBootHoldDots[] = {".", "..", "...", "...."};
+            const uint8_t phase = static_cast<uint8_t>((millis() / 500) % 4);
+            drawFrameText(display, state, x, y, kBootHoldDots[phase]);
+            return;
+        }
+#endif
 #ifdef ARCH_ESP32
-        if (wakeCause == ESP_SLEEP_WAKEUP_TIMER || wakeCause == ESP_SLEEP_WAKEUP_EXT1) {
+        if (!bootScreenForceLogo && (wakeCause == ESP_SLEEP_WAKEUP_TIMER || wakeCause == ESP_SLEEP_WAKEUP_EXT1)) {
             drawFrameText(display, state, x, y, "Resuming...");
         } else
 #endif
@@ -1835,6 +1877,7 @@ void Screen::setup()
             drawIconScreen(region, display, state, x, y);
         }
     };
+    alertFrames[0] = showHermesWelcome ? drawHermesXBootHoldFrame : bootScreenFrames[0];
     ui->setFrames(alertFrames, 1);
     // No overlays.
     ui->setOverlays(nullptr, 0);
@@ -1844,6 +1887,10 @@ void Screen::setup()
 
     // Set up a log buffer with 3 lines, 32 chars each.
     dispdev->setLogBuffer(3, 32);
+
+    if (showHermesWelcome) {
+        startBootHoldReveal(1000);
+    }
 
 #ifdef SCREEN_MIRROR
     dispdev->mirrorScreen();
@@ -1897,8 +1944,15 @@ void Screen::setup()
     powerStatusObserver.observe(&powerStatus->onNewStatus);
     gpsStatusObserver.observe(&gpsStatus->onNewStatus);
     nodeStatusObserver.observe(&nodeStatus->onNewStatus);
+}
+
+void Screen::attachModuleObservers()
+{
+    if (moduleObserversAttached)
+        return;
 #if !MESHTASTIC_EXCLUDE_ADMIN
-    adminMessageObserver.observe(adminModule);
+    if (adminModule)
+        adminMessageObserver.observe(adminModule);
 #endif
     if (textMessageModule)
         textMessageObserver.observe(textMessageModule);
@@ -1907,6 +1961,8 @@ void Screen::setup()
 
     // Modules can notify screen about refresh
     MeshModule::observeUIEvents(&uiFrameEventObserver);
+
+    moduleObserversAttached = true;
 }
 
 void Screen::forceDisplay(bool forceUiUpdate)
@@ -1946,6 +2002,278 @@ void Screen::forceDisplay(bool forceUiUpdate)
 }
 
 static uint32_t lastScreenTransition;
+static bool pendingNormalFrames = false;
+static bool hermesXBootHoldActive = false;
+static bool hermesXBootHoldReveal = false;
+static bool hermesXBootHoldAlertStarted = false;
+static uint32_t hermesXBootHoldRevealUntilMs = 0;
+static uint32_t hermesXBootHoldHeldMs = 0;
+static uint32_t hermesXBootHoldLongMs = 1;
+static bool hermesXBootHoldBootScreenPending = false;
+static uint32_t hermesXBootHoldBootScreenAtMs = 0;
+
+static bool showingBootScreen = true;
+static uint32_t bootScreenStartMs = 0;
+#ifdef USERPREFS_OEM_TEXT
+static bool showingOEMBootScreen = true;
+#endif
+
+struct BootHoldPoint {
+    float nx;
+    float ny;
+};
+
+struct BootHoldEdge {
+    uint8_t a;
+    uint8_t b;
+};
+
+static float clamp01(float v)
+{
+    if (v < 0.0f)
+        return 0.0f;
+    if (v > 1.0f)
+        return 1.0f;
+    return v;
+}
+
+static int16_t lerpI16(int16_t a, int16_t b, float t)
+{
+    const float tt = clamp01(t);
+    return static_cast<int16_t>(a + static_cast<float>(b - a) * tt);
+}
+
+static float edgeLength(const int16_t x0, const int16_t y0, const int16_t x1, const int16_t y1)
+{
+    const float dx = static_cast<float>(x1 - x0);
+    const float dy = static_cast<float>(y1 - y0);
+    return sqrtf(dx * dx + dy * dy);
+}
+
+static int16_t clampI16(int16_t v, int16_t lo, int16_t hi)
+{
+    if (v < lo)
+        return lo;
+    if (v > hi)
+        return hi;
+    return v;
+}
+
+static void drawLineThick(OLEDDisplay *display, int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint8_t thickness)
+{
+    display->drawLine(x0, y0, x1, y1);
+    if (thickness <= 1)
+        return;
+
+    const int16_t dx = (x1 >= x0) ? (x1 - x0) : (x0 - x1);
+    const int16_t dy = (y1 >= y0) ? (y1 - y0) : (y0 - y1);
+    const bool horizontalish = dx >= dy;
+
+    // Draw a small perpendicular halo to simulate thicker strokes.
+    const int8_t offsets[] = {1, -1};
+    const uint8_t extra = thickness >= 3 ? 2 : 1;
+    for (uint8_t i = 0; i < extra; ++i) {
+        const int8_t off = offsets[i];
+        if (horizontalish) {
+            display->drawLine(x0, y0 + off, x1, y1 + off);
+        } else {
+            display->drawLine(x0 + off, y0, x1 + off, y1);
+        }
+    }
+}
+
+static void drawBootHoldPartialLine(OLEDDisplay *display, int16_t x0, int16_t y0, int16_t x1, int16_t y1, float t,
+                                    uint8_t thickness, bool drawTip)
+{
+    const int16_t ex = lerpI16(x0, x1, t);
+    const int16_t ey = lerpI16(y0, y1, t);
+    drawLineThick(display, x0, y0, ex, ey, thickness);
+    if (drawTip) {
+        display->drawCircle(ex, ey, 2);
+    }
+}
+
+static void drawHermesXBootHoldFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
+{
+    (void)state;
+    if (!display)
+        return;
+
+    // Normalized points (0..1) aligned to the latest reference mock.
+    static const BootHoldPoint kPoints[] = {
+        {1.00f, 0.38f}, // extension start (forced to right edge below)
+        {0.90f, 0.38f}, // right node
+        {0.50f, 0.08f}, // top node
+        {0.07f, 0.40f}, // left node
+        {0.20f, 0.72f}, // left-bottom node
+        {0.50f, 0.80f}, // bottom node
+    };
+    static const BootHoldEdge kEdges[] = {
+        {0, 1}, // draw from right to left
+        {1, 2},
+        {2, 3},
+        {3, 4},
+        {4, 5},
+    };
+    static const bool kNodeEnabled[] = {
+        false, // extension has no node dot
+        true,
+        true,
+        true,
+        true,
+        true,
+    };
+
+    const int16_t margin = 1;
+    const int16_t drawW = display->width() - (margin * 2) - 1;
+    const int16_t drawH = display->height() - (margin * 2) - 1;
+
+    struct Pt {
+        int16_t x;
+        int16_t y;
+    };
+    Pt pts[sizeof(kPoints) / sizeof(kPoints[0])];
+    for (size_t i = 0; i < (sizeof(kPoints) / sizeof(kPoints[0])); ++i) {
+        pts[i].x = x + margin + static_cast<int16_t>(kPoints[i].nx * drawW);
+        pts[i].y = y + margin + static_cast<int16_t>(kPoints[i].ny * drawH);
+    }
+
+    // Center the main shape (nodes 1..N) within the display, then pin the extension to the right edge.
+    int16_t minX = pts[1].x;
+    int16_t maxX = pts[1].x;
+    int16_t minY = pts[1].y;
+    int16_t maxY = pts[1].y;
+    for (size_t i = 2; i < (sizeof(pts) / sizeof(pts[0])); ++i) {
+        minX = pts[i].x < minX ? pts[i].x : minX;
+        maxX = pts[i].x > maxX ? pts[i].x : maxX;
+        minY = pts[i].y < minY ? pts[i].y : minY;
+        maxY = pts[i].y > maxY ? pts[i].y : maxY;
+    }
+    const int16_t bboxCx = static_cast<int16_t>((minX + maxX) / 2);
+    const int16_t bboxCy = static_cast<int16_t>((minY + maxY) / 2);
+    const int16_t targetCx = x + (display->width() / 2);
+    const int16_t targetCy = y + (display->height() / 2);
+    const int16_t dx = targetCx - bboxCx;
+    const int16_t dy = targetCy - bboxCy;
+    const int16_t clampLoX = x + 1;
+    const int16_t clampHiX = x + display->width() - 2;
+    const int16_t clampLoY = y + 1;
+    const int16_t clampHiY = y + display->height() - 2;
+    for (size_t i = 1; i < (sizeof(pts) / sizeof(pts[0])); ++i) {
+        pts[i].x = clampI16(static_cast<int16_t>(pts[i].x + dx), clampLoX, clampHiX);
+        pts[i].y = clampI16(static_cast<int16_t>(pts[i].y + dy), clampLoY, clampHiY);
+    }
+    pts[0].x = x + display->width() - 1;
+    pts[0].y = pts[1].y;
+
+    float progress = 0.0f;
+    if (hermesXBootHoldReveal) {
+        progress = 1.0f;
+    } else if (hermesXBootHoldLongMs > 0) {
+        progress = clamp01(static_cast<float>(hermesXBootHoldHeldMs) / static_cast<float>(hermesXBootHoldLongMs));
+    }
+
+    const int edgeCount = static_cast<int>(sizeof(kEdges) / sizeof(kEdges[0]));
+    static constexpr float kSegmentStepPx = 1.0f;
+    static constexpr int kMaxSegments = 512;
+
+    struct BootHoldSegment {
+        int16_t x0;
+        int16_t y0;
+        int16_t x1;
+        int16_t y1;
+        uint8_t startNode;
+        uint8_t endNode;
+        bool endsAtNode;
+    };
+
+    BootHoldSegment segments[kMaxSegments];
+    int segmentCount = 0;
+    for (int i = 0; i < edgeCount && segmentCount < kMaxSegments; ++i) {
+        const BootHoldEdge &e = kEdges[i];
+        const Pt &a = pts[e.a];
+        const Pt &b = pts[e.b];
+        const float len = edgeLength(a.x, a.y, b.x, b.y);
+        if (len <= 0.0f) {
+            continue;
+        }
+        const int steps = static_cast<int>(ceilf(len / kSegmentStepPx));
+        const int safeSteps = steps > 0 ? steps : 1;
+        for (int s = 0; s < safeSteps && segmentCount < kMaxSegments; ++s) {
+            const float t0 = static_cast<float>(s) / static_cast<float>(safeSteps);
+            const float t1 = static_cast<float>(s + 1) / static_cast<float>(safeSteps);
+            BootHoldSegment &seg = segments[segmentCount++];
+            seg.x0 = lerpI16(a.x, b.x, t0);
+            seg.y0 = lerpI16(a.y, b.y, t0);
+            seg.x1 = lerpI16(a.x, b.x, t1);
+            seg.y1 = lerpI16(a.y, b.y, t1);
+            seg.startNode = e.a;
+            seg.endNode = e.b;
+            seg.endsAtNode = (s + 1) == safeSteps;
+        }
+    }
+
+    bool nodeVisible[sizeof(kPoints) / sizeof(kPoints[0])] = {false};
+    if (segmentCount > 0 && progress > 0.0f) {
+        const float segProgress = clamp01(progress) * static_cast<float>(segmentCount);
+        int fullSegments = static_cast<int>(segProgress);
+        if (fullSegments > segmentCount) {
+            fullSegments = segmentCount;
+        }
+        float partialT = segProgress - static_cast<float>(fullSegments);
+        if (fullSegments >= segmentCount) {
+            partialT = 0.0f;
+        }
+
+        if (fullSegments > 0) {
+            nodeVisible[segments[0].startNode] = true;
+        }
+
+        for (int i = 0; i < fullSegments; ++i) {
+            const BootHoldSegment &seg = segments[i];
+            const uint8_t thickness = (seg.startNode == 0) ? 1 : 2;
+            drawLineThick(display, seg.x0, seg.y0, seg.x1, seg.y1, thickness);
+            nodeVisible[seg.startNode] = true;
+            if (seg.endsAtNode) {
+                nodeVisible[seg.endNode] = true;
+            }
+        }
+
+        if (partialT > 0.0f && fullSegments < segmentCount) {
+            const BootHoldSegment &seg = segments[fullSegments];
+            nodeVisible[seg.startNode] = true;
+            const uint8_t thickness = (seg.startNode == 0) ? 1 : 2;
+            drawBootHoldPartialLine(display, seg.x0, seg.y0, seg.x1, seg.y1, partialT, thickness,
+                                    !hermesXBootHoldReveal);
+        }
+    }
+
+    for (size_t i = 0; i < (sizeof(nodeVisible) / sizeof(nodeVisible[0])); ++i) {
+        if (nodeVisible[i] && kNodeEnabled[i]) {
+            display->drawCircle(pts[i].x, pts[i].y, 2);
+        }
+    }
+
+    // Ensure the right node dot appears once any progress is visible.
+    if ((progress > 0.0f) && kNodeEnabled[1]) {
+        display->drawCircle(pts[1].x, pts[1].y, 2);
+    }
+
+    if (hermesXBootHoldReveal) {
+        const int16_t textX = x + (display->width() - HERMESX_WORD_WIDTH) / 2;
+        const int16_t textY = y + (display->height() - HERMESX_WORD_HEIGHT) / 2;
+        display->drawXbm(textX, textY, HERMESX_WORD_WIDTH, HERMESX_WORD_HEIGHT, hermesx_word_bits);
+
+        // HermesX build tag in bottom-right corner.
+        const char *kHermesXBuildTag = "HXB_0.2.8";
+        display->setFont(FONT_SMALL);
+        display->setTextAlignment(TEXT_ALIGN_LEFT);
+        const int16_t tagWidth = display->getStringWidth(kHermesXBuildTag);
+        const int16_t tagX = x + display->width() - tagWidth - 2;
+        const int16_t tagY = y + display->height() - FONT_HEIGHT_SMALL - 2;
+        display->drawString(tagX, tagY, kHermesXBuildTag);
+    }
+}
 
 int32_t Screen::runOnce()
 {
@@ -1969,19 +2297,24 @@ int32_t Screen::runOnce()
     if (displayHeight == 0) {
         displayHeight = dispdev->getHeight();
     }
+    if (bootScreenStartMs == 0) {
+        bootScreenStartMs = serialSinceMsec;
+    }
+
+    const bool gatePending = HermesXPowerGuard::guardEnabled() && HermesXPowerGuard::bootHoldPending();
+    const bool deferNormalFrames = gatePending || (nodeDB == nullptr) || hermesXBootHoldActive;
 
     // Show boot screen for first logo_timeout seconds, then switch to normal operation.
     // serialSinceMsec adjusts for additional serial wait time during nRF52 bootup
-    static bool showingBootScreen = true;
-    if (showingBootScreen && (millis() > (logo_timeout + serialSinceMsec))) {
+    if (!deferNormalFrames && showingBootScreen && (millis() > (logo_timeout + bootScreenStartMs))) {
         LOG_INFO("Done with boot screen");
         stopBootScreen();
         showingBootScreen = false;
+        bootScreenForceLogo = false;
     }
 
 #ifdef USERPREFS_OEM_TEXT
-    static bool showingOEMBootScreen = true;
-    if (showingOEMBootScreen && (millis() > ((logo_timeout / 2) + serialSinceMsec))) {
+    if (!deferNormalFrames && showingOEMBootScreen && (millis() > ((logo_timeout / 2) + bootScreenStartMs))) {
         LOG_INFO("Switch to OEM screen...");
         // Change frames.
         static FrameCallback bootOEMFrames[] = {drawOEMBootScreen};
@@ -2052,10 +2385,43 @@ int32_t Screen::runOnce()
         }
     }
 
+    if (hermesXBootHoldBootScreenPending && hermesXBootHoldBootScreenAtMs != 0 &&
+        millis() >= hermesXBootHoldBootScreenAtMs) {
+        hermesXBootHoldBootScreenPending = false;
+        hermesXBootHoldBootScreenAtMs = 0;
+        hermesXBootHoldActive = false;
+        hermesXBootHoldReveal = false;
+        hermesXBootHoldRevealUntilMs = 0;
+        hermesXBootHoldAlertStarted = false;
+        hermesXBootHoldHeldMs = 0;
+        hermesXBootHoldLongMs = 1;
+        bootScreenStartMs = millis();
+        showingBootScreen = true;
+        bootScreenForceLogo = true;
+        bootScreenShowHermesWelcome = false;
+#ifdef USERPREFS_OEM_TEXT
+        showingOEMBootScreen = true;
+#endif
+        showingNormalScreen = false;
+        setFrameImmediateDraw(bootScreenFrames);
+    }
+
+    if (!deferNormalFrames && pendingNormalFrames) {
+        pendingNormalFrames = false;
+        setFrames(FOCUS_PRESERVE);
+    }
+
     if (!screenOn) { // If we didn't just wake and the screen is still off, then
                      // stop updating until it is on again
         enabled = false;
         return 0;
+    }
+
+    if (hermesXBootHoldActive && hermesXBootHoldReveal && hermesXBootHoldRevealUntilMs != 0 &&
+        millis() >= hermesXBootHoldRevealUntilMs) {
+        hermesXBootHoldRevealUntilMs = 0;
+        hermesXBootHoldBootScreenPending = true;
+        hermesXBootHoldBootScreenAtMs = millis();
     }
 
     // this must be before the frameState == FIXED check, because we always
@@ -2065,7 +2431,7 @@ int32_t Screen::runOnce()
     // Switch to a low framerate (to save CPU) when we are not in transition
     // but we should only call setTargetFPS when framestate changes, because
     // otherwise that breaks animations.
-    if (targetFramerate != IDLE_FRAMERATE && ui->getUiState()->frameState == FIXED) {
+    if (targetFramerate != IDLE_FRAMERATE && ui->getUiState()->frameState == FIXED && !hermesXBootHoldActive) {
         // oldFrameState = ui->getUiState()->frameState;
         targetFramerate = IDLE_FRAMERATE;
 
@@ -2097,6 +2463,65 @@ int32_t Screen::runOnce()
     // as fast as we really need so that any rounding errors still result with
     // the correct framerate
     return (1000 / targetFramerate);
+}
+
+void Screen::setBootHoldProgress(uint32_t heldMs, uint32_t longPressMs)
+{
+    hermesXBootHoldActive = true;
+    hermesXBootHoldReveal = false;
+    hermesXBootHoldRevealUntilMs = 0;
+    hermesXBootHoldHeldMs = heldMs;
+    hermesXBootHoldLongMs = longPressMs ? longPressMs : 1;
+    if (!hermesXBootHoldAlertStarted) {
+        hermesXBootHoldAlertStarted = true;
+        startAlert(drawHermesXBootHoldFrame);
+    }
+    setFastFramerate();
+}
+
+void Screen::startHermesXAlert(const char *text)
+{
+    if (!text || !*text) {
+        return;
+    }
+    startAlert([text](OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y) -> void {
+        (void)state;
+        const int lineHeight = HermesX_zh::GLYPH_HEIGHT + 1;
+        const int width = HermesX_zh::stringAdvance(text, HermesX_zh::GLYPH_WIDTH, display);
+        const int16_t drawX = x + (display->width() - width) / 2;
+        const int16_t drawY = y + (display->height() - lineHeight) / 2;
+        HermesX_zh::drawMixed(*display, drawX, drawY, text, HermesX_zh::GLYPH_WIDTH, lineHeight, nullptr);
+    });
+    // Ensure the alert is visible immediately (avoid 1fps idle delays).
+    setFastFramerate();
+}
+
+void Screen::startBootHoldReveal(uint32_t revealMs)
+{
+    hermesXBootHoldActive = true;
+    hermesXBootHoldReveal = true;
+    hermesXBootHoldHeldMs = hermesXBootHoldLongMs;
+    const uint32_t duration = revealMs ? revealMs : 1;
+    hermesXBootHoldRevealUntilMs = millis() + duration;
+    if (!hermesXBootHoldAlertStarted) {
+        hermesXBootHoldAlertStarted = true;
+        startAlert(drawHermesXBootHoldFrame);
+    }
+    setFastFramerate();
+}
+
+void Screen::resetBootHoldProgress()
+{
+    hermesXBootHoldActive = true;
+    hermesXBootHoldReveal = false;
+    hermesXBootHoldRevealUntilMs = 0;
+    hermesXBootHoldHeldMs = 0;
+    hermesXBootHoldLongMs = hermesXBootHoldLongMs ? hermesXBootHoldLongMs : 1;
+    if (!hermesXBootHoldAlertStarted) {
+        hermesXBootHoldAlertStarted = true;
+        startAlert(drawHermesXBootHoldFrame);
+    }
+    setFastFramerate();
 }
 
 void Screen::drawDebugInfoTrampoline(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
@@ -2197,6 +2622,19 @@ void Screen::setScreensaverFrames(FrameCallback einkScreensaver)
 // Called when a frame should be added / removed, or custom frames should be cleared
 void Screen::setFrames(FrameFocus focus)
 {
+    if (HermesXPowerGuard::guardEnabled() && HermesXPowerGuard::bootHoldPending()) {
+        pendingNormalFrames = true;
+        return;
+    }
+    if (nodeDB == nullptr) {
+        pendingNormalFrames = true;
+        return;
+    }
+    if (hermesXBootHoldActive) {
+        pendingNormalFrames = true;
+        return;
+    }
+
     uint8_t originalPosition = ui->getUiState()->currentFrame;
     FramesetInfo fsi; // Location of specific frames, for applying focus parameter
 

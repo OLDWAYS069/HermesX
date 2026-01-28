@@ -1,16 +1,45 @@
 # HermesX 變更紀錄 (REF_changelog.md)
 
 ## 範圍
+- 日期：2026-01-26
+- 版本：HXB_0.2.8
+- 項目：BootHold gate 前移、僅喚醒時攔截；Prefs 備份/還原防洗檔
+- 檔案：
+  - src/main.cpp
+  - src/graphics/Screen.cpp
+  - src/graphics/Screen.h
+  - src/modules/HermesXPowerGuard.cpp
+  - src/mesh/NodeDB.cpp
+- 說明：
+  - BootHold gate 移到 `setup()` 的 NodeDB 之前，僅在睡眠喚醒 (`wokeFromSleep`) 時攔截；成功長按後才放行主系統初始化。
+  - gate 改為 GPIO 直讀 + baseline 判定，避免 active-low 假設錯誤；短按喚醒後顯示「. .. ... ....」點點動畫，等待期間不啟動 LED 動畫。
+  - `Screen::handleSetOn()` 增加 `buttonThread` null 防護，支援 gate 早期畫面啟動。
+  - `NodeDB::loadFromDisk()` 在 prefs 讀取失敗/版本過舊時，先嘗試從 `/backups/backup.proto` 還原，成功即不覆寫 defaults；失敗才回退預設。
+  - `NodeDB::saveToDisk()` 成功保存後每 10 分鐘最多自動備份一次；首次正常開機無備份時會建立備份。
+- 開機流程（目前）：
+  - 平台與電源初始化 → HermesXPowerGuard 判斷喚醒來源。
+  - 若為睡眠喚醒且 guard 開啟：建立螢幕 → `screen->setup()` → 進入 BootHold gate（5 秒等待 + 長按門檻）。
+  - 長按達標：放行 → NodeDB 載入 prefs → 設定時區/RTC/GPS → MeshService/init → modules → UI frames。
+  - 未達標：timeout 後關機回深睡。
+- 測試：未執行；需實機確認喚醒 gate、點點動畫與 prefs 備份/還原行為。
+
+## 範圍
 - 日期：2026-01-25
 - 版本：HXB_0.2.8
-- 項目：BootHold 喚醒等待期、提示動畫與喚醒原因記錄
+- 項目：BootHold 喚醒等待期、提示動畫與強制 gate
 - 檔案：
   - src/ButtonThread.cpp
   - src/ButtonThread.h
+  - src/main.cpp
+  - src/modules/HermesXInterfaceModule.cpp
   - src/modules/HermesXPowerGuard.cpp
+  - src/modules/Modules.cpp
+  - src/graphics/Screen.cpp
 - 說明：
   - 短按喚醒後進入 5 秒等待期，期間需長按才放行開機。
-  - 長按期間進度條由暗轉亮，並顯示「. .. ... ....」循環提示。
+  - 等待期改為 setup 內阻塞式 gate，未達門檻前不初始化 MeshService/模組。
+  - 長按期間進度條由暗轉亮，並顯示「. .. ... ....」循環提示，覆蓋 Resuming 畫面。
+  - HermesX 啟動動畫/音效改為跟隨 guard，長按未達標不播。
   - 開機時輸出喚醒原因（timer/ext/reset）。
 - 測試：未執行；需實機確認。
 
