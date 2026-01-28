@@ -59,6 +59,7 @@
 #define TFT_BACKLIGHT_ON HIGH
 #endif
 
+
 extern graphics::Screen *screen;
 
 namespace
@@ -1314,9 +1315,9 @@ int32_t HermesXInterfaceModule::runOnce() {
     // === ?��??��?段�??�執行�?�?===
     if (firstTime) {
         firstTime = false;
-        music.begin();
+        ///music.begin();
         if (outputsAllowed) {
-            music.playStartupSound();
+            ///music.playStartupSound();暫時拿掉
         }
         HERMESX_LOG_INFO("first runOnce() call");
 
@@ -1332,7 +1333,7 @@ int32_t HermesXInterfaceModule::runOnce() {
     // === 測試?��?（�?一次�?===
     if (!testPlayed && outputsAllowed) {
         testPlayed = true;
-        music.playSendSound();
+        ///music.playSendSound();
     }
 
     // === ?�止 tone ?�放 ===
@@ -1362,6 +1363,8 @@ int32_t HermesXInterfaceModule::runOnce() {
     if (emergencyBannerVisible && emergencyBannerHideDeadline && now >= emergencyBannerHideDeadline) {
         showEmergencyBanner(false);
     }
+
+    // (HNY melody handled in Screen)
 
     renderLEDs();
 

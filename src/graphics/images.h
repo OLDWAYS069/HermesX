@@ -234,3 +234,4 @@ static unsigned char poo[] PROGMEM = {
 #endif
 
 #include "img/icon.xbm"
+#include "img/liu_hny.xbm"

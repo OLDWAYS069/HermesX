@@ -256,6 +256,8 @@ class Screen : public concurrency::OSThread
 
     void startHermesXAlert(const char *text);
 
+    bool isBootScreenVisible() const;
+
     void endAlert()
     {
         ScreenCmd cmd;

@@ -39,6 +39,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "graphics/ScreenFonts.h"
 // --- HermesX Remove TFT fast-path START
 #include "graphics/fonts/HermesX_zh/HermesX_CN12.h"
+#include "modules/MusicModule.h"
+#include "concurrency/Periodic.h"
 #include <inttypes.h>
 #include <math.h>
 // --- HermesX Remove TFT fast-path END
@@ -2018,6 +2020,181 @@ static uint32_t bootScreenStartMs = 0;
 static bool showingOEMBootScreen = true;
 #endif
 
+// --- HNY melody playback (non-blocking) ---
+struct HnyNote {
+    float freq;
+    uint16_t duration;
+};
+static constexpr uint16_t kHnyBeatMs = 60000 / 132; // BPM 132, quarter note
+static constexpr uint16_t kHnyQuarterMs = kHnyBeatMs;                 // 4分
+static constexpr uint16_t kHnyEighthMs  = kHnyBeatMs / 2;             // 8分
+static constexpr uint16_t kHnySixteenthMs = kHnyBeatMs / 4;           // 16分
+static constexpr uint16_t kHnyHalfMs    = kHnyBeatMs * 2;             // 2分
+static constexpr uint16_t kHnyDottedQuarterMs =
+    kHnyQuarterMs + kHnyEighthMs;                                     // 附點4分
+static constexpr uint16_t kHnyDottedEighthMs =
+    kHnyEighthMs + kHnySixteenthMs;                                   // 附點8分
+static constexpr uint16_t kHnyGapMs = 20;
+static constexpr float kHnyScaleFreqs[] = {
+    0.0f,     // 0 unused
+    349.23f,  // 1 (F4)
+    392.00f,  // 2 (G4)
+    440.00f,  // 3 (A4)
+    466.16f,  // 4 (Bb4)
+    523.25f,  // 5 (C5)
+    587.33f,  // 6 (D5)
+    659.25f,  // 7 (E5)
+    293.66f   // 8 (D4)
+};
+static const HnyNote kHnyMelody[] = {
+    {kHnyScaleFreqs[2], kHnyQuarterMs},        // G4  4分
+    {kHnyScaleFreqs[3], kHnyQuarterMs},        // A4  4分
+    {kHnyScaleFreqs[5], kHnyQuarterMs},        // C5  4分
+    {kHnyScaleFreqs[3], kHnyQuarterMs},        // A4  4分
+
+    {kHnyScaleFreqs[2], kHnyDottedEighthMs},   // G4  附點8分
+    {kHnyScaleFreqs[3], kHnySixteenthMs},      // A4  16分
+    {kHnyScaleFreqs[2], kHnyEighthMs},         // G4  8分
+    {kHnyScaleFreqs[1], kHnyEighthMs},         // F4  8分
+    {kHnyScaleFreqs[8], kHnyHalfMs},           // D4  2分
+
+    {0.0f, kHnyEighthMs},                       // Rest 8分
+
+    {kHnyScaleFreqs[2], kHnyQuarterMs},        // G4  4分
+    {kHnyScaleFreqs[3], kHnyQuarterMs},        // A4  4分
+    {kHnyScaleFreqs[5], kHnyQuarterMs},        // C5  4分
+    {kHnyScaleFreqs[3], kHnyQuarterMs},        // A4  4分
+
+    {kHnyScaleFreqs[2], kHnyDottedEighthMs},   // G4  附點8分
+    {kHnyScaleFreqs[3], kHnySixteenthMs},      // A4  16分
+    {kHnyScaleFreqs[2], kHnyEighthMs},         // G4  8分
+    {kHnyScaleFreqs[8], kHnyEighthMs},         // D4  8分
+    {kHnyScaleFreqs[1], kHnyHalfMs},           // F4  2分
+
+    {0.0f, kHnyEighthMs},                       // Rest 8分
+    {0.0f, 0},                                 // End
+};
+static MusicModule *s_hnyMusic = nullptr;
+static concurrency::Periodic *s_hnyThread = nullptr;
+static bool s_hnyPlaying = false;
+static bool s_hnyToneOn = false;
+static uint32_t s_hnyNextMs = 0;
+static size_t s_hnyIndex = 0;
+static void hnyTick(uint32_t now);
+static int32_t hnyThreadTick();
+
+static int16_t getHnyBuzzerPin()
+{
+    int16_t pin = -1;
+#ifdef PIN_BUZZER
+    pin = PIN_BUZZER;
+#endif
+#if !defined(PIN_BUZZER) && defined(HELTEC_TRACKER_V1_X)
+    // HermesX hardware uses a fixed buzzer pin on Heltec Tracker builds.
+    pin = 17;
+#endif
+    if (config.device.buzzer_gpio) {
+        pin = static_cast<int16_t>(config.device.buzzer_gpio);
+    }
+    return pin;
+}
+
+static void ensureHnyMusic()
+{
+    if (s_hnyMusic != nullptr) {
+        return;
+    }
+    const int16_t pin = getHnyBuzzerPin();
+    if (pin < 0) {
+        return;
+    }
+    s_hnyMusic = new MusicModule(static_cast<uint8_t>(pin));
+    s_hnyMusic->begin();
+}
+
+static void ensureHnyThread()
+{
+    if (s_hnyThread != nullptr) {
+        return;
+    }
+    s_hnyThread = new concurrency::Periodic("HNY", hnyThreadTick);
+    s_hnyThread->setInterval(10);
+}
+
+static void hnyStart(uint32_t now)
+{
+    ensureHnyThread();
+    ensureHnyMusic();
+    if (!s_hnyMusic) {
+        return;
+    }
+    s_hnyPlaying = true;
+    s_hnyToneOn = false;
+    s_hnyNextMs = now;
+    s_hnyIndex = 0;
+    s_hnyMusic->stopTone();
+}
+
+static void hnyStop()
+{
+    if (!s_hnyPlaying)
+        return;
+    if (s_hnyMusic) {
+        s_hnyMusic->stopTone();
+    }
+    s_hnyPlaying = false;
+    s_hnyToneOn = false;
+    s_hnyNextMs = 0;
+    s_hnyIndex = 0;
+}
+
+static void hnyTick(uint32_t now)
+{
+    if (!s_hnyPlaying || !s_hnyMusic)
+        return;
+    if (now < s_hnyNextMs)
+        return;
+    if (s_hnyToneOn) {
+        s_hnyMusic->stopTone();
+        s_hnyToneOn = false;
+        s_hnyNextMs = now + kHnyGapMs;
+        return;
+    }
+
+    const HnyNote &note = kHnyMelody[s_hnyIndex];
+    if (note.duration == 0) {
+        s_hnyIndex = 0;
+        return;
+    }
+    if (note.freq <= 0.0f) {
+        s_hnyMusic->stopTone();
+        s_hnyToneOn = false;
+        s_hnyNextMs = now + note.duration;
+        s_hnyIndex++;
+        if (kHnyMelody[s_hnyIndex].duration == 0) {
+            s_hnyIndex = 0;
+        }
+        return;
+    }
+
+    s_hnyMusic->playTone(note.freq, note.duration);
+    s_hnyToneOn = true;
+    s_hnyNextMs = now + note.duration;
+    s_hnyIndex++;
+    if (kHnyMelody[s_hnyIndex].duration == 0) {
+        s_hnyIndex = 0;
+    }
+}
+
+static int32_t hnyThreadTick()
+{
+    if (!s_hnyPlaying) {
+        return 100;
+    }
+    hnyTick(millis());
+    return 10;
+}
+
 struct BootHoldPoint {
     float nx;
     float ny;
@@ -2173,6 +2350,25 @@ static void drawHermesXBootHoldFrame(OLEDDisplay *display, OLEDDisplayUiState *s
         progress = clamp01(static_cast<float>(hermesXBootHoldHeldMs) / static_cast<float>(hermesXBootHoldLongMs));
     }
 
+    // HNY special: only show Liu slide-in + build tag (no line network).
+    if (progress > 0.0f) {
+        const float slideT = clamp01(progress);
+        const int16_t endX = x + (display->width() - liu_hny_width) / 2;
+        const int16_t startX = x + display->width() + 2;
+        const int16_t liuX = static_cast<int16_t>(startX + (endX - startX) * slideT);
+        const int16_t liuY = y + (display->height() - liu_hny_height) / 2;
+        display->drawXbm(liuX, liuY, liu_hny_width, liu_hny_height, liu_hny_bits);
+
+        const char *kHermesXBuildTag = "HXB_0.2.8";
+        display->setFont(FONT_SMALL);
+        display->setTextAlignment(TEXT_ALIGN_LEFT);
+        const int16_t tagWidth = display->getStringWidth(kHermesXBuildTag);
+        const int16_t tagX = x + display->width() - tagWidth - 2;
+        const int16_t tagY = y + display->height() - FONT_HEIGHT_SMALL - 2;
+        display->drawString(tagX, tagY, kHermesXBuildTag);
+    }
+    return;
+
     const int edgeCount = static_cast<int>(sizeof(kEdges) / sizeof(kEdges[0]));
     static constexpr float kSegmentStepPx = 1.0f;
     static constexpr int kMaxSegments = 512;
@@ -2259,10 +2455,13 @@ static void drawHermesXBootHoldFrame(OLEDDisplay *display, OLEDDisplayUiState *s
         display->drawCircle(pts[1].x, pts[1].y, 2);
     }
 
-    if (hermesXBootHoldReveal) {
-        const int16_t textX = x + (display->width() - HERMESX_WORD_WIDTH) / 2;
-        const int16_t textY = y + (display->height() - HERMESX_WORD_HEIGHT) / 2;
-        display->drawXbm(textX, textY, HERMESX_WORD_WIDTH, HERMESX_WORD_HEIGHT, hermesx_word_bits);
+    if (progress > 0.0f) {
+        const float slideT = clamp01(progress);
+        const int16_t endX = x + (display->width() - liu_hny_width) / 2;
+        const int16_t startX = x + display->width() + 2;
+        const int16_t liuX = static_cast<int16_t>(startX + (endX - startX) * slideT);
+        const int16_t liuY = y + (display->height() - liu_hny_height) / 2;
+        display->drawXbm(liuX, liuY, liu_hny_width, liu_hny_height, liu_hny_bits);
 
         // HermesX build tag in bottom-right corner.
         const char *kHermesXBuildTag = "HXB_0.2.8";
@@ -2303,6 +2502,25 @@ int32_t Screen::runOnce()
 
     const bool gatePending = HermesXPowerGuard::guardEnabled() && HermesXPowerGuard::bootHoldPending();
     const bool deferNormalFrames = gatePending || (nodeDB == nullptr) || hermesXBootHoldActive;
+
+    // HNY melody during boot-hold (after 1s) and while boot screen is visible.
+    const bool bootHoldMusic = hermesXBootHoldActive && (hermesXBootHoldHeldMs >= 1000);
+    const bool bootScreenMusic = showingBootScreen
+#ifdef USERPREFS_OEM_TEXT
+                                 || showingOEMBootScreen
+#endif
+        ;
+    const bool shouldPlayHny = bootHoldMusic || bootScreenMusic;
+    if (shouldPlayHny && !s_hnyPlaying) {
+        hnyStart(millis());
+        setFastFramerate();
+    }
+    if (!shouldPlayHny && s_hnyPlaying) {
+        hnyStop();
+    }
+    if (s_hnyPlaying) {
+        hnyTick(millis());
+    }
 
     // Show boot screen for first logo_timeout seconds, then switch to normal operation.
     // serialSinceMsec adjusts for additional serial wait time during nRF52 bootup
@@ -2494,6 +2712,15 @@ void Screen::startHermesXAlert(const char *text)
     });
     // Ensure the alert is visible immediately (avoid 1fps idle delays).
     setFastFramerate();
+}
+
+bool Screen::isBootScreenVisible() const
+{
+    bool oemVisible = false;
+#ifdef USERPREFS_OEM_TEXT
+    oemVisible = showingOEMBootScreen;
+#endif
+    return showingBootScreen || oemVisible;
 }
 
 void Screen::startBootHoldReveal(uint32_t revealMs)
