@@ -954,7 +954,7 @@ void setup()
     else
 #if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS)
         if (HermesXPowerGuard::startupVisualsAllowed()) {
-            playStartMelody();
+            // Startup melody disabled for HermesX to avoid extra audio during boot/hold.
         }
 #else
         playStartMelody();

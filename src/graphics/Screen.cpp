@@ -2046,33 +2046,29 @@ static constexpr float kHnyScaleFreqs[] = {
     659.25f,  // 7 (E5)
     293.66f   // 8 (D4)
 };
-static const HnyNote kHnyMelody[] = {
-    {kHnyScaleFreqs[2], kHnyQuarterMs},        // G4  4分
-    {kHnyScaleFreqs[3], kHnyQuarterMs},        // A4  4分
-    {kHnyScaleFreqs[5], kHnyQuarterMs},        // C5  4分
-    {kHnyScaleFreqs[3], kHnyQuarterMs},        // A4  4分
-
-    {kHnyScaleFreqs[2], kHnyDottedEighthMs},   // G4  附點8分
-    {kHnyScaleFreqs[3], kHnySixteenthMs},      // A4  16分
-    {kHnyScaleFreqs[2], kHnyEighthMs},         // G4  8分
-    {kHnyScaleFreqs[1], kHnyEighthMs},         // F4  8分
-    {kHnyScaleFreqs[8], kHnyHalfMs},           // D4  2分
-
+// 長按期間循環段（第 1 段）
+static const HnyNote kHnyHoldMelody[] = {
+    {kHnyScaleFreqs[3], kHnyQuarterMs},         // 3
+    {kHnyScaleFreqs[4], kHnyQuarterMs},         // 4
+    {kHnyScaleFreqs[3], kHnyQuarterMs},         // 3
+    {kHnyScaleFreqs[3], kHnyDottedQuarterMs},   // 3.
+    {kHnyScaleFreqs[1], kHnyEighthMs},          // 1
+    {kHnyScaleFreqs[2], kHnyEighthMs},          // 2
+    {kHnyScaleFreqs[2], kHnyHalfMs},            // 2
     {0.0f, kHnyEighthMs},                       // Rest 8分
-
-    {kHnyScaleFreqs[2], kHnyQuarterMs},        // G4  4分
-    {kHnyScaleFreqs[3], kHnyQuarterMs},        // A4  4分
-    {kHnyScaleFreqs[5], kHnyQuarterMs},        // C5  4分
-    {kHnyScaleFreqs[3], kHnyQuarterMs},        // A4  4分
-
-    {kHnyScaleFreqs[2], kHnyDottedEighthMs},   // G4  附點8分
-    {kHnyScaleFreqs[3], kHnySixteenthMs},      // A4  16分
-    {kHnyScaleFreqs[2], kHnyEighthMs},         // G4  8分
-    {kHnyScaleFreqs[8], kHnyEighthMs},         // D4  8分
-    {kHnyScaleFreqs[1], kHnyHalfMs},           // F4  2分
-
+    {0.0f, 0},                                  // End
+};
+// Boot screen 續播段（第 2 段）
+static const HnyNote kHnyBootMelody[] = {
+    {kHnyScaleFreqs[3], kHnyQuarterMs},         // 3
+    {kHnyScaleFreqs[5], kHnyQuarterMs},         // 5
+    {kHnyScaleFreqs[4], kHnyQuarterMs},         // 4
+    {kHnyScaleFreqs[4], kHnyDottedQuarterMs},   // 4.
+    {kHnyScaleFreqs[2], kHnyEighthMs},          // 2
+    {kHnyScaleFreqs[1], kHnyEighthMs},          // 1
+    {kHnyScaleFreqs[1], kHnyHalfMs},            // 1
     {0.0f, kHnyEighthMs},                       // Rest 8分
-    {0.0f, 0},                                 // End
+    {0.0f, 0},                                  // End
 };
 static MusicModule *s_hnyMusic = nullptr;
 static concurrency::Periodic *s_hnyThread = nullptr;
@@ -2080,6 +2076,9 @@ static bool s_hnyPlaying = false;
 static bool s_hnyToneOn = false;
 static uint32_t s_hnyNextMs = 0;
 static size_t s_hnyIndex = 0;
+static bool s_hnyLoop = true;
+static bool s_hnyBootScreenPlayed = false;
+static const HnyNote *s_hnyMelody = nullptr;
 static void hnyTick(uint32_t now);
 static int32_t hnyThreadTick();
 
@@ -2121,17 +2120,19 @@ static void ensureHnyThread()
     s_hnyThread->setInterval(10);
 }
 
-static void hnyStart(uint32_t now)
+static void hnyStart(uint32_t now, bool loop, const HnyNote *melody)
 {
     ensureHnyThread();
     ensureHnyMusic();
-    if (!s_hnyMusic) {
+    if (!s_hnyMusic || !melody) {
         return;
     }
     s_hnyPlaying = true;
     s_hnyToneOn = false;
     s_hnyNextMs = now;
     s_hnyIndex = 0;
+    s_hnyLoop = loop;
+    s_hnyMelody = melody;
     s_hnyMusic->stopTone();
 }
 
@@ -2146,11 +2147,12 @@ static void hnyStop()
     s_hnyToneOn = false;
     s_hnyNextMs = 0;
     s_hnyIndex = 0;
+    s_hnyMelody = nullptr;
 }
 
 static void hnyTick(uint32_t now)
 {
-    if (!s_hnyPlaying || !s_hnyMusic)
+    if (!s_hnyPlaying || !s_hnyMusic || !s_hnyMelody)
         return;
     if (now < s_hnyNextMs)
         return;
@@ -2161,9 +2163,13 @@ static void hnyTick(uint32_t now)
         return;
     }
 
-    const HnyNote &note = kHnyMelody[s_hnyIndex];
+    const HnyNote &note = s_hnyMelody[s_hnyIndex];
     if (note.duration == 0) {
-        s_hnyIndex = 0;
+        if (s_hnyLoop) {
+            s_hnyIndex = 0;
+        } else {
+            hnyStop();
+        }
         return;
     }
     if (note.freq <= 0.0f) {
@@ -2171,7 +2177,7 @@ static void hnyTick(uint32_t now)
         s_hnyToneOn = false;
         s_hnyNextMs = now + note.duration;
         s_hnyIndex++;
-        if (kHnyMelody[s_hnyIndex].duration == 0) {
+        if (s_hnyMelody[s_hnyIndex].duration == 0) {
             s_hnyIndex = 0;
         }
         return;
@@ -2181,7 +2187,7 @@ static void hnyTick(uint32_t now)
     s_hnyToneOn = true;
     s_hnyNextMs = now + note.duration;
     s_hnyIndex++;
-    if (kHnyMelody[s_hnyIndex].duration == 0) {
+    if (s_hnyMelody[s_hnyIndex].duration == 0) {
         s_hnyIndex = 0;
     }
 }
@@ -2511,15 +2517,23 @@ int32_t Screen::runOnce()
 #endif
         ;
     const bool shouldPlayHny = bootHoldMusic || bootScreenMusic;
-    if (shouldPlayHny && !s_hnyPlaying) {
-        hnyStart(millis());
+    if (bootHoldMusic) {
+        if (!s_hnyPlaying || s_hnyMelody != kHnyHoldMelody || !s_hnyLoop) {
+            hnyStart(millis(), true, kHnyHoldMelody);
+            setFastFramerate();
+        }
+    } else if (bootScreenMusic && !s_hnyBootScreenPlayed) {
+        hnyStart(millis(), false, kHnyBootMelody);
+        s_hnyBootScreenPlayed = true;
         setFastFramerate();
-    }
-    if (!shouldPlayHny && s_hnyPlaying) {
+    } else if (!shouldPlayHny && s_hnyPlaying) {
         hnyStop();
     }
     if (s_hnyPlaying) {
         hnyTick(millis());
+    }
+    if (!bootScreenMusic) {
+        s_hnyBootScreenPlayed = false;
     }
 
     // Show boot screen for first logo_timeout seconds, then switch to normal operation.
