@@ -44,6 +44,10 @@ class ButtonThread : public concurrency::OSThread
     void disableBootHold();
 #endif
     static void requireReleaseBeforeLongPress();
+    static void extendLongPressGrace(uint32_t graceMs);
+    static void suppressLongPress(bool active);
+    static void suppressLongPressFor(uint32_t graceMs);
+    static bool isLongPressSuppressed();
     static bool isReleaseRequiredForLongPress();
     static void clearHoldAnimationState();
     static bool isHoldButtonPressed();

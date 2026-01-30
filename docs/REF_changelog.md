@@ -1,6 +1,19 @@
 # HermesX 變更紀錄 (REF_changelog.md)
 
 ## 範圍
+- 日期：2026-01-29
+- 項目：EC11 四相解碼穩定旋轉輸入；EM16 用途註記
+- 檔案：
+  - src/input/RotaryEncoderInterruptBase.cpp
+  - src/input/RotaryEncoderInterruptBase.h
+  - docs/HermesX_EM_FontSubset.md
+- 說明：
+  - Rotary encoder 改為四相解碼，僅在完成 detent 後送出 CW/CCW，並加入最小派送間隔以抑制抖動。
+  - 補註 HermesX_EM16_ZH 僅供 OLED_ZH 的 EM UI 最小字集；一般介面仍以 HermesX_CN12 為主。
+- 測試：
+  - 未執行（使用者回報已修復 EC11 亂跳）。
+
+## 範圍
 - 日期：2026-01-26
 - 版本：HXB_0.2.8
 - 項目：BootHold gate 前移、僅喚醒時攔截；Prefs 備份/還原防洗檔

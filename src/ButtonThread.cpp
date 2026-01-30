@@ -41,11 +41,15 @@ static bool s_releaseSeen = false;
 static bool s_requireReleaseBeforeLongPress = false;
 static bool s_longGateArmed = false;
 static bool s_longEventPending = false;
+static bool s_longPressFromAlt = false;
+static bool s_longPressSuppressed = false;
+static uint32_t s_longPressSuppressUntil = 0;
 static uint32_t s_resumeGraceUntil = 0;
 static uint32_t s_lastStableChangeMs = 0;
 static bool s_lastStablePressed = false;
 static uint32_t s_longStartMillis = 0;
 static uint32_t s_holdPressStartMs = 0;
+static bool isLongPressSuppressedNow();
 
 static bool s_shutdownAnimArmed = false;
 static uint32_t s_shutdownDeadlineMs = 0;
@@ -54,6 +58,7 @@ static constexpr uint32_t kShutdownMessageMinMs = 1500;
 static constexpr uint32_t kShutdownMessageEarlyMs = 4000;
 static constexpr uint32_t kResumeGraceMs = 1200;
 static constexpr uint32_t kReleaseDebounceMs = 80;
+static constexpr uint32_t kRotaryLongPressDelayMs = 1000;
 static constexpr const char *kShutdownMessage = "拜拜～下次見！";
 // 罐頭訊息選單：長按約 1 秒退出
 static bool s_exitCannedHold = false;
@@ -754,6 +759,9 @@ void ButtonThread::resetLongPressState()
     s_releaseSeen = false;
     s_longGateArmed = false;
     s_longEventPending = false;
+    s_longPressFromAlt = false;
+    s_longPressSuppressed = false;
+    s_longPressSuppressUntil = 0;
     s_resumeGraceUntil = millis() + kResumeGraceMs;
     s_lastStableChangeMs = 0;
     s_lastStablePressed = false;
@@ -927,6 +935,9 @@ void ButtonThread::resetLongPressGates()
         s_releaseSeen = false;
         s_longGateArmed = false;
         s_longEventPending = false;
+        s_longPressFromAlt = false;
+        s_longPressSuppressed = false;
+        s_longPressSuppressUntil = 0;
         s_resumeGraceUntil = millis() + kResumeGraceMs;
         s_lastStableChangeMs = 0;
         s_lastStablePressed = false;
@@ -941,6 +952,19 @@ void ButtonThread::updatePowerHoldAnimation()
     auto *interfaceModule = HermesXInterfaceModule::instance;
     bool interfaceReady = interfaceModule != nullptr;
 
+    if (isLongPressSuppressedNow()) {
+        if (holdAnimationActive || holdAnimationStarted) {
+            holdAnimationActive = false;
+            holdAnimationStarted = false;
+            holdAnimationLastMs = 0;
+            s_holdPressStartMs = 0;
+            if (interfaceReady) {
+                interfaceModule->stopPowerHoldAnimation(false);
+            }
+        }
+        return;
+    }
+
     // 已經進入關機序列時，不再繼續進度動畫，避免再次啟動或重跑
     if (s_shutdownSequenceStarted) {
         // 進度動畫停掉，但不要重置計時；等待關機
@@ -954,7 +978,7 @@ void ButtonThread::updatePowerHoldAnimation()
         return;
     }
 
-    const uint32_t holdDurationMs = BUTTON_LONGPRESS_MS ? BUTTON_LONGPRESS_MS : 1;
+    uint32_t holdDurationMs = BUTTON_LONGPRESS_MS ? BUTTON_LONGPRESS_MS : 1;
     bool anyPressed = false;
     uint32_t pressedMs = 0;
     uint32_t userPressedMs = 0;
@@ -996,6 +1020,12 @@ void ButtonThread::updatePowerHoldAnimation()
     if (anyPressed && pressedMs == 0) {
         pressedMs = 1;
     }
+
+#if !MESHTASTIC_EXCLUDE_HERMESX
+    if (altPressedMs >= pressedMs && altPressedMs > 0) {
+        holdDurationMs += kRotaryLongPressDelayMs;
+    }
+#endif
 
     static bool s_prevAnyPressed = false;
     static uint32_t s_lastPressTimestamp = 0;
@@ -1171,6 +1201,65 @@ void ButtonThread::requireReleaseBeforeLongPress()
 #endif
 }
 
+static bool isLongPressSuppressedNow()
+{
+#if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT) ||                \
+    defined(BUTTON_PIN_TOUCH)
+    if (s_longPressSuppressUntil && millis() > s_longPressSuppressUntil) {
+        s_longPressSuppressUntil = 0;
+        s_longPressSuppressed = false;
+    }
+    return s_longPressSuppressed;
+#else
+    return false;
+#endif
+}
+
+void ButtonThread::extendLongPressGrace(uint32_t graceMs)
+{
+#if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT) ||                \
+    defined(BUTTON_PIN_TOUCH)
+    if (graceMs == 0) {
+        return;
+    }
+    const uint32_t now = millis();
+    const uint32_t candidate = now + graceMs;
+    if (candidate > s_resumeGraceUntil) {
+        s_resumeGraceUntil = candidate;
+    }
+#endif
+}
+
+void ButtonThread::suppressLongPress(bool active)
+{
+#if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT) ||                \
+    defined(BUTTON_PIN_TOUCH)
+    s_longPressSuppressed = active;
+    if (!active) {
+        s_longPressSuppressUntil = 0;
+    }
+#endif
+}
+
+void ButtonThread::suppressLongPressFor(uint32_t graceMs)
+{
+#if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT) ||                \
+    defined(BUTTON_PIN_TOUCH)
+    if (graceMs == 0) {
+        s_longPressSuppressed = false;
+        s_longPressSuppressUntil = 0;
+        return;
+    }
+    s_longPressSuppressed = true;
+    s_longPressSuppressUntil = millis() + graceMs;
+#endif
+}
+
+bool ButtonThread::isLongPressSuppressed()
+{
+    return isLongPressSuppressedNow();
+}
+
 bool ButtonThread::isReleaseRequiredForLongPress()
 {
 #if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT) ||                \
@@ -1320,6 +1409,9 @@ bool ButtonThread::handleBootHold()
 void ButtonThread::userButtonPressedLongStart()
 {
 #if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT)
+    if (isLongPressSuppressedNow()) {
+        return;
+    }
     // 已啟動關機序列時忽略後續長按開始，避免中途再次觸發導致提前關機
 #if !MESHTASTIC_EXCLUDE_HERMESX
     if (s_shutdownSequenceStarted || s_shutdownAnimArmed) {
@@ -1331,15 +1423,24 @@ void ButtonThread::userButtonPressedLongStart()
     }
 #endif
     uint32_t pressedMs = 0;
+    bool useAltPress = false;
 #if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN)
     pressedMs = userButton.getPressedMs();
 #endif
 #ifdef BUTTON_PIN_ALT
     uint32_t altPressed = userButtonAlt.getPressedMs();
-    if (altPressed > pressedMs)
+    if (altPressed > pressedMs) {
         pressedMs = altPressed;
+        useAltPress = true;
+    }
 #endif
-    if (pressedMs + 20 < BUTTON_LONGPRESS_MS)
+    uint32_t longPressThreshold = BUTTON_LONGPRESS_MS;
+#if !MESHTASTIC_EXCLUDE_HERMESX
+    if (useAltPress) {
+        longPressThreshold += kRotaryLongPressDelayMs;
+    }
+#endif
+    if (pressedMs + 20 < longPressThreshold)
         return;
 
     const uint32_t now = millis();
@@ -1380,6 +1481,7 @@ void ButtonThread::userButtonPressedLongStart()
     s_longStartMillis = now - pressedMs;
     s_longGateArmed = true;
     s_longEventPending = true;
+    s_longPressFromAlt = useAltPress;
     s_releaseSeen = false;
     btnEvent = BUTTON_EVENT_LONG_PRESSED;
 
@@ -1399,7 +1501,7 @@ void ButtonThread::userButtonPressedLongStart()
         }
         LOG_INFO("PowerHold: manual start mode=%s ms=%" PRIu32,
                  mode == HermesXInterfaceModule::PowerHoldMode::PowerOn ? "on" : "off", pressedMs);
-        interfaceModule->startPowerHoldAnimation(mode, BUTTON_LONGPRESS_MS ? BUTTON_LONGPRESS_MS : 1);
+        interfaceModule->startPowerHoldAnimation(mode, longPressThreshold ? longPressThreshold : 1);
     }
 #endif
 #endif
@@ -1414,9 +1516,17 @@ void ButtonThread::userButtonPressedLongStop()
         s_longGateArmed = false;
         s_longEventPending = false;
         s_longStartMillis = 0;
+        s_longPressFromAlt = false;
         return;
     }
 #endif
+    if (isLongPressSuppressedNow()) {
+        s_longGateArmed = false;
+        s_longEventPending = false;
+        s_longStartMillis = 0;
+        s_longPressFromAlt = false;
+        return;
+    }
     const uint32_t now = millis();
     bool holdAllowed =
 #if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS) &&                                                   \
@@ -1432,6 +1542,7 @@ void ButtonThread::userButtonPressedLongStop()
     if (!s_longGateArmed) {
         s_longEventPending = false;
         s_longStartMillis = 0;
+        s_longPressFromAlt = false;
         return;
     }
 
@@ -1440,18 +1551,27 @@ void ButtonThread::userButtonPressedLongStop()
     if (!holdAllowed) {
         s_longEventPending = false;
         s_longStartMillis = 0;
+        s_longPressFromAlt = false;
         return;
     }
 
     if (s_resumeGraceUntil && (now < s_resumeGraceUntil)) {
         s_longEventPending = false;
         s_longStartMillis = 0;
+        s_longPressFromAlt = false;
         return;
     }
 
     uint32_t duration = s_longStartMillis ? (now - s_longStartMillis) : 0;
     s_longStartMillis = 0;
     s_longEventPending = false;
+    const uint32_t longPressThreshold =
+#if !MESHTASTIC_EXCLUDE_HERMESX
+        BUTTON_LONGPRESS_MS + (s_longPressFromAlt ? kRotaryLongPressDelayMs : 0);
+#else
+        BUTTON_LONGPRESS_MS;
+#endif
+    s_longPressFromAlt = false;
 
 #if !MESHTASTIC_EXCLUDE_HERMESX
     // 收尾時再更新一次動畫進度，確保達標時會進入完成態
@@ -1464,7 +1584,7 @@ void ButtonThread::userButtonPressedLongStop()
     }
 #endif
 
-    if (duration + 20 < BUTTON_LONGPRESS_MS) {
+    if (duration + 20 < longPressThreshold) {
         return;
     }
 

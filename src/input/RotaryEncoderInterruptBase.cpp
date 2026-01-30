@@ -3,7 +3,9 @@
 
 namespace
 {
-constexpr uint32_t kRotaryDebounceMs = 30; // Guard against rapid edge bounce on mechanical encoders.
+constexpr uint32_t kRotaryDispatchMinMs = 40;
+constexpr int8_t kRotaryStepsPerDetent = 4;
+const int8_t kRotaryTransitionTable[16] = {0, -1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0};
 }
 
 RotaryEncoderInterruptBase::RotaryEncoderInterruptBase(const char *name) : concurrency::OSThread(name)
@@ -33,6 +35,8 @@ void RotaryEncoderInterruptBase::init(
 
     this->rotaryLevelA = digitalRead(this->_pinA);
     this->rotaryLevelB = digitalRead(this->_pinB);
+    this->lastRotaryState = ((this->rotaryLevelA == HIGH) ? 1 : 0) << 1 | ((this->rotaryLevelB == HIGH) ? 1 : 0);
+    this->rotaryStep = 0;
     LOG_INFO("Rotary initialized (%d, %d, %d)", this->_pinA, this->_pinB, pinPress);
 }
 
@@ -41,6 +45,18 @@ int32_t RotaryEncoderInterruptBase::runOnce()
     InputEvent e;
     e.inputEvent = meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_NONE;
     e.source = this->_originName;
+    e.kbchar = 0x00;
+    e.touchX = 0;
+    e.touchY = 0;
+
+    if ((this->action == ROTARY_ACTION_CW) || (this->action == ROTARY_ACTION_CCW)) {
+        uint32_t now = millis();
+        if ((this->lastRotaryDispatchMs != 0) && ((now - this->lastRotaryDispatchMs) < kRotaryDispatchMinMs)) {
+            this->action = ROTARY_ACTION_NONE;
+            return INT32_MAX;
+        }
+        this->lastRotaryDispatchMs = now;
+    }
 
     if (this->action == ROTARY_ACTION_PRESSED) {
         LOG_DEBUG("Rotary event Press");
@@ -103,24 +119,37 @@ RotaryEncoderInterruptBaseStateType RotaryEncoderInterruptBase::intHandler(bool 
                                                                            RotaryEncoderInterruptBaseActionType action,
                                                                            RotaryEncoderInterruptBaseStateType state)
 {
-    RotaryEncoderInterruptBaseStateType newState = state;
-    if (actualPinRaising && (otherPinLevel == LOW)) {
-        if (state == ROTARY_EVENT_CLEARED) {
-            newState = ROTARY_EVENT_OCCURRED;
-            if (this->action != ROTARY_ACTION_PRESSED) {
-                uint32_t now = millis();
-                bool withinDebounce = (this->lastRotaryEdgeMs != 0) && ((now - this->lastRotaryEdgeMs) < kRotaryDebounceMs);
-                this->lastRotaryEdgeMs = now;
-                if (!withinDebounce && (this->action != action)) {
-                    this->action = action;
-                }
-            }
-        }
-    } else if (!actualPinRaising && (otherPinLevel == HIGH)) {
-        // Logic to prevent bouncing.
-        newState = ROTARY_EVENT_CLEARED;
-    }
-    setIntervalFromNow(50); // TODO: this modifies a non-volatile variable!
+    (void)actualPinRaising;
+    (void)otherPinLevel;
+    (void)action;
 
-    return newState;
+    uint8_t currentState = ((this->rotaryLevelA == HIGH) ? 1 : 0) << 1 | ((this->rotaryLevelB == HIGH) ? 1 : 0);
+    uint8_t transition = (this->lastRotaryState << 2) | currentState;
+    int8_t movement = kRotaryTransitionTable[transition & 0x0f];
+
+    if (this->action != ROTARY_ACTION_PRESSED) {
+        if (movement != 0) {
+            this->rotaryStep += movement;
+            if (this->rotaryStep <= -kRotaryStepsPerDetent) {
+                if (this->action == ROTARY_ACTION_NONE) {
+                    this->action = ROTARY_ACTION_CW;
+                    setIntervalFromNow(50); // TODO: this modifies a non-volatile variable!
+                }
+                this->rotaryStep = 0;
+            } else if (this->rotaryStep >= kRotaryStepsPerDetent) {
+                if (this->action == ROTARY_ACTION_NONE) {
+                    this->action = ROTARY_ACTION_CCW;
+                    setIntervalFromNow(50); // TODO: this modifies a non-volatile variable!
+                }
+                this->rotaryStep = 0;
+            }
+        } else if (currentState != this->lastRotaryState) {
+            this->rotaryStep = 0;
+        }
+    } else {
+        this->rotaryStep = 0;
+    }
+
+    this->lastRotaryState = currentState;
+    return state;
 }

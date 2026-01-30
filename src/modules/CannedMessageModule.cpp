@@ -1462,11 +1462,14 @@ void CannedMessageModule::handleSetCannedMessageModuleMessages(const char *from_
     if (*from_msg) {
         changed |= strcmp(cannedMessageModuleConfig.messages, from_msg);
         strncpy(cannedMessageModuleConfig.messages, from_msg, sizeof(cannedMessageModuleConfig.messages));
+        cannedMessageModuleConfig.messages[sizeof(cannedMessageModuleConfig.messages) - 1] = '\0';
         LOG_DEBUG("*** from_msg.text:%s", from_msg);
     }
 
     if (changed) {
         this->saveProtoForModule();
+        this->splitConfiguredMessages();
+        this->ensureCancelOption();
     }
 }
 

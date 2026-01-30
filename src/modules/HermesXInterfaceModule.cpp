@@ -25,6 +25,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <Arduino.h>
+#include <cstring>
 #include "RedirectablePrint.h"
 #include "DebugConfiguration.h"
 #include "meshtastic/portnums.pb.h"
@@ -328,13 +329,13 @@ void HermesXInterfaceModule::startLEDAnimation(LEDAnimation anim)
     switch (anim) {
     case LEDAnimation::AckFlash:
         ackFlashActive = true;
-        if (useCentralLedManager && !flashOn) {
+        if (useCentralLedManager && !flashOn && audioAllowed()) {
             music.playSuccessSound();
         }
         break;
     case LEDAnimation::NackFlash:
         nackFlashActive = true;
-        if (useCentralLedManager && !flashOn) {
+        if (useCentralLedManager && !flashOn && audioAllowed()) {
             music.playFailedSound();
         }
         break;
@@ -788,6 +789,12 @@ HermesXInterfaceModule::HermesXInterfaceModule()
     isPromiscuous = true;
     loopbackOk = true;
     initLED();
+#if !MESHTASTIC_EXCLUDE_INPUTBROKER
+    if (inputBroker) {
+        inputObserver.observe(inputBroker);
+    }
+#endif
+    userOutputsMuted = (ledUserBrightness == 0);
 
     // 預設啟用集中式 LED 管理（必要時可改回 false 走 legacy）
     useCentralLedManager = true;
@@ -823,6 +830,8 @@ void HermesXInterfaceModule::applyRoleOutputPolicy()
     outputsDisabled = shouldDisable;
     if (outputsDisabled) {
         forceAllLedsOff();
+    }
+    if (outputsDisabled || userOutputsMuted) {
         music.stopTone();
         stopTone();
     }
@@ -833,6 +842,66 @@ void HermesXInterfaceModule::handleButtonPress()
 {
 
 }
+
+#if !MESHTASTIC_EXCLUDE_INPUTBROKER
+bool HermesXInterfaceModule::isRotaryPressHeld() const
+{
+    if (!moduleConfig.canned_message.rotary1_enabled) {
+        return false;
+    }
+    const uint8_t pinPress = moduleConfig.canned_message.inputbroker_pin_press;
+    return digitalRead(pinPress) == LOW;
+}
+
+int HermesXInterfaceModule::handleInputEvent(const InputEvent *event)
+{
+    if (!event || !event->source) {
+        return 0;
+    }
+    if (strcmp(event->source, "rotEnc1") != 0) {
+        return 0;
+    }
+
+    const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
+    const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
+    const char eventPressed = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
+
+    if (event->inputEvent == eventPressed) {
+        if (rotaryPressConsume || rotaryLedAdjustActive) {
+            rotaryPressConsume = false;
+            rotaryLedAdjustActive = false;
+            HERMESX_LOG_INFO("Rotary LED: consume press after adjust");
+            return 1;
+        }
+        return 0;
+    }
+
+    if (event->inputEvent != eventCw && event->inputEvent != eventCcw) {
+        return 0;
+    }
+
+    if (!isRotaryPressHeld()) {
+        return 0;
+    }
+
+    rotaryLedAdjustActive = true;
+    rotaryHadRotation = true;
+    rotaryPressConsume = true;
+    // 旋轉調光期間暫停長按關機偵測（每次旋轉延長 1s）
+    ButtonThread::suppressLongPressFor(kRotaryLongPressGraceMs);
+
+    const int delta = (event->inputEvent == eventCw) ? kLedBrightnessStep : -kLedBrightnessStep;
+    int next = static_cast<int>(ledUserBrightness) + delta;
+    if (next < 0) {
+        next = 0;
+    } else if (next > 255) {
+        next = 255;
+    }
+    setUserLedBrightness(static_cast<uint8_t>(next));
+    HERMESX_LOG_INFO("Rotary LED: adjust %s -> %u", (delta > 0) ? "up" : "down", ledUserBrightness);
+    return 1;
+}
+#endif
 
 
 void HermesXInterfaceModule::registerRawButtonPress(HermesButtonSource /*source*/)//目前任何輸入都可
@@ -987,10 +1056,38 @@ void HermesXInterfaceModule::drawFace(const char* face, uint16_t color) {
 
 void HermesXInterfaceModule::initLED() {
     rgb.begin();
-    rgb.setBrightness(60);
+    applyUserLedBrightness();
     rgb.clear();   // 上電先關燈，等動畫/邏輯接管再亮
     rgb.show();
     HERMESX_LOG_INFO("LED setup\n");
+}
+
+void HermesXInterfaceModule::applyUserLedBrightness()
+{
+    if (appliedLedBrightness == ledUserBrightness) {
+        return;
+    }
+    rgb.setBrightness(ledUserBrightness);
+    appliedLedBrightness = ledUserBrightness;
+}
+
+void HermesXInterfaceModule::setUserLedBrightness(uint8_t brightness)
+{
+    if (brightness == ledUserBrightness) {
+        return;
+    }
+    if (brightness > 0) {
+        ledUserBrightnessRestore = brightness;
+    }
+    ledUserBrightness = brightness;
+    userOutputsMuted = (ledUserBrightness == 0);
+    applyUserLedBrightness();
+    if (userOutputsMuted) {
+        rgb.clear();
+        rgb.show();
+        music.stopTone();
+        stopTone();
+    }
 }
 
 
@@ -1180,14 +1277,16 @@ void HermesXInterfaceModule::onPacketSent() {
     if (outputsDisabled)
         return;
 
-    music.playSendSound();        // ?�出?��?
+    if (audioAllowed()) {
+        music.playSendSound();        // ?�出?��?
+    }
     startSendAnim();              // ?�出?�畫（R?�L）�?交給 updateLED()/animState 流�???
     HERMESX_LOG_DEBUG("Sent MSG");
 }
 
 
 void HermesXInterfaceModule::playTone(float freq, uint32_t duration_ms) {
-    if (outputsDisabled)
+    if (!audioAllowed())
         return;
 
     if (freq > 0) {
@@ -1303,8 +1402,44 @@ int32_t HermesXInterfaceModule::runOnce() {
     uint32_t now = millis();
 
     applyRoleOutputPolicy();
+#if !MESHTASTIC_EXCLUDE_INPUTBROKER
+    const bool rotaryHeld = isRotaryPressHeld();
+    if (rotaryHeld && !rotaryPressHeld) {
+        rotaryPressHeld = true;
+        rotaryPressStartMs = now;
+        rotaryHadRotation = false;
+    } else if (!rotaryHeld && rotaryPressHeld) {
+        rotaryPressHeld = false;
+        const uint32_t heldMs = rotaryPressStartMs ? (now - rotaryPressStartMs) : 0;
+        rotaryPressStartMs = 0;
 
-    bool outputsAllowed = !outputsDisabled;
+        if (!rotaryHadRotation &&
+            heldMs >= kRotaryLedToggleHoldMs &&
+            (heldMs + 20) < (BUTTON_LONGPRESS_MS + kRotaryShutdownDelayMs)) {
+            if (ledUserBrightness == 0) {
+                const uint8_t restore = ledUserBrightnessRestore ? ledUserBrightnessRestore : kLedBrightnessDefault;
+                setUserLedBrightness(restore);
+                HERMESX_LOG_INFO("Rotary LED: toggle on -> %u", ledUserBrightness);
+            } else {
+                setUserLedBrightness(0);
+                HERMESX_LOG_INFO("Rotary LED: toggle off");
+            }
+            rotaryPressConsume = true;
+        }
+
+        rotaryHadRotation = false;
+
+        if (rotaryLedAdjustActive || rotaryPressConsume) {
+            rotaryLedAdjustActive = false;
+            // 放開後仍保留 1s 緩衝，避免立刻進入長按關機
+            ButtonThread::suppressLongPressFor(kRotaryLongPressGraceMs);
+        } else {
+            rotaryLedAdjustActive = false;
+        }
+    }
+#endif
+
+    bool outputsAllowed = !outputsDisabled && !userOutputsMuted;
 #if defined(HERMESX_GUARD_POWER_ANIMATIONS)
     if (HermesXPowerGuard::guardEnabled() && HermesXPowerGuard::bootHoldPending()) {
         outputsAllowed = false;
@@ -1353,7 +1488,9 @@ int32_t HermesXInterfaceModule::runOnce() {
     if (pendingSuccessFeedback && now >= successFeedbackTime) {
         pendingSuccessFeedback = false;
         if (!outputsDisabled) {
-            music.playSuccessSound();
+            if (audioAllowed()) {
+                music.playSuccessSound();
+            }
             startAckFlash();
             HERMESX_LOG_INFO("Success feedback triggered (ACK animation)");
         }
@@ -1401,7 +1538,9 @@ void HermesXInterfaceModule::handleExternalNotification(int index, bool state) {
 void HermesXInterfaceModule::playSendFeedback() {
     if (outputsDisabled)
         return;
-    music.playSendSound();
+    if (audioAllowed()) {
+        music.playSendSound();
+    }
     startSendAnim();
     HERMESX_LOG_INFO("Send feedback triggered");
 }
@@ -1409,7 +1548,9 @@ void HermesXInterfaceModule::playSendFeedback() {
 void HermesXInterfaceModule::playReceiveFeedback() {
     if (outputsDisabled)
         return;
-    music.playReceiveSound();
+    if (audioAllowed()) {
+        music.playReceiveSound();
+    }
     startReceiveAnim();
     HERMESX_LOG_INFO("Receive feedback triggered");
 }
@@ -1425,7 +1566,9 @@ void HermesXInterfaceModule::playSendSuccessFeedback() {
 void HermesXInterfaceModule::playNodeInfoFeedback() {
     if (outputsDisabled)
         return;
-    music.playNodeInfoSound();
+    if (audioAllowed()) {
+        music.playNodeInfoSound();
+    }
     startInfoReceiveAnimTwoDots();
     HERMESX_LOG_INFO("NodeInfo feedback triggered");
 }
@@ -1433,7 +1576,9 @@ void HermesXInterfaceModule::playNodeInfoFeedback() {
 void HermesXInterfaceModule::playSendFailedFeedback() {
     if (outputsDisabled)
         return;
-    music.playFailedSound();   
+    if (audioAllowed()) {
+        music.playFailedSound();
+    }
     startNackFlash();
     HERMESX_LOG_INFO("Failed feedback triggered");
 }
@@ -1458,7 +1603,9 @@ void HermesXInterfaceModule::playSOSFeedback()
 {
     if (outputsDisabled)
         return;
-    music.playSendSound();
+    if (audioAllowed()) {
+        music.playSendSound();
+    }
     startSendAnim();
 }
 
@@ -1466,7 +1613,9 @@ void HermesXInterfaceModule::playAckSuccess()
 {
     if (outputsDisabled)
         return;
-    music.playSuccessSound();
+    if (audioAllowed()) {
+        music.playSuccessSound();
+    }
     startAckFlash();
 }
 
@@ -1474,7 +1623,9 @@ void HermesXInterfaceModule::playNackFail()
 {
     if (outputsDisabled)
         return;
-    music.playFailedSound();
+    if (audioAllowed()) {
+        music.playFailedSound();
+    }
     startNackFlash();
 }
 
@@ -1729,7 +1880,7 @@ void HermesXInterfaceModule::legacyShutdownAnimation(uint32_t durationMs)
     powerHoldDurationMs = 0;
     powerHoldElapsedMs = 0;
 
-    rgb.setBrightness(80);
+    applyUserLedBrightness();
     rgb.fill(kPowerHoldRedColor);
     rgb.show();
 
@@ -1738,7 +1889,7 @@ void HermesXInterfaceModule::legacyShutdownAnimation(uint32_t durationMs)
 
     disableVisibleOutputsCommon();
 
-    performShutdownAnimation(effectiveDuration, rgb, kPowerHoldRedColor, &music);
+    performShutdownAnimation(effectiveDuration, rgb, kPowerHoldRedColor, audioAllowed() ? &music : nullptr);
 }
 
 void HermesXInterfaceModule::renderLEDs()

@@ -752,8 +752,14 @@ void AdminModule::handleSetConfig(const meshtastic_Config &c)
 
 bool AdminModule::handleSetModuleConfig(const meshtastic_ModuleConfig &c)
 {
-    if (!hasOpenEditTransaction)
+    bool shouldDisableBluetooth = !hasOpenEditTransaction;
+    if (c.which_payload_variant == meshtastic_ModuleConfig_canned_message_tag) {
+        // Keep BLE alive so clients can push canned message text in the same session.
+        shouldDisableBluetooth = false;
+    }
+    if (shouldDisableBluetooth) {
         disableBluetooth();
+    }
     switch (c.which_payload_variant) {
     case meshtastic_ModuleConfig_mqtt_tag:
 #if MESHTASTIC_EXCLUDE_MQTT
