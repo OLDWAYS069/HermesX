@@ -1,6 +1,22 @@
 # HermesX 變更紀錄 (REF_changelog.md)
 
 ## 範圍
+- 日期：2026-01-30
+- 項目：EC11 按下＋旋轉調光；調光期間抑制長按關機
+- 檔案：
+  - src/modules/HermesXInterfaceModule.cpp
+  - src/modules/HermesXInterfaceModule.h
+  - src/ButtonThread.cpp
+  - src/ButtonThread.h
+- 說明：
+  - 新增按下＋旋轉調整 LED 亮度（步進 5），調整時輸出 `Rotary LED` log。
+  - 亮度為 0 時自動靜音（停止蜂鳴器/音效），並保留最後一次非 0 亮度供切回。
+  - 按住未旋轉達 1 秒可切換 LED 開/關；旋轉調光時暫停長按關機偵測，停止調光後再保留 1 秒緩衝才恢復偵測。
+  - ALT 長按關機門檻延後 1 秒，避免與旋鈕操作衝突。
+- 測試：
+  - 未執行（使用者自行編譯驗證）。
+
+## 範圍
 - 日期：2026-01-29
 - 項目：EC11 四相解碼穩定旋轉輸入；EM16 用途註記
 - 檔案：
