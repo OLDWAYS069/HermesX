@@ -1,25 +1,21 @@
 ﻿<div align="center" markdown="1">
 
-<img src="images/face.png" alt="HermesX Logo" width="96"/>
+![截圖 2026-01-27 晚上7.29.49](https://hackmd.io/_uploads/H1WY16s8-l.png)
+
 <h1>HermesX Firmware</h1>
 
-<a href="https://github.com/OLDWAYS069/HermesX/releases">
-  <img src="https://img.shields.io/github/v/release/OLDWAYS069/HermesX?include_prereleases&label=release" alt="Release"/>
-</a>
-<a href="https://github.com/OLDWAYS069/HermesX/releases">
-  <img src="https://img.shields.io/github/downloads/OLDWAYS069/HermesX/total" alt="GitHub release downloads"/>
-</a>
-<a href="https://github.com/OLDWAYS069/HermesX/actions/workflows/main_matrix.yml">
-  <img src="https://img.shields.io/github/actions/workflow/status/OLDWAYS069/HermesX/main_matrix.yml?branch=master&label=actions&logo=github&color=yellow" alt="CI"/>
-</a>
-<a href="LICENSE">
-  <img src="https://img.shields.io/github/license/OLDWAYS069/HermesX" alt="License"/>
-</a>
+![GitHub release downloads](https://img.shields.io/github/downloads/OLDWAYS069/HermesX/total)
+[![CI](https://img.shields.io/github/actions/workflow/status/OLDWAYS069/HermesX/main_matrix.yml?branch=master&label=actions&logo=github&color=yellow)](https://github.com/OLDWAYS069/HermesX/actions/workflows/main_matrix.yml)
+[![License](https://img.shields.io/github/license/OLDWAYS069/HermesX)](LICENSE)
 
 </div>
 
 <div align="center">
   <a href="https://github.com/OLDWAYS069/HermesX">Repository</a>
+  -
+  <a href="docs/README.md">Documentation</a>
+  -
+  <a href="docs/CHANGELOG_MINI.md">Changelog</a>
 </div>
 
 > 在沒有網路或行動訊號的時候，HermesX 讓 LoRa 裝置仍能「看得見、操得到、傳得出去」。
@@ -27,10 +23,19 @@
 **HermesX** 是基於 [Meshtastic](https://github.com/meshtastic/Meshtastic-device) 開源韌體延伸開發的自訂分支，
 專為 LoRa 裝置打造具有互動表情顯示、旋鈕操作、訊息回覆與緊急應變的個人戰術通訊系統。
 
+![Upstream](https://img.shields.io/badge/Upstream-Meshtastic-brightgreen)
+![Build](https://img.shields.io/badge/Build-PlatformIO-blue)
+
 ## Overview
 
 HermesX 的核心目標是提供更直覺的操作介面與緊急模式控制，
 讓離線通訊更適合日常互動與突發場景。
+
+### Get Started
+
+- 🧰 **[Build Instructions](#建置方式-build-instructions)** – 安裝 PlatformIO、選擇環境並編譯韌體。
+- ⚡ **[Auto Flash Script](bin/auto-flash-meshtastic.ps1)** – 使用 PowerShell 腳本快速燒錄。
+- 📦 **[Project Layout](#專案結構-project-layout)** – 了解模組與自訂 proto 的位置。
 
 ## 專案特點
 
@@ -59,6 +64,13 @@ HermesX 的核心目標是提供更直覺的操作介面與緊急模式控制，
 - Rotary Encoder 控制 canned messages 選單
 - 按鍵按壓觸發 canned message 發送
 - 整合 `sendCannedMessage()`，自訂訊息發送邏輯
+
+
+## 進度條
+
+- [ ] UI 建構完畢
+- [ ] 中文字型引入
+
 
 
 ## 建置方式 (Build Instructions)
@@ -103,7 +115,7 @@ platformio run -e heltec-wireless-tracker
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later).
+This project is licensed under the MIT License.
 
 ## Stats
 
@@ -111,7 +123,3 @@ This project is licensed under the GNU General Public License v3.0 or later (GPL
 ![GitHub forks](https://img.shields.io/github/forks/OLDWAYS069/HermesX)
 ![GitHub watchers](https://img.shields.io/github/watchers/OLDWAYS069/HermesX)
 
-## 特別感謝
-- 感謝codeX在這六個月以來陪我熬過了無數日夜，幫我寫了一堆東西出來，雖然很多時候讓我很抓狂，但沒有你我不可能一個人完成這個項目。
-- ChatGPT你也有份啦，還有HermesTrack團隊的所有人
-- 我不可能一個人又要寫code又要畫設計圖還要叫貨進貨出貨。
