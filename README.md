@@ -84,8 +84,6 @@ git clone https://github.com/OLDWAYS069/HermesX.git
 cd HermesX
 ```
 
-> [!IMPORTANT]
-> 請切換到 `master` 分支（非預設的 `main`）。
 
 3. 編譯
 
