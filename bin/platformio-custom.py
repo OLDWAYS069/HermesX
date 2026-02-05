@@ -99,7 +99,7 @@ verObj = readProps(prefsLoc)
 print("Using meshtastic platformio-custom.py, firmware version " + verObj["long"] + " on " + env.get("PIOENV"))
 
 # Display version: prefer branch-based HermesX tag without git suffix (HXB_<branch>), fallback to app version
-display_short = "HXB_0.2.8"
+display_short = "HXB_0.2.9"
 
 jsonLoc = env["PROJECT_DIR"] + "/userPrefs.jsonc"
 with open(jsonLoc) as f:

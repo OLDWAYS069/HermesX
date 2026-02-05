@@ -26,6 +26,9 @@
 #endif
 #if !MESHTASTIC_EXCLUDE_HERMESX
 #include "HermesXLog.h"
+#if HAS_SCREEN
+#include "modules/HermesEmUiModule.h"
+#endif
 #include "modules/HermesXInterfaceModule.h"
 #include "modules/HermesXPowerGuard.h"
 #endif
@@ -164,6 +167,11 @@ void setupModules()
 #if defined(HERMESX_GUARD_POWER_ANIMATIONS)
         if (!globalHermes && HermesXPowerGuard::guardEnabled() && HermesXPowerGuard::bootHoldPending()) {
             HermesXInterfaceModule::deferStartupVisuals();
+        }
+#endif
+#if HAS_SCREEN
+        if (!hermesEmUiModule) {
+            hermesEmUiModule = new HermesEmUiModule();
         }
 #endif
         if (!globalHermes) {

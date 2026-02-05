@@ -1,4 +1,7 @@
 #include "LighthouseModule.h"
+#if HAS_SCREEN
+#include "modules/HermesEmUiModule.h"
+#endif
 #include "MeshService.h"
 #include "NodeDB.h"
 #include "FSCommon.h"
@@ -391,9 +394,12 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
             nodeDB->saveToDisk(SEGMENT_CONFIG);
             saveState();
 
-            HERMESX_LOG_INFO("LIGHTHOUSE ACTIVE. Restarting...");
-            delay(15000);
-            ESP.restart();
+            HERMESX_LOG_INFO("LIGHTHOUSE ACTIVE. EM UI popup without restart.");
+#if HAS_SCREEN
+            if (hermesEmUiModule != nullptr) {
+                hermesEmUiModule->enterEmergencyMode("EM ACTIVE");
+            }
+#endif
         }
 
         return ProcessMessage::CONTINUE;
