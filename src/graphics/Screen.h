@@ -195,6 +195,7 @@ class Screen : public concurrency::OSThread
     //
     // Not thread safe - must be called before any other methods are called.
     void setup();
+    void attachModuleObservers();
 
     /// Turns the screen on/off. Optionally, pass a custom screensaver frame for E-Ink
     void setOn(bool on, FrameCallback einkScreensaver = NULL)
@@ -253,12 +254,18 @@ class Screen : public concurrency::OSThread
         });
     }
 
+    void startHermesXAlert(const char *text);
+
     void endAlert()
     {
         ScreenCmd cmd;
         cmd.cmd = Cmd::STOP_ALERT_FRAME;
         enqueueCmd(cmd);
     }
+
+    void setBootHoldProgress(uint32_t heldMs, uint32_t longPressMs);
+    void startBootHoldReveal(uint32_t revealMs);
+    void resetBootHoldProgress();
 
     void startFirmwareUpdateScreen()
     {
@@ -675,6 +682,7 @@ class Screen : public concurrency::OSThread
     // Whether we are showing the regular screen (as opposed to booth screen or
     // Bluetooth PIN screen)
     bool showingNormalScreen = false;
+    bool moduleObserversAttached = false;
 
     // Implementation to Adjust Brightness
     uint8_t brightness = BRIGHTNESS_DEFAULT; // H = 254, MH = 192, ML = 130 L = 103

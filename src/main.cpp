@@ -104,6 +104,11 @@ NRF52Bluetooth *nrf52Bluetooth = nullptr;
 
 #if !MESHTASTIC_EXCLUDE_HERMESX
 #include "modules/HermesXPowerGuard.h"
+#include "modules/HermesXInterfaceModule.h"
+#endif
+
+#ifndef BUTTON_LONGPRESS_MS
+#define BUTTON_LONGPRESS_MS 5000
 #endif
 
 #include "AmbientLightingThread.h"
@@ -151,6 +156,7 @@ volatile static const char slipstreamTZString[] = {USERPREFS_TZ_STRING};
 
 // We always create a screen object, but we only init it if we find the hardware
 graphics::Screen *screen = nullptr;
+static bool screenSetupDone = false;
 
 // Global power status
 meshtastic::PowerStatus *powerStatus = new meshtastic::PowerStatus();
@@ -330,6 +336,131 @@ void printInfo()
 {
     LOG_INFO("S:B:%d,%s", HW_VENDOR, optstr(APP_VERSION));
 }
+
+#if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS)
+static void hermesXEnforceBootHoldGate()
+{
+    if (!HermesXPowerGuard::guardEnabled() || !HermesXPowerGuard::wokeFromSleep() || !HermesXPowerGuard::bootHoldPending())
+        return;
+
+    HermesXPowerGuard::setPowerHoldReady(false);
+    HermesXPowerGuard::setStartupVisualsAllowed(false);
+
+    if (buttonThread) {
+        buttonThread->disableBootHold();
+    }
+
+    if (screen && screenSetupDone) {
+        screen->setOn(true);
+        screen->resetBootHoldProgress();
+    }
+
+    const uint32_t longPressMs = 5000;
+    const uint32_t waitWindowMs = longPressMs;
+    uint32_t windowStartMs = millis();
+    uint32_t pressStartMs = 0;
+    bool longPressActive = false;
+    bool revealStarted = false;
+
+    int buttonPin = -1;
+#if defined(BUTTON_PIN)
+    buttonPin = BUTTON_PIN;
+#elif defined(USERPREFS_BUTTON_PIN)
+    buttonPin = USERPREFS_BUTTON_PIN;
+#endif
+    if (config.device.button_gpio > 0) {
+        buttonPin = config.device.button_gpio;
+    }
+    if (buttonPin < 0) {
+        buttonPin = 4;
+    }
+    bool activeLow = true;
+#if defined(HELTEC_CAPSULE_SENSOR_V3) || defined(HELTEC_SENSOR_HUB)
+    activeLow = false;
+#elif defined(BUTTON_ACTIVE_LOW)
+    activeLow = BUTTON_ACTIVE_LOW;
+#endif
+    const int pressedLevel = activeLow ? LOW : HIGH;
+    int baselineLevel = (buttonPin >= 0) ? digitalRead(buttonPin) : HIGH;
+    int lastLevel = baselineLevel;
+    int stableLevel = baselineLevel;
+    uint32_t lastChangeMs = windowStartMs;
+    const uint32_t debounceMs = 30;
+    bool gateTimedOut = false;
+    LOG_INFO("BootHold gate: pin=%d baseline=%d activeLow=%d window=%" PRIu32 " long=%" PRIu32, buttonPin, baselineLevel,
+             activeLow ? 1 : 0, waitWindowMs, longPressMs);
+
+    while (HermesXPowerGuard::guardEnabled() && HermesXPowerGuard::bootHoldPending()) {
+        const uint32_t now = millis();
+        int rawLevel = (buttonPin >= 0) ? digitalRead(buttonPin) : baselineLevel;
+        if (rawLevel != lastLevel) {
+            lastLevel = rawLevel;
+            lastChangeMs = now;
+        }
+        if ((now - lastChangeMs) >= debounceMs && stableLevel != lastLevel) {
+            stableLevel = lastLevel;
+            LOG_INFO("BootHold gate: level=%d", stableLevel);
+        }
+        const bool pressed = (stableLevel == pressedLevel);
+        if (pressed) {
+            if (!longPressActive) {
+                if ((now - windowStartMs) >= waitWindowMs) {
+                    LOG_INFO("BootHold gate: timeout (%" PRIu32 " ms)", now - windowStartMs);
+                    gateTimedOut = true;
+                    break;
+                }
+                longPressActive = true;
+                pressStartMs = now;
+                LOG_INFO("BootHold gate: press start");
+                if (screen && screenSetupDone) {
+                    screen->setBootHoldProgress(0, longPressMs);
+                }
+            }
+            const uint32_t heldMs = now - pressStartMs;
+            if (screen && screenSetupDone) {
+                screen->setBootHoldProgress(heldMs, longPressMs);
+            }
+            if (heldMs >= longPressMs) {
+                LOG_INFO("BootHold gate: long press committed (%" PRIu32 " ms)", heldMs);
+                HermesXPowerGuard::markBootHoldCommitted();
+                if (screen && screenSetupDone) {
+                    screen->startBootHoldReveal(1000);
+                    revealStarted = true;
+                }
+                ButtonThread::requireReleaseBeforeLongPress();
+                break;
+            }
+        } else {
+            if (longPressActive) {
+                longPressActive = false;
+                pressStartMs = 0;
+                windowStartMs = now;
+                if (screen && screenSetupDone) {
+                    screen->resetBootHoldProgress();
+                }
+            }
+            if (!longPressActive && (now - windowStartMs) >= waitWindowMs) {
+                LOG_INFO("BootHold gate: timeout (%" PRIu32 " ms)", now - windowStartMs);
+                gateTimedOut = true;
+                break;
+            }
+        }
+
+        (void)mainController.runOrDelay();
+        delay(10);
+    }
+
+    if (screen && screenSetupDone && !revealStarted) {
+        screen->endAlert();
+    }
+
+    if (HermesXPowerGuard::bootHoldPending()) {
+        LOG_INFO("BootHold gate: sleep (timeout=%d)", gateTimedOut ? 1 : 0);
+        HermesXPowerGuard::enterGateDeepSleep(true);
+    }
+}
+#endif
+
 #ifndef PIO_UNIT_TESTING
 void setup()
 {
@@ -778,6 +909,25 @@ void setup()
     rp2040Setup();
 #endif
 
+#if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS)
+    const bool hermesXGatePending =
+        HermesXPowerGuard::guardEnabled() && HermesXPowerGuard::bootHoldPending();
+#if HAS_SCREEN
+    if (hermesXGatePending && !screen) {
+        screen = new graphics::Screen(screen_found, screen_model, screen_geometry);
+    }
+#endif
+#if !MESHTASTIC_EXCLUDE_I2C
+    if (hermesXGatePending && screen && !screenSetupDone) {
+        screen->setup();
+        screenSetupDone = true;
+    }
+#endif
+    if (hermesXGatePending) {
+        hermesXEnforceBootHoldGate();
+    }
+#endif
+
     // We do this as early as possible because this loads preferences from flash
     // but we need to do this after main cpu init (esp32setup), because we need the random seed set
     nodeDB = new NodeDB;
@@ -884,8 +1034,33 @@ void setup()
 
     // Initialize the screen first so we can show the logo while we start up everything else.
 #if HAS_SCREEN
-    screen = new graphics::Screen(screen_found, screen_model, screen_geometry);
+    if (!screen) {
+        screen = new graphics::Screen(screen_found, screen_model, screen_geometry);
+    }
 #endif
+
+#if !MESHTASTIC_EXCLUDE_I2C
+    // Don't call screen setup until after nodedb is setup (because we need
+    // the current region name)
+    if (screen && !screenSetupDone) {
+#if defined(ST7701_CS) || defined(ST7735_CS) || defined(USE_EINK) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) ||       \
+    defined(ST7789_CS) || defined(HX8357_CS) || defined(USE_ST7789) || defined(ILI9488_CS)
+        screen->setup();
+        screenSetupDone = true;
+#elif defined(ARCH_PORTDUINO)
+        if (screen_found.port != ScanI2C::I2CPort::NO_I2C || settingsMap[displayPanel]) {
+            screen->setup();
+            screenSetupDone = true;
+        }
+#else
+        if (screen_found.port != ScanI2C::I2CPort::NO_I2C) {
+            screen->setup();
+            screenSetupDone = true;
+        }
+#endif
+    }
+#endif
+
     // setup TZ prior to time actions.
 #if !MESHTASTIC_EXCLUDE_TZ
     LOG_DEBUG("Use compiled/slipstreamed %s", slipstreamTZString); // important, removing this clobbers our magic string
@@ -946,7 +1121,10 @@ void setup()
     }
 #endif
 #endif
-    service = new MeshService();
+
+    if (!service) {
+        service = new MeshService();
+    }
     service->init();
 
     // Now that the mesh service is created, create any modules
@@ -955,6 +1133,12 @@ void setup()
 #ifdef MESHTASTIC_INCLUDE_NICHE_GRAPHICS
     // After modules are setup, so we can observe modules
     setupNicheGraphics();
+#endif
+
+#if !MESHTASTIC_EXCLUDE_I2C
+    if (screen && screenSetupDone) {
+        screen->attachModuleObservers();
+    }
 #endif
 
 #ifdef LED_PIN
@@ -970,19 +1154,15 @@ void setup()
 #endif
 
 #if !MESHTASTIC_EXCLUDE_I2C
-// Don't call screen setup until after nodedb is setup (because we need
-// the current region name)
-#if defined(ST7701_CS) || defined(ST7735_CS) || defined(USE_EINK) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) ||       \
-    defined(ST7789_CS) || defined(HX8357_CS) || defined(USE_ST7789) || defined(ILI9488_CS)
-    screen->setup();
-#elif defined(ARCH_PORTDUINO)
-    if (screen_found.port != ScanI2C::I2CPort::NO_I2C || settingsMap[displayPanel]) {
-        screen->setup();
-    }
+    if (screen && screenSetupDone) {
+#if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS)
+        if (!HermesXPowerGuard::guardEnabled()) {
+            screen->stopBootScreen();
+        }
 #else
-    if (screen_found.port != ScanI2C::I2CPort::NO_I2C)
-        screen->setup();
+        screen->stopBootScreen();
 #endif
+    }
 #endif
 
     screen->print("Started...\n");
@@ -1421,6 +1601,16 @@ void loop()
     if (!Throttle::isWithinTimespanMs(lastPrint, 10 * 1000L)) {
         lastPrint = millis();
         meshtastic::printThreadInfo("main");
+    }
+#endif
+
+#if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS)
+    if (HermesXPowerGuard::guardEnabled() && HermesXPowerGuard::bootHoldPending()) {
+        long delayMsec = mainController.runOrDelay();
+        if (!runASAP && loopCanSleep()) {
+            mainDelay.delay(delayMsec);
+        }
+        return;
     }
 #endif
 

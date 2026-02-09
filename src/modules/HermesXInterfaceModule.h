@@ -4,11 +4,13 @@
 #endif
 #if !MESHTASTIC_EXCLUDE_HERMESX
 
+#include "configuration.h"
 #include "SinglePortModule.h"
 #include <Arduino.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_NeoPixel.h>
 #include <stdint.h>
+#include "input/InputBroker.h"
 #include "meshtastic/mesh.pb.h"
 #include "MusicModule.h"
 #include "concurrency/OSThread.h"
@@ -170,6 +172,14 @@ private:
     void initLED();
     void initRotary();
 
+#if !MESHTASTIC_EXCLUDE_INPUTBROKER
+    int handleInputEvent(const InputEvent *event);
+    bool isRotaryPressHeld() const;
+#endif
+    void applyUserLedBrightness();
+    void setUserLedBrightness(uint8_t brightness);
+    bool audioAllowed() const { return !outputsDisabled && !userOutputsMuted; }
+
     void drawFace(const char* face, uint16_t color);
     void updateFace();
 
@@ -187,6 +197,24 @@ private:
     bool safeWindowActive = false;
     uint8_t safePressCount = 0;
     uint32_t safeWindowDeadlineMs = 0;
+#if !MESHTASTIC_EXCLUDE_INPUTBROKER
+    CallbackObserver<HermesXInterfaceModule, const InputEvent *> inputObserver =
+        CallbackObserver<HermesXInterfaceModule, const InputEvent *>(this, &HermesXInterfaceModule::handleInputEvent);
+#endif
+    static constexpr uint8_t kLedBrightnessDefault = 60;
+    static constexpr uint8_t kLedBrightnessStep = 5;
+    static constexpr uint32_t kRotaryLedToggleHoldMs = 1000;
+    static constexpr uint32_t kRotaryShutdownDelayMs = 1000;
+    static constexpr uint32_t kRotaryLongPressGraceMs = 1000;
+    uint8_t ledUserBrightness = kLedBrightnessDefault;
+    uint8_t appliedLedBrightness = 0;
+    uint8_t ledUserBrightnessRestore = kLedBrightnessDefault;
+    bool userOutputsMuted = false;
+    bool rotaryLedAdjustActive = false;
+    bool rotaryPressConsume = false;
+    bool rotaryPressHeld = false;
+    bool rotaryHadRotation = false;
+    uint32_t rotaryPressStartMs = 0;
 
     void sendText(NodeNum dest, ChannelIndex channel, const char *message, bool wantAck);
     void sendCannedMessage(const char* msg);

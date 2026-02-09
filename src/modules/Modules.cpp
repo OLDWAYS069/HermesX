@@ -27,6 +27,7 @@
 #if !MESHTASTIC_EXCLUDE_HERMESX
 #include "HermesXLog.h"
 #include "modules/HermesXInterfaceModule.h"
+#include "modules/HermesXPowerGuard.h"
 #endif
 #if !MESHTASTIC_EXCLUDE_NEIGHBORINFO
 #include "modules/NeighborInfoModule.h"
@@ -161,10 +162,16 @@ void setupModules()
 #endif
 #if !MESHTASTIC_EXCLUDE_HERMESX
 #if defined(HERMESX_GUARD_POWER_ANIMATIONS)
-        HermesXInterfaceModule::deferStartupVisuals();
+        if (!globalHermes && HermesXPowerGuard::guardEnabled() && HermesXPowerGuard::bootHoldPending()) {
+            HermesXInterfaceModule::deferStartupVisuals();
+        }
 #endif
-        globalHermes = new HermesXInterfaceModule();
-        HERMESX_LOG_INFO("new HermesInterface");
+        if (!globalHermes) {
+            globalHermes = new HermesXInterfaceModule();
+            HERMESX_LOG_INFO("new HermesInterface");
+        } else {
+            HERMESX_LOG_INFO("HermesInterface already created");
+        }
 #endif
         // Example: Put your module here
         // new ReplyModule();

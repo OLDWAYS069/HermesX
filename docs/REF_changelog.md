@@ -1,5 +1,77 @@
 # HermesX 變更紀錄 (REF_changelog.md)
 
+## 範圍
+- 日期：2026-01-30
+- 項目：EC11 按下＋旋轉調光；調光期間抑制長按關機
+- 檔案：
+  - src/modules/HermesXInterfaceModule.cpp
+  - src/modules/HermesXInterfaceModule.h
+  - src/ButtonThread.cpp
+  - src/ButtonThread.h
+- 說明：
+  - 新增按下＋旋轉調整 LED 亮度（步進 5），調整時輸出 `Rotary LED` log。
+  - 亮度為 0 時自動靜音（停止蜂鳴器/音效），並保留最後一次非 0 亮度供切回。
+  - 按住未旋轉達 1 秒可切換 LED 開/關；旋轉調光時暫停長按關機偵測，停止調光後再保留 1 秒緩衝才恢復偵測。
+  - ALT 長按關機門檻延後 1 秒，避免與旋鈕操作衝突。
+- 測試：
+  - 未執行（使用者自行編譯驗證）。
+
+## 範圍
+- 日期：2026-01-29
+- 項目：EC11 四相解碼穩定旋轉輸入；EM16 用途註記
+- 檔案：
+  - src/input/RotaryEncoderInterruptBase.cpp
+  - src/input/RotaryEncoderInterruptBase.h
+  - docs/HermesX_EM_FontSubset.md
+- 說明：
+  - Rotary encoder 改為四相解碼，僅在完成 detent 後送出 CW/CCW，並加入最小派送間隔以抑制抖動。
+  - 補註 HermesX_EM16_ZH 僅供 OLED_ZH 的 EM UI 最小字集；一般介面仍以 HermesX_CN12 為主。
+- 測試：
+  - 未執行（使用者回報已修復 EC11 亂跳）。
+
+## 範圍
+- 日期：2026-01-26
+- 版本：HXB_0.2.8
+- 項目：BootHold gate 前移、僅喚醒時攔截；Prefs 備份/還原防洗檔
+- 檔案：
+  - src/main.cpp
+  - src/graphics/Screen.cpp
+  - src/graphics/Screen.h
+  - src/modules/HermesXPowerGuard.cpp
+  - src/mesh/NodeDB.cpp
+- 說明：
+  - BootHold gate 移到 `setup()` 的 NodeDB 之前，僅在睡眠喚醒 (`wokeFromSleep`) 時攔截；成功長按後才放行主系統初始化。
+  - gate 改為 GPIO 直讀 + baseline 判定，避免 active-low 假設錯誤；短按喚醒後顯示「. .. ... ....」點點動畫，等待期間不啟動 LED 動畫。
+  - `Screen::handleSetOn()` 增加 `buttonThread` null 防護，支援 gate 早期畫面啟動。
+  - `NodeDB::loadFromDisk()` 在 prefs 讀取失敗/版本過舊時，先嘗試從 `/backups/backup.proto` 還原，成功即不覆寫 defaults；失敗才回退預設。
+  - `NodeDB::saveToDisk()` 成功保存後每 10 分鐘最多自動備份一次；首次正常開機無備份時會建立備份。
+- 開機流程（目前）：
+  - 平台與電源初始化 → HermesXPowerGuard 判斷喚醒來源。
+  - 若為睡眠喚醒且 guard 開啟：建立螢幕 → `screen->setup()` → 進入 BootHold gate（5 秒等待 + 長按門檻）。
+  - 長按達標：放行 → NodeDB 載入 prefs → 設定時區/RTC/GPS → MeshService/init → modules → UI frames。
+  - 未達標：timeout 後關機回深睡。
+- 測試：未執行；需實機確認喚醒 gate、點點動畫與 prefs 備份/還原行為。
+
+## 範圍
+- 日期：2026-01-25
+- 版本：HXB_0.2.8
+- 項目：BootHold 喚醒等待期、提示動畫與強制 gate
+- 檔案：
+  - src/ButtonThread.cpp
+  - src/ButtonThread.h
+  - src/main.cpp
+  - src/modules/HermesXInterfaceModule.cpp
+  - src/modules/HermesXPowerGuard.cpp
+  - src/modules/Modules.cpp
+  - src/graphics/Screen.cpp
+- 說明：
+  - 短按喚醒後進入 5 秒等待期，期間需長按才放行開機。
+  - 等待期改為 setup 內阻塞式 gate，未達門檻前不初始化 MeshService/模組。
+  - 長按期間進度條由暗轉亮，並顯示「. .. ... ....」循環提示，覆蓋 Resuming 畫面。
+  - HermesX 啟動動畫/音效改為跟隨 guard，長按未達標不播。
+  - 開機時輸出喚醒原因（timer/ext/reset）。
+- 測試：未執行；需實機確認。
+
 ## 版本比較：0.2.8 vs 0.2.7
 - 版本同步：APP_VERSION/SHORT/螢幕顯示皆改為 0.2.8（0.2.7 使用 branch 語意版＋ git 碼顯示）。
 - Lighthouse：0.2.8 預設停用（編譯排除 `MESHTASTIC_EXCLUDE_LIGHTHOUSE=1`），0.2.7 仍啟用且隨身模式廣播。
