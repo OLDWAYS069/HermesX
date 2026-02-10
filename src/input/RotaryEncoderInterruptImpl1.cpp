@@ -1,9 +1,18 @@
 #include "RotaryEncoderInterruptImpl1.h"
 #include "InputBroker.h"
+#ifdef ARCH_ESP32
+#include "sleep.h"
+#endif
 
 RotaryEncoderInterruptImpl1 *rotaryEncoderInterruptImpl1;
 
-RotaryEncoderInterruptImpl1::RotaryEncoderInterruptImpl1() : RotaryEncoderInterruptBase("rotEnc1") {}
+RotaryEncoderInterruptImpl1::RotaryEncoderInterruptImpl1() : RotaryEncoderInterruptBase("rotEnc1")
+{
+#ifdef ARCH_ESP32
+    lsObserver.observe(&notifyLightSleep);
+    lsEndObserver.observe(&notifyLightSleepEnd);
+#endif
+}
 
 bool RotaryEncoderInterruptImpl1::init()
 {
@@ -40,3 +49,19 @@ void RotaryEncoderInterruptImpl1::handleIntPressed()
 {
     rotaryEncoderInterruptImpl1->intPressHandler();
 }
+
+#ifdef ARCH_ESP32
+int RotaryEncoderInterruptImpl1::beforeLightSleep(void *unused)
+{
+    (void)unused;
+    detachInterrupts();
+    return 0;
+}
+
+int RotaryEncoderInterruptImpl1::afterLightSleep(esp_sleep_wakeup_cause_t cause)
+{
+    (void)cause;
+    attachInterrupts();
+    return 0;
+}
+#endif

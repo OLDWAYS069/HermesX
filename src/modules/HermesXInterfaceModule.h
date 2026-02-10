@@ -99,6 +99,8 @@ public:
     void playSendFailedFeedback();
     void playSendSuccessFeedback();
     void playNodeInfoFeedback();
+    void startEmergencySiren(float freq, uint32_t duration_ms);
+    void stopEmergencySiren();
 
     // 集中式 LED 控制 API（後續逐步遷移）
     void startLEDAnimation(LEDAnimation anim);
@@ -152,6 +154,7 @@ public:
     static bool isPowerHoldReady();
 
     void setLedTheme(const LedTheme& theme) { currentTheme = theme; }
+    LedTheme getLedTheme() const { return currentTheme; }
     void onCannedMessageResult(bool ack, const String& nodeName);
 
     static inline uint8_t clamp8(int v) {
@@ -288,6 +291,7 @@ private:
     uint32_t powerHoldFadeStartMs = 0;
 
     uint32_t toneStopTime = 0;
+    uint32_t emergencyToneStopTime = 0;
     bool outputsDisabled = false;
 
     LedTheme currentTheme {

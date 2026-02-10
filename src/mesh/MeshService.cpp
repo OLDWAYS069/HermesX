@@ -12,12 +12,14 @@
 #include "RTC.h"
 #include "TypeConversions.h"
 #include "main.h"
+#include "mesh/HermesPortnums.h"
 #include "mesh-pb-constants.h"
 #include "meshUtils.h"
 #include "modules/NodeInfoModule.h"
 #include "modules/PositionModule.h"
 #include "power.h"
 #include <assert.h>
+#include <cstring>
 #include <string>
 
 #if ARCH_PORTDUINO
@@ -44,6 +46,59 @@ the new node can build its node db)
 */
 
 MeshService *service;
+
+namespace {
+bool isEmergencyTxLockAllowedText(const meshtastic_MeshPacket *p, RxSource src)
+{
+    if (src != RX_SRC_USER) {
+        return false;
+    }
+    if (p->decoded.portnum != meshtastic_PortNum_TEXT_MESSAGE_APP) {
+        return false;
+    }
+    if (p->decoded.payload.size == 0) {
+        return false;
+    }
+
+    char buf[96];
+    size_t len = p->decoded.payload.size;
+    if (len >= sizeof(buf)) {
+        len = sizeof(buf) - 1;
+    }
+    memcpy(buf, p->decoded.payload.bytes, len);
+    buf[len] = '\0';
+
+    while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r' || buf[len - 1] == ' ' || buf[len - 1] == '\t')) {
+        buf[--len] = '\0';
+    }
+
+    char *s = buf;
+    while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') {
+        ++s;
+    }
+    if (*s != '@') {
+        return false;
+    }
+
+    if (strncmp(s, "@EmergencyActive", 16) == 0) {
+        return true;
+    }
+    if (strcmp(s, "@ResetLighthouse") == 0) {
+        return true;
+    }
+    if (strcmp(s, "@GoToSleep") == 0) {
+        return true;
+    }
+    if (strcmp(s, "@HiHermes") == 0) {
+        return true;
+    }
+    if (strcmp(s, "@Status") == 0) {
+        return true;
+    }
+
+    return false;
+}
+} // namespace
 
 static MemoryDynamic<meshtastic_MqttClientProxyMessage> staticMqttClientProxyMessagePool;
 
@@ -232,6 +287,15 @@ ErrorCode MeshService::sendQueueStatusToPhone(const meshtastic_QueueStatus &qs, 
 
 void MeshService::sendToMesh(meshtastic_MeshPacket *p, RxSource src, bool ccToPhone)
 {
+    if (emergencyTxLock && p->decoded.portnum != PORTNUM_HERMESX_EMERGENCY) {
+        if (!isEmergencyTxLockAllowedText(p, src)) {
+            LOG_WARN("EM Tx lock active, dropping outbound packet (portnum=%d)", p->decoded.portnum);
+            releaseToPool(p);
+            return;
+        }
+        LOG_INFO("EM Tx lock allow @ command from phone");
+    }
+
     uint32_t mesh_packet_id = p->id;
     nodeDB->updateFrom(*p); // update our local DB for this packet (because phone might have sent position packets etc...)
 
@@ -254,6 +318,15 @@ void MeshService::sendToMesh(meshtastic_MeshPacket *p, RxSource src, bool ccToPh
     if (res == ERRNO_SHOULD_RELEASE) {
         releaseToPool(p);
     }
+}
+
+void MeshService::setEmergencyTxLock(bool locked)
+{
+    if (emergencyTxLock == locked) {
+        return;
+    }
+    emergencyTxLock = locked;
+    LOG_WARN("EM Tx lock %s", locked ? "ENABLED" : "DISABLED");
 }
 
 bool MeshService::trySendPosition(NodeNum dest, bool wantReplies)

@@ -35,6 +35,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "NodeDB.h"
 #include "error.h"
 #include "gps/GeoCoord.h"
+#include "modules/HermesEmUiModule.h"
 #include "gps/RTC.h"
 #include "graphics/ScreenFonts.h"
 // --- HermesX Remove TFT fast-path START
@@ -358,6 +359,13 @@ static void drawFunctionOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
         else
             HermesX_zh::drawMixed(*display, SCREEN_WIDTH - width, SCREEN_HEIGHT - FONT_HEIGHT_SMALL, buf);
         // --- HermesX Remove TFT fast-path END
+    }
+}
+
+static void drawHermesXEmUiOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
+{
+    if (hermesXEmUiModule) {
+        hermesXEmUiModule->drawOverlay(display, state);
     }
 }
 
@@ -2739,7 +2747,7 @@ void Screen::setFrames(FrameFocus focus)
     ui->enableAllIndicators();
 
     // Add function overlay here. This can show when notifications muted, modifier key is active etc
-    static OverlayCallback functionOverlay[] = {drawFunctionOverlay};
+    static OverlayCallback functionOverlay[] = {drawHermesXEmUiOverlay, drawFunctionOverlay};
     static const int functionOverlayCount = sizeof(functionOverlay) / sizeof(functionOverlay[0]);
     ui->setOverlays(functionOverlay, functionOverlayCount);
 

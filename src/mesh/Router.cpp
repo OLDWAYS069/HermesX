@@ -8,6 +8,7 @@
 #include "configuration.h"
 #include "detect/LoRaRadioType.h"
 #include "main.h"
+#include "mesh/HermesPortnums.h"
 #include "mesh-pb-constants.h"
 #include "meshUtils.h"
 #include "modules/RoutingModule.h"
@@ -214,6 +215,12 @@ ErrorCode Router::rawSend(meshtastic_MeshPacket *p)
  */
 ErrorCode Router::send(meshtastic_MeshPacket *p)
 {
+    if (service && service->isEmergencyTxLocked() &&
+        !(isFromUs(p) && p->decoded.portnum == PORTNUM_HERMESX_EMERGENCY)) {
+        packetPool.release(p);
+        return ERRNO_DISABLED;
+    }
+
     if (isToUs(p)) {
         LOG_ERROR("BUG! send() called with packet destined for local node!");
         packetPool.release(p);

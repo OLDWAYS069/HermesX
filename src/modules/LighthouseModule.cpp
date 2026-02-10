@@ -14,6 +14,9 @@
 #include <string>
 #include "HermesXLog.h"
 #include "mesh/Channels.h"
+#include "mesh/HermesPortnums.h"
+#include "mesh/generated/meshtastic/mesh.pb.h"
+#include "mesh/mesh-pb-constants.h"
 #include "mesh/Router.h"
 
 
@@ -22,9 +25,10 @@ static const char *modeFile = "/prefs/lighthouse_mode.bin";
 static const char *whitelistFile = "/prefs/lighthouse_whitelist.txt";
 static const char *passphraseFile = "/prefs/lighthouse_passphrase.txt";
 
-static const uint32_t WAIT_TIME_MS = 10UL * 1000UL;
 static const uint32_t POLLING_AWAKE_MS = 300000UL; // 醒來期間
 static const uint32_t POLLING_SLEEP_MS = 1800000UL; // 睡覺時間
+static const uint32_t EM_SOS_GRACE_MS = 60000UL;
+static const uint32_t EM_SOS_INTERVAL_MS = 60000UL;
 
 LighthouseModule *lighthouseModule = nullptr;
 
@@ -46,6 +50,36 @@ LighthouseModule::LighthouseModule()
     } else {
         HERMESX_LOG_INFO(" load firstBootMillis = %lu from bootfile", firstBootMillis);
     }
+}
+
+void LighthouseModule::markEmergencySafe()
+{
+    if (emergencySafeAcked) {
+        return;
+    }
+    emergencySafeAcked = true;
+    HERMESX_LOG_INFO("Emergency SAFE received, auto SOS disabled");
+}
+
+int32_t LighthouseModule::getEmergencyGraceRemainingSec() const
+{
+    if (!emergencyModeActive || emergencySafeAcked) {
+        return -1;
+    }
+
+    const uint32_t now = millis();
+    const uint32_t baseMs = (emergencyLastSosAtMs != 0) ? emergencyLastSosAtMs : emergencyActivatedAtMs;
+    if (baseMs == 0) {
+        return static_cast<int32_t>((EM_SOS_GRACE_MS + 999) / 1000);
+    }
+
+    const uint32_t windowMs = (emergencyLastSosAtMs != 0) ? EM_SOS_INTERVAL_MS : EM_SOS_GRACE_MS;
+    int32_t remainingMs = static_cast<int32_t>(windowMs) -
+                          static_cast<int32_t>(now - baseMs);
+    if (remainingMs < 0) {
+        remainingMs = 0;
+    }
+    return (remainingMs + 999) / 1000;
 }
 
 void LighthouseModule::loadBoot()
@@ -165,7 +199,10 @@ bool LighthouseModule::isEmergencyActiveAllowed(NodeNum from) const
 {
     if (emergencyWhitelist.empty())
         return false;
-    return std::find(emergencyWhitelist.begin(), emergencyWhitelist.end(), from) != emergencyWhitelist.end();
+    HERMESX_LOG_INFO("EmergencyActive whitelist size=%u", static_cast<unsigned int>(emergencyWhitelist.size()));
+    const bool whiteOk = (std::find(emergencyWhitelist.begin(), emergencyWhitelist.end(), from) != emergencyWhitelist.end());
+    HERMESX_LOG_INFO("EmergencyActive whitelist %s from=0x%x", whiteOk ? "hit" : "miss", from);
+    return whiteOk;
 }
 
 void LighthouseModule::loadPassphrase()
@@ -218,6 +255,7 @@ bool LighthouseModule::isEmergencyActiveAuthorized(const char *txt, NodeNum from
     }
 
     const bool whiteOk = isEmergencyActiveAllowed(from);
+    HERMESX_LOG_INFO("EmergencyActive auth pass=%s white=%s", passOk ? "ok" : "no", whiteOk ? "ok" : "no");
     return passOk || whiteOk;
 }
 
@@ -322,20 +360,66 @@ void LighthouseModule::IntroduceMessage()
     LOG_INFO("Broadcast status: %s", msg.c_str());
 }
 
+void LighthouseModule::sendEmergencyOk(NodeNum dest)
+{
+    if (dest == 0) {
+        HERMESX_LOG_WARN("Emergency OK skip: destination is 0 (phone)");
+        return;
+    }
+
+    meshtastic_MeshPacket *p = allocDataPacket();
+    if (!p) {
+        HERMESX_LOG_WARN("Emergency OK alloc failed");
+        return;
+    }
+
+    p->to = dest;
+    p->channel = channels.getPrimaryIndex();
+    p->decoded.portnum = PORTNUM_HERMESX_EMERGENCY;
+    p->want_ack = true;
+
+    const char *payload = "STATUS: OK";
+    p->decoded.payload.size = strlen(payload);
+    memcpy(p->decoded.payload.bytes, payload, p->decoded.payload.size);
+
+    emergencyOkRequestId = p->id;
+    awaitingEmergencyOkAck = true;
+    HERMESX_LOG_INFO("Emergency OK send to=0x%x req_id=%u", dest, emergencyOkRequestId);
+    service->sendToMesh(p, RX_SRC_LOCAL, false);
+    HERMESX_LOG_INFO("Emergency OK sent, awaiting ACK id=%u", emergencyOkRequestId);
+}
+
+void LighthouseModule::sendEmergencySos()
+{
+    meshtastic_MeshPacket *p = allocDataPacket();
+    if (!p) {
+        HERMESX_LOG_WARN("Emergency SOS alloc failed");
+        return;
+    }
+
+    p->to = NODENUM_BROADCAST;
+    p->channel = channels.getPrimaryIndex();
+    p->decoded.portnum = PORTNUM_HERMESX_EMERGENCY;
+    p->want_ack = false;
+
+    const char *payload = "SOS";
+    p->decoded.payload.size = strlen(payload);
+    memcpy(p->decoded.payload.bytes, payload, p->decoded.payload.size);
+
+    service->sendToMesh(p, RX_SRC_LOCAL, false);
+    HERMESX_LOG_WARN("Emergency SOS sent");
+}
 
 
 bool LighthouseModule::wantPacket(const meshtastic_MeshPacket *p)
 {
+    if (awaitingEmergencyOkAck && p->decoded.portnum == meshtastic_PortNum_ROUTING_APP)
+        return true;
+
     if (p->decoded.portnum != meshtastic_PortNum_TEXT_MESSAGE_APP)
         return false;
 
     if (p->decoded.payload.size > 0 && p->decoded.payload.bytes[0] == '@')
-        return true;
-
-    if (emergencyModeActive)
-        return true;
-
-    if ((millis() - firstBootMillis) >= WAIT_TIME_MS)
         return true;
 
     return false;
@@ -343,6 +427,21 @@ bool LighthouseModule::wantPacket(const meshtastic_MeshPacket *p)
 
 ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
 {
+    if (awaitingEmergencyOkAck && mp.decoded.portnum == meshtastic_PortNum_ROUTING_APP && mp.decoded.request_id != 0 &&
+        mp.decoded.request_id == emergencyOkRequestId) {
+        meshtastic_Routing decoded = meshtastic_Routing_init_default;
+        pb_decode_from_bytes(mp.decoded.payload.bytes, mp.decoded.payload.size, meshtastic_Routing_fields, &decoded);
+        if (decoded.error_reason == meshtastic_Routing_Error_NONE) {
+            awaitingEmergencyOkAck = false;
+            emergencyOkRequestId = 0;
+            service->setEmergencyTxLock(true);
+            HERMESX_LOG_WARN("Emergency OK ACK received, EM Tx lock enabled");
+        } else {
+            HERMESX_LOG_WARN("Emergency OK NACK error_reason=%d", decoded.error_reason);
+        }
+        return ProcessMessage::CONTINUE;
+    }
+
     char txt[256];
     size_t len = mp.decoded.payload.size;
     if (len >= sizeof(txt))
@@ -350,8 +449,12 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
     memcpy(txt, mp.decoded.payload.bytes, len);
     txt[len] = '\0';
 
-     while (len > 0 && (txt[len - 1] == '\n' || txt[len - 1] == '\r' || txt[len - 1] == ' ')) {
+    while (len > 0 && (txt[len - 1] == '\n' || txt[len - 1] == '\r' || txt[len - 1] == ' ')) {
         txt[--len] = '\0';
+    }
+
+    if (txt[0] != '@') {
+        return ProcessMessage::CONTINUE;
     }
 
     HERMESX_LOG_INFO("[Lighthouse] Received text=[%s] strlen=%d", txt, strlen(txt));
@@ -361,8 +464,16 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
         emergencyModeActive = false;
         pollingModeRequested = false;
         firstBootMillis = millis();
+        awaitingEmergencyOkAck = false;
+        emergencyOkRequestId = 0;
+        emergencyActivatedAtMs = 0;
+        emergencyLastSosAtMs = 0;
+        lastEmergencyActiveId = 0;
+        lastEmergencyActiveAtMs = 0;
+        emergencySafeAcked = false;
         saveBoot();
         saveState();
+        service->setEmergencyTxLock(false);
         config.device.role = meshtastic_Config_DeviceConfig_Role_ROUTER_LATE;
         nodeDB->saveToDisk(SEGMENT_CONFIG);
         saveState();
@@ -377,14 +488,30 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
     }
 
     if (strncmp(txt, "@EmergencyActive", 16) == 0) {
+        HERMESX_LOG_INFO("EmergencyActive received from=0x%x text=[%s]", mp.from, txt);
         if (!isEmergencyActiveAuthorized(txt, mp.from)) {
             HERMESX_LOG_WARN("ignore @EmergencyActive from 0x%x (not authorized)", mp.from);
             return ProcessMessage::CONTINUE;
         }
 
-        if (!emergencyModeActive) {
-            emergencyModeActive = true;
-            pollingModeRequested = false;
+        const bool wasActive = emergencyModeActive;
+        const uint32_t now = millis();
+        if (wasActive && mp.id != 0 && mp.id == lastEmergencyActiveId) {
+            HERMESX_LOG_INFO("EmergencyActive duplicate id=0x%08x ignored", static_cast<unsigned int>(mp.id));
+            return ProcessMessage::CONTINUE;
+        }
+
+        lastEmergencyActiveId = mp.id;
+        lastEmergencyActiveAtMs = now;
+        emergencyModeActive = true;
+        pollingModeRequested = false;
+        emergencyActivatedAtMs = now;
+        emergencyLastSosAtMs = 0;
+        emergencySafeAcked = false;
+        awaitingEmergencyOkAck = false;
+        emergencyOkRequestId = 0;
+
+        if (!wasActive) {
             config.has_device = true;
             config.device.role = meshtastic_Config_DeviceConfig_Role_ROUTER;
             config.power.is_power_saving = false;
@@ -395,11 +522,22 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
             saveState();
 
             HERMESX_LOG_INFO("LIGHTHOUSE ACTIVE. EM UI popup without restart.");
+        } else {
+            HERMESX_LOG_INFO("EmergencyActive refresh: reset SAFE grace window");
+        }
+
+        HERMESX_LOG_INFO("EmergencyActive: SAFE grace %lu ms", EM_SOS_GRACE_MS);
 #if HAS_SCREEN
-            if (hermesEmUiModule != nullptr) {
-                hermesEmUiModule->enterEmergencyMode("EM ACTIVE");
-            }
+        if (hermesXEmUiModule != nullptr) {
+            hermesXEmUiModule->enterEmergencyMode(u8"請在60秒內回復");
+        }
 #endif
+        service->setEmergencyTxLock(false);
+        if (mp.from == 0) {
+            HERMESX_LOG_WARN("EmergencyActive from phone, enable EM Tx lock immediately");
+            service->setEmergencyTxLock(true);
+        } else {
+            sendEmergencyOk(mp.from);
         }
 
         return ProcessMessage::CONTINUE;
@@ -409,6 +547,14 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
         emergencyModeActive = false;
         pollingModeRequested = true;
         firstBootMillis = millis();
+        awaitingEmergencyOkAck = false;
+        emergencyOkRequestId = 0;
+        emergencyActivatedAtMs = 0;
+        emergencyLastSosAtMs = 0;
+        lastEmergencyActiveId = 0;
+        lastEmergencyActiveAtMs = 0;
+        emergencySafeAcked = false;
+        service->setEmergencyTxLock(false);
         config.device.role = meshtastic_Config_DeviceConfig_Role_ROUTER_LATE;
 
         saveBoot();
@@ -429,6 +575,12 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
         hihermes = true;
         emergencyModeActive = false;
         pollingModeRequested = false;
+        awaitingEmergencyOkAck = false;
+        emergencyOkRequestId = 0;
+        emergencyActivatedAtMs = 0;
+        emergencyLastSosAtMs = 0;
+        emergencySafeAcked = false;
+        service->setEmergencyTxLock(false);
         IntroduceMessage();
         HERMESX_LOG_INFO("@HiHermes INTRODUCING");
 
@@ -446,6 +598,7 @@ int32_t LighthouseModule::runOnce()
     static const uint32_t POLLING_AWAKE_MS = 300000UL;  // 醒來運作 300 秒
     static const uint32_t POLLING_SLEEP_MS = 1800000UL;  // deep sleep 30分鐘
     static uint32_t awakeStart = 0;
+    const uint32_t now = millis();
 
     if (firstTime) {
         firstTime = false;
@@ -454,8 +607,23 @@ int32_t LighthouseModule::runOnce()
         HERMESX_LOG_INFO("broadcasting...");
     }
 
+    if (emergencyModeActive && !emergencySafeAcked) {
+        if (emergencyActivatedAtMs == 0) {
+            emergencyActivatedAtMs = now;
+            HERMESX_LOG_INFO("EmergencyActive: SAFE grace %lu ms (resume)", EM_SOS_GRACE_MS);
+        }
+        if (static_cast<int32_t>(now - emergencyActivatedAtMs) >= static_cast<int32_t>(EM_SOS_GRACE_MS)) {
+            if (emergencyLastSosAtMs == 0 ||
+                static_cast<int32_t>(now - emergencyLastSosAtMs) >= static_cast<int32_t>(EM_SOS_INTERVAL_MS)) {
+                sendEmergencySos();
+                emergencyLastSosAtMs = now;
+                emergencyActivatedAtMs = now;
+                HERMESX_LOG_INFO("EmergencyActive: grace window reset after SOS");
+            }
+        }
+    }
+
     if (pollingModeRequested && !emergencyModeActive) {
-        uint32_t now = millis();
         uint32_t awakeElapsed = now - awakeStart;
 
 #ifdef LIGHTHOUSE_DEBUG

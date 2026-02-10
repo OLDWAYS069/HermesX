@@ -170,8 +170,8 @@ void setupModules()
         }
 #endif
 #if HAS_SCREEN
-        if (!hermesEmUiModule) {
-            hermesEmUiModule = new HermesEmUiModule();
+        if (!hermesXEmUiModule) {
+            hermesXEmUiModule = new HermesXEmUiModule();
         }
 #endif
         if (!globalHermes) {

@@ -14,6 +14,7 @@
 #include "input/ScanAndSelect.h"
 #include "mesh/generated/meshtastic/cannedmessages.pb.h"
 #include "modules/AdminModule.h"
+#include "modules/HermesEmUiModule.h"
 #include "HermesFace.h"
 
 #include "main.h"                               // for cardkb_found
@@ -256,6 +257,10 @@ int CannedMessageModule::splitConfiguredMessages()
 
 int CannedMessageModule::handleInputEvent(const InputEvent *event)
 {
+    if (hermesXEmUiModule && hermesXEmUiModule->isActive()) {
+        return 0;
+    }
+
     if ((strlen(moduleConfig.canned_message.allow_input_source) > 0) &&
         (strcasecmp(moduleConfig.canned_message.allow_input_source, event->source) != 0) &&
         (strcasecmp(moduleConfig.canned_message.allow_input_source, "_any") != 0)) {

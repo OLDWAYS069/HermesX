@@ -1,6 +1,7 @@
 // HermesXInterfaceModule.cpp - Refactored without TinyScheduler
 
 #include "HermesXInterfaceModule.h"
+#include "modules/HermesEmUiModule.h"
 
 #include "mesh/MeshService.h"
 #include "mesh/NodeDB.h"
@@ -54,7 +55,13 @@
 #define PIN_LED 6
 #define NUM_LEDS 8
 
+#ifndef BUZZER_PIN
+#ifdef PIN_BUZZER
+#define BUZZER_PIN PIN_BUZZER
+#else
 #define BUZZER_PIN 17
+#endif
+#endif
 
 #ifndef TFT_BACKLIGHT_ON
 #define TFT_BACKLIGHT_ON HIGH
@@ -102,6 +109,18 @@ int mixedStringWidth(OLEDDisplay &display, const char *text)
 int mixedStringWidth(OLEDDisplay &display, const String &text)
 {
     return mixedStringWidth(display, text.c_str());
+}
+
+int resolveEmergencyBuzzerPin()
+{
+    if (config.device.buzzer_gpio) {
+        return static_cast<int>(config.device.buzzer_gpio);
+    }
+#ifdef PIN_BUZZER
+    return static_cast<int>(PIN_BUZZER);
+#else
+    return static_cast<int>(BUZZER_PIN);
+#endif
 }
 
 } // namespace
@@ -833,7 +852,9 @@ void HermesXInterfaceModule::applyRoleOutputPolicy()
     }
     if (outputsDisabled || userOutputsMuted) {
         music.stopTone();
-        stopTone();
+        if (!isEmergencyUiActive()) {
+            stopTone();
+        }
     }
 }
 
@@ -1086,7 +1107,9 @@ void HermesXInterfaceModule::setUserLedBrightness(uint8_t brightness)
         rgb.clear();
         rgb.show();
         music.stopTone();
-        stopTone();
+        if (!isEmergencyUiActive()) {
+            stopTone();
+        }
     }
 }
 
@@ -1402,7 +1425,11 @@ int32_t HermesXInterfaceModule::runOnce() {
     uint32_t now = millis();
 
     applyRoleOutputPolicy();
+    if (hermesXEmUiModule) {
+        hermesXEmUiModule->tickSiren(now);
+    }
 #if !MESHTASTIC_EXCLUDE_INPUTBROKER
+    const bool emergencyUiActive = isEmergencyUiActive();
     const bool rotaryHeld = isRotaryPressHeld();
     if (rotaryHeld && !rotaryPressHeld) {
         rotaryPressHeld = true;
@@ -1413,7 +1440,8 @@ int32_t HermesXInterfaceModule::runOnce() {
         const uint32_t heldMs = rotaryPressStartMs ? (now - rotaryPressStartMs) : 0;
         rotaryPressStartMs = 0;
 
-        if (!rotaryHadRotation &&
+        if (!emergencyUiActive &&
+            !rotaryHadRotation &&
             heldMs >= kRotaryLedToggleHoldMs &&
             (heldMs + 20) < (BUTTON_LONGPRESS_MS + kRotaryShutdownDelayMs)) {
             if (ledUserBrightness == 0) {
@@ -1475,6 +1503,13 @@ int32_t HermesXInterfaceModule::runOnce() {
         stopTone();
         toneStopTime = 0;
     }
+    if (emergencyToneStopTime && now >= emergencyToneStopTime) {
+        const int pin = resolveEmergencyBuzzerPin();
+        if (pin > 0) {
+            noTone(pin);
+        }
+        emergencyToneStopTime = 0;
+    }
 
     // === Timeout: 等�? ACK 超�? 3 秒�?視為失�? ===
     if (waitingForAck && (now - lastSentTime > 30000)) {
@@ -1522,7 +1557,7 @@ int HermesXInterfaceModule::onNotify(uint32_t fromNum)
 
 bool HermesXInterfaceModule::isEmergencyUiActive() const
 {
-    return false;
+    return hermesXEmUiModule != nullptr && hermesXEmUiModule->isActive();
 }
 
 void HermesXInterfaceModule::handleExternalNotification(int index, bool state) {
@@ -1627,6 +1662,29 @@ void HermesXInterfaceModule::playNackFail()
         music.playFailedSound();
     }
     startNackFlash();
+}
+
+void HermesXInterfaceModule::startEmergencySiren(float freq, uint32_t duration_ms)
+{
+    if (freq <= 0 || duration_ms == 0) {
+        return;
+    }
+    const int pin = resolveEmergencyBuzzerPin();
+    if (pin <= 0) {
+        HERMESX_LOG_WARN("EM siren skipped: buzzer pin not set");
+        return;
+    }
+    tone(pin, static_cast<unsigned int>(freq), duration_ms);
+    emergencyToneStopTime = millis() + duration_ms;
+}
+
+void HermesXInterfaceModule::stopEmergencySiren()
+{
+    const int pin = resolveEmergencyBuzzerPin();
+    if (pin > 0) {
+        noTone(pin);
+    }
+    emergencyToneStopTime = 0;
 }
 
 void HermesXInterfaceModule::showEmergencyBanner(bool on, const __FlashStringHelper *text, uint16_t color,

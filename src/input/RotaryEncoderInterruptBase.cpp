@@ -4,6 +4,7 @@
 namespace
 {
 constexpr uint32_t kRotaryDispatchMinMs = 40;
+constexpr uint32_t kRotaryPressDebounceMs = 200;
 constexpr int8_t kRotaryStepsPerDetent = 4;
 const int8_t kRotaryTransitionTable[16] = {0, -1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0};
 }
@@ -20,6 +21,10 @@ void RotaryEncoderInterruptBase::init(
 {
     this->_pinA = pinA;
     this->_pinB = pinB;
+    this->_pinPress = pinPress;
+    this->_onIntA = onIntA;
+    this->_onIntB = onIntB;
+    this->_onIntPress = onIntPress;
     this->_eventCw = eventCw;
     this->_eventCcw = eventCcw;
     this->_eventPressed = eventPressed;
@@ -28,16 +33,36 @@ void RotaryEncoderInterruptBase::init(
     pinMode(this->_pinA, INPUT_PULLUP);
     pinMode(this->_pinB, INPUT_PULLUP);
 
-    //    attachInterrupt(pinPress, onIntPress, RISING);
-    attachInterrupt(pinPress, onIntPress, RISING);
-    attachInterrupt(this->_pinA, onIntA, CHANGE);
-    attachInterrupt(this->_pinB, onIntB, CHANGE);
+    attachInterrupts();
 
     this->rotaryLevelA = digitalRead(this->_pinA);
     this->rotaryLevelB = digitalRead(this->_pinB);
     this->lastRotaryState = ((this->rotaryLevelA == HIGH) ? 1 : 0) << 1 | ((this->rotaryLevelB == HIGH) ? 1 : 0);
     this->rotaryStep = 0;
     LOG_INFO("Rotary initialized (%d, %d, %d)", this->_pinA, this->_pinB, pinPress);
+}
+
+void RotaryEncoderInterruptBase::attachInterrupts()
+{
+    if (!_pinA || !_pinB || !_pinPress || !_onIntA || !_onIntB || !_onIntPress) {
+        return;
+    }
+    attachInterrupt(_pinPress, _onIntPress, CHANGE);
+    attachInterrupt(_pinA, _onIntA, CHANGE);
+    attachInterrupt(_pinB, _onIntB, CHANGE);
+}
+
+void RotaryEncoderInterruptBase::detachInterrupts()
+{
+    if (_pinPress) {
+        detachInterrupt(_pinPress);
+    }
+    if (_pinA) {
+        detachInterrupt(_pinA);
+    }
+    if (_pinB) {
+        detachInterrupt(_pinB);
+    }
 }
 
 int32_t RotaryEncoderInterruptBase::runOnce()
@@ -59,6 +84,16 @@ int32_t RotaryEncoderInterruptBase::runOnce()
     }
 
     if (this->action == ROTARY_ACTION_PRESSED) {
+        if (digitalRead(this->_pinPress) != LOW) {
+            this->action = ROTARY_ACTION_NONE;
+            return INT32_MAX;
+        }
+        uint32_t now = millis();
+        if ((this->lastPressDispatchMs != 0) && ((now - this->lastPressDispatchMs) < kRotaryPressDebounceMs)) {
+            this->action = ROTARY_ACTION_NONE;
+            return INT32_MAX;
+        }
+        this->lastPressDispatchMs = now;
         LOG_DEBUG("Rotary event Press");
         e.inputEvent = this->_eventPressed;
     } else if (this->action == ROTARY_ACTION_CW) {
@@ -80,6 +115,9 @@ int32_t RotaryEncoderInterruptBase::runOnce()
 
 void RotaryEncoderInterruptBase::intPressHandler()
 {
+    if (digitalRead(this->_pinPress) != LOW) {
+        return;
+    }
     this->action = ROTARY_ACTION_PRESSED;
     setIntervalFromNow(20); // TODO: this modifies a non-volatile variable!
 }

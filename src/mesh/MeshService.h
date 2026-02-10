@@ -133,6 +133,9 @@ class MeshService
     /// cache
     void sendToMesh(meshtastic_MeshPacket *p, RxSource src = RX_SRC_LOCAL, bool ccToPhone = false);
 
+    void setEmergencyTxLock(bool locked);
+    bool isEmergencyTxLocked() const { return emergencyTxLock; }
+
     /** Attempt to cancel a previously sent packet from this _local_ node.  Returns true if a packet was found we could cancel */
     bool cancelSending(PacketId id);
 
@@ -164,6 +167,8 @@ class MeshService
     /// needs to keep the packet around it makes a copy
     int handleFromRadio(const meshtastic_MeshPacket *p);
     friend class RoutingModule;
+
+    bool emergencyTxLock = false;
 };
 
 extern MeshService *service;

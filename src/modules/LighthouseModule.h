@@ -12,6 +12,8 @@ class LighthouseModule : public SinglePortModule, private concurrency::OSThread
 {
   public:
     LighthouseModule();
+    void markEmergencySafe();
+    int32_t getEmergencyGraceRemainingSec() const;
 
   protected:
     virtual bool wantPacket(const meshtastic_MeshPacket *p) override;
@@ -30,12 +32,21 @@ class LighthouseModule : public SinglePortModule, private concurrency::OSThread
  
     void broadcastStatusMessage();
     void IntroduceMessage();
+    void sendEmergencyOk(NodeNum dest);
+    void sendEmergencySos();
 
     bool emergencyModeActive = false;
     bool roleCorrected = false;
     bool pollingModeRequested = false;
     bool hihermes = false;
+    bool awaitingEmergencyOkAck = false;
+    PacketId emergencyOkRequestId = 0;
     uint32_t firstBootMillis = 0;
+    uint32_t emergencyActivatedAtMs = 0;
+    uint32_t emergencyLastSosAtMs = 0;
+    PacketId lastEmergencyActiveId = 0;
+    uint32_t lastEmergencyActiveAtMs = 0;
+    bool emergencySafeAcked = false;
     std::vector<NodeNum> emergencyWhitelist;
     String emergencyPassphrase;
 
