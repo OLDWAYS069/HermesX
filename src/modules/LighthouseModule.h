@@ -13,7 +13,10 @@ class LighthouseModule : public SinglePortModule, private concurrency::OSThread
   public:
     LighthouseModule();
     void markEmergencySafe();
+    void activateEmergencyLocal();
     int32_t getEmergencyGraceRemainingSec() const;
+    bool setEmergencyPassphraseSlot(uint8_t slot, const String &value);
+    String getEmergencyPassphrase(uint8_t slot) const;
 
   protected:
     virtual bool wantPacket(const meshtastic_MeshPacket *p) override;
@@ -27,6 +30,7 @@ class LighthouseModule : public SinglePortModule, private concurrency::OSThread
     void saveState();
     void loadWhitelist();
     void loadPassphrase();
+    void savePassphrase();
     bool isEmergencyActiveAllowed(NodeNum from) const;
     bool isEmergencyActiveAuthorized(const char *txt, NodeNum from) const;
  
@@ -34,6 +38,7 @@ class LighthouseModule : public SinglePortModule, private concurrency::OSThread
     void IntroduceMessage();
     void sendEmergencyOk(NodeNum dest);
     void sendEmergencySos();
+    void broadcastEmergencyActive();
 
     bool emergencyModeActive = false;
     bool roleCorrected = false;
@@ -48,7 +53,7 @@ class LighthouseModule : public SinglePortModule, private concurrency::OSThread
     uint32_t lastEmergencyActiveAtMs = 0;
     bool emergencySafeAcked = false;
     std::vector<NodeNum> emergencyWhitelist;
-    String emergencyPassphrase;
+    String emergencyPassphrase[2];
 
 };
 

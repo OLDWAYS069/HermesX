@@ -42,6 +42,9 @@
 extern ScanI2C::DeviceAddress cardkb_found;
 
 static const char *cannedMessagesConfigFile = "/prefs/cannedConf.proto";
+#ifdef FSCom
+static const char *kHermesCannedChannelFile = "/prefs/hermesx_canned_channel.txt";
+#endif
 
 meshtastic_CannedMessageModuleConfig cannedMessageModuleConfig;
 
@@ -180,6 +183,7 @@ CannedMessageModule::CannedMessageModule()
 {
     if (moduleConfig.canned_message.enabled || CANNED_MESSAGE_MODULE_ENABLE) {
         this->loadProtoForModule();
+        this->loadPreferredChannel();
         if ((this->splitConfiguredMessages() <= 0) && (cardkb_found.address == 0x00) && !INPUTBROKER_MATRIX_TYPE &&
             !CANNED_MESSAGE_MODULE_ENABLE) {
             LOG_INFO("CannedMessageModule: No messages are configured. Module is disabled");
@@ -199,6 +203,103 @@ CannedMessageModule::CannedMessageModule()
         this->runState = CANNED_MESSAGE_RUN_STATE_DISABLED;
         disable();
     }
+}
+
+void CannedMessageModule::refreshChannelList()
+{
+    numChannels = 0;
+    for (unsigned int i = 0; i < channels.getNumChannels() && numChannels < MAX_NUM_CHANNELS; i++) {
+        if ((channels.getByIndex(i).role == meshtastic_Channel_Role_SECONDARY) ||
+            (channels.getByIndex(i).role == meshtastic_Channel_Role_PRIMARY)) {
+            indexChannels[numChannels++] = i;
+        }
+    }
+    if (numChannels == 0) {
+        indexChannels[0] = 0;
+        numChannels = 1;
+    }
+    if (channel >= numChannels) {
+        channel = 0;
+    }
+}
+
+int CannedMessageModule::findChannelListIndex(ChannelIndex channelIndex) const
+{
+    for (uint8_t i = 0; i < numChannels; ++i) {
+        if (indexChannels[i] == channelIndex) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void CannedMessageModule::applyPreferredChannel(ChannelIndex channelIndex)
+{
+    preferredChannel = channelIndex;
+    preferredChannelValid = true;
+    refreshChannelList();
+    const int listIndex = findChannelListIndex(channelIndex);
+    if (listIndex >= 0) {
+        channel = static_cast<ChannelIndex>(listIndex);
+    } else {
+        channel = 0;
+    }
+}
+
+void CannedMessageModule::loadPreferredChannel()
+{
+    preferredChannelValid = false;
+#ifdef FSCom
+    concurrency::LockGuard g(spiLock);
+    auto f = FSCom.open(kHermesCannedChannelFile, FILE_O_READ);
+    if (f) {
+        String line;
+        while (f.available()) {
+            char c = f.read();
+            if (c == '\n' || c == '\r') {
+                break;
+            }
+            line += c;
+        }
+        f.close();
+        line.trim();
+        if (line.length() > 0) {
+            char *end = nullptr;
+            long value = strtol(line.c_str(), &end, 10);
+            if (end && *end == '\0' && value >= 0 && value < static_cast<long>(channels.getNumChannels())) {
+                applyPreferredChannel(static_cast<ChannelIndex>(value));
+                return;
+            }
+        }
+    }
+#endif
+    refreshChannelList();
+}
+
+void CannedMessageModule::savePreferredChannel()
+{
+#ifdef FSCom
+    concurrency::LockGuard g(spiLock);
+    if (!FSCom.exists("/prefs")) {
+        FSCom.mkdir("/prefs");
+    }
+    if (FSCom.exists(kHermesCannedChannelFile)) {
+        FSCom.remove(kHermesCannedChannelFile);
+    }
+    auto f = FSCom.open(kHermesCannedChannelFile, FILE_O_WRITE);
+    if (f) {
+        f.printf("%u\n", static_cast<unsigned int>(preferredChannel));
+        f.close();
+    } else {
+        LOG_WARN("CannedMessageModule: unable to save preferred channel");
+    }
+#endif
+}
+
+void CannedMessageModule::setPreferredChannel(ChannelIndex channelIndex)
+{
+    applyPreferredChannel(channelIndex);
+    savePreferredChannel();
 }
 
 /**
@@ -258,6 +359,9 @@ int CannedMessageModule::splitConfiguredMessages()
 int CannedMessageModule::handleInputEvent(const InputEvent *event)
 {
     if (hermesXEmUiModule && hermesXEmUiModule->isActive()) {
+        return 0;
+    }
+    if (screen && screen->isHermesFastSetupActive()) {
         return 0;
     }
 
@@ -691,13 +795,7 @@ int32_t CannedMessageModule::runOnce()
                     this->dest = NODENUM_BROADCAST;
                 }
             } else if (this->destSelect == CANNED_MESSAGE_DESTINATION_TYPE_CHANNEL) {
-                for (unsigned int i = 0; i < channels.getNumChannels(); i++) {
-                    if ((channels.getByIndex(i).role == meshtastic_Channel_Role_SECONDARY) ||
-                        (channels.getByIndex(i).role == meshtastic_Channel_Role_PRIMARY)) {
-                        indexChannels[numChannels] = i;
-                        numChannels++;
-                    }
-                }
+                refreshChannelList();
                 if (this->channel == 0) {
                     this->channel = numChannels - 1;
                 } else {
@@ -726,13 +824,7 @@ int32_t CannedMessageModule::runOnce()
                     this->dest = NODENUM_BROADCAST;
                 }
             } else if (this->destSelect == CANNED_MESSAGE_DESTINATION_TYPE_CHANNEL) {
-                for (unsigned int i = 0; i < channels.getNumChannels(); i++) {
-                    if ((channels.getByIndex(i).role == meshtastic_Channel_Role_SECONDARY) ||
-                        (channels.getByIndex(i).role == meshtastic_Channel_Role_PRIMARY)) {
-                        indexChannels[numChannels] = i;
-                        numChannels++;
-                    }
-                }
+                refreshChannelList();
                 if (this->channel == numChannels - 1) {
                     this->channel = 0;
                 } else {

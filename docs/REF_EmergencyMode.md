@@ -2,6 +2,7 @@
 
 ## 入口 / 觸發
 - 收到 `@EmergencyActive`（TEXT_MESSAGE_APP）且通過白名單或 passphrase。
+- Rotary 三擊（本地觸發）：直接進入 EM UI，並對外廣播 `@EmergencyActive`。
 - Lighthouse 設 `emergencyModeActive=true`、關閉省電、角色改為 `ROUTER`，並彈出 EM UI（banner 預設「請在60秒內回復」）。
 - 若來源為手機（`from==0`）立即啟用 EM Tx lock；否則回送 Emergency OK（port 300，want_ack=true），ACK 後啟用 EM Tx lock。
 

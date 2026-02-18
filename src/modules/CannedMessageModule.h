@@ -70,6 +70,18 @@ class CannedMessageModule : public SinglePortModule, public Observable<const UIF
 
     String drawWithCursor(String text, int cursor);
 
+    void setPreferredChannel(ChannelIndex channelIndex);
+    ChannelIndex getPreferredChannel() const
+    {
+        if (preferredChannelValid) {
+            return preferredChannel;
+        }
+        if (channel < numChannels) {
+            return indexChannels[channel];
+        }
+        return 0;
+    }
+
     cannedMessageModuleRunState getRunState() const { return runState; }
 
     /*
@@ -135,6 +147,11 @@ class CannedMessageModule : public SinglePortModule, public Observable<const UIF
     bool saveProtoForModule();
 
     void installDefaultCannedMessageModuleConfig();
+    void refreshChannelList();
+    int findChannelListIndex(ChannelIndex channelIndex) const;
+    void applyPreferredChannel(ChannelIndex channelIndex);
+    void loadPreferredChannel();
+    void savePreferredChannel();
 
     int currentMessageIndex = -1;
     cannedMessageModuleRunState runState = CANNED_MESSAGE_RUN_STATE_INACTIVE;
@@ -143,6 +160,8 @@ class CannedMessageModule : public SinglePortModule, public Observable<const UIF
     String freetext = ""; // Text Buffer for Freetext Editor
     NodeNum dest = NODENUM_BROADCAST;
     ChannelIndex channel = 0;
+    ChannelIndex preferredChannel = 0;
+    bool preferredChannelValid = false;
     cannedMessageDestinationType destSelect = CANNED_MESSAGE_DESTINATION_TYPE_NONE;
     uint8_t numChannels = 0;
     ChannelIndex indexChannels[MAX_NUM_CHANNELS] = {0};

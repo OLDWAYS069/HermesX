@@ -33,6 +33,7 @@ class Screen
 #else
 #include <cstring>
 
+#include <Arduino.h>
 #include <OLEDDisplayUi.h>
 
 #include "../configuration.h"
@@ -255,6 +256,7 @@ class Screen : public concurrency::OSThread
     }
 
     void startHermesXAlert(const char *text);
+    bool isHermesFastSetupActive() const;
 
     void endAlert()
     {
@@ -615,6 +617,9 @@ class Screen : public concurrency::OSThread
             uint8_t textMessage = 0;
             uint8_t waypoint = 0;
             uint8_t focusedModule = 0;
+            uint8_t main = 0;
+            uint8_t setup = 0;
+            uint8_t share = 0;
             uint8_t log = 0;
             uint8_t settings = 0;
             uint8_t wifi = 0;
@@ -648,6 +653,14 @@ class Screen : public concurrency::OSThread
     static void drawDebugInfoSettingsTrampoline(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
 
     static void drawDebugInfoWiFiTrampoline(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
+
+    static void drawHermesFastSetupFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
+    void drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
+    bool handleHermesFastSetupInput(const InputEvent *event);
+    static void drawHermesXMainFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
+    void drawHermesXMain(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
+    static void drawHermesXShareChannelFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
+    void drawHermesXShareChannel(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
 
 #if defined(DISPLAY_CLOCK_FRAME)
     static void drawAnalogClockFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
@@ -688,6 +701,35 @@ class Screen : public concurrency::OSThread
     uint8_t brightness = BRIGHTNESS_DEFAULT; // H = 254, MH = 192, ML = 130 L = 103
 
     bool hasCompass = false;
+
+    enum class HermesFastSetupPage : uint8_t {
+        Root,
+        EmacMenu,
+        UiMenu,
+        UiBrightnessSelect,
+        NodeMenu,
+        PassEdit,
+        PassShow,
+        RoleMenu,
+        RoleSelect,
+        HopSelect,
+        CannedMenu,
+        CannedChannelSelect,
+        GpsMenu,
+        GpsUpdateSelect,
+        GpsBroadcastSelect,
+    };
+    HermesFastSetupPage hermesSetupPage = HermesFastSetupPage::Root;
+    int8_t hermesSetupSelected = 0;
+    int8_t hermesSetupOffset = 0;
+    uint32_t hermesSetupLastNavAtMs = 0;
+    int8_t hermesSetupLastNavDir = 0;
+    uint8_t hermesSetupKeyRow = 0;
+    uint8_t hermesSetupKeyCol = 0;
+    uint8_t hermesSetupEditingSlot = 0;
+    String hermesSetupPassDraft;
+    String hermesSetupToast;
+    uint32_t hermesSetupToastUntilMs = 0;
     float compassHeading;
     uint32_t endCalibrationAt;
 

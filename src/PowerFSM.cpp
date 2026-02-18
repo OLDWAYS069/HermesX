@@ -72,7 +72,13 @@ extern Power *power;
 static void shutdownEnter()
 {
     LOG_DEBUG("State: SHUTDOWN");
-    power->shutdown();
+    if (screen) {
+        screen->setOn(true);
+        screen->startHermesXAlert(u8"關機中");
+    }
+    if (!shutdownAtMsec) {
+        shutdownAtMsec = millis() + 800;
+    }
 }
 
 #include "error.h"

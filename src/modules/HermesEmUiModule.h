@@ -21,8 +21,11 @@ class HermesXEmUiModule : public SinglePortModule, public Observable<const UIFra
     void enterEmergencyMode(const char *reason = nullptr);
     void exitEmergencyMode();
     bool isActive() const { return active; }
+    bool isSirenEnabled() const { return sirenEnabled; }
+    void setSirenEnabled(bool enabled);
     void tickSiren(uint32_t now);
     void drawOverlay(OLEDDisplay *display, OLEDDisplayUiState *state);
+    void sendResetLighthouseNow();
 
   protected:
     bool wantPacket(const meshtastic_MeshPacket *p) override
@@ -44,24 +47,46 @@ class HermesXEmUiModule : public SinglePortModule, public Observable<const UIFra
         OkHere,
     };
 
+    enum class UiMode {
+        Menu,
+        PassphraseEdit,
+    };
+
     bool active = false;
+    UiMode uiMode = UiMode::Menu;
     String banner;
     int selectedIndex = 0;
+    int listOffset = 0;
     bool awaitingAck = false;
     PacketId lastRequestId = 0;
     bool lastAckSuccess = false;
     uint32_t lastAckAtMs = 0;
     bool selectionArmed = false;
     uint32_t lastNavAtMs = 0;
+    int8_t lastNavDir = 0;
     uint32_t lastSendAtMs = 0;
     bool hasSentOnce = false;
     bool screamActive = false;
+    bool sirenEnabled = true;
     uint32_t nextScreamAtMs = 0;
     LedTheme savedTheme{};
     bool themeSaved = false;
+    uint8_t editingPassSlot = 0;
+    String passDraft;
+    String lastAlertMessage;
+    int keyRow = 0;
+    int keyCol = 0;
 
     void setThemeActive(bool enabled);
     void sendEmergencyAction(EmAction action);
+    void sendResetLighthouse();
+    void enterPassphraseEdit(uint8_t slot);
+    void exitPassphraseEdit(bool save);
+    void sendLocalTextToPhone(const String &text);
+    void notifyPassphraseSaved(uint8_t slot, const String &value, bool ok);
+    void updateListOffset();
+    int handleMenuInput(const InputEvent *event);
+    int handlePassphraseInput(const InputEvent *event);
     void startScream();
     void stopScream();
     void tickScream(uint32_t now);

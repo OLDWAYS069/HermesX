@@ -99,6 +99,8 @@ public:
     void playSendFailedFeedback();
     void playSendSuccessFeedback();
     void playNodeInfoFeedback();
+    void setUiLedBrightness(uint8_t brightness);
+    uint8_t getUiLedBrightness() const;
     void startEmergencySiren(float freq, uint32_t duration_ms);
     void stopEmergencySiren();
 
@@ -195,6 +197,7 @@ private:
     uint32_t lastSentTime = 0;
     uint32_t lastSentId = 0;
     uint32_t lastSentRequestId = 0;
+    uint32_t firstRawPressMs = 0;
     uint32_t lastRawPressMs = 0;
     uint8_t rawPressCount = 0;
     bool safeWindowActive = false;

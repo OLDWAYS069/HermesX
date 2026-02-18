@@ -1,6 +1,52 @@
 # HermesX 變更紀錄 (REF_changelog.md)
 
 ## 範圍
+- 日期：2026-02-18
+- 版本：HXB_0.2.9
+- 項目：Fast Setup 新增潛行模式、TFT 彩色分區與刷新優化
+- 檔案：
+  - src/graphics/Screen.cpp
+  - src/graphics/Screen.h
+  - src/graphics/TFTDisplay.cpp
+  - src/graphics/TFTDisplay.h
+- 說明：
+  - Fast Setup 根選單新增「潛行模式」，一鍵關閉 UI LED(2812) 與蜂鳴器，並停用 GPS、BLE、LoRa TX 與 radio 介面。
+  - 為 ST77xx/ILI 類 TFT 新增 Fast Setup 色盤分區（header、選中列、toast），在單色 framebuffer 上套用 RGB 主題。
+  - 修正 `TFTDisplay::ColorZone` 初始化相容性問題，補上建構子以解決 Screen 端 palette 區塊建構編譯失敗。
+  - 刷新策略改為「僅在頁層切換時全頁重繪一次」；旋鈕選單移動不再每步觸發整頁重刷。
+  - 退出 Fast Setup 時改為局部 palette 區塊失效（invalidate）而非全畫面 dirty，降低退出卡頓。
+- 測試：
+  - `platformio run -e heltec-wireless-tracker`（SUCCESS）
+
+## 版本比較：HXB_0.2.9（目前）vs HXB_0.2.8
+- Fast Setup：0.2.9 加入 Hermes Fast Setup 多層流程與快速設定入口；0.2.8 無此整合介面。
+- 潛行模式：0.2.9 新增一鍵關閉 LED/蜂鳴器並停用 GPS、BLE、LoRa TX；0.2.8 無此快捷。
+- TFT 顯示：0.2.9 於 Fast Setup 支援分區彩色（header/選中/toast）與頁層切換一次重繪；0.2.8 仍為單色主題流程。
+- 操作體感：0.2.9 修正旋鈕移動反覆刷新與退出 FAST Setup 卡頓；0.2.8 尚未包含這批修正。
+- 版號策略：延續 App 回報 `2.6.11.x`，螢幕顯示 `HXB_0.2.9`（0.2.8 為 `HXB_0.2.8`）。
+
+## 範圍
+- 日期：2026-02-18（增補）
+- 版本：HXB_0.2.9（增量修正）
+- 項目：FastSetup `UI設定` 亮度控制改為 WS2812 使用者燈
+- 檔案：
+  - src/graphics/Screen.cpp
+  - src/modules/HermesXInterfaceModule.cpp
+  - src/modules/HermesXInterfaceModule.h
+  - docs/CHANGELOG_MINI.md
+- 說明：
+  - `UI設定 > LED亮度` 改為讀寫 `HermesXInterfaceModule` 的 `ledUserBrightness`，不再改 TFT 背光。
+  - 亮度檔位調整為：`關閉 / 低 / 中 / 高 / 最大`，子頁標題改為 `WS2812亮度調整`。
+  - 新增 UI 用公開介面：`setUiLedBrightness()` / `getUiLedBrightness()`。
+- 測試：
+  - `platformio run --environment heltec-wireless-tracker`（SUCCESS）
+
+## 版本差異補充：HXB_0.2.9（增補） vs HXB_0.2.8
+- 亮度控制對象：0.2.9（增補）可在 FastSetup 直接調整 WS2812 使用者燈；0.2.8 無此 UI 控制入口。
+- 亮度選項：0.2.9（增補）提供 `關閉` 選項與固定五檔；0.2.8 仍以旋鈕按住＋旋轉為主。
+- 版本策略：App 回報仍是 `2.6.11.x`；螢幕顯示維持 `HXB_0.2.9`（不另升次版號）。
+
+## 範圍
 - 日期：2026-01-30
 - 項目：EC11 按下＋旋轉調光；調光期間抑制長按關機
 - 檔案：

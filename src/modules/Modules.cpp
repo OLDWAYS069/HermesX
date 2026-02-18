@@ -189,10 +189,12 @@ void setupModules()
             delete rotaryEncoderInterruptImpl1;
             rotaryEncoderInterruptImpl1 = nullptr;
         }
-        upDownInterruptImpl1 = new UpDownInterruptImpl1();
-        if (!upDownInterruptImpl1->init()) {
-            delete upDownInterruptImpl1;
-            upDownInterruptImpl1 = nullptr;
+        if (!moduleConfig.canned_message.rotary1_enabled) {
+            upDownInterruptImpl1 = new UpDownInterruptImpl1();
+            if (!upDownInterruptImpl1->init()) {
+                delete upDownInterruptImpl1;
+                upDownInterruptImpl1 = nullptr;
+            }
         }
 
 #if HAS_SCREEN

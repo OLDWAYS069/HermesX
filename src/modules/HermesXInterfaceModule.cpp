@@ -9,6 +9,7 @@
 #include "mesh/Router.h"
 #include "meshtastic/mesh.pb.h"
 #include "modules/CannedMessageModule.h"
+#include "modules/LighthouseModule.h"
 #include "SinglePortModule.h"
 #include "pb.h"
 #include "pb_encode.h"
@@ -894,6 +895,7 @@ int HermesXInterfaceModule::handleInputEvent(const InputEvent *event)
             HERMESX_LOG_INFO("Rotary LED: consume press after adjust");
             return 1;
         }
+        registerRawButtonPress(HermesButtonSource::Alt);
         return 0;
     }
 
@@ -927,6 +929,9 @@ int HermesXInterfaceModule::handleInputEvent(const InputEvent *event)
 
 void HermesXInterfaceModule::registerRawButtonPress(HermesButtonSource /*source*/)//目前任何輸入都可
 {
+    if (screen && screen->isHermesFastSetupActive()) {
+        return;
+    }
     const uint32_t now = millis();
 
     // Expire the SAFE double-press window if the timeout has elapsed.
@@ -937,20 +942,30 @@ void HermesXInterfaceModule::registerRawButtonPress(HermesButtonSource /*source*
     }
 
     constexpr uint32_t kMultiPressWindowMs = 1200;
+    constexpr uint32_t kTripleTotalWindowMs = 1200;
     if (lastRawPressMs == 0 || now - lastRawPressMs > kMultiPressWindowMs) {
         rawPressCount = 0;
+        firstRawPressMs = 0;
+    }
+
+    if (rawPressCount == 0) {
+        firstRawPressMs = now;
     }
 
     lastRawPressMs = now;
     rawPressCount++;
 
     if (rawPressCount >= 3) {
+        const bool inWindow = (firstRawPressMs != 0) && ((now - firstRawPressMs) <= kTripleTotalWindowMs);
         rawPressCount = 0;
+        firstRawPressMs = 0;
         safeWindowActive = false;
         safePressCount = 0;
         safeWindowDeadlineMs = 0;
-        onTripleClick();
-        return;
+        if (inWindow) {
+            onTripleClick();
+            return;
+        }
     }
 
     constexpr uint32_t kSafeWindowMs = 3000;
@@ -1081,6 +1096,16 @@ void HermesXInterfaceModule::initLED() {
     rgb.clear();   // 上電先關燈，等動畫/邏輯接管再亮
     rgb.show();
     HERMESX_LOG_INFO("LED setup\n");
+}
+
+void HermesXInterfaceModule::setUiLedBrightness(uint8_t brightness)
+{
+    setUserLedBrightness(brightness);
+}
+
+uint8_t HermesXInterfaceModule::getUiLedBrightness() const
+{
+    return ledUserBrightness;
 }
 
 void HermesXInterfaceModule::applyUserLedBrightness()
@@ -1620,7 +1645,16 @@ void HermesXInterfaceModule::playSendFailedFeedback() {
 
 void HermesXInterfaceModule::onTripleClick()
 {
-    ///come back on beta_0.3.0
+    HERMESX_LOG_INFO("EM UI local trigger (triple click)");
+    if (lighthouseModule != nullptr) {
+        lighthouseModule->activateEmergencyLocal();
+        return;
+    }
+#if HAS_SCREEN
+    if (hermesXEmUiModule != nullptr) {
+        hermesXEmUiModule->enterEmergencyMode(u8"請在60秒內回復");
+    }
+#endif
 }
 
 void HermesXInterfaceModule::onDoubleClickWithin3s()
@@ -1685,6 +1719,8 @@ void HermesXInterfaceModule::stopEmergencySiren()
         noTone(pin);
     }
     emergencyToneStopTime = 0;
+    // Re-attach buzzer pin to music channel after tone() steals it.
+    music.begin();
 }
 
 void HermesXInterfaceModule::showEmergencyBanner(bool on, const __FlashStringHelper *text, uint16_t color,

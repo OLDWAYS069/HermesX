@@ -61,6 +61,43 @@ void LighthouseModule::markEmergencySafe()
     HERMESX_LOG_INFO("Emergency SAFE received, auto SOS disabled");
 }
 
+void LighthouseModule::activateEmergencyLocal()
+{
+    const uint32_t now = millis();
+    const bool wasActive = emergencyModeActive;
+
+    emergencyModeActive = true;
+    pollingModeRequested = false;
+    emergencyActivatedAtMs = now;
+    emergencyLastSosAtMs = 0;
+    emergencySafeAcked = false;
+    awaitingEmergencyOkAck = false;
+    emergencyOkRequestId = 0;
+    lastEmergencyActiveId = 0;
+    lastEmergencyActiveAtMs = now;
+
+    if (!wasActive) {
+        config.has_device = true;
+        config.device.role = meshtastic_Config_DeviceConfig_Role_ROUTER;
+        config.power.is_power_saving = false;
+        roleCorrected = true;
+        nodeDB->saveToDisk(SEGMENT_CONFIG);
+        saveState();
+        HERMESX_LOG_INFO("EmergencyActive local: enter EM mode");
+    } else {
+        HERMESX_LOG_INFO("EmergencyActive local: refresh grace window");
+    }
+
+    HERMESX_LOG_INFO("EmergencyActive local: SAFE grace %lu ms", EM_SOS_GRACE_MS);
+#if HAS_SCREEN
+    if (hermesXEmUiModule != nullptr) {
+        hermesXEmUiModule->enterEmergencyMode(u8"請在60秒內回復");
+    }
+#endif
+    service->setEmergencyTxLock(false);
+    broadcastEmergencyActive();
+}
+
 int32_t LighthouseModule::getEmergencyGraceRemainingSec() const
 {
     if (!emergencyModeActive || emergencySafeAcked) {
@@ -207,9 +244,10 @@ bool LighthouseModule::isEmergencyActiveAllowed(NodeNum from) const
 
 void LighthouseModule::loadPassphrase()
 {
+    emergencyPassphrase[0] = "";
+    emergencyPassphrase[1] = "";
 #ifdef FSCom
     concurrency::LockGuard g(spiLock);
-    emergencyPassphrase = "";
 
     auto f = FSCom.open(passphraseFile, FILE_O_READ);
     if (!f) {
@@ -217,30 +255,78 @@ void LighthouseModule::loadPassphrase()
         return;
     }
 
-    String content;
-    while (f.available()) {
-        content += static_cast<char>(f.read());
+    uint8_t slot = 0;
+    while (f.available() && slot < 2) {
+        String line = f.readStringUntil('\n');
+        line.trim();
+        emergencyPassphrase[slot] = line;
+        slot++;
     }
     f.close();
 
-    content.trim();
-    if (content.length() == 0) {
+    if (emergencyPassphrase[0].length() == 0 && emergencyPassphrase[1].length() == 0) {
         HERMESX_LOG_WARN("lighthouse passphrase file empty; passphrase auth disabled");
-        emergencyPassphrase = "";
         return;
     }
 
-    emergencyPassphrase = content;
-    HERMESX_LOG_INFO("lighthouse passphrase loaded");
+    HERMESX_LOG_INFO("lighthouse passphrase loaded (slotA=%s, slotB=%s)",
+                     emergencyPassphrase[0].length() > 0 ? "set" : "empty",
+                     emergencyPassphrase[1].length() > 0 ? "set" : "empty");
 #else
     HERMESX_LOG_INFO("FSCom not available; passphrase disabled");
 #endif
 }
 
+void LighthouseModule::savePassphrase()
+{
+#ifdef FSCom
+    concurrency::LockGuard g(spiLock);
+    FSCom.mkdir("/prefs");
+    if (FSCom.exists(passphraseFile)) {
+        FSCom.remove(passphraseFile);
+    }
+    auto f = FSCom.open(passphraseFile, FILE_O_WRITE);
+    if (!f) {
+        HERMESX_LOG_WARN("lighthouse passphrase save failed (%s)", passphraseFile);
+        return;
+    }
+    f.print(emergencyPassphrase[0]);
+    f.print('\n');
+    f.print(emergencyPassphrase[1]);
+    f.flush();
+    f.close();
+#endif
+}
+
+bool LighthouseModule::setEmergencyPassphraseSlot(uint8_t slot, const String &value)
+{
+    if (slot >= 2) {
+        return false;
+    }
+    emergencyPassphrase[slot] = value;
+#ifdef FSCom
+    savePassphrase();
+    HERMESX_LOG_INFO("lighthouse passphrase slot %u updated", static_cast<unsigned int>(slot));
+    return true;
+#else
+    HERMESX_LOG_WARN("FSCom not available; passphrase will not persist");
+    return true;
+#endif
+}
+
+String LighthouseModule::getEmergencyPassphrase(uint8_t slot) const
+{
+    if (slot >= 2) {
+        return "";
+    }
+    return emergencyPassphrase[slot];
+}
+
 bool LighthouseModule::isEmergencyActiveAuthorized(const char *txt, NodeNum from) const
 {
     bool passOk = false;
-    if (emergencyPassphrase.length() > 0) {
+    const bool hasPass = (emergencyPassphrase[0].length() > 0 || emergencyPassphrase[1].length() > 0);
+    if (hasPass) {
         constexpr const char *kPrefix = "@EmergencyActive";
         const size_t prefixLen = strlen(kPrefix);
         if (strncmp(txt, kPrefix, prefixLen) == 0) {
@@ -249,7 +335,8 @@ bool LighthouseModule::isEmergencyActiveAuthorized(const char *txt, NodeNum from
                 ++p;
             }
             if (*p != '\0') {
-                passOk = (emergencyPassphrase == String(p));
+                const String provided(p);
+                passOk = (provided == emergencyPassphrase[0]) || (provided == emergencyPassphrase[1]);
             }
         }
     }
@@ -387,6 +474,32 @@ void LighthouseModule::sendEmergencyOk(NodeNum dest)
     HERMESX_LOG_INFO("Emergency OK send to=0x%x req_id=%u", dest, emergencyOkRequestId);
     service->sendToMesh(p, RX_SRC_LOCAL, false);
     HERMESX_LOG_INFO("Emergency OK sent, awaiting ACK id=%u", emergencyOkRequestId);
+}
+
+void LighthouseModule::broadcastEmergencyActive()
+{
+    meshtastic_MeshPacket *p = allocDataPacket();
+    if (!p) {
+        HERMESX_LOG_WARN("EmergencyActive broadcast alloc failed");
+        return;
+    }
+
+    p->to = NODENUM_BROADCAST;
+    p->channel = channels.getPrimaryIndex();
+    p->decoded.portnum = meshtastic_PortNum_TEXT_MESSAGE_APP;
+    p->want_ack = false;
+
+    String payload = "@EmergencyActive";
+    const String &pass = emergencyPassphrase[0].length() > 0 ? emergencyPassphrase[0] : emergencyPassphrase[1];
+    if (pass.length() > 0) {
+        payload += " ";
+        payload += pass;
+    }
+    p->decoded.payload.size = payload.length();
+    memcpy(p->decoded.payload.bytes, payload.c_str(), p->decoded.payload.size);
+
+    service->sendToMesh(p, RX_SRC_LOCAL, false);
+    HERMESX_LOG_INFO("EmergencyActive broadcast sent (local trigger)");
 }
 
 void LighthouseModule::sendEmergencySos()

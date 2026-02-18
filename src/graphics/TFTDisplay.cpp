@@ -959,6 +959,7 @@ static LGFX *tft = nullptr;
 #include "SPILock.h"
 #include "TFTDisplay.h"
 #include <SPI.h>
+#include <algorithm>
 
 #ifdef UNPHONE
 #include "unPhone.h"
@@ -970,6 +971,12 @@ GpioPin *TFTDisplay::backlightEnable = NULL;
 TFTDisplay::TFTDisplay(uint8_t address, int sda, int scl, OLEDDISPLAY_GEOMETRY geometry, HW_I2C i2cBus)
 {
     LOG_DEBUG("TFTDisplay!");
+
+    baseDefaultFg = static_cast<uint16_t>(TFT_MESH);
+    baseDefaultBg = static_cast<uint16_t>(TFT_BLACK);
+    colorDefaultFg = baseDefaultFg;
+    colorDefaultBg = baseDefaultBg;
+    colorPaletteDirty = true;
 
 #ifdef TFT_BL
     GpioPin *p = new GpioHwPin(TFT_BL);
@@ -999,11 +1006,124 @@ TFTDisplay::TFTDisplay(uint8_t address, int sda, int scl, OLEDDISPLAY_GEOMETRY g
 #endif
 }
 
+uint16_t TFTDisplay::resolveForegroundColor(int16_t x, int16_t y) const
+{
+    for (int i = static_cast<int>(colorZoneCount) - 1; i >= 0; --i) {
+        const ColorZone &zone = colorZones[i];
+        if (zone.width <= 0 || zone.height <= 0) {
+            continue;
+        }
+        if (x >= zone.x && y >= zone.y && x < (zone.x + zone.width) && y < (zone.y + zone.height)) {
+            return zone.fg;
+        }
+    }
+    return colorDefaultFg;
+}
+
+uint16_t TFTDisplay::resolveBackgroundColor(int16_t x, int16_t y) const
+{
+    for (int i = static_cast<int>(colorZoneCount) - 1; i >= 0; --i) {
+        const ColorZone &zone = colorZones[i];
+        if (zone.width <= 0 || zone.height <= 0) {
+            continue;
+        }
+        if (x >= zone.x && y >= zone.y && x < (zone.x + zone.width) && y < (zone.y + zone.height)) {
+            return zone.bg;
+        }
+    }
+    return colorDefaultBg;
+}
+
+void TFTDisplay::clearColorPaletteZones()
+{
+    colorZoneCount = 0;
+}
+
+void TFTDisplay::markColorPaletteDirty()
+{
+    colorPaletteDirty = true;
+}
+
+void TFTDisplay::invalidateRectForPalette(int16_t x, int16_t y, int16_t width, int16_t height)
+{
+    if (width <= 0 || height <= 0) {
+        return;
+    }
+
+    const int16_t x0 = std::max<int16_t>(0, x);
+    const int16_t y0 = std::max<int16_t>(0, y);
+    const int16_t x1 = std::min<int16_t>(displayWidth, static_cast<int16_t>(x + width));
+    const int16_t y1 = std::min<int16_t>(displayHeight, static_cast<int16_t>(y + height));
+    if (x1 <= x0 || y1 <= y0) {
+        return;
+    }
+
+    for (int16_t yy = y0; yy < y1; ++yy) {
+        for (int16_t xx = x0; xx < x1; ++xx) {
+            const uint16_t pos = static_cast<uint16_t>(xx + (yy / 8) * displayWidth);
+            const uint8_t mask = static_cast<uint8_t>(1u << (yy & 7));
+            const bool currentSet = (buffer[pos] & mask) != 0;
+            if (currentSet) {
+                buffer_back[pos] &= static_cast<uint8_t>(~mask);
+            } else {
+                buffer_back[pos] |= mask;
+            }
+        }
+    }
+}
+
+void TFTDisplay::resetColorPalette(bool forceFullRedraw)
+{
+    const bool changed = (colorZoneCount != 0) || (colorDefaultFg != baseDefaultFg) || (colorDefaultBg != baseDefaultBg);
+    ColorZone oldZones[kMaxColorZones]{};
+    const uint8_t oldZoneCount = colorZoneCount;
+    if (!forceFullRedraw && oldZoneCount > 0) {
+        for (uint8_t i = 0; i < oldZoneCount; ++i) {
+            oldZones[i] = colorZones[i];
+        }
+    }
+
+    const bool defaultsChanged = (colorDefaultFg != baseDefaultFg) || (colorDefaultBg != baseDefaultBg);
+    colorZoneCount = 0;
+    colorDefaultFg = baseDefaultFg;
+    colorDefaultBg = baseDefaultBg;
+    if (changed) {
+        if (forceFullRedraw || defaultsChanged) {
+            colorPaletteDirty = true;
+        } else {
+            for (uint8_t i = 0; i < oldZoneCount; ++i) {
+                const ColorZone &zone = oldZones[i];
+                invalidateRectForPalette(zone.x, zone.y, zone.width, zone.height);
+            }
+        }
+    }
+}
+
+void TFTDisplay::setColorPaletteDefaults(uint16_t fg, uint16_t bg)
+{
+    if (colorDefaultFg == fg && colorDefaultBg == bg) {
+        return;
+    }
+    colorDefaultFg = fg;
+    colorDefaultBg = bg;
+    colorPaletteDirty = true;
+}
+
+void TFTDisplay::addColorPaletteZone(const ColorZone &zone)
+{
+    if (zone.width <= 0 || zone.height <= 0 || colorZoneCount >= kMaxColorZones) {
+        return;
+    }
+    colorZones[colorZoneCount++] = zone;
+}
+
 // Write the buffer to the display memory
 void TFTDisplay::display(bool fromBlank)
 {
-    if (fromBlank)
-        tft->fillScreen(TFT_BLACK);
+    fromBlank = fromBlank || colorPaletteDirty;
+    if (fromBlank) {
+        tft->fillScreen(colorDefaultBg);
+    }
     // tft->clear();
     concurrency::LockGuard g(spiLock);
 
@@ -1016,10 +1136,10 @@ void TFTDisplay::display(bool fromBlank)
                 // get src pixel in the page based ordering the OLED lib uses FIXME, super inefficent
                 auto dblbuf_isset = buffer_back[x + (y / 8) * displayWidth] & (1 << (y & 7));
                 if (isset != dblbuf_isset) {
-                    tft->drawPixel(x, y, isset ? TFT_MESH : TFT_BLACK);
+                    tft->drawPixel(x, y, isset ? resolveForegroundColor(x, y) : resolveBackgroundColor(x, y));
                 }
-            } else if (isset) {
-                tft->drawPixel(x, y, TFT_MESH);
+            } else {
+                tft->drawPixel(x, y, isset ? resolveForegroundColor(x, y) : resolveBackgroundColor(x, y));
             }
         }
     }
@@ -1030,6 +1150,8 @@ void TFTDisplay::display(bool fromBlank)
             buffer_back[pos] = buffer[pos];
         }
     }
+
+    colorPaletteDirty = false;
 }
 
 // Send a command to the display (low level function)
