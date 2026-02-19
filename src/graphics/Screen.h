@@ -704,6 +704,7 @@ class Screen : public concurrency::OSThread
 
     enum class HermesFastSetupPage : uint8_t {
         Root,
+        GeneralMenu,
         EmacMenu,
         UiMenu,
         UiBrightnessSelect,

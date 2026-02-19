@@ -1426,8 +1426,8 @@ constexpr size_t kSetupPassMaxLen = 20;
 constexpr uint32_t kSetupNavMinIntervalMs = 80;
 constexpr uint32_t kSetupNavFlipGuardMs = 800;
 
-static const char *kSetupRootItems[] = {u8"返回",      u8"EMAC設定", u8"UI設定",   u8"節點設定",
-                                        u8"罐頭訊息", u8"潛行模式", u8"儲存並重新開機"};
+static const char *kSetupRootItems[] = {u8"返回", u8"一般設定", u8"EMAC設定", u8"UI設定",
+                                        u8"節點設定", u8"罐頭訊息", u8"潛行模式", u8"儲存並重新開機"};
 static const uint8_t kSetupRootCount = sizeof(kSetupRootItems) / sizeof(kSetupRootItems[0]);
 static const char *kSetupEmacItems[] = {u8"返回", u8"設定密碼A", u8"設定密碼B", u8"顯示密碼", u8"EMAC解除"};
 static const uint8_t kSetupEmacCount = sizeof(kSetupEmacItems) / sizeof(kSetupEmacItems[0]);
@@ -1528,6 +1528,10 @@ static bool enableStealthMode()
     bool changed = false;
 
     if (HermesXInterfaceModule::instance) {
+        if (HermesXInterfaceModule::instance->isEmergencyLampEnabled()) {
+            HermesXInterfaceModule::instance->setEmergencyLampEnabled(false);
+            changed = true;
+        }
         HermesXInterfaceModule::instance->setUiLedBrightness(0);
         HermesXInterfaceModule::instance->stopEmergencySiren();
         changed = true;
@@ -2479,6 +2483,28 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
         String brightnessLine = String(u8"LED亮度: ") + getSetupBrightnessLabel(ledBrightness);
         const char *items[] = {u8"返回", label.c_str(), brightnessLine.c_str()};
         drawSetupList(display, width, height, u8"UI設定", items, 3, hermesSetupSelected, hermesSetupOffset);
+        if (hermesSetupToastUntilMs != 0) {
+            if (millis() > hermesSetupToastUntilMs) {
+                hermesSetupToastUntilMs = 0;
+                hermesSetupToast = "";
+            } else if (hermesSetupToast.length() > 0) {
+                graphics::HermesX_zh::drawMixedBounded(*display, 2, height - FONT_HEIGHT_SMALL, width - 4,
+                                                       hermesSetupToast.c_str(), graphics::HermesX_zh::GLYPH_WIDTH,
+                                                       FONT_HEIGHT_SMALL, nullptr);
+            }
+        }
+        return;
+    }
+
+    if (hermesSetupPage == HermesFastSetupPage::GeneralMenu) {
+        applyPaletteList(2);
+        bool lampOn = false;
+        if (HermesXInterfaceModule::instance) {
+            lampOn = HermesXInterfaceModule::instance->isEmergencyLampEnabled();
+        }
+        String lampLine = String(u8"緊急照明燈: ") + (lampOn ? u8"開" : u8"關");
+        const char *items[] = {u8"返回", lampLine.c_str()};
+        drawSetupList(display, width, height, u8"一般設定", items, 2, hermesSetupSelected, hermesSetupOffset);
         if (hermesSetupToastUntilMs != 0) {
             if (millis() > hermesSetupToastUntilMs) {
                 hermesSetupToastUntilMs = 0;
@@ -4751,14 +4777,16 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                 resetMenu(HermesFastSetupPage::Root);
                 showNextFrame();
             } else if (hermesSetupSelected == 1) {
-                resetMenu(HermesFastSetupPage::EmacMenu);
+                resetMenu(HermesFastSetupPage::GeneralMenu);
             } else if (hermesSetupSelected == 2) {
-                resetMenu(HermesFastSetupPage::UiMenu);
+                resetMenu(HermesFastSetupPage::EmacMenu);
             } else if (hermesSetupSelected == 3) {
-                resetMenu(HermesFastSetupPage::NodeMenu);
+                resetMenu(HermesFastSetupPage::UiMenu);
             } else if (hermesSetupSelected == 4) {
-                resetMenu(HermesFastSetupPage::CannedMenu);
+                resetMenu(HermesFastSetupPage::NodeMenu);
             } else if (hermesSetupSelected == 5) {
+                resetMenu(HermesFastSetupPage::CannedMenu);
+            } else if (hermesSetupSelected == 6) {
                 const bool applied = enableStealthMode();
                 nodeDB->saveToDisk(SEGMENT_CONFIG);
                 hermesSetupToast = applied ? u8"潛行模式已啟用" : u8"潛行模式維持中";
@@ -4769,6 +4797,33 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                 hermesSetupToastUntilMs = millis() + 1500;
                 rebootAtMsec = millis() + 2000;
             }
+            setFastFramerate();
+            return true;
+        }
+        return false;
+    }
+
+    if (hermesSetupPage == HermesFastSetupPage::GeneralMenu) {
+        if (handleMenuNav(2)) {
+            LOG_INFO("[HermesFastSetup] select=%d item=%s", hermesSetupSelected,
+                     (hermesSetupSelected == 0) ? "返回" : "緊急照明燈");
+            setFastFramerate();
+            return true;
+        }
+        if (isSelect || isPress) {
+            if (hermesSetupSelected == 0) {
+                resetMenu(HermesFastSetupPage::Root);
+            } else if (HermesXInterfaceModule::instance) {
+                const bool next = !HermesXInterfaceModule::instance->isEmergencyLampEnabled();
+                HermesXInterfaceModule::instance->setEmergencyLampEnabled(next);
+                hermesSetupToast = next ? u8"緊急照明燈已開啟 (RED)" : u8"緊急照明燈已關閉";
+                hermesSetupToastUntilMs = millis() + 1500;
+            }
+            setFastFramerate();
+            return true;
+        }
+        if (isCancel) {
+            resetMenu(HermesFastSetupPage::Root);
             setFastFramerate();
             return true;
         }

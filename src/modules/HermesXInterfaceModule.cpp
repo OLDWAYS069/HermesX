@@ -146,6 +146,8 @@ LEDAnimation HermesXInterfaceModule::selectActiveAnimation() const
         return LEDAnimation::PowerHoldFade;
     if (powerHoldLatchedRed)
         return LEDAnimation::PowerHoldLatchedRed;
+    if (emergencyLampEnabled)
+        return LEDAnimation::EmergencyLampRed;
     if (startupEffectActive)
         return LEDAnimation::StartupEffect;
     if (shutdownEffectActive)
@@ -438,6 +440,9 @@ void HermesXInterfaceModule::tickLEDAnimation(uint32_t now)
     case LEDAnimation::PowerHoldLatchedRed:
         renderPowerHoldLatchedRed();
         break;
+    case LEDAnimation::EmergencyLampRed:
+        renderEmergencyLampRed();
+        break;
     case LEDAnimation::AckFlash:
         renderAckFlash(now);
         break;
@@ -517,6 +522,12 @@ void HermesXInterfaceModule::renderPowerHoldFade(uint32_t now)
 }
 
 void HermesXInterfaceModule::renderPowerHoldLatchedRed()
+{
+    rgb.fill(kPowerHoldRedColor);
+    rgb.show();
+}
+
+void HermesXInterfaceModule::renderEmergencyLampRed()
 {
     rgb.fill(kPowerHoldRedColor);
     rgb.show();
@@ -1108,6 +1119,27 @@ uint8_t HermesXInterfaceModule::getUiLedBrightness() const
     return ledUserBrightness;
 }
 
+void HermesXInterfaceModule::setEmergencyLampEnabled(bool enabled)
+{
+    emergencyLampEnabled = enabled;
+    if (!emergencyLampEnabled) {
+        return;
+    }
+
+    // Stealth can mute WS2812 brightness to 0; bring it back before forcing red.
+    if (ledUserBrightness == 0) {
+        const uint8_t restore = ledUserBrightnessRestore ? ledUserBrightnessRestore : kLedBrightnessDefault;
+        setUserLedBrightness(restore);
+    } else {
+        applyUserLedBrightness();
+    }
+}
+
+bool HermesXInterfaceModule::isEmergencyLampEnabled() const
+{
+    return emergencyLampEnabled;
+}
+
 void HermesXInterfaceModule::applyUserLedBrightness()
 {
     if (appliedLedBrightness == ledUserBrightness) {
@@ -1214,6 +1246,12 @@ void HermesXInterfaceModule::updateLED() {
     }
 
     if (powerHoldLatchedRed) {
+        rgb.fill(kPowerHoldRedColor);
+        rgb.show();
+        return;
+    }
+
+    if (emergencyLampEnabled) {
         rgb.fill(kPowerHoldRedColor);
         rgb.show();
         return;
