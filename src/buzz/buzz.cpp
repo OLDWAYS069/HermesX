@@ -36,8 +36,33 @@ const int DURATION_1_2 = 500;  // 1/2 note
 const int DURATION_3_4 = 750;  // 1/4 note
 const int DURATION_1_1 = 1000; // 1/1 note
 
+bool isBuzzerGloballyEnabled()
+{
+    return config.device.buzzer_mode != meshtastic_Config_DeviceConfig_BuzzerMode_DISABLED;
+}
+
+void setGlobalBuzzerEnabled(bool enabled)
+{
+    config.device.buzzer_mode = enabled ? meshtastic_Config_DeviceConfig_BuzzerMode_ALL_ENABLED
+                                        : meshtastic_Config_DeviceConfig_BuzzerMode_DISABLED;
+    if (!enabled) {
+        if (config.device.buzzer_gpio) {
+            noTone(config.device.buzzer_gpio);
+        }
+#ifdef PIN_BUZZER
+        if (PIN_BUZZER && PIN_BUZZER != config.device.buzzer_gpio) {
+            noTone(PIN_BUZZER);
+        }
+#endif
+    }
+}
+
 void playTones(const ToneDuration *tone_durations, int size)
 {
+    if (!isBuzzerGloballyEnabled()) {
+        return;
+    }
+
 #ifdef PIN_BUZZER
     if (!config.device.buzzer_gpio)
         config.device.buzzer_gpio = PIN_BUZZER;

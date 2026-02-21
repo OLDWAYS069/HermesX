@@ -135,6 +135,16 @@ class RadioInterface
         sleep();
     }
 
+    /// Re-enable this interface after disable()
+    void enable()
+    {
+        if (!disabled) {
+            return;
+        }
+        disabled = false;
+        onEnable();
+    }
+
     /**
      * Send a packet (possibly by enquing in a private fifo).  This routine will
      * later free() the packet to pool.  This routine is not allowed to stall.
@@ -241,6 +251,9 @@ class RadioInterface
      * Save the channel we selected for later reuse.
      */
     virtual void saveChannelNum(uint32_t savedChannelNum);
+
+    /// Hook for implementations that need to wake hardware after disable().
+    virtual void onEnable() {}
 
   private:
     /**

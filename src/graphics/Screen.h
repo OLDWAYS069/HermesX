@@ -24,6 +24,8 @@ class Screen
     void startFirmwareUpdateScreen() {}
     void increaseBrightness() {}
     void decreaseBrightness() {}
+    uint8_t getBrightnessLevel() const { return 150; }
+    void setBrightnessLevel(uint8_t) {}
     void setFunctionSymbol(std::string) {}
     void removeFunctionSymbol(std::string) {}
     void startAlert(const char *) {}
@@ -257,6 +259,7 @@ class Screen : public concurrency::OSThread
 
     void startHermesXAlert(const char *text);
     bool isHermesFastSetupActive() const;
+    bool isHermesXActionPageActive() const;
 
     void endAlert()
     {
@@ -294,6 +297,8 @@ class Screen : public concurrency::OSThread
     // functions for display brightness
     void increaseBrightness();
     void decreaseBrightness();
+    uint8_t getBrightnessLevel() const { return brightness; }
+    void setBrightnessLevel(uint8_t value);
 
     void setFunctionSymbol(std::string sym);
     void removeFunctionSymbol(std::string sym);
@@ -618,6 +623,7 @@ class Screen : public concurrency::OSThread
             uint8_t waypoint = 0;
             uint8_t focusedModule = 0;
             uint8_t main = 0;
+            uint8_t mainAction = 0;
             uint8_t setup = 0;
             uint8_t share = 0;
             uint8_t log = 0;
@@ -659,8 +665,12 @@ class Screen : public concurrency::OSThread
     bool handleHermesFastSetupInput(const InputEvent *event);
     static void drawHermesXMainFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     void drawHermesXMain(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
+    static void drawHermesXActionFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
+    void drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
+    bool handleHermesXActionInput(const InputEvent *event);
     static void drawHermesXShareChannelFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     void drawHermesXShareChannel(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
+    void syncTextMessageNotification();
 
 #if defined(DISPLAY_CLOCK_FRAME)
     static void drawAnalogClockFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
@@ -703,8 +713,8 @@ class Screen : public concurrency::OSThread
     bool hasCompass = false;
 
     enum class HermesFastSetupPage : uint8_t {
+        Entry,
         Root,
-        GeneralMenu,
         EmacMenu,
         UiMenu,
         UiBrightnessSelect,
@@ -720,11 +730,19 @@ class Screen : public concurrency::OSThread
         GpsUpdateSelect,
         GpsBroadcastSelect,
     };
-    HermesFastSetupPage hermesSetupPage = HermesFastSetupPage::Root;
+    HermesFastSetupPage hermesSetupPage = HermesFastSetupPage::Entry;
     int8_t hermesSetupSelected = 0;
     int8_t hermesSetupOffset = 0;
     uint32_t hermesSetupLastNavAtMs = 0;
     int8_t hermesSetupLastNavDir = 0;
+    int8_t hermesActionSelected = 0;
+    uint32_t hermesActionLastNavAtMs = 0;
+    int8_t hermesActionLastNavDir = 0;
+    bool hermesActionStealthConfirmVisible = false;
+    uint8_t hermesActionStealthConfirmSelected = 0; // 0=No, 1=Yes
+    uint32_t hermesActionStealthConfirmShownAtMs = 0;
+    bool hasUnreadTextMessage = false;
+    uint8_t notifyingTextMessageFrame = UINT8_MAX;
     uint8_t hermesSetupKeyRow = 0;
     uint8_t hermesSetupKeyCol = 0;
     uint8_t hermesSetupEditingSlot = 0;

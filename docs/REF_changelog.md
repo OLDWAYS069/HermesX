@@ -1,6 +1,28 @@
 # HermesX 變更紀錄 (REF_changelog.md)
 
 ## 範圍
+- 日期：2026-02-21
+- 版本：HXB_0.2.9（Released）
+- 項目：Released 整理（操作頁、潛行確認、FastSetup 入口、Lighthouse 啟動靜默）
+- 檔案：
+  - src/graphics/Screen.cpp
+  - src/graphics/Screen.h
+  - src/modules/HermesEmUiModule.cpp
+  - src/modules/HermesXInterfaceModule.cpp
+  - src/modules/LighthouseModule.cpp
+  - README.md
+  - docs/REF_changelog.md
+- 說明：
+  - 主頁新增獨立「操作選單」頁，整合「返回/下一頁、緊急照明燈、潛行模式」旋鈕操作，並隔離罐頭訊息模組操作衝突。
+  - 潛行模式啟用前新增確認對話框（3 秒保護倒數），確認後會將螢幕亮度調整為目前值的 50%，並優化彈窗排版避免與底部提示互蓋。
+  - FastSetup 新增入口頁（螺母圖示）；旋轉才進入設定清單，短按直接跳下一頁。
+  - 新訊息到達時不再強制切回 LOGO 頁，改以通知點提示。
+  - `UI設定 > 全域蜂鳴器` 改為全域控制蜂鳴器行為。
+  - Lighthouse 停用「開機自動廣播狀態」，保留手動 `@Status` 回覆機制。
+- 測試：
+  - `platformio run -e heltec-wireless-tracker`（SUCCESS）
+
+## 範圍
 - 日期：2026-02-18
 - 版本：HXB_0.2.9
 - 項目：Fast Setup 新增潛行模式、TFT 彩色分區與刷新優化

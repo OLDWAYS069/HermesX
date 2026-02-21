@@ -187,7 +187,7 @@ private:
 #endif
     void applyUserLedBrightness();
     void setUserLedBrightness(uint8_t brightness);
-    bool audioAllowed() const { return !outputsDisabled && !userOutputsMuted; }
+    bool audioAllowed() const;
 
     void drawFace(const char* face, uint16_t color);
     void updateFace();
@@ -219,6 +219,8 @@ private:
     uint8_t ledUserBrightness = kLedBrightnessDefault;
     uint8_t appliedLedBrightness = 0;
     uint8_t ledUserBrightnessRestore = kLedBrightnessDefault;
+    uint8_t emergencyLampPrevBrightness = kLedBrightnessDefault;
+    bool emergencyLampBrightnessForced = false;
     bool userOutputsMuted = false;
     bool rotaryLedAdjustActive = false;
     bool rotaryPressConsume = false;

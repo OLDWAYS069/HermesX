@@ -486,6 +486,11 @@ void RadioLibInterface::startReceive()
     powerMon->setState(meshtastic_PowerMon_State_Lora_RXOn);
 }
 
+void RadioLibInterface::onEnable()
+{
+    startReceive();
+}
+
 void RadioLibInterface::configHardwareForSend()
 {
     powerMon->setState(meshtastic_PowerMon_State_Lora_TXOn);

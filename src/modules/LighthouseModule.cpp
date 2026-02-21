@@ -716,8 +716,7 @@ int32_t LighthouseModule::runOnce()
     if (firstTime) {
         firstTime = false;
         awakeStart = millis();
-        broadcastStatusMessage();
-        HERMESX_LOG_INFO("broadcasting...");
+        HERMESX_LOG_INFO("startup status broadcast disabled");
     }
 
     if (emergencyModeActive && !emergencySafeAcked) {

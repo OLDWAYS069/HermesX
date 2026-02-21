@@ -8,6 +8,29 @@ HermesX 是一款建立在 Meshtastic 協作網路上的定製韌體，專注於
 - **HermesX 品牌化 UI**：面板表情、動畫與命名全面統一，打造一致的介面識別。
 - **安全喚醒流程**：短按喚醒後進入 5 秒長按等待期，未達門檻前不進入 Mesh；長按顯示由暗轉亮進度與點點提示，避免誤觸開機。
 
+## 最新釋出（Released）
+- 新增獨立「操作選單」頁：可直接控制「緊急照明燈」與「潛行模式」，並支援 `返回=下一頁`。
+- 潛行模式啟用前加入確認對話框（3 秒保護倒數），啟用後自動將螢幕亮度調整為目前值的 50%。
+- FastSetup 入口改為螺母圖示頁：旋轉才進設定，短按可直接切下一頁。
+- 新訊息到達不再強制跳頁，改為通知點提示。
+- Lighthouse 關閉「開機自動廣播狀態」，僅保留手動 `@Status` 查詢回覆。
+
+## 發佈流程（Tag: `Released`）
+1. 檢查目前改動：
+   - `git status`
+2. 加入本次要提交的檔案（建議先明確指定）：
+   - `git add README.md docs/REF_changelog.md`
+   - 若要連同程式改動一起發布，再追加 `git add src/...`
+3. 建立提交：
+   - `git commit -m "release: update HermesX action/stealth/fastsetup/lighthouse behavior"`
+4. 建立標籤（Annotated Tag）：
+   - `git tag -a Released -m "HermesX Released (HXB_0.2.9)"`
+5. 推送分支與標籤：
+   - `git push origin <你的分支名>`
+   - `git push origin Released`
+
+若遠端已有同名 `Released` 標籤，先改新名稱（例如 `Released-20260221`），避免覆蓋既有釋出。
+
 ## 外觀設計
 外殼預留勾槽，可搭配 D 扣或掛繩將 HermesX 固定於背包、胸掛、皮帶或褲子，真正做到隨身攜帶、隨時使用。
 

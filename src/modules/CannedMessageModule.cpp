@@ -361,7 +361,7 @@ int CannedMessageModule::handleInputEvent(const InputEvent *event)
     if (hermesXEmUiModule && hermesXEmUiModule->isActive()) {
         return 0;
     }
-    if (screen && screen->isHermesFastSetupActive()) {
+    if (screen && (screen->isHermesFastSetupActive() || screen->isHermesXActionPageActive())) {
         return 0;
     }
 

@@ -397,8 +397,8 @@ void HermesXEmUiModule::sendResetLighthouse()
     stopScream();
     lastAckAtMs = 0;
 
-    HERMESX_LOG_INFO("EM UI send reset payload=%s", payload);
-    service->sendToMesh(p, RX_SRC_LOCAL, false);
+    HERMESX_LOG_INFO("EM UI send reset payload=%s via USER src", payload);
+    service->sendToMesh(p, RX_SRC_USER, false);
 }
 
 void HermesXEmUiModule::updateListOffset()

@@ -1,5 +1,8 @@
 #pragma once
 
+bool isBuzzerGloballyEnabled();
+void setGlobalBuzzerEnabled(bool enabled);
+
 void playBeep();
 void playLongBeep();
 void playStartMelody();

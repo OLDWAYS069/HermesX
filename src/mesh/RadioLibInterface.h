@@ -209,6 +209,9 @@ class RadioLibInterface : public RadioInterface, protected concurrency::Notified
      */
     virtual void setStandby();
 
+    /// Wake radio receive path after RadioInterface::enable().
+    void onEnable() override;
+
     const char *radioLibErr = "RadioLib err=";
 
     /**

@@ -1121,13 +1121,27 @@ uint8_t HermesXInterfaceModule::getUiLedBrightness() const
 
 void HermesXInterfaceModule::setEmergencyLampEnabled(bool enabled)
 {
-    emergencyLampEnabled = enabled;
-    if (!emergencyLampEnabled) {
+    if (emergencyLampEnabled == enabled) {
         return;
     }
 
+    emergencyLampEnabled = enabled;
+    if (!emergencyLampEnabled) {
+        if (emergencyLampBrightnessForced) {
+            setUserLedBrightness(emergencyLampPrevBrightness);
+            emergencyLampBrightnessForced = false;
+        } else {
+            applyUserLedBrightness();
+        }
+        return;
+    }
+
+    emergencyLampPrevBrightness = ledUserBrightness;
+    emergencyLampBrightnessForced = false;
+
     // Stealth can mute WS2812 brightness to 0; bring it back before forcing red.
     if (ledUserBrightness == 0) {
+        emergencyLampBrightnessForced = true;
         const uint8_t restore = ledUserBrightnessRestore ? ledUserBrightnessRestore : kLedBrightnessDefault;
         setUserLedBrightness(restore);
     } else {
@@ -1168,6 +1182,11 @@ void HermesXInterfaceModule::setUserLedBrightness(uint8_t brightness)
             stopTone();
         }
     }
+}
+
+bool HermesXInterfaceModule::audioAllowed() const
+{
+    return !outputsDisabled && !userOutputsMuted && isBuzzerGloballyEnabled();
 }
 
 
@@ -1739,6 +1758,9 @@ void HermesXInterfaceModule::playNackFail()
 void HermesXInterfaceModule::startEmergencySiren(float freq, uint32_t duration_ms)
 {
     if (freq <= 0 || duration_ms == 0) {
+        return;
+    }
+    if (!isBuzzerGloballyEnabled()) {
         return;
     }
     const int pin = resolveEmergencyBuzzerPin();
