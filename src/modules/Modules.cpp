@@ -26,8 +26,13 @@
 #endif
 #if !MESHTASTIC_EXCLUDE_HERMESX
 #include "HermesXLog.h"
+#ifndef HERMESX_CIV_DISABLE_EMAC
+#define HERMESX_CIV_DISABLE_EMAC 0
+#endif
 #if HAS_SCREEN
+#if !HERMESX_CIV_DISABLE_EMAC
 #include "modules/HermesEmUiModule.h"
+#endif
 #endif
 #include "modules/HermesXInterfaceModule.h"
 #include "modules/HermesXPowerGuard.h"
@@ -169,7 +174,7 @@ void setupModules()
             HermesXInterfaceModule::deferStartupVisuals();
         }
 #endif
-#if HAS_SCREEN
+#if HAS_SCREEN && !HERMESX_CIV_DISABLE_EMAC
         if (!hermesXEmUiModule) {
             hermesXEmUiModule = new HermesXEmUiModule();
         }

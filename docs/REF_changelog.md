@@ -1,6 +1,21 @@
 # HermesX 變更紀錄 (REF_changelog.md)
 
 ## 範圍
+- 日期：2026-02-22
+- 版本：HermesX_0.2.9_Civ（分支註記）
+- 項目：Civ 版本差異註記
+- 檔案：
+  - docs/REF_changelog.md
+  - docs/CHANGELOG_MINI.md
+  - README.md
+- 說明：
+  - 建立分支 `HermesX_0.2.9_Civ`。
+  - Civ 版已排除 EMAC 功能：FastSetup 隱藏 `EMAC設定`，不建立 `HermesEmUiModule`，三擊 EM 觸發改為忽略。
+  - Lighthouse 改為關閉（`MESHTASTIC_EXCLUDE_LIGHTHOUSE=1`，不建立模組實例）。
+- 測試：
+  - 無（文件註記與分支建立）
+
+## 範圍
 - 日期：2026-02-21
 - 版本：HXB_0.2.9（Released）
 - 項目：Released 整理（操作頁、潛行確認、FastSetup 入口、Lighthouse 啟動靜默）

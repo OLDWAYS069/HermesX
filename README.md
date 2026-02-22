@@ -14,6 +14,7 @@ HermesX 是一款建立在 Meshtastic 協作網路上的定製韌體，專注於
 - FastSetup 入口改為螺母圖示頁：旋轉才進設定，短按可直接切下一頁。
 - 新訊息到達不再強制跳頁，改為通知點提示。
 - Lighthouse 關閉「開機自動廣播狀態」，僅保留手動 `@Status` 查詢回覆。
+- 分支差異註記：`HermesX_0.2.9_Civ` 為 Civ 版分支（已排除 EMAC 功能，並關閉 Lighthouse）。
 
 ## 發佈流程（Tag: `Released`）
 1. 檢查目前改動：

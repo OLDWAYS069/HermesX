@@ -25,6 +25,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "buzz/buzz.h"
 #include "configuration.h"
 #if HAS_SCREEN
+#ifndef HERMESX_CIV_DISABLE_EMAC
+#define HERMESX_CIV_DISABLE_EMAC 0
+#endif
 #include <OLEDDisplay.h>
 
 #include "DisplayFormatters.h"
@@ -1596,8 +1599,12 @@ constexpr uint32_t kSetupNavFlipGuardMs = 800;
 constexpr uint8_t kMainActionCount = 3;
 constexpr uint32_t kStealthConfirmArmMs = 3000;
 
+#if HERMESX_CIV_DISABLE_EMAC
+static const char *kSetupRootItems[] = {u8"返回", u8"UI設定", u8"節點設定", u8"罐頭訊息", u8"儲存並重新開機"};
+#else
 static const char *kSetupRootItems[] = {u8"返回", u8"EMAC設定", u8"UI設定", u8"節點設定", u8"罐頭訊息",
                                         u8"儲存並重新開機"};
+#endif
 static const uint8_t kSetupRootCount = sizeof(kSetupRootItems) / sizeof(kSetupRootItems[0]);
 static const char *kSetupEmacItems[] = {u8"返回", u8"設定密碼A", u8"設定密碼B", u8"顯示密碼", u8"EMAC解除"};
 static const uint8_t kSetupEmacCount = sizeof(kSetupEmacItems) / sizeof(kSetupEmacItems[0]);
@@ -5519,7 +5526,22 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
             if (hermesSetupSelected == 0) {
                 resetMenu(HermesFastSetupPage::Entry);
                 showNextFrame();
-            } else if (hermesSetupSelected == 1) {
+            }
+#if HERMESX_CIV_DISABLE_EMAC
+            else if (hermesSetupSelected == 1) {
+                resetMenu(HermesFastSetupPage::UiMenu);
+            } else if (hermesSetupSelected == 2) {
+                resetMenu(HermesFastSetupPage::NodeMenu);
+            } else if (hermesSetupSelected == 3) {
+                resetMenu(HermesFastSetupPage::CannedMenu);
+            } else {
+                nodeDB->saveToDisk(SEGMENT_CONFIG | SEGMENT_MODULECONFIG | SEGMENT_CHANNELS | SEGMENT_DEVICESTATE);
+                hermesSetupToast = u8"即將重新開機";
+                hermesSetupToastUntilMs = millis() + 1500;
+                rebootAtMsec = millis() + 2000;
+            }
+#else
+            else if (hermesSetupSelected == 1) {
                 resetMenu(HermesFastSetupPage::EmacMenu);
             } else if (hermesSetupSelected == 2) {
                 resetMenu(HermesFastSetupPage::UiMenu);
@@ -5533,6 +5555,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                 hermesSetupToastUntilMs = millis() + 1500;
                 rebootAtMsec = millis() + 2000;
             }
+#endif
             setFastFramerate();
             return true;
         }

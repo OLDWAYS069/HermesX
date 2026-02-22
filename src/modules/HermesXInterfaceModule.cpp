@@ -39,6 +39,10 @@
 #include "graphics/fonts/HermesX_zh/HermesX_CN12.h"
 #include "ButtonThread.h" // for BUTTON_LONGPRESS_MS
 
+#ifndef HERMESX_CIV_DISABLE_EMAC
+#define HERMESX_CIV_DISABLE_EMAC 0
+#endif
+
 #include "ReliableRouter.h"
 #include "Default.h"
 #include "MeshTypes.h"
@@ -1702,6 +1706,10 @@ void HermesXInterfaceModule::playSendFailedFeedback() {
 
 void HermesXInterfaceModule::onTripleClick()
 {
+#if HERMESX_CIV_DISABLE_EMAC
+    HERMESX_LOG_INFO("EM UI local trigger ignored (Civ build, EMAC disabled)");
+    return;
+#endif
     HERMESX_LOG_INFO("EM UI local trigger (triple click)");
     if (lighthouseModule != nullptr) {
         lighthouseModule->activateEmergencyLocal();

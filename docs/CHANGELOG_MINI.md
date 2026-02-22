@@ -1,6 +1,11 @@
 # HermesX Mini Change Log
 （每次只寫極簡亮點，便於快速回顧）
 
+## 2026-02-22
+- 建立分支 `HermesX_0.2.9_Civ`。
+- Civ 版已排除 EMAC 功能（FastSetup 隱藏 EMAC 設定、停用 EM 緊急 UI 觸發）。
+- Lighthouse 模組改為關閉（不建立模組實例）。
+
 ## 2026-02-18
 - Fast Setup：新增多層快速設定流程，整合 EMAC/UI/節點/GPS/罐頭訊息。
 - UI設定：`LED亮度` 改為控制 **WS2812 使用者燈**（不再改 TFT 背光），新增檔位 `關閉 / 低 / 中 / 高 / 最大`。
