@@ -1,39 +1,129 @@
-# HermesX Firmware
+<div align="center" markdown="1">
 
-HermesX 是一款建立在 Meshtastic 協作網路上的定製韌體，專注於讓離線通訊更直覺。這一代的核心任務是強化人機介面：即使使用者不拿出手機，也能透過裝置本體的旋鈕、LED 與音效快速掌握狀態並完成訊息傳遞。
+![截圖 2026-01-27 晚上7.29.49](https://hackmd.io/_uploads/H1WY16s8-l.png)
 
-## 功能亮點
-- **專注的操作體驗**：強調「抬手即用」的交互，不需手機即可瀏覽罐頭訊息並完成發送。
-- **視覺 + 聽覺雙通知**：LED 狀態條與對應音效共同回饋，讓訊息狀態一目了然、耳聞即知。
-- **HermesX 品牌化 UI**：面板表情、動畫與命名全面統一，打造一致的介面識別。
-- **安全喚醒流程**：短按喚醒後進入 5 秒長按等待期，未達門檻前不進入 Mesh；長按顯示由暗轉亮進度與點點提示，避免誤觸開機。
+<h1>HermesX Firmware</h1>
 
-## 最新釋出（Released）
-- 新增獨立「操作選單」頁：可直接控制「緊急照明燈」與「潛行模式」，並支援 `返回=下一頁`。
-- 潛行模式啟用前加入確認對話框（3 秒保護倒數），啟用後自動將螢幕亮度調整為目前值的 50%。
-- FastSetup 入口改為螺母圖示頁：旋轉才進設定，短按可直接切下一頁。
-- 新訊息到達不再強制跳頁，改為通知點提示。
-- Lighthouse 關閉「開機自動廣播狀態」，僅保留手動 `@Status` 查詢回覆。
-- 分支差異註記：`HermesX_0.2.9_Civ` 為 Civ 版分支（已排除 EMAC 功能，並關閉 Lighthouse）。
+![GitHub release downloads](https://img.shields.io/github/downloads/OLDWAYS069/HermesX/total)
+[![CI](https://img.shields.io/github/actions/workflow/status/OLDWAYS069/HermesX/main_matrix.yml?branch=master&label=actions&logo=github&color=yellow)](https://github.com/OLDWAYS069/HermesX/actions/workflows/main_matrix.yml)
+[![License](https://img.shields.io/github/license/OLDWAYS069/HermesX)](LICENSE)
+![Build](https://img.shields.io/badge/Build-PlatformIO-blue)
+![Upstream](https://img.shields.io/badge/Upstream-Meshtastic-brightgreen)
 
-## 發佈流程（Tag: `Released`）
-1. 檢查目前改動：
-   - `git status`
-2. 加入本次要提交的檔案（建議先明確指定）：
-   - `git add README.md docs/REF_changelog.md`
-   - 若要連同程式改動一起發布，再追加 `git add src/...`
-3. 建立提交：
-   - `git commit -m "release: update HermesX action/stealth/fastsetup/lighthouse behavior"`
-4. 建立標籤（Annotated Tag）：
-   - `git tag -a Released -m "HermesX Released (HXB_0.2.9)"`
-5. 推送分支與標籤：
-   - `git push origin <你的分支名>`
-   - `git push origin Released`
+</div>
 
-若遠端已有同名 `Released` 標籤，先改新名稱（例如 `Released-20260221`），避免覆蓋既有釋出。
+<div align="center">
+  <a href="https://github.com/OLDWAYS069/HermesX">Repository</a>
+  -
+  <a href="docs/README.md">Documentation</a>
+  -
+  <a href="docs/CHANGELOG_MINI.md">Changelog</a>
+</div>
 
-## 外觀設計
-外殼預留勾槽，可搭配 D 扣或掛繩將 HermesX 固定於背包、胸掛、皮帶或褲子，真正做到隨身攜帶、隨時使用。
+> 在沒有網路或行動訊號的時候，HermesX 讓 LoRa 裝置仍能「看得見、操得到、傳得出去」。
+
+HermesX 是基於 Meshtastic 的客製化韌體，重點放在「不用拿手機也能操作」的本機 UI/UX。
+本專案針對旋鈕操作、畫面提示、聲光回饋與快捷功能頁做了大量調整，讓裝置在外勤場景中更直覺。
+
+## Overview
+- 以 Meshtastic 為核心通訊能力
+- 強化本機操作（旋鈕 / 按鍵 / 畫面 / 蜂鳴器 / LED）
+- 針對 HermesX 硬體使用情境做 UI 與互動優化
+- 專注於「無手機操作」與外勤場景的快速交互
+
+## Get Started
+- `Build`：`platformio run -e heltec-wireless-tracker`
+- `Docs`：`docs/README.md`
+- `Changelog`：`docs/CHANGELOG_MINI.md`、`docs/REF_changelog.md`
+- `Release Tag`：使用 `Released`（Annotated Tag）
+
+## 目前版本與分支
+- `Released`：正式釋出標記（Tag）
+- `HermesX_0.2.9_Civ`：Civ 版分支（已排除 EMAC 功能，並關閉 Lighthouse）
+
+
+
+## 功能展示
+### 快速設定 FastSetup
+- 旋轉才進入設定，降低誤觸風險。
+- 短按可略過設定，直接切頁。
+- 適合外勤中快速查看與調整常用選項。
+
+### 附加操作頁（快捷功能）
+- 將「緊急照明燈」與「潛行模式」從 FastSetup 分離。
+- 使用滾動式選單操作，行為與 FastSetup 一致。
+- 最上層提供「返回」（切到下一頁）作為安全出口。
+
+### 潛行模式保護流程
+- 啟用前跳出警告框，提醒將關閉外部通訊能力（含藍牙）。
+- 啟用後自動降亮度至目前值 50%，降低可見度。
+- 對話框排版已針對小螢幕做過擠壓/遮擋修正。
+
+### 訊息通知不搶畫面
+- 新訊息到達時不強制跳回 LOGO 主頁。
+- 以底部頁面指示點閃爍提示，保留使用者當前操作上下文。
+
+## 操作流程圖（Mermaid）
+### FastSetup 入口流程
+```mermaid
+flowchart TD
+    A[進入 FastSetup 入口頁] --> B{使用者操作}
+    B -->|旋轉旋鈕| C[進入 FastSetup 清單]
+    B -->|短按| D[切換到下一頁]
+    C --> E[旋轉選擇項目]
+    E --> F[短按執行/切換設定]
+```
+
+### 潛行模式啟用流程
+```mermaid
+flowchart TD
+    A[附加操作頁選到 潛行模式] --> B[短按啟動]
+    B --> C[顯示警告對話框]
+    C --> D{是否確認}
+    D -->|取消| E[返回附加操作頁]
+    D -->|確認| F[啟用潛行模式]
+    F --> G[關閉外部通訊功能]
+    G --> H[螢幕亮度調整為目前 50%]
+```
+
+## HermesX UI 改動（重點）
+以下為相較原始 Meshtastic 韌體，HermesX 在 UI/操作上的主要差異：
+
+### 1. FastSetup（快速設定）體驗改造
+- 入口不再直接進入清單，而是先顯示大型圖示頁（螺母/設定提示）。
+- 畫面提示「旋轉已進入設定」的操作概念。
+- 使用者旋轉旋鈕時才進入原本 FastSetup 選單。
+- 短按可直接切換到下一頁，不強制進設定。
+
+### 2. 獨立操作頁（附加頁面）
+- 新增獨立的滾動式操作頁（不放在主 LOGO 頁直接觸發）。
+- 操作方式比照 FastSetup，透過旋鈕滾動選單進行。
+- 頁面頂層提供「返回」（實際行為為切到下一頁）。
+- 該頁面設計為不觸發罐頭訊息模組。
+
+### 3. 緊急照明燈（Emergency Light）
+- 從 FastSetup 分離，改放在獨立操作頁中管理。
+- 與其他快捷功能同頁操作，避免混在設定項目中。
+
+### 4. 潛行模式（Stealth Mode）
+- 從 FastSetup 分離，改放到與緊急照明燈同一個操作頁。
+- 啟用前會跳出確認對話框，避免誤觸。
+- 對話框包含保護提示與確認流程（含延遲保護機制）。
+- 啟用後自動將螢幕亮度調整為目前亮度的 `50%`。
+- 已修正對話框文字過度擁擠與與下排提示重疊問題。
+
+### 5. 新訊息通知行為
+- 收到新訊息時不再強制跳回 LOGO 頁。
+- 改為使用底部頁面指示點的閃爍提示，降低畫面被搶走的情況。
+
+### 6. 全域蜂鳴器控制
+- `UI設定` 中的 `EMUI蜂鳴器` 已調整為控制全域蜂鳴器行為。
+
+## 其他 HermesX 互動特性
+- **專注的操作體驗**：可透過本機直接瀏覽/發送罐頭訊息。
+- **視覺 + 聽覺雙通知**：LED 與蜂鳴器同步回饋送達、失敗、接收狀態。
+- **HermesX 品牌化 UI**：畫面表情、提示與互動流程做了統一。
+- **安全喚醒流程**：長按電源具備可視化進度，降低誤觸啟動風險。
 
 ## LED 狀態條行為
 | 狀態 | 顏色與動畫 | 說明 |
@@ -45,21 +135,36 @@ HermesX 是一款建立在 Meshtastic 協作網路上的定製韌體，專注於
 | 傳訊成功 | 綠燈閃爍三次 | 訊息已獲確認。 |
 | 傳訊失敗 | 紅燈閃爍三次 | 訊息未成功送達，請重試。 |
 
-同時搭配對應音效通知，使用者無需盯著燈條也能即時掌握狀態。
-
 ## 旋鈕操作
-- **旋轉**：瀏覽並選擇欲發送的罐頭訊息。
-- **按下**：立即發送目前選定的訊息。
+- **旋轉**：瀏覽頁面或移動選單項目。
+- **按下**：執行目前選定的功能 / 發送目前選定的罐頭訊息。
 - **長按**：控制開機與關機。
+
+## 建置與燒錄（PlatformIO）
+- 預設環境：`heltec-wireless-tracker`
+- 編譯：
+
+```bash
+platformio run -e heltec-wireless-tracker
+```
+
+- 韌體輸出位置（常用）：
+  - `.pio/build/heltec-wireless-tracker/firmware.bin`
+  - `.pio/build/heltec-wireless-tracker/firmware.factory.bin`
+  - `.pio/build/heltec-wireless-tracker/bootloader.bin`
+  - `.pio/build/heltec-wireless-tracker/partitions.bin`
+
+
+
+## 外觀設計
+外殼預留勾槽，可搭配 D 扣或掛繩將 HermesX 固定於背包、胸掛、皮帶或褲子，方便隨身攜帶。
 
 ## 其他特點
 - 支援 18650 電池快速更換，延長外勤續航。
-- 防潑水設計（請勿浸泡；若不慎泡水導致損壞，可寄回更換電路板 ??）。
+- 防潑水設計（請勿浸泡）。
 
 ## 售價
 先行者套件價格為 3000 元 / 台，含完整保固服務。
-
-這是 HermesX 的第一步，我們期待把它帶到真實場域與每一個日常場景。
 
 ## HermesX Agents 指南
 - **核心命名習慣**：以 HermesX 為主要前綴，涵蓋類別（如 `HermesXInterfaceModule`、`HermesFace`）、工具（`HermesXPacketUtils`）與記錄（`HermesXLog`）；功能掛鉤採語意化命名（`setNextSleepPreHookParams`、`runPreDeepSleepHook`）；以大寫宏 `MESHTASTIC_EXCLUDE_HERMESX` 控制編譯範圍。
