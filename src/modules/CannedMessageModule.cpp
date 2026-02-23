@@ -377,6 +377,22 @@ int CannedMessageModule::handleInputEvent(const InputEvent *event)
     if (this->runState == CANNED_MESSAGE_RUN_STATE_SENDING_ACTIVE) {
         return 0; // Ignore input while sending
     }
+
+    // ACK/NACK popup is transient feedback only. Swallow confirm/cancel presses so they
+    // don't get reinterpreted as a fresh "select" action (which can run ACTION_SELECT
+    // with currentMessageIndex == -1).
+    if ((this->runState == CANNED_MESSAGE_RUN_STATE_ACK_NACK_RECEIVED) ||
+        (this->runState == CANNED_MESSAGE_RUN_STATE_MESSAGE)) {
+        const char configuredPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
+        const char input = event->inputEvent;
+        if (input == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT) ||
+            input == configuredPress ||
+            input == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
+            input == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK)) {
+            return 1;
+        }
+    }
+
     bool validEvent = false;
     if (event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP)) {
         if (this->messagesCount > 0) {
@@ -683,7 +699,8 @@ int32_t CannedMessageModule::runOnce()
         // TODO: might have some feedback of sending state
         this->runState = CANNED_MESSAGE_RUN_STATE_INACTIVE;
         temporaryMessage = "";
-        e.action = UIFrameEvent::Action::REGENERATE_FRAMESET; // We want to change the list of frames shown on-screen
+        // Transient popup cleanup should not steal focus from the user's current page.
+        e.action = UIFrameEvent::Action::REGENERATE_FRAMESET_BACKGROUND;
         this->currentMessageIndex = -1;
         this->freetext = ""; // clear freetext
         this->cursor = 0;
@@ -716,7 +733,8 @@ int32_t CannedMessageModule::runOnce()
                 this->runState = CANNED_MESSAGE_RUN_STATE_INACTIVE;
             }
         } else {
-            if ((this->messagesCount > this->currentMessageIndex) && (strlen(this->messages[this->currentMessageIndex]) > 0)) {
+            if ((this->currentMessageIndex >= 0) && (this->messagesCount > this->currentMessageIndex) &&
+                (strlen(this->messages[this->currentMessageIndex]) > 0)) {
                 if (strcmp(this->messages[this->currentMessageIndex], "~") == 0) {
                     exitMenu();
                     return INT32_MAX;
@@ -733,7 +751,9 @@ int32_t CannedMessageModule::runOnce()
                 this->runState = CANNED_MESSAGE_RUN_STATE_INACTIVE;
             }
         }
-        e.action = UIFrameEvent::Action::REGENERATE_FRAMESET; // We want to change the list of frames shown on-screen
+        // Sending/feedback popup is transient; keep current page and update in background.
+        LOG_INFO("[CannedMessage] send feedback popup update (background)");
+        e.action = UIFrameEvent::Action::REGENERATE_FRAMESET_BACKGROUND;
         this->currentMessageIndex = -1;
         this->freetext = ""; // clear freetext
         this->cursor = 0;
@@ -1031,7 +1051,9 @@ void CannedMessageModule::showTemporaryMessage(const String &message)
 {
     temporaryMessage = message;
     UIFrameEvent e;
-    e.action = UIFrameEvent::Action::REGENERATE_FRAMESET; // We want to change the list of frames shown on-screen
+    // Temporary HermesFace/text popup should not force-switch pages.
+    LOG_INFO("[CannedMessage] temporary popup: %s (background)", message.c_str());
+    e.action = UIFrameEvent::Action::REGENERATE_FRAMESET_BACKGROUND;
     notifyObservers(&e);
     runState = CANNED_MESSAGE_RUN_STATE_MESSAGE;
     // run this loop again in 2 seconds, next iteration will clear the display
@@ -1258,7 +1280,6 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
     char buffer[50];
 
     if (temporaryMessage.length() != 0) {
-        requestFocus(); // Tell Screen::setFrames to move to our module's frame
 #if !MESHTASTIC_EXCLUDE_HERMESX
         HermesX_DrawFace(display, x, y, HermesFaceMode::Thinking);
 #else
@@ -1321,7 +1342,6 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
         // E-Ink: clean the screen *after* this pop-up
         EINK_ADD_FRAMEFLAG(display, COSMETIC);
 
-        requestFocus(); // Tell Screen::setFrames to move to our module's frame
 #if !MESHTASTIC_EXCLUDE_HERMESX
         HermesX_DrawFace(display, x, y, HermesFaceMode::Sending);
 #else
@@ -1335,7 +1355,6 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
 #endif
     } else if (cannedMessageModule->runState == CANNED_MESSAGE_RUN_STATE_DISABLED) {
 #if !MESHTASTIC_EXCLUDE_HERMESX
-        requestFocus();
         HermesX_DrawFace(display, x, y, HermesFaceMode::Disabled);
 #else
         display->setTextAlignment(TEXT_ALIGN_LEFT);
@@ -1452,12 +1471,14 @@ ProcessMessage CannedMessageModule::handleReceived(const meshtastic_MeshPacket &
         // look for a request_id
         if (mp.decoded.request_id != 0) {
             UIFrameEvent e;
-            e.action = UIFrameEvent::Action::REGENERATE_FRAMESET;
+            // ACK/NACK face should be shown only as background notification (no forced page switch).
+            e.action = UIFrameEvent::Action::REGENERATE_FRAMESET_BACKGROUND;
             this->runState = CANNED_MESSAGE_RUN_STATE_ACK_NACK_RECEIVED;
             this->incoming = service->getNodenumFromRequestId(mp.decoded.request_id);
             meshtastic_Routing decoded = meshtastic_Routing_init_default;
             pb_decode_from_bytes(mp.decoded.payload.bytes, mp.decoded.payload.size, meshtastic_Routing_fields, &decoded);
             this->ack = decoded.error_reason == meshtastic_Routing_Error_NONE;
+            LOG_INFO("[CannedMessage] ACK/NACK popup: %s (background)", this->ack ? "ACK" : "NACK");
             waitingForAck = false; // No longer want routing packets
             this->notifyObservers(&e);
             // run the next time 2 seconds later

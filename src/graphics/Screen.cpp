@@ -1647,6 +1647,24 @@ static const SetupBrightnessOption kSetupBrightnessOptions[] = {
 };
 static const uint8_t kSetupBrightnessCount = sizeof(kSetupBrightnessOptions) / sizeof(kSetupBrightnessOptions[0]);
 
+struct SetupScreenSleepOption {
+    uint16_t seconds;
+    const char *label;
+};
+static const SetupScreenSleepOption kSetupScreenSleepOptions[] = {
+#if defined(USE_EINK)
+    {0, u8"關閉"},
+#endif
+    {10, u8"10秒"},
+    {30, u8"30秒"},
+    {60, u8"1分鐘"},
+    {120, u8"2分鐘"},
+    {300, u8"5分鐘"},
+    {600, u8"10分鐘"},
+    {900, u8"15分鐘"},
+};
+static const uint8_t kSetupScreenSleepCount = sizeof(kSetupScreenSleepOptions) / sizeof(kSetupScreenSleepOptions[0]);
+
 static const char *kSetupKeyRows[][10] = {
     {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"},
     {"Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"},
@@ -1679,6 +1697,50 @@ static const char *getSetupBrightnessLabel(uint8_t value)
         }
     }
     return best->label;
+}
+
+static String getSetupScreenSleepLabel(uint32_t seconds)
+{
+    for (uint8_t i = 0; i < kSetupScreenSleepCount; ++i) {
+        if (kSetupScreenSleepOptions[i].seconds == seconds) {
+            return String(kSetupScreenSleepOptions[i].label);
+        }
+    }
+
+    if (seconds == 0) {
+        return String(u8"關閉");
+    }
+    if ((seconds % 60U) == 0U) {
+        return String(seconds / 60U) + u8"分鐘";
+    }
+    return String(seconds) + u8"秒";
+}
+
+static uint32_t getSetupCurrentScreenSleepSeconds()
+{
+#if defined(USE_EINK)
+    return config.display.screen_on_secs;
+#else
+    return Default::getConfiguredOrDefault(config.display.screen_on_secs, default_screen_on_secs);
+#endif
+}
+
+static uint8_t getSetupScreenSleepSelection(uint32_t seconds)
+{
+    uint8_t selected = 1;
+    uint32_t bestDiff = UINT32_MAX;
+    for (uint8_t i = 0; i < kSetupScreenSleepCount; ++i) {
+        const uint32_t optionSeconds = kSetupScreenSleepOptions[i].seconds;
+        if (optionSeconds == seconds) {
+            return i + 1;
+        }
+        const uint32_t diff = (seconds > optionSeconds) ? (seconds - optionSeconds) : (optionSeconds - seconds);
+        if (diff < bestDiff) {
+            bestDiff = diff;
+            selected = i + 1;
+        }
+    }
+    return selected;
 }
 
 static uint8_t buildSetupChannelList(ChannelIndex *out, uint8_t maxCount)
@@ -2983,7 +3045,7 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
     }
 
     if (hermesSetupPage == HermesFastSetupPage::UiMenu) {
-        applyPaletteList(3);
+        applyPaletteList(4);
         String label = u8"全域蜂鳴器: ";
         if (isBuzzerGloballyEnabled()) {
             label += u8"開";
@@ -2993,8 +3055,9 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
         const uint8_t ledBrightness =
             HermesXInterfaceModule::instance ? HermesXInterfaceModule::instance->getUiLedBrightness() : 60;
         String brightnessLine = String(u8"LED亮度: ") + getSetupBrightnessLabel(ledBrightness);
-        const char *items[] = {u8"返回", label.c_str(), brightnessLine.c_str()};
-        drawSetupList(display, width, height, u8"UI設定", items, 3, hermesSetupSelected, hermesSetupOffset);
+        String screenSleepLine = String(u8"螢幕休眠: ") + getSetupScreenSleepLabel(getSetupCurrentScreenSleepSeconds());
+        const char *items[] = {u8"返回", label.c_str(), brightnessLine.c_str(), screenSleepLine.c_str()};
+        drawSetupList(display, width, height, u8"UI設定", items, 4, hermesSetupSelected, hermesSetupOffset);
         if (hermesSetupToastUntilMs != 0) {
             if (millis() > hermesSetupToastUntilMs) {
                 hermesSetupToastUntilMs = 0;
@@ -3015,6 +3078,27 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
             items[i + 1] = kSetupBrightnessOptions[i].label;
         }
         drawSetupList(display, width, height, u8"WS2812亮度調整", items, kSetupBrightnessCount + 1, hermesSetupSelected,
+                      hermesSetupOffset);
+        if (hermesSetupToastUntilMs != 0) {
+            if (millis() > hermesSetupToastUntilMs) {
+                hermesSetupToastUntilMs = 0;
+                hermesSetupToast = "";
+            } else if (hermesSetupToast.length() > 0) {
+                graphics::HermesX_zh::drawMixedBounded(*display, 2, height - FONT_HEIGHT_SMALL, width - 4,
+                                                       hermesSetupToast.c_str(), graphics::HermesX_zh::GLYPH_WIDTH,
+                                                       FONT_HEIGHT_SMALL, nullptr);
+            }
+        }
+        return;
+    }
+
+    if (hermesSetupPage == HermesFastSetupPage::UiScreenSleepSelect) {
+        applyPaletteList(kSetupScreenSleepCount + 1);
+        const char *items[kSetupScreenSleepCount + 1] = {u8"返回"};
+        for (uint8_t i = 0; i < kSetupScreenSleepCount; ++i) {
+            items[i + 1] = kSetupScreenSleepOptions[i].label;
+        }
+        drawSetupList(display, width, height, u8"螢幕休眠時間", items, kSetupScreenSleepCount + 1, hermesSetupSelected,
                       hermesSetupOffset);
         if (hermesSetupToastUntilMs != 0) {
             if (millis() > hermesSetupToastUntilMs) {
@@ -4465,14 +4549,30 @@ void Screen::setFrames(FrameFocus focus)
     case FOCUS_PRESERVE:
         // If we can identify which type of frame "originalPosition" was, can move directly to it in the new frameset
         const FramesetInfo &oldFsi = this->framesetInfo;
-        if (originalPosition == oldFsi.positions.log)
-            ui->switchToFrame(fsi.positions.log);
-        else if (originalPosition == oldFsi.positions.settings)
-            ui->switchToFrame(fsi.positions.settings);
-        else if (originalPosition == oldFsi.positions.wifi)
-            ui->switchToFrame(fsi.positions.wifi);
-        else if (originalPosition == oldFsi.positions.mainAction)
+        auto canMap = [&](uint8_t oldPos, uint8_t newPos) -> bool {
+            return (oldPos < oldFsi.frameCount) && (newPos < fsi.frameCount) && (originalPosition == oldPos);
+        };
+
+        if (canMap(oldFsi.positions.fault, fsi.positions.fault))
+            ui->switchToFrame(fsi.positions.fault);
+        else if (canMap(oldFsi.positions.textMessage, fsi.positions.textMessage))
+            ui->switchToFrame(fsi.positions.textMessage);
+        else if (canMap(oldFsi.positions.waypoint, fsi.positions.waypoint))
+            ui->switchToFrame(fsi.positions.waypoint);
+        else if (canMap(oldFsi.positions.main, fsi.positions.main))
+            ui->switchToFrame(fsi.positions.main);
+        else if (canMap(oldFsi.positions.mainAction, fsi.positions.mainAction))
             ui->switchToFrame(fsi.positions.mainAction);
+        else if (canMap(oldFsi.positions.setup, fsi.positions.setup))
+            ui->switchToFrame(fsi.positions.setup);
+        else if (canMap(oldFsi.positions.share, fsi.positions.share))
+            ui->switchToFrame(fsi.positions.share);
+        else if (canMap(oldFsi.positions.log, fsi.positions.log))
+            ui->switchToFrame(fsi.positions.log);
+        else if (canMap(oldFsi.positions.settings, fsi.positions.settings))
+            ui->switchToFrame(fsi.positions.settings);
+        else if (canMap(oldFsi.positions.wifi, fsi.positions.wifi))
+            ui->switchToFrame(fsi.positions.wifi);
 
         // If frame count has decreased
         else if (fsi.frameCount < oldFsi.frameCount) {
@@ -4536,7 +4636,8 @@ void Screen::syncTextMessageNotification()
         return;
     }
 
-    if (ui->addFrameToNotifications(textFrame, true)) {
+    // Do not force-switch to the notified frame; only blink the frame indicator dot.
+    if (ui->addFrameToNotifications(textFrame, false)) {
         notifyingTextMessageFrame = textFrame;
     }
 }
@@ -5608,9 +5709,18 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
     }
 
     if (hermesSetupPage == HermesFastSetupPage::UiMenu) {
-        if (handleMenuNav(3)) {
-            LOG_INFO("[HermesFastSetup] select=%d item=%s", hermesSetupSelected,
-                     (hermesSetupSelected == 0) ? "返回" : (hermesSetupSelected == 1 ? "全域蜂鳴器" : "WS2812亮度調整"));
+        if (handleMenuNav(4)) {
+            const char *itemName = "未知";
+            if (hermesSetupSelected == 0) {
+                itemName = "返回";
+            } else if (hermesSetupSelected == 1) {
+                itemName = "全域蜂鳴器";
+            } else if (hermesSetupSelected == 2) {
+                itemName = "WS2812亮度調整";
+            } else if (hermesSetupSelected == 3) {
+                itemName = "螢幕休眠時間";
+            }
+            LOG_INFO("[HermesFastSetup] select=%d item=%s", hermesSetupSelected, itemName);
             setFastFramerate();
             return true;
         }
@@ -5637,6 +5747,9 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                     }
                 }
                 enterMenu(HermesFastSetupPage::UiBrightnessSelect, kSetupBrightnessCount + 1, selected);
+            } else if (hermesSetupSelected == 3) {
+                const uint8_t selected = getSetupScreenSleepSelection(getSetupCurrentScreenSleepSeconds());
+                enterMenu(HermesFastSetupPage::UiScreenSleepSelect, kSetupScreenSleepCount + 1, selected);
             } else if (hermesSetupSelected == 0) {
                 resetMenu(HermesFastSetupPage::Root);
             }
@@ -5667,6 +5780,35 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                     }
                     hermesSetupToast = String(u8"LED亮度: ") + kSetupBrightnessOptions[idx].label;
                     hermesSetupToastUntilMs = millis() + 1500;
+                }
+                resetMenu(HermesFastSetupPage::UiMenu);
+            }
+            setFastFramerate();
+            return true;
+        }
+        if (isCancel) {
+            resetMenu(HermesFastSetupPage::UiMenu);
+            setFastFramerate();
+            return true;
+        }
+        return false;
+    }
+
+    if (hermesSetupPage == HermesFastSetupPage::UiScreenSleepSelect) {
+        if (handleMenuNav(kSetupScreenSleepCount + 1)) {
+            setFastFramerate();
+            return true;
+        }
+        if (isSelect || isPress) {
+            if (hermesSetupSelected == 0) {
+                resetMenu(HermesFastSetupPage::UiMenu);
+            } else {
+                const uint8_t idx = static_cast<uint8_t>(hermesSetupSelected - 1);
+                if (idx < kSetupScreenSleepCount) {
+                    config.display.screen_on_secs = kSetupScreenSleepOptions[idx].seconds;
+                    nodeDB->saveToDisk(SEGMENT_CONFIG);
+                    hermesSetupToast = String(u8"休眠: ") + kSetupScreenSleepOptions[idx].label + u8" (重開生效)";
+                    hermesSetupToastUntilMs = millis() + 1800;
                 }
                 resetMenu(HermesFastSetupPage::UiMenu);
             }
