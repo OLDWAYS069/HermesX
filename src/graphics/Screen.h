@@ -718,6 +718,7 @@ class Screen : public concurrency::OSThread
         EmacMenu,
         UiMenu,
         UiBrightnessSelect,
+        UiScreenSleepSelect,
         NodeMenu,
         PassEdit,
         PassShow,
