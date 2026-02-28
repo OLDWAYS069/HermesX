@@ -30,6 +30,8 @@ class Screen
     void removeFunctionSymbol(std::string) {}
     void startAlert(const char *) {}
     void endAlert() {}
+    bool isStealthModeConstrained() const { return false; }
+    void armStealthWakeWindow() {}
 };
 } // namespace graphics
 #else
@@ -260,6 +262,12 @@ class Screen : public concurrency::OSThread
     void startHermesXAlert(const char *text);
     bool isHermesFastSetupActive() const;
     bool isHermesXActionPageActive() const;
+    bool isRecentTextMessagesPageActive() const;
+    bool isStealthModeConstrained() const;
+    void armStealthWakeWindow();
+    bool shouldShowHermesXMenuFooter(uint8_t frameIndex) const;
+    bool showHermesXActionPage();
+    bool showTextMessageDetailPage();
 
     void endAlert()
     {
@@ -619,6 +627,7 @@ class Screen : public concurrency::OSThread
     struct FramesetInfo {
         struct FramePositions {
             uint8_t fault = 0;
+            uint8_t textMessageList = 0;
             uint8_t textMessage = 0;
             uint8_t waypoint = 0;
             uint8_t focusedModule = 0;
@@ -670,6 +679,7 @@ class Screen : public concurrency::OSThread
     bool handleHermesXActionInput(const InputEvent *event);
     static void drawHermesXShareChannelFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     void drawHermesXShareChannel(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
+    bool handleRecentTextMessageListInput(const InputEvent *event);
     void syncTextMessageNotification();
 
 #if defined(DISPLAY_CLOCK_FRAME)
@@ -706,6 +716,8 @@ class Screen : public concurrency::OSThread
     // Bluetooth PIN screen)
     bool showingNormalScreen = false;
     bool moduleObserversAttached = false;
+    uint32_t stealthScreenWakeUntilMs = 0;
+    bool stealthRestoreChecked = false;
 
     // Implementation to Adjust Brightness
     uint8_t brightness = BRIGHTNESS_DEFAULT; // H = 254, MH = 192, ML = 130 L = 103

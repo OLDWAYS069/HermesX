@@ -364,6 +364,12 @@ int CannedMessageModule::handleInputEvent(const InputEvent *event)
     if (screen && (screen->isHermesFastSetupActive() || screen->isHermesXActionPageActive())) {
         return 0;
     }
+    if (screen && screen->isStealthModeConstrained()) {
+        if (this->runState != CANNED_MESSAGE_RUN_STATE_DISABLED && this->runState != CANNED_MESSAGE_RUN_STATE_INACTIVE) {
+            exitMenu();
+        }
+        return 0;
+    }
 
     if ((strlen(moduleConfig.canned_message.allow_input_source) > 0) &&
         (strcasecmp(moduleConfig.canned_message.allow_input_source, event->source) != 0) &&

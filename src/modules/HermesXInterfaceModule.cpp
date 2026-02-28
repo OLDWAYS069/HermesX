@@ -863,7 +863,8 @@ void HermesXInterfaceModule::applyRoleOutputPolicy()
     const bool shouldDisable =
         role == meshtastic_Config_DeviceConfig_Role_TAK || role == meshtastic_Config_DeviceConfig_Role_TAK_TRACKER;
     outputsDisabled = shouldDisable;
-    if (outputsDisabled) {
+    // Allow emergency lamp to remain visible even when TAK roles mute normal UI outputs.
+    if (outputsDisabled && !emergencyLampEnabled) {
         forceAllLedsOff();
     }
     if (outputsDisabled || userOutputsMuted) {
@@ -1125,6 +1126,9 @@ uint8_t HermesXInterfaceModule::getUiLedBrightness() const
 
 void HermesXInterfaceModule::setEmergencyLampEnabled(bool enabled)
 {
+    if (enabled && screen && screen->isStealthModeConstrained()) {
+        return;
+    }
     if (emergencyLampEnabled == enabled) {
         return;
     }
@@ -1195,8 +1199,12 @@ bool HermesXInterfaceModule::audioAllowed() const
 
 
 void HermesXInterfaceModule::updateLED() {
-    if (outputsDisabled) {
+    if (outputsDisabled && !emergencyLampEnabled) {
         forceAllLedsOff();
+        return;
+    }
+    if (outputsDisabled && emergencyLampEnabled) {
+        renderEmergencyLampRed();
         return;
     }
 
