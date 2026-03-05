@@ -18,6 +18,7 @@ class Screen
     void onPress() {}
     void setup() {}
     void setOn(bool) {}
+    bool isOn() const { return false; }
     void print(const char *) {}
     void doDeepSleep() {}
     void forceDisplay(bool forceUiUpdate = false) {}
@@ -26,12 +27,14 @@ class Screen
     void decreaseBrightness() {}
     uint8_t getBrightnessLevel() const { return 150; }
     void setBrightnessLevel(uint8_t) {}
+    void maybeArmIncomingTextPopup(const meshtastic_MeshPacket &) {}
     void setFunctionSymbol(std::string) {}
     void removeFunctionSymbol(std::string) {}
     void startAlert(const char *) {}
     void endAlert() {}
     bool isStealthModeConstrained() const { return false; }
     void armStealthWakeWindow() {}
+    bool showRecentTextMessageListPage() { return false; }
 };
 } // namespace graphics
 #else
@@ -211,6 +214,8 @@ class Screen : public concurrency::OSThread
         else
             enqueueCmd(ScreenCmd{.cmd = Cmd::SET_ON});
     }
+    bool isOn() const { return screenOn; }
+    void maybeArmIncomingTextPopup(const meshtastic_MeshPacket &packet);
 
     /**
      * Prepare the display for the unit going to the lowest power mode possible.  Most screens will just
@@ -263,10 +268,17 @@ class Screen : public concurrency::OSThread
     bool isHermesFastSetupActive() const;
     bool isHermesXActionPageActive() const;
     bool isRecentTextMessagesPageActive() const;
+    bool isRecentTextMessageDetailPageActive() const;
+    uint8_t getCurrentFrameIndexForDebug() const;
+    uint8_t getRecentListFrameIndexForDebug() const;
+    uint8_t getRecentDetailFrameIndexForDebug() const;
+    uint8_t getFrameCountForDebug() const;
     bool isStealthModeConstrained() const;
     void armStealthWakeWindow();
     bool shouldShowHermesXMenuFooter(uint8_t frameIndex) const;
     bool showHermesXActionPage();
+    bool showHermesXMainPage();
+    bool showRecentTextMessageListPage();
     bool showTextMessageDetailPage();
 
     void endAlert()
@@ -680,6 +692,8 @@ class Screen : public concurrency::OSThread
     static void drawHermesXShareChannelFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     void drawHermesXShareChannel(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     bool handleRecentTextMessageListInput(const InputEvent *event);
+    bool handleRecentTextMessageDetailInput(const InputEvent *event);
+    bool handleTextMessagePopupInput(const InputEvent *event);
     void syncTextMessageNotification();
 
 #if defined(DISPLAY_CLOCK_FRAME)
@@ -732,6 +746,7 @@ class Screen : public concurrency::OSThread
         UiBrightnessSelect,
         UiScreenSleepSelect,
         NodeMenu,
+        PowerMenu,
         PassEdit,
         PassShow,
         RoleMenu,

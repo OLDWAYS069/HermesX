@@ -1,6 +1,22 @@
 # HermesX Mini Change Log
 （每次只寫極簡亮點，便於快速回顧）
 
+## 2026-03-05
+- 修正 Home Timer 每秒整頁重刷：改為時鐘差分更新，降低閃爍。
+- 修正返回 Home 殘影與只剩 Timer 問題：加強進出 Home 清區與首次完整重繪。
+- 修正 `CannedMessage` 的 `Cancel` 誤跳 `Recent Send`：預設改回 Home，並加入 `restoreReturnTarget default -> home` log。
+- 修正 `CannedMessage` 旋鈕誤退出：旋轉改為優先做訊息選單導航，不再誤觸 `Cancel/Back` 導致回 Home。
+
+## 2026-03-03
+- HermesX 主頁改版：Home 改為大時鐘主頁，整合日期 / Role / 橫向電池 / 右下衛星角標，並加入 `Pattanakarn` 數字字型資產。
+- TFT Home 時鐘改為 direct-TFT 霓虹渲染：新增 `fillRect565()/drawPixel565()` 直繪 API，改用多層藍光暈 + 青白管壁 + 白色核心，不再只靠單色 buffer 假發光。
+- Home 時鐘改為局部差分更新：秒數變化只更新變動字形與光暈層，降低每秒整頁重刷感。
+- 新增 `Recent Send` 訊息流程：最近訊息清單與詳頁分離，`MSG` 入口整合到 HermesX 自訂 UI。
+- 新訊息提示改為 3 秒彈出：只在「訊息喚醒螢幕」時顯示；短按可直進該則訊息，旋鈕可關閉。
+- 修正訊息彈窗時序：`EVENT_RECEIVED_MSG` 先喚醒螢幕導致 popup 不觸發的問題，改為先由 `Screen` 判斷是否 arm popup 再喚醒。
+- CannedMessage 與 Recent Send 隔離：Recent list / detail 頁不再被罐頭選單搶事件；取消時優先關閉 CannedMessage，避免誤退回訊息列表。
+- 旋鈕輸入補 fallback：若未明確設定 rotary 的 `cw/ccw/press` 事件，預設回退為 `UP/DOWN/SELECT`，減少自訂頁面「有 raw log 但 UI 沒反應」情況。
+
 ## 2026-02-22
 - 建立分支 `HermesX_0.2.9_Civ`。
 - Civ 版已排除 EMAC 功能（FastSetup 隱藏 EMAC 設定、停用 EM 緊急 UI 觸發）。

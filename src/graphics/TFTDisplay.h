@@ -71,6 +71,8 @@ class TFTDisplay : public OLEDDisplay
     void resetColorPalette(bool forceFullRedraw = true);
     void setColorPaletteDefaults(uint16_t fg, uint16_t bg);
     void addColorPaletteZone(const ColorZone &zone);
+    void fillRect565(int16_t x, int16_t y, int16_t width, int16_t height, uint16_t color);
+    void drawPixel565(int16_t x, int16_t y, uint16_t color);
 
     /**
      * This is normally managed entirely by TFTDisplay, but some rare applications (heltec tracker) might need to replace the

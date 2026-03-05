@@ -43,6 +43,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "modules/HermesEmUiModule.h"
 #include "gps/RTC.h"
 #include "graphics/ScreenFonts.h"
+#include "graphics/fonts/PattanakarnClock32.h"
 // --- HermesX Remove TFT fast-path START
 #include "graphics/fonts/HermesX_zh/HermesX_CN12.h"
 #include <inttypes.h>
@@ -65,6 +66,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "modules/AdminModule.h"
 #include "modules/CannedMessageModule.h"
 #include "modules/ExternalNotificationModule.h"
+#include "modules/HermesXBatteryProtection.h"
 #include "modules/LighthouseModule.h"
 #include "modules/HermesXInterfaceModule.h"
 #include "modules/TextMessageModule.h"
@@ -101,6 +103,7 @@ namespace graphics
 
 // This means the *visible* area (sh1106 can address 132, but shows 128 for example)
 #define IDLE_FRAMERATE 1 // in fps
+#define DIRECT_HOME_CLOCK_FRAMERATE 4 // in fps
 
 // DEBUG
 #define NUM_EXTRA_FRAMES 3 // text message and debug frame
@@ -653,6 +656,710 @@ static uint8_t estimateBatteryPercentFromVoltageMv(int batteryVoltageMv)
     return static_cast<uint8_t>(scaled);
 }
 
+struct HermesXBatteryCache {
+    bool valid = false;
+    int voltageMv = 0;
+    uint8_t percent = 0;
+};
+static HermesXBatteryCache gHermesXBatteryCache;
+static bool supportsDirectTftClockRendering(OLEDDisplay *display);
+static int16_t measurePattanakarnClockText(const char *text);
+static bool isStealthModeActive();
+
+struct HermesXDirectHomeUiCache {
+    bool valid = false;
+    bool stealth = false;
+    bool hasBattery = false;
+    uint8_t batteryPercent = 0;
+    uint8_t satCount = 0;
+    meshtastic_Config_DeviceConfig_Role role = meshtastic_Config_DeviceConfig_Role_CLIENT;
+    char date[24] = {0};
+    bool lastTimeValid = false;
+    char lastTime[16] = {0};
+};
+static HermesXDirectHomeUiCache gHermesXDirectHomeUiCache;
+static bool gDirectHomeClockWasVisible = false;
+static bool gDirectHomeBasePainted = false;
+static uint32_t gDirectHomeLastBaseRefreshMs = 0;
+static constexpr uint32_t kDirectHomeBaseRefreshMinMs = 3000;
+
+static constexpr int16_t kDirectNeonClockGlowRadiusOuter = 5;
+static constexpr int16_t kDirectNeonClockMargin = kDirectNeonClockGlowRadiusOuter + 1;
+static constexpr int16_t kDirectNeonClockGlyphMaxW = 21;
+static constexpr int16_t kDirectNeonClockGlyphTileW = kDirectNeonClockGlyphMaxW + (kDirectNeonClockMargin * 2);
+static constexpr int16_t kDirectNeonClockGlyphTileH = PattanakarnClock32::kGlyphHeight + (kDirectNeonClockMargin * 2);
+static constexpr int16_t kDirectNeonClockSlotCount = 8;
+static constexpr int16_t kDirectNeonClockMaxRegionW = 176;
+static constexpr int16_t kDirectNeonClockMaxRegionH = 52;
+
+struct DirectNeonClockGlyphCache {
+    bool valid = false;
+    char ch = '\0';
+    uint8_t coreW = 0;
+    uint8_t tileW = 0;
+    uint8_t tileH = 0;
+    uint8_t layerMap[kDirectNeonClockGlyphTileW * kDirectNeonClockGlyphTileH] = {0};
+};
+
+static DirectNeonClockGlyphCache gDirectNeonClockGlyphCache[PattanakarnClock32::kGlyphCount];
+
+static void getHermesXHomeBatteryState(bool &hasBattery, int &batteryVoltageMv, uint8_t &batteryPercent)
+{
+    hasBattery = false;
+    batteryVoltageMv = 0;
+    batteryPercent = 0;
+
+    if (powerStatus) {
+        const int liveVoltageMv = powerStatus->getBatteryVoltageMv();
+        const bool hasLiveReading = (liveVoltageMv > 0);
+        if (powerStatus->getHasBattery() && hasLiveReading) {
+            batteryVoltageMv = liveVoltageMv;
+            batteryPercent = estimateBatteryPercentFromVoltageMv(batteryVoltageMv);
+            gHermesXBatteryCache.valid = true;
+            gHermesXBatteryCache.voltageMv = batteryVoltageMv;
+            gHermesXBatteryCache.percent = batteryPercent;
+            hasBattery = true;
+        } else if (hasLiveReading) {
+            batteryVoltageMv = liveVoltageMv;
+            batteryPercent = estimateBatteryPercentFromVoltageMv(batteryVoltageMv);
+            gHermesXBatteryCache.valid = true;
+            gHermesXBatteryCache.voltageMv = batteryVoltageMv;
+            gHermesXBatteryCache.percent = batteryPercent;
+            hasBattery = true;
+        } else if (gHermesXBatteryCache.valid) {
+            batteryVoltageMv = gHermesXBatteryCache.voltageMv;
+            batteryPercent = gHermesXBatteryCache.percent;
+            hasBattery = true;
+        }
+    } else if (gHermesXBatteryCache.valid) {
+        batteryVoltageMv = gHermesXBatteryCache.voltageMv;
+        batteryPercent = gHermesXBatteryCache.percent;
+        hasBattery = true;
+    }
+}
+
+static void formatHermesXHomeTimeDate(char *timeBuf, size_t timeBufSize, char *dateBuf, size_t dateBufSize)
+{
+    const uint32_t rtcSec = getValidTime(RTCQuality::RTCQualityDevice, true);
+    if (rtcSec > 0) {
+        time_t t = rtcSec;
+        tm *localTm = gmtime(&t);
+        static const char *kWeekdays[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+        if (localTm) {
+            snprintf(timeBuf, timeBufSize, "%02d:%02d:%02d", localTm->tm_hour, localTm->tm_min, localTm->tm_sec);
+            const char *weekday =
+                (localTm->tm_wday >= 0 && localTm->tm_wday <= 6) ? kWeekdays[localTm->tm_wday] : "---";
+            snprintf(dateBuf, dateBufSize, "%04d/%02d/%02d %s", localTm->tm_year + 1900, localTm->tm_mon + 1,
+                     localTm->tm_mday, weekday);
+            return;
+        }
+    }
+
+    snprintf(timeBuf, timeBufSize, "--:--:--");
+    snprintf(dateBuf, dateBufSize, "----/--/-- ---");
+}
+
+static bool canUseDirectHermesXHomeClock(OLEDDisplay *display)
+{
+    if (!supportsDirectTftClockRendering(display) || !display) {
+        return false;
+    }
+
+    const int16_t width = display->getWidth();
+    const int16_t height = display->getHeight();
+    const bool compactLayout = (width < 200 || height < 120);
+    const int16_t contentW = width - 8;
+    const int16_t customTimeMaxW = measurePattanakarnClockText("88:88:88");
+    const bool useCustomTimeFont = (contentW > 0) && (customTimeMaxW > 0) && (customTimeMaxW <= contentW);
+    return compactLayout && useCustomTimeFont;
+}
+
+static void addTftColorZone(OLEDDisplay *display, int16_t x, int16_t y, int16_t width, int16_t height, uint16_t fg, uint16_t bg)
+{
+#if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
+    defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
+    if (!display || width <= 0 || height <= 0) {
+        return;
+    }
+    auto *tft = static_cast<TFTDisplay *>(display);
+    tft->addColorPaletteZone(TFTDisplay::ColorZone{x, y, width, height, fg, bg});
+#else
+    (void)display;
+    (void)x;
+    (void)y;
+    (void)width;
+    (void)height;
+    (void)fg;
+    (void)bg;
+#endif
+}
+
+static const PattanakarnClock32::GlyphInfo *findPattanakarnClockGlyph(char ch)
+{
+    for (std::size_t i = 0; i < PattanakarnClock32::kGlyphCount; ++i) {
+        if (PattanakarnClock32::kGlyphs[i].ch == ch) {
+            return &PattanakarnClock32::kGlyphs[i];
+        }
+    }
+    return nullptr;
+}
+
+static int16_t measurePattanakarnClockText(const char *text)
+{
+    if (!text) {
+        return 0;
+    }
+
+    int16_t width = 0;
+    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
+        const auto *glyph = findPattanakarnClockGlyph(*cursor);
+        if (!glyph) {
+            return 0;
+        }
+        width += glyph->width;
+    }
+    return width;
+}
+
+static void drawPattanakarnClockText(OLEDDisplay *display, int16_t x, int16_t y, const char *text)
+{
+    if (!display || !text) {
+        return;
+    }
+
+    int16_t cursorX = x;
+    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
+        const auto *glyph = findPattanakarnClockGlyph(*cursor);
+        if (!glyph) {
+            continue;
+        }
+
+        for (std::uint8_t row = 0; row < PattanakarnClock32::kGlyphHeight; ++row) {
+            for (std::uint8_t byteIndex = 0; byteIndex < glyph->bytesPerRow; ++byteIndex) {
+                const std::uint8_t rowBits =
+                    pgm_read_byte(glyph->bitmap + row * glyph->bytesPerRow + byteIndex);
+                for (std::uint8_t bit = 0; bit < 8; ++bit) {
+                    const std::uint8_t col = static_cast<std::uint8_t>(byteIndex * 8 + bit);
+                    if (col >= glyph->width) {
+                        break;
+                    }
+                    if (rowBits & (0x80 >> bit)) {
+                        display->setPixel(cursorX + col, y + row);
+                    }
+                }
+            }
+        }
+
+        cursorX += glyph->width;
+    }
+}
+
+static void drawPattanakarnClockTextOutsideRect(OLEDDisplay *display,
+                                                int16_t x,
+                                                int16_t y,
+                                                const char *text,
+                                                int16_t excludeX,
+                                                int16_t excludeY,
+                                                int16_t excludeW,
+                                                int16_t excludeH)
+{
+    if (!display || !text) {
+        return;
+    }
+
+    const int16_t excludeX2 = excludeX + excludeW;
+    const int16_t excludeY2 = excludeY + excludeH;
+
+    int16_t cursorX = x;
+    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
+        const auto *glyph = findPattanakarnClockGlyph(*cursor);
+        if (!glyph) {
+            continue;
+        }
+
+        for (std::uint8_t row = 0; row < PattanakarnClock32::kGlyphHeight; ++row) {
+            for (std::uint8_t byteIndex = 0; byteIndex < glyph->bytesPerRow; ++byteIndex) {
+                const std::uint8_t rowBits =
+                    pgm_read_byte(glyph->bitmap + row * glyph->bytesPerRow + byteIndex);
+                for (std::uint8_t bit = 0; bit < 8; ++bit) {
+                    const std::uint8_t col = static_cast<std::uint8_t>(byteIndex * 8 + bit);
+                    if (col >= glyph->width) {
+                        break;
+                    }
+                    if (!(rowBits & (0x80 >> bit))) {
+                        continue;
+                    }
+
+                    const int16_t px = cursorX + col;
+                    const int16_t py = y + row;
+                    if (px >= excludeX && py >= excludeY && px < excludeX2 && py < excludeY2) {
+                        continue;
+                    }
+                    display->setPixel(px, py);
+                }
+            }
+        }
+
+        cursorX += glyph->width;
+    }
+}
+
+static bool supportsDirectTftClockRendering(OLEDDisplay *display)
+{
+#if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
+    defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
+    return display != nullptr;
+#else
+    (void)display;
+    return false;
+#endif
+}
+
+static void stampPattanakarnClockMask(uint8_t *mask,
+                                      int16_t maskW,
+                                      int16_t maskH,
+                                      int16_t x,
+                                      int16_t y,
+                                      const char *text,
+                                      uint8_t value)
+{
+    if (!mask || !text || maskW <= 0 || maskH <= 0) {
+        return;
+    }
+
+    int16_t cursorX = x;
+    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
+        const auto *glyph = findPattanakarnClockGlyph(*cursor);
+        if (!glyph) {
+            continue;
+        }
+
+        for (std::uint8_t row = 0; row < PattanakarnClock32::kGlyphHeight; ++row) {
+            const int16_t py = y + static_cast<int16_t>(row);
+            if (py < 0 || py >= maskH) {
+                continue;
+            }
+            for (std::uint8_t byteIndex = 0; byteIndex < glyph->bytesPerRow; ++byteIndex) {
+                const std::uint8_t rowBits =
+                    pgm_read_byte(glyph->bitmap + row * glyph->bytesPerRow + byteIndex);
+                for (std::uint8_t bit = 0; bit < 8; ++bit) {
+                    const std::uint8_t col = static_cast<std::uint8_t>(byteIndex * 8 + bit);
+                    if (col >= glyph->width) {
+                        break;
+                    }
+                    if (!(rowBits & (0x80 >> bit))) {
+                        continue;
+                    }
+
+                    const int16_t px = cursorX + static_cast<int16_t>(col);
+                    if (px < 0 || px >= maskW) {
+                        continue;
+                    }
+                    mask[py * maskW + px] = value;
+                }
+            }
+        }
+
+        cursorX += glyph->width;
+    }
+}
+
+static bool hasMaskPixelInRadius(const uint8_t *mask, int16_t maskW, int16_t maskH, int16_t x, int16_t y, int16_t radius)
+{
+    if (!mask || radius < 0) {
+        return false;
+    }
+
+    const int16_t minY = std::max<int16_t>(0, y - radius);
+    const int16_t maxY = std::min<int16_t>(maskH - 1, y + radius);
+    const int16_t minX = std::max<int16_t>(0, x - radius);
+    const int16_t maxX = std::min<int16_t>(maskW - 1, x + radius);
+    const int32_t radiusSq = static_cast<int32_t>(radius) * static_cast<int32_t>(radius);
+
+    for (int16_t yy = minY; yy <= maxY; ++yy) {
+        const int32_t dy = static_cast<int32_t>(yy - y);
+        const int32_t dySq = dy * dy;
+        const int16_t rowBase = yy * maskW;
+        for (int16_t xx = minX; xx <= maxX; ++xx) {
+            if (!mask[rowBase + xx]) {
+                continue;
+            }
+
+            const int32_t dx = static_cast<int32_t>(xx - x);
+            if ((dx * dx) + dySq <= radiusSq) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static bool isMaskInteriorPixel(const uint8_t *mask, int16_t maskW, int16_t maskH, int16_t x, int16_t y)
+{
+    if (!mask || x <= 0 || y <= 0 || x >= (maskW - 1) || y >= (maskH - 1)) {
+        return false;
+    }
+
+    for (int16_t yy = y - 1; yy <= y + 1; ++yy) {
+        const int16_t rowBase = yy * maskW;
+        for (int16_t xx = x - 1; xx <= x + 1; ++xx) {
+            if (!mask[rowBase + xx]) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+static uint16_t mapDirectNeonClockLayerColor(uint8_t value)
+{
+    switch (value) {
+    case 1:
+        return TFTDisplay::rgb565(0x03, 0x09, 0x1F);
+    case 2:
+        return TFTDisplay::rgb565(0x04, 0x12, 0x3D);
+    case 3:
+        return TFTDisplay::rgb565(0x06, 0x24, 0x72);
+    case 4:
+        return TFTDisplay::rgb565(0x0C, 0x54, 0xC8);
+    case 5:
+        return TFTDisplay::rgb565(0x36, 0xC5, 0xFF);
+    case 6:
+        return TFTDisplay::rgb565(0xAC, 0xF6, 0xFF);
+    case 7:
+        return TFTDisplay::rgb565(0xFF, 0xFF, 0xFF);
+    default:
+        return TFTDisplay::rgb565(0x00, 0x00, 0x00);
+    }
+}
+
+static int16_t getDirectNeonClockSlotWidth(size_t slotIndex)
+{
+    return (slotIndex == 2 || slotIndex == 5) ? 7 : kDirectNeonClockGlyphMaxW;
+}
+
+static int16_t getDirectNeonClockFrameWidth()
+{
+    int16_t width = 0;
+    for (size_t i = 0; i < kDirectNeonClockSlotCount; ++i) {
+        width += getDirectNeonClockSlotWidth(i);
+    }
+    return width;
+}
+
+static DirectNeonClockGlyphCache *getDirectNeonClockGlyphCache(char ch)
+{
+    const auto *glyph = findPattanakarnClockGlyph(ch);
+    if (!glyph) {
+        return nullptr;
+    }
+
+    const std::size_t glyphIndex = static_cast<std::size_t>(glyph - &PattanakarnClock32::kGlyphs[0]);
+    if (glyphIndex >= PattanakarnClock32::kGlyphCount) {
+        return nullptr;
+    }
+
+    auto &cache = gDirectNeonClockGlyphCache[glyphIndex];
+    if (cache.valid) {
+        return &cache;
+    }
+
+    static uint8_t fullMask[kDirectNeonClockGlyphTileW * kDirectNeonClockGlyphTileH];
+    static uint8_t coreMask[kDirectNeonClockGlyphTileW * kDirectNeonClockGlyphTileH];
+    memset(fullMask, 0, sizeof(fullMask));
+    memset(coreMask, 0, sizeof(coreMask));
+    memset(cache.layerMap, 0, sizeof(cache.layerMap));
+
+    const char glyphText[2] = {ch, '\0'};
+    stampPattanakarnClockMask(fullMask,
+                              kDirectNeonClockGlyphTileW,
+                              kDirectNeonClockGlyphTileH,
+                              kDirectNeonClockMargin,
+                              kDirectNeonClockMargin,
+                              glyphText,
+                              1);
+
+    for (int16_t yy = 0; yy < kDirectNeonClockGlyphTileH; ++yy) {
+        for (int16_t xx = 0; xx < kDirectNeonClockGlyphTileW; ++xx) {
+            if (!fullMask[(yy * kDirectNeonClockGlyphTileW) + xx]) {
+                continue;
+            }
+            if (isMaskInteriorPixel(fullMask, kDirectNeonClockGlyphTileW, kDirectNeonClockGlyphTileH, xx, yy)) {
+                coreMask[(yy * kDirectNeonClockGlyphTileW) + xx] = 1;
+            }
+        }
+    }
+
+    for (int16_t yy = 0; yy < kDirectNeonClockGlyphTileH; ++yy) {
+        for (int16_t xx = 0; xx < kDirectNeonClockGlyphTileW; ++xx) {
+            const int16_t idx = (yy * kDirectNeonClockGlyphTileW) + xx;
+            uint8_t value = 0;
+            if (coreMask[idx]) {
+                value = 7;
+            } else if (fullMask[idx]) {
+                value = 6;
+            } else if (hasMaskPixelInRadius(fullMask,
+                                            kDirectNeonClockGlyphTileW,
+                                            kDirectNeonClockGlyphTileH,
+                                            xx,
+                                            yy,
+                                            1)) {
+                value = 5;
+            } else if (hasMaskPixelInRadius(fullMask,
+                                            kDirectNeonClockGlyphTileW,
+                                            kDirectNeonClockGlyphTileH,
+                                            xx,
+                                            yy,
+                                            2)) {
+                value = 4;
+            } else if (hasMaskPixelInRadius(fullMask,
+                                            kDirectNeonClockGlyphTileW,
+                                            kDirectNeonClockGlyphTileH,
+                                            xx,
+                                            yy,
+                                            3)) {
+                value = 3;
+            } else if (hasMaskPixelInRadius(fullMask,
+                                            kDirectNeonClockGlyphTileW,
+                                            kDirectNeonClockGlyphTileH,
+                                            xx,
+                                            yy,
+                                            4)) {
+                value = 2;
+            } else if (hasMaskPixelInRadius(fullMask,
+                                            kDirectNeonClockGlyphTileW,
+                                            kDirectNeonClockGlyphTileH,
+                                            xx,
+                                            yy,
+                                            kDirectNeonClockGlowRadiusOuter)) {
+                value = 1;
+            }
+            cache.layerMap[idx] = value;
+        }
+    }
+
+    cache.valid = true;
+    cache.ch = ch;
+    cache.coreW = glyph->width;
+    cache.tileW = glyph->width + (kDirectNeonClockMargin * 2);
+    cache.tileH = kDirectNeonClockGlyphTileH;
+    return &cache;
+}
+
+static void blitDirectNeonClockGlyph(TFTDisplay *tft, int16_t x, int16_t y, const DirectNeonClockGlyphCache *cache)
+{
+    if (!tft || !cache || !cache->valid || cache->tileW <= 0 || cache->tileH <= 0) {
+        return;
+    }
+
+    const uint16_t black = TFTDisplay::rgb565(0x00, 0x00, 0x00);
+    for (int16_t row = 0; row < cache->tileH; ++row) {
+        int16_t runStart = -1;
+        uint16_t runColor = 0;
+        for (int16_t col = 0; col <= cache->tileW; ++col) {
+            const bool atEnd = (col == cache->tileW);
+            const uint16_t color = atEnd ? 0 : mapDirectNeonClockLayerColor(cache->layerMap[(row * kDirectNeonClockGlyphTileW) + col]);
+            if (color == black) {
+                if (runStart >= 0) {
+                    tft->fillRect565(x + runStart, y + row, col - runStart, 1, runColor);
+                    runStart = -1;
+                }
+                continue;
+            }
+
+            if (runStart < 0) {
+                runStart = col;
+                runColor = color;
+                continue;
+            }
+
+            if (color != runColor) {
+                tft->fillRect565(x + runStart, y + row, col - runStart, 1, runColor);
+                runStart = col;
+                runColor = color;
+            }
+        }
+    }
+}
+
+static void clearDirectNeonClockRegion(TFTDisplay *tft, int16_t displayW, int16_t originY = 0)
+{
+    if (!tft || displayW <= 0) {
+        return;
+    }
+
+    const int16_t frameW = getDirectNeonClockFrameWidth();
+    const int16_t glyphH = PattanakarnClock32::kGlyphHeight;
+    if (frameW <= 0 || frameW > (displayW - 4)) {
+        return;
+    }
+
+    const int16_t timeY = originY + 8;
+    const int16_t frameX = (displayW - frameW) / 2;
+    const int16_t regionX = frameX - kDirectNeonClockMargin;
+    const int16_t regionY = timeY - kDirectNeonClockMargin;
+    const int16_t regionW = frameW + (kDirectNeonClockMargin * 2);
+    const int16_t regionH = glyphH + (kDirectNeonClockMargin * 2);
+    if (regionW <= 0 || regionH <= 0) {
+        return;
+    }
+
+    tft->fillRect565(regionX, regionY, regionW, regionH, TFTDisplay::rgb565(0x00, 0x00, 0x00));
+}
+
+static void renderDirectNeonClock(TFTDisplay *tft, int16_t width, int16_t originY, const char *timeBuf, bool forceFullRedraw = false)
+{
+    if (!tft || !timeBuf) {
+        return;
+    }
+
+    const int16_t frameW = getDirectNeonClockFrameWidth();
+    const int16_t glyphH = PattanakarnClock32::kGlyphHeight;
+    if (frameW <= 0 || frameW > (width - 4)) {
+        return;
+    }
+
+    const int16_t timeY = originY + 8;
+    const int16_t frameX = (width - frameW) / 2;
+    const int16_t regionX = frameX - kDirectNeonClockMargin;
+    const int16_t regionY = timeY - kDirectNeonClockMargin;
+    const int16_t regionW = frameW + (kDirectNeonClockMargin * 2);
+    const int16_t regionH = glyphH + (kDirectNeonClockMargin * 2);
+    if (regionW <= 0 || regionH <= 0 || regionW > kDirectNeonClockMaxRegionW || regionH > kDirectNeonClockMaxRegionH) {
+        return;
+    }
+    const uint16_t black = TFTDisplay::rgb565(0x00, 0x00, 0x00);
+
+    static char previousTimeBuf[16] = {0};
+    static bool previousValid = false;
+    static int16_t previousRegionX = 0;
+    static int16_t previousRegionY = 0;
+    static int16_t previousRegionW = 0;
+    static int16_t previousRegionH = 0;
+    static uint8_t previousComposedLayerMap[kDirectNeonClockMaxRegionW * kDirectNeonClockMaxRegionH];
+
+    const bool geometryChanged = !previousValid || previousRegionX != regionX || previousRegionY != regionY ||
+                                 previousRegionW != regionW || previousRegionH != regionH;
+
+    if (geometryChanged && previousValid) {
+        tft->fillRect565(previousRegionX, previousRegionY, previousRegionW, previousRegionH, black);
+    }
+
+    const bool timeChanged = !previousValid || strcmp(previousTimeBuf, timeBuf) != 0;
+    if (!geometryChanged && !forceFullRedraw && !timeChanged) {
+        return;
+    }
+
+    int16_t slotStartX[kDirectNeonClockSlotCount + 1];
+    slotStartX[0] = frameX;
+    for (size_t slotIndex = 0; slotIndex < kDirectNeonClockSlotCount; ++slotIndex) {
+        slotStartX[slotIndex + 1] = slotStartX[slotIndex] + getDirectNeonClockSlotWidth(slotIndex);
+    }
+
+    static uint8_t composedLayerMap[kDirectNeonClockMaxRegionW * kDirectNeonClockMaxRegionH];
+    memset(composedLayerMap, 0, static_cast<size_t>(regionW * regionH));
+
+    const auto composeSlot = [&](size_t slotIndex) {
+        const char ch = timeBuf[slotIndex];
+        if (ch == '\0') {
+            return;
+        }
+        if (auto *cache = getDirectNeonClockGlyphCache(ch)) {
+            const int16_t slotW = getDirectNeonClockSlotWidth(slotIndex);
+            const int16_t drawX = slotStartX[slotIndex] + ((slotW - cache->coreW) / 2) - kDirectNeonClockMargin;
+            for (int16_t row = 0; row < cache->tileH; ++row) {
+                const int16_t py = regionY + row;
+                if (py < regionY || py >= (regionY + regionH)) {
+                    continue;
+                }
+                for (int16_t col = 0; col < cache->tileW; ++col) {
+                    const int16_t px = drawX + col;
+                    if (px < regionX || px >= (regionX + regionW)) {
+                        continue;
+                    }
+                    const uint8_t value = cache->layerMap[(row * kDirectNeonClockGlyphTileW) + col];
+                    if (!value) {
+                        continue;
+                    }
+                    const int16_t idx = ((py - regionY) * regionW) + (px - regionX);
+                    if (value > composedLayerMap[idx]) {
+                        composedLayerMap[idx] = value;
+                    }
+                }
+            }
+        }
+    };
+
+    for (size_t slotIndex = 0; slotIndex < kDirectNeonClockSlotCount; ++slotIndex) {
+        if (timeBuf[slotIndex] == '\0') {
+            break;
+        }
+        composeSlot(slotIndex);
+    }
+
+    if (geometryChanged || forceFullRedraw || !previousValid) {
+        tft->fillRect565(regionX, regionY, regionW, regionH, black);
+        for (int16_t row = 0; row < regionH; ++row) {
+            int16_t runStart = -1;
+            uint8_t runValue = 0xFF;
+            for (int16_t col = 0; col <= regionW; ++col) {
+                const uint8_t value = (col < regionW) ? composedLayerMap[(row * regionW) + col] : 0xFF;
+                if (value == runValue) {
+                    continue;
+                }
+                if (runStart >= 0 && runValue > 0) {
+                    tft->fillRect565(regionX + runStart,
+                                     regionY + row,
+                                     col - runStart,
+                                     1,
+                                     mapDirectNeonClockLayerColor(runValue));
+                }
+                runValue = value;
+                runStart = (col < regionW) ? col : -1;
+            }
+        }
+    } else {
+        for (int16_t row = 0; row < regionH; ++row) {
+            int16_t runStart = -1;
+            uint8_t runValue = 0xFF;
+            for (int16_t col = 0; col <= regionW; ++col) {
+                bool changed = false;
+                uint8_t value = 0xFF;
+                if (col < regionW) {
+                    const int16_t idx = (row * regionW) + col;
+                    changed = previousComposedLayerMap[idx] != composedLayerMap[idx];
+                    value = composedLayerMap[idx];
+                }
+
+                if (!changed || value != runValue) {
+                    if (runStart >= 0) {
+                        const uint16_t color = (runValue > 0) ? mapDirectNeonClockLayerColor(runValue) : black;
+                        tft->fillRect565(regionX + runStart, regionY + row, col - runStart, 1, color);
+                        runStart = -1;
+                    }
+                }
+
+                if (changed) {
+                    if (runStart < 0) {
+                        runStart = col;
+                        runValue = value;
+                    }
+                } else {
+                    runValue = 0xFF;
+                }
+            }
+        }
+    }
+
+    strlcpy(previousTimeBuf, timeBuf, sizeof(previousTimeBuf));
+    memcpy(previousComposedLayerMap, composedLayerMap, static_cast<size_t>(regionW * regionH));
+    previousRegionX = regionX;
+    previousRegionY = regionY;
+    previousRegionW = regionW;
+    previousRegionH = regionH;
+    previousValid = true;
+}
+
 static void drawHermesXBatteryIcon(OLEDDisplay *display, int16_t x, int16_t y, int16_t width, int16_t height, uint8_t percent)
 {
     if (!display || width < 16 || height < 24) {
@@ -699,7 +1406,62 @@ static void drawHermesXBatteryIcon(OLEDDisplay *display, int16_t x, int16_t y, i
         fillH = 1;
     }
     if (fillH > 0) {
+        addTftColorZone(display, innerX, innerY + innerH - fillH, innerW, fillH, TFTDisplay::rgb565(0xB5, 0xED, 0x00), 0x0000);
         display->fillRect(innerX, innerY + innerH - fillH, innerW, fillH);
+    }
+}
+
+static void drawHermesXBatteryIconHorizontal(OLEDDisplay *display, int16_t x, int16_t y, int16_t width, int16_t height,
+                                             uint8_t percent)
+{
+    if (!display || width < 20 || height < 12) {
+        return;
+    }
+
+    if (percent > 100) {
+        percent = 100;
+    }
+
+    int16_t capW = width / 10;
+    if (capW < 3) {
+        capW = 3;
+    }
+    int16_t capH = height / 2;
+    if (capH < 4) {
+        capH = 4;
+    }
+
+    const int16_t bodyW = width - capW - 1;
+    if (bodyW < 12) {
+        return;
+    }
+
+    const int16_t bodyY = y;
+    const int16_t capX = x + bodyW;
+    const int16_t capY = y + (height - capH) / 2;
+
+    display->drawRect(x, bodyY, bodyW, height);
+    if (bodyW > 16 && height > 12) {
+        display->drawRect(x + 1, bodyY + 1, bodyW - 2, height - 2);
+    }
+    display->drawRect(capX, capY, capW, capH);
+
+    const int16_t inset = (bodyW >= 26 && height >= 16) ? 3 : 2;
+    const int16_t innerX = x + inset;
+    const int16_t innerY = bodyY + inset;
+    const int16_t innerW = bodyW - inset * 2;
+    const int16_t innerH = height - inset * 2;
+    if (innerW <= 0 || innerH <= 0) {
+        return;
+    }
+
+    int16_t fillW = (innerW * percent) / 100;
+    if (percent > 0 && fillW < 1) {
+        fillW = 1;
+    }
+    if (fillW > 0) {
+        addTftColorZone(display, innerX, innerY, fillW, innerH, TFTDisplay::rgb565(0xB5, 0xED, 0x00), 0x0000);
+        display->fillRect(innerX, innerY, fillW, innerH);
     }
 }
 
@@ -1215,22 +1977,75 @@ bool deltaToTimestamp(uint32_t secondsAgo, uint8_t *hours, uint8_t *minutes, int
 }
 
 static constexpr uint8_t kRecentTextMessageCapacity = 8;
+static constexpr uint32_t kIncomingTextPopupMs = 3000;
 
 struct RecentTextMessageState {
     meshtastic_MeshPacket packets[kRecentTextMessageCapacity];
     uint8_t count = 0;
+    uint8_t listCursor = 0;
     uint8_t selectedIndex = 0;
     uint8_t detailIndex = 0;
 };
 static RecentTextMessageState gRecentTextMessageState;
+
+struct IncomingTextPopupState {
+    meshtastic_MeshPacket packet{};
+    bool pending = false;
+    bool visible = false;
+    uint32_t untilMs = 0;
+};
+static IncomingTextPopupState gIncomingTextPopupState;
+
+static void dismissIncomingTextPopup()
+{
+    gIncomingTextPopupState.pending = false;
+    gIncomingTextPopupState.visible = false;
+    gIncomingTextPopupState.untilMs = 0;
+}
+
+static bool isIncomingTextPopupVisible()
+{
+    return gIncomingTextPopupState.visible;
+}
+
+static void armIncomingTextPopup(const meshtastic_MeshPacket &packet)
+{
+    if (gIncomingTextPopupState.pending || gIncomingTextPopupState.visible) {
+        return;
+    }
+
+    gIncomingTextPopupState.packet = packet;
+    gIncomingTextPopupState.pending = true;
+    gIncomingTextPopupState.visible = false;
+    gIncomingTextPopupState.untilMs = 0;
+}
+
+void Screen::maybeArmIncomingTextPopup(const meshtastic_MeshPacket &packet)
+{
+    if (packet.from == 0 || config.display.screen_on_secs == 0 || screenOn || isStealthModeActive()) {
+        return;
+    }
+
+    armIncomingTextPopup(packet);
+}
 
 static bool hasRecentTextMessages()
 {
     return gRecentTextMessageState.count > 0;
 }
 
+static uint8_t getRecentTextMessageListEntryCount()
+{
+    return gRecentTextMessageState.count + 1; // Includes the leading "Back" row.
+}
+
 static void clampRecentTextMessageIndices()
 {
+    const uint8_t lastCursor = getRecentTextMessageListEntryCount() - 1;
+    if (gRecentTextMessageState.listCursor > lastCursor) {
+        gRecentTextMessageState.listCursor = lastCursor;
+    }
+
     if (gRecentTextMessageState.count == 0) {
         gRecentTextMessageState.selectedIndex = 0;
         gRecentTextMessageState.detailIndex = 0;
@@ -1300,6 +2115,7 @@ static void storeRecentTextMessage(const meshtastic_MeshPacket &packet)
     }
 
     gRecentTextMessageState.packets[0] = packet;
+    gRecentTextMessageState.listCursor = 1;
     gRecentTextMessageState.selectedIndex = 0;
     gRecentTextMessageState.detailIndex = 0;
 }
@@ -1392,6 +2208,54 @@ static void makeTextMessageSnippet(const meshtastic_MeshPacket &packet, char *ou
     out[dstPos] = '\0';
 }
 
+static void drawIncomingTextPopupOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
+{
+    (void)state;
+    if (!display || !isIncomingTextPopupVisible()) {
+        return;
+    }
+
+    const meshtastic_MeshPacket &packet = gIncomingTextPopupState.packet;
+    if (packet.from == 0) {
+        return;
+    }
+
+    const int16_t width = display->getWidth();
+    const int16_t height = display->getHeight();
+    const bool compactLayout = (width < 200 || height < 120);
+    const int16_t boxX = compactLayout ? 6 : 10;
+    const int16_t boxY = compactLayout ? 8 : 14;
+    const int16_t boxW = width - boxX - (compactLayout ? 10 : 16);
+    const int16_t boxH = compactLayout ? 30 : 50;
+    const int16_t textPadX = compactLayout ? 4 : 6;
+    const int16_t textPadY = compactLayout ? 3 : 5;
+
+    addTftColorZone(display, boxX, boxY, boxW, boxH, TFTDisplay::rgb565(0x1E, 0xB8, 0xE0), 0x0000);
+
+    display->setColor(WHITE);
+    display->fillRect(boxX, boxY, boxW, boxH);
+    display->setColor(BLACK);
+
+    meshtastic_NodeInfoLite *node = nodeDB->getMeshNode(getFrom(&packet));
+    const char *sender = (node && node->has_user && node->user.long_name[0] != '\0') ? node->user.long_name : "Unknown";
+    char headerBuf[48];
+    snprintf(headerBuf, sizeof(headerBuf), "From %s", sender);
+
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+    display->setFont(FONT_SMALL);
+    display->drawStringMaxWidth(boxX + textPadX, boxY + textPadY, boxW - textPadX * 2, headerBuf);
+
+    const int16_t bodyY = boxY + (compactLayout ? 14 : 20);
+    if (screen) {
+        screen->drawMixed(display, boxX + textPadX, bodyY, u8"新訊息", HermesX_zh::GLYPH_WIDTH, compactLayout ? 13 : 15);
+    } else {
+        HermesX_zh::drawMixedBounded(*display, boxX + textPadX, bodyY, boxW - textPadX * 2, u8"新訊息",
+                                     HermesX_zh::GLYPH_WIDTH, compactLayout ? 13 : 15, nullptr);
+    }
+
+    display->setColor(WHITE);
+}
+
 static void drawRecentTextMessagesFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
 {
     (void)state;
@@ -1407,11 +2271,6 @@ static void drawRecentTextMessagesFrame(OLEDDisplay *display, OLEDDisplayUiState
     display->setColor(WHITE);
 
     clampRecentTextMessageIndices();
-    if (!hasRecentTextMessages()) {
-        display->drawString(x, y + FONT_HEIGHT_SMALL + 2, "No messages");
-        return;
-    }
-
     const int16_t width = display->getWidth();
     const int16_t rowH = FONT_HEIGHT_SMALL + 3;
     const int16_t listTop = y + FONT_HEIGHT_SMALL + 2;
@@ -1423,22 +2282,34 @@ static void drawRecentTextMessagesFrame(OLEDDisplay *display, OLEDDisplayUiState
         visibleRows = 3;
     }
 
-    uint8_t startIndex = 0;
-    if (gRecentTextMessageState.selectedIndex >= static_cast<uint8_t>(visibleRows)) {
-        startIndex = gRecentTextMessageState.selectedIndex - static_cast<uint8_t>(visibleRows) + 1;
+    const uint8_t totalRows = getRecentTextMessageListEntryCount();
+    uint8_t startCursor = 0;
+    if (gRecentTextMessageState.listCursor >= static_cast<uint8_t>(visibleRows)) {
+        startCursor = gRecentTextMessageState.listCursor - static_cast<uint8_t>(visibleRows) + 1;
     }
 
     for (int8_t row = 0; row < visibleRows; ++row) {
-        const uint8_t index = startIndex + row;
-        const meshtastic_MeshPacket *packet = getRecentTextMessageAt(index);
-        if (!packet) {
+        const uint8_t cursorIndex = startCursor + row;
+        if (cursorIndex >= totalRows) {
             break;
         }
 
         const int16_t rowY = listTop + row * rowH;
-        const bool selected = (index == gRecentTextMessageState.selectedIndex);
+        const bool selected = (cursorIndex == gRecentTextMessageState.listCursor);
         if (selected) {
             display->drawRect(x, rowY - 1, width - 2, rowH);
+        }
+
+        if (cursorIndex == 0) {
+            graphics::HermesX_zh::drawMixedBounded(*display, x + 2, rowY, width - 4, u8"返回",
+                                                   graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
+            continue;
+        }
+
+        const uint8_t packetIndex = cursorIndex - 1;
+        const meshtastic_MeshPacket *packet = getRecentTextMessageAt(packetIndex);
+        if (!packet) {
+            continue;
         }
 
         meshtastic_NodeInfoLite *node = nodeDB->getMeshNode(getFrom(packet));
@@ -1457,6 +2328,10 @@ static void drawRecentTextMessagesFrame(OLEDDisplay *display, OLEDDisplayUiState
         snprintf(lineBuf, sizeof(lineBuf), "%s: %s", sender, preview);
         const int16_t textWidth = channelX - x - 4;
         display->drawStringMaxWidth(x + 2, rowY, textWidth > 0 ? textWidth : width - 4, lineBuf);
+    }
+
+    if (!hasRecentTextMessages() && visibleRows > 1) {
+        display->drawString(x + 2, listTop + rowH, "No messages");
     }
 }
 
@@ -2112,9 +2987,7 @@ constexpr uint8_t kSetupVisibleRows = 4;
 constexpr size_t kSetupPassMaxLen = 20;
 constexpr uint32_t kSetupNavMinIntervalMs = 80;
 constexpr uint32_t kSetupNavFlipGuardMs = 800;
-constexpr uint8_t kMainActionCols = 4;
-constexpr uint8_t kMainActionRows = 2;
-constexpr uint8_t kMainActionTilesPerPage = kMainActionCols * kMainActionRows;
+constexpr uint8_t kMainActionVisibleSlots = 3;
 constexpr uint8_t kMainActionCount = 9;
 constexpr uint32_t kStealthConfirmArmMs = 3000;
 constexpr uint32_t kStealthWakeMs = 1000;
@@ -2128,6 +3001,8 @@ static const char *kSetupRootItems[] = {u8"返回", u8"EMAC設定", u8"UI設定"
 static const uint8_t kSetupRootCount = sizeof(kSetupRootItems) / sizeof(kSetupRootItems[0]);
 static const char *kSetupEmacItems[] = {u8"返回", u8"設定密碼A", u8"設定密碼B", u8"顯示密碼", u8"EMAC解除"};
 static const uint8_t kSetupEmacCount = sizeof(kSetupEmacItems) / sizeof(kSetupEmacItems[0]);
+static const uint8_t kSetupNodeMenuCount = 5;
+static const uint8_t kSetupPowerMenuCount = 2;
 
 struct SetupRoleOption {
     meshtastic_Config_DeviceConfig_Role role;
@@ -2405,6 +3280,15 @@ static bool hasPersistedStealthStateFile()
 #endif
 }
 
+static void logStealthStateProbe(const char *phase)
+{
+    const bool hasRtcState = isValidStealthRetainedState(gStealthRetainedState);
+    const bool hasFileState = hasPersistedStealthStateFile();
+    LOG_INFO("[HermesX] Stealth probe (%s): runtime=%d rtc=%d file=%d bt_cfg=%d tx_cfg=%d serial_cfg=%d",
+             phase ? phase : "?", gStealthRuntimeState.active, hasRtcState, hasFileState, config.bluetooth.enabled,
+             config.lora.tx_enabled, config.security.serial_enabled);
+}
+
 static bool loadPersistedStealthStateFromFile()
 {
 #ifdef FSCom
@@ -2638,27 +3522,36 @@ static bool recoverLegacyStealthCommsIfNeeded()
         return false;
     }
 
-    // Legacy recovery path:
-    // older Stealth implementations persisted these flags and could leave comms disabled
-    // after unexpected reboot/crash.
-    const bool legacyStealthSignature = !config.lora.tx_enabled && !config.bluetooth.enabled &&
-                                        config.device.led_heartbeat_disabled &&
-                                        config.position.gps_mode == meshtastic_Config_PositionConfig_GpsMode_DISABLED;
-    if (!legacyStealthSignature) {
+    // Recovery path:
+    // If no Stealth state exists anywhere, but communication interfaces were left disabled,
+    // assume an old Stealth flow (or interrupted exit) left config stuck in a silent state.
+    const bool radioBtLocked = !config.lora.tx_enabled && !config.bluetooth.enabled;
+    const bool serialLocked = !config.security.serial_enabled;
+    if (!radioBtLocked && !serialLocked) {
         return false;
     }
 
-    LOG_WARN("Detected legacy Stealth comms lock, restoring tx/bluetooth");
-    config.lora.tx_enabled = true;
-    config.bluetooth.enabled = true;
-    setBluetoothEnable(true);
-    if (rIf) {
-        rIf->enable();
+    bool changed = false;
+    if (radioBtLocked) {
+        LOG_WARN("Detected radio+bluetooth lock without Stealth state, restoring external comms");
+        config.lora.tx_enabled = true;
+        config.bluetooth.enabled = true;
+        changed = true;
+        if (rIf) {
+            rIf->enable();
+        }
+        setBluetoothEnable(true);
     }
-    if (nodeDB) {
+    if (serialLocked) {
+        LOG_WARN("Detected serial API lock without Stealth state, restoring serial");
+        config.security.serial_enabled = true;
+        changed = true;
+    }
+
+    if (changed && nodeDB) {
         nodeDB->saveToDisk(SEGMENT_CONFIG);
     }
-    return true;
+    return changed;
 }
 
 static bool enableTakMode()
@@ -3393,26 +4286,17 @@ void Screen::drawHermesXShareChannelFrame(OLEDDisplay *display, OLEDDisplayUiSta
 
 void Screen::drawHermesXMain(OLEDDisplay *display, OLEDDisplayUiState * /*state*/, int16_t x, int16_t y)
 {
+    (void)x;
+    (void)y;
     const int16_t width = display->getWidth();
     const int16_t height = display->getHeight();
-    const bool hasBattery = powerStatus && powerStatus->getHasBattery();
+    const int16_t originX = 0;
+    const int16_t originY = 0;
+    bool hasBattery = false;
     int batteryVoltageMv = 0;
     uint8_t batteryPercent = 0;
-    if (hasBattery) {
-        batteryVoltageMv = powerStatus->getBatteryVoltageMv();
-        batteryPercent = estimateBatteryPercentFromVoltageMv(batteryVoltageMv);
-    }
-    int16_t batteryPaneW = 0;
-    if (hasBattery) {
-        batteryPaneW = width - HERMESX_WORD_WIDTH - 8;
-        if (batteryPaneW > 50) {
-            batteryPaneW = 50;
-        }
-        if (batteryPaneW < 28) {
-            batteryPaneW = 0;
-        }
-    }
-
+    getHermesXHomeBatteryState(hasBattery, batteryVoltageMv, batteryPercent);
+    (void)batteryVoltageMv;
 #if defined(USE_EINK)
     display->setColor(EINK_WHITE);
 #else
@@ -3425,48 +4309,149 @@ void Screen::drawHermesXMain(OLEDDisplay *display, OLEDDisplayUiState * /*state*
     display->setColor(OLEDDISPLAY_COLOR::WHITE);
 #endif
 
-    const int16_t logoAreaX = x;
-    const int16_t logoAreaW = width - batteryPaneW;
-    const int16_t logoX = logoAreaX + (logoAreaW - HERMESX_WORD_WIDTH) / 2;
-    const int16_t logoY = y + (height - HERMESX_WORD_HEIGHT) / 2;
-    display->drawXbm(logoX, logoY, HERMESX_WORD_WIDTH, HERMESX_WORD_HEIGHT, hermesx_word_bits);
+    const bool compactLayout = (width < 200 || height < 120);
+    const int16_t contentX = originX + (compactLayout ? 4 : 8);
+    const int16_t contentW = width - 8;
+    auto drawHomeLine = [&](int16_t dx, int16_t dy, const char *text) {
+        const int16_t maxW = (contentW > 0) ? contentW : (width - 4);
+        display->drawStringMaxWidth(dx, dy, maxW, text);
+    };
+    auto drawHomeBoldLine = [&](int16_t dx, int16_t dy, const char *text) {
+        const int16_t maxW = (contentW > 0) ? contentW : (width - 4);
+        display->drawStringMaxWidth(dx, dy, maxW, text);
+        display->drawStringMaxWidth(dx + 1, dy, maxW > 1 ? (maxW - 1) : maxW, text);
+    };
 
-    if (batteryPaneW > 0) {
-        const int16_t paneX = x + width - batteryPaneW;
-        int16_t iconW = batteryPaneW - 12;
-        int16_t iconH = height - FONT_HEIGHT_SMALL - 14;
-        if (iconW > 28) {
-            iconW = 28;
-        }
-        if (iconW < 18) {
-            iconW = 18;
-        }
-        if (iconH > 56) {
-            iconH = 56;
-        }
-        if (iconH < 28) {
-            iconH = 28;
-        }
-        const int16_t iconX = paneX + (batteryPaneW - iconW) / 2;
-        const int16_t iconY = y + ((height - FONT_HEIGHT_SMALL - 4) - iconH) / 2;
-        drawHermesXBatteryIcon(display, iconX, iconY, iconW, iconH, batteryPercent);
+    char timeBuf[16];
+    char dateBuf[24];
+    formatHermesXHomeTimeDate(timeBuf, sizeof(timeBuf), dateBuf, sizeof(dateBuf));
 
-        char batteryInfo[20];
-        const int batV = batteryVoltageMv / 1000;
-        const int batCv = (batteryVoltageMv % 1000) / 10;
-        snprintf(batteryInfo, sizeof(batteryInfo), "%u%% %d.%02dV", batteryPercent, batV, batCv);
-        display->setFont(FONT_SMALL_LOCAL);
-        display->setTextAlignment(TEXT_ALIGN_LEFT);
-        display->drawString(x + 2, y + height - FONT_HEIGHT_SMALL - 2, batteryInfo);
+    const char *roleLabel = getSetupRoleLabel(config.device.role);
+    char roleUpper[24];
+    size_t rp = 0;
+    for (; roleLabel[rp] != '\0' && rp < (sizeof(roleUpper) - 1); ++rp) {
+        char c = roleLabel[rp];
+        if (c >= 'a' && c <= 'z') {
+            c = static_cast<char>(c - ('a' - 'A'));
+        }
+        roleUpper[rp] = c;
+    }
+    roleUpper[rp] = '\0';
+
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+
+    const int16_t timeY = originY + (compactLayout ? 11 : 14);
+    const int16_t customTimeMaxW = measurePattanakarnClockText("88:88:88");
+    const bool useCustomTimeFont = (contentW > 0) && (customTimeMaxW > 0) && (customTimeMaxW <= contentW);
+    const bool useDirectTftClock = canUseDirectHermesXHomeClock(display);
+    const uint16_t neonGlowOuterFg = TFTDisplay::rgb565(0x1A, 0x3F, 0xD6);
+    const uint16_t neonGlowInnerFg = TFTDisplay::rgb565(0x4C, 0xD9, 0xFF);
+    const uint16_t neonCoreFg = TFTDisplay::rgb565(0xFE, 0xFF, 0xFF);
+    if (useDirectTftClock) {
+        // TFT home clock is rendered after ui->update() via direct color drawing.
+    } else if (useCustomTimeFont) {
+        const int16_t currentTimeW = measurePattanakarnClockText(timeBuf);
+        const int16_t timeFrameX = originX + ((width - customTimeMaxW) / 2);
+        const int16_t drawX = timeFrameX + ((customTimeMaxW - currentTimeW) / 2);
+        const int16_t coreX = drawX;
+        const int16_t coreY = timeY;
+        const int16_t coreW = currentTimeW;
+        const int16_t coreH = PattanakarnClock32::kGlyphHeight;
+        addTftColorZone(display, timeFrameX - 3, timeY - 3, customTimeMaxW + 6, PattanakarnClock32::kGlyphHeight + 6, neonGlowOuterFg,
+                        0x0000);
+        addTftColorZone(display, drawX - 2, timeY - 2, currentTimeW + 4, PattanakarnClock32::kGlyphHeight + 4, neonGlowInnerFg,
+                        0x0000);
+        addTftColorZone(display, drawX, timeY, currentTimeW, PattanakarnClock32::kGlyphHeight, neonCoreFg, 0x0000);
+        drawPattanakarnClockTextOutsideRect(display, drawX + 2, timeY, timeBuf, coreX, coreY, coreW, coreH);
+        drawPattanakarnClockTextOutsideRect(display, drawX - 2, timeY, timeBuf, coreX, coreY, coreW, coreH);
+        drawPattanakarnClockTextOutsideRect(display, drawX, timeY + 2, timeBuf, coreX, coreY, coreW, coreH);
+        drawPattanakarnClockTextOutsideRect(display, drawX, timeY - 2, timeBuf, coreX, coreY, coreW, coreH);
+        drawPattanakarnClockTextOutsideRect(display, drawX + 1, timeY, timeBuf, coreX, coreY, coreW, coreH);
+        drawPattanakarnClockTextOutsideRect(display, drawX - 1, timeY, timeBuf, coreX, coreY, coreW, coreH);
+        drawPattanakarnClockTextOutsideRect(display, drawX, timeY + 1, timeBuf, coreX, coreY, coreW, coreH);
+        drawPattanakarnClockTextOutsideRect(display, drawX, timeY - 1, timeBuf, coreX, coreY, coreW, coreH);
+        drawPattanakarnClockText(display, drawX, timeY, timeBuf);
+    } else {
+        display->setFont(FONT_LARGE);
+        if (display->getStringWidth(timeBuf) > (width - 4)) {
+            display->setFont(FONT_MEDIUM);
+        }
+        const int16_t timeMaxWidth = display->getStringWidth("88:88:88");
+        const int16_t timeWidth = display->getStringWidth(timeBuf);
+        const int16_t timeFrameX = ((width - timeMaxWidth) / 2) > 2 ? ((width - timeMaxWidth) / 2) : 2;
+        const int16_t drawX = timeFrameX + ((timeMaxWidth - timeWidth) / 2);
+        addTftColorZone(display, timeFrameX - 3, timeY - 3, timeMaxWidth + 6, FONT_HEIGHT_LARGE + 6, neonGlowOuterFg, 0x0000);
+        addTftColorZone(display, drawX - 2, timeY - 2, timeWidth + 4, FONT_HEIGHT_LARGE + 4, neonGlowInnerFg, 0x0000);
+        addTftColorZone(display, drawX, timeY, timeWidth, FONT_HEIGHT_LARGE, neonCoreFg, 0x0000);
+        drawHomeLine(drawX + 2, timeY, timeBuf);
+        drawHomeLine(drawX - 2, timeY, timeBuf);
+        drawHomeLine(drawX, timeY + 2, timeBuf);
+        drawHomeLine(drawX, timeY - 2, timeBuf);
+        drawHomeLine(drawX + 1, timeY, timeBuf);
+        drawHomeLine(drawX - 1, timeY, timeBuf);
+        drawHomeLine(drawX, timeY + 1, timeBuf);
+        drawHomeLine(drawX, timeY - 1, timeBuf);
+        drawHomeLine(drawX, timeY, timeBuf);
     }
 
-    const char *kHermesXBuildTag = "HXB_0.2.9";
     display->setFont(FONT_SMALL);
+    const int16_t dateY = originY + (compactLayout ? 49 : 62);
+    drawHomeBoldLine(contentX, dateY, dateBuf);
+
+    display->setFont(compactLayout ? FONT_SMALL : FONT_MEDIUM);
+    if (display->getStringWidth(roleUpper) > (width / 2)) {
+        display->setFont(FONT_SMALL);
+    }
+    const int16_t roleY = originY + (compactLayout ? 62 : (height - FONT_HEIGHT_MEDIUM));
+    drawHomeBoldLine(contentX, roleY, roleUpper);
+
+    if (hasBattery) {
+        int16_t iconW = compactLayout ? 34 : 48;
+        int16_t iconH = compactLayout ? 16 : 20;
+        const int16_t iconX = originX + ((width - iconW) / 2) - (compactLayout ? 6 : 12);
+        const int16_t iconY = originY + height - iconH - (compactLayout ? 3 : 6);
+        drawHermesXBatteryIconHorizontal(display, iconX, iconY, iconW, iconH, batteryPercent);
+    }
+
+    uint32_t satCount = 0;
+    if (gpsStatus && gpsStatus->getIsConnected()) {
+        satCount = gpsStatus->getNumSatellites();
+    }
+    if (satCount > 99) {
+        satCount = 99;
+    }
+    const bool hasSatFix = satCount > 0;
+
+    const int16_t decoCx = width + (compactLayout ? 24 : 28);
+    const int16_t decoCy = height + (compactLayout ? 18 : 20);
+    display->drawCircle(decoCx, decoCy, compactLayout ? 46 : 60);
+    display->drawCircle(decoCx, decoCy, compactLayout ? 32 : 42);
+    display->drawLine(width - (compactLayout ? 50 : 62), height - 1, width - (compactLayout ? 20 : 28),
+                      height - (compactLayout ? 28 : 36));
+    display->drawLine(width - (compactLayout ? 22 : 30), height - (compactLayout ? 27 : 35), width - (compactLayout ? 6 : 8),
+                      height - (compactLayout ? 36 : 46));
+    display->drawLine(width - (compactLayout ? 22 : 30), height - (compactLayout ? 27 : 35), width - (compactLayout ? 36 : 48),
+                      height - (compactLayout ? 40 : 52));
+
+    const int16_t badgeW = compactLayout ? 24 : 32;
+    const int16_t badgeH = compactLayout ? 18 : 24;
+    const int16_t badgeX = width - badgeW - (compactLayout ? 12 : 18);
+    const int16_t badgeY = height - badgeH - (compactLayout ? 10 : 16);
+    addTftColorZone(display, badgeX, badgeY, badgeW, badgeH,
+                    hasSatFix ? TFTDisplay::rgb565(0xB5, 0xED, 0x00) : TFTDisplay::rgb565(0xD9, 0x2D, 0x20), 0x0000);
+    display->setColor(BLACK);
+    display->fillRect(badgeX - 1, badgeY - 1, badgeW + 2, badgeH + 2);
+    display->setColor(WHITE);
+    display->fillRect(badgeX, badgeY, badgeW, badgeH);
+    display->setColor(BLACK);
+    display->setFont(compactLayout ? FONT_SMALL : FONT_MEDIUM);
+    char satBuf[4];
+    snprintf(satBuf, sizeof(satBuf), "%" PRIu32, satCount);
+    display->setTextAlignment(TEXT_ALIGN_CENTER);
+    const int16_t satTextY = badgeY + (compactLayout ? 1 : 2);
+    display->drawString(badgeX + badgeW / 2, satTextY, satBuf);
     display->setTextAlignment(TEXT_ALIGN_LEFT);
-    const int16_t tagWidth = display->getStringWidth(kHermesXBuildTag);
-    const int16_t tagX = x + width - tagWidth - 2;
-    const int16_t tagY = y + height - FONT_HEIGHT_SMALL - 2;
-    display->drawString(tagX, tagY, kHermesXBuildTag);
+    display->setColor(WHITE);
 }
 
 void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*state*/, int16_t /*x*/, int16_t /*y*/)
@@ -3509,35 +4494,12 @@ void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*stat
             u8"潛行", u8"照明", "GPS", "TAK", u8"休眠", "Home", u8"頻道", u8"設定", "MSG",
         };
         const bool compactLayout = (width < 180 || height < 100);
-        const char *const *tileLabels = compactLayout ? kTileLabelCompact : kTileLabelExact;
         bool tileHasState[kMainActionCount] = {true, true, true, true, false, false, false, false, false};
         bool tileState[kMainActionCount] = {stealthOn, lampOn, gpsOn, takOn, false, false, false, false, false};
         tileHasState[8] = hasRecentMessages;
         tileState[8] = recentUnread;
 
-        const int16_t cols = kMainActionCols;
-        const int16_t rows = kMainActionRows;
-        const int16_t cellW = width / cols;
-        const int16_t cellH = height / rows;
         const int16_t labelLineH = compactLayout ? FONT_HEIGHT_SMALL : (FONT_HEIGHT_SMALL + 2);
-        const int pageCount = (kMainActionCount + kMainActionTilesPerPage - 1) / kMainActionTilesPerPage;
-        int currentPage = hermesActionSelected / static_cast<int>(kMainActionTilesPerPage);
-        if (currentPage < 0) {
-            currentPage = 0;
-        } else if (currentPage >= pageCount) {
-            currentPage = pageCount - 1;
-        }
-        const int pageStart = currentPage * static_cast<int>(kMainActionTilesPerPage);
-
-        display->drawRect(0, 0, width, height);
-        for (int c = 1; c < cols; ++c) {
-            const int16_t xLine = c * cellW;
-            display->drawLine(xLine, 0, xLine, height - 1);
-        }
-        for (int r = 1; r < rows; ++r) {
-            const int16_t yLine = r * cellH;
-            display->drawLine(0, yLine, width - 1, yLine);
-        }
 
 #if defined(USE_EINK)
         const auto tileBgColor = EINK_WHITE;
@@ -3975,22 +4937,8 @@ void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*stat
             }
         };
 
-        for (int slot = 0; slot < kMainActionTilesPerPage; ++slot) {
-            const int actionIndex = pageStart + slot;
-            const int16_t col = slot % cols;
-            const int16_t row = slot / cols;
-            const int16_t tx = col * cellW;
-            const int16_t ty = row * cellH;
-            const int16_t tw = (col == cols - 1) ? (width - tx) : cellW;
-            const int16_t th = (row == rows - 1) ? (height - ty) : cellH;
-            if (actionIndex >= kMainActionCount) {
-                continue;
-            }
-            const bool selected = (hermesActionSelected == actionIndex);
-
-            drawActionGlyph(actionIndex, tx, ty, tw, th, selected);
-
-            const char *label = tileLabels[actionIndex];
+        auto drawActionLabel = [&](int index, int16_t tx, int16_t ty, int16_t tw, int16_t th, bool selected,
+                                   const char *label) {
             const int labelW = graphics::HermesX_zh::stringAdvance(label, graphics::HermesX_zh::GLYPH_WIDTH, display);
             const int16_t labelY = ty + th - labelLineH - (compactLayout ? 3 : 8);
             int16_t labelX = tx + (tw - labelW) / 2;
@@ -4011,16 +4959,103 @@ void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*stat
 
             graphics::HermesX_zh::drawMixedBounded(*display, labelX, labelY, tx + tw - labelX - 2, label,
                                                    graphics::HermesX_zh::GLYPH_WIDTH, labelLineH, nullptr);
+
+            if (!compactLayout || !tileHasState[index] || !tileState[index]) {
+                return;
+            }
+
+            const int16_t dotX = tx + tw - (selected ? 9 : 6);
+            const int16_t dotY = ty + (selected ? 8 : 6);
+            if (selected) {
+                display->drawCircle(dotX, dotY, 3);
+                display->fillCircle(dotX, dotY, 2);
+            } else {
+                display->fillCircle(dotX, dotY, 2);
+            }
+        };
+
+        auto wrapActionIndex = [&](int index) -> int {
+            while (index < 0) {
+                index += kMainActionCount;
+            }
+            return index % kMainActionCount;
+        };
+
+        const int actionSlots[kMainActionVisibleSlots] = {
+            wrapActionIndex(hermesActionSelected - 1),
+            hermesActionSelected,
+            wrapActionIndex(hermesActionSelected + 1),
+        };
+
+        const int16_t outerPad = compactLayout ? 2 : 6;
+        const int16_t gap = compactLayout ? 2 : 6;
+        const int16_t minSideW = compactLayout ? 26 : 44;
+        const int16_t maxSideW = compactLayout ? 34 : 60;
+        const int16_t minCenterW = compactLayout ? 68 : 96;
+        int16_t sideW = compactLayout ? (width / 6 + 6) : (width / 5);
+        if (sideW < minSideW) {
+            sideW = minSideW;
+        }
+        if (sideW > maxSideW) {
+            sideW = maxSideW;
         }
 
-        if (pageCount > 1) {
-            char pageBuf[8];
-            snprintf(pageBuf, sizeof(pageBuf), "%d/%d", currentPage + 1, pageCount);
-            const int pageW = display->getStringWidth(pageBuf);
-            display->setFont(FONT_SMALL);
-            display->setTextAlignment(TEXT_ALIGN_LEFT);
-            display->drawString(width - pageW - 2, 1, pageBuf);
+        int16_t centerW = width - (outerPad * 2) - (sideW * 2) - (gap * 2);
+        if (centerW < minCenterW) {
+            sideW = (width - (outerPad * 2) - (gap * 2) - minCenterW) / 2;
+            if (sideW < minSideW) {
+                sideW = minSideW;
+            }
+            centerW = width - (outerPad * 2) - (sideW * 2) - (gap * 2);
         }
+        if (centerW < 40) {
+            centerW = 40;
+        }
+
+        int16_t sideH = height - (compactLayout ? 18 : 20);
+        int16_t centerH = height - (compactLayout ? 4 : 8);
+        if (sideH < 40) {
+            sideH = height - 8;
+        }
+        if (centerH < 48) {
+            centerH = height - 4;
+        }
+
+        const int16_t sideY = (height - sideH) / 2;
+        const int16_t centerY = (height - centerH) / 2;
+        const int16_t centerX = (width - centerW) / 2;
+        int16_t sideDrawW = ((width - centerW) / 2) - gap - outerPad;
+        if (sideDrawW > sideW) {
+            sideDrawW = sideW;
+        }
+        if (sideDrawW < 16) {
+            sideDrawW = 16;
+        }
+        const int16_t leftCardX = centerX - gap - sideDrawW;
+        const int16_t rightCardX = centerX + centerW + gap;
+
+        display->drawRect(centerX, centerY, centerW, centerH);
+        if (!compactLayout && centerW > 8 && centerH > 8) {
+            display->drawRect(centerX + 1, centerY + 1, centerW - 2, centerH - 2);
+        }
+        display->drawRect(leftCardX, sideY, sideDrawW, sideH);
+        display->drawRect(rightCardX, sideY, sideDrawW, sideH);
+
+        drawActionGlyph(actionSlots[0], leftCardX, sideY, sideDrawW, sideH, false);
+        drawActionLabel(actionSlots[0], leftCardX, sideY, sideDrawW, sideH, false, kTileLabelCompact[actionSlots[0]]);
+
+        drawActionGlyph(actionSlots[1], centerX, centerY, centerW, centerH, true);
+        drawActionLabel(actionSlots[1], centerX, centerY, centerW, centerH, true, kTileLabelExact[actionSlots[1]]);
+
+        drawActionGlyph(actionSlots[2], rightCardX, sideY, sideDrawW, sideH, false);
+        drawActionLabel(actionSlots[2], rightCardX, sideY, sideDrawW, sideH, false, kTileLabelCompact[actionSlots[2]]);
+
+        const int16_t midY = height / 2;
+        const int16_t arrowInset = compactLayout ? 3 : 6;
+        display->drawLine(centerX - gap + 1, midY, centerX - arrowInset, midY - 4);
+        display->drawLine(centerX - gap + 1, midY, centerX - arrowInset, midY + 4);
+        display->drawLine(centerX + centerW + gap - 1, midY, centerX + centerW + arrowInset - gap, midY - 4);
+        display->drawLine(centerX + centerW + gap - 1, midY, centerX + centerW + arrowInset - gap, midY + 4);
         return;
     }
 
@@ -4532,9 +5567,28 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
     }
 
     if (hermesSetupPage == HermesFastSetupPage::NodeMenu) {
-        applyPaletteList(3);
-        const char *items[] = {u8"返回", "Role", u8"GPS"};
-        drawSetupList(display, width, height, u8"節點設定", items, 3, hermesSetupSelected, hermesSetupOffset);
+        applyPaletteList(kSetupNodeMenuCount);
+        String btLine = String(u8"藍牙: ") + (config.bluetooth.enabled ? u8"開" : u8"關");
+        const char *items[] = {u8"返回", "Role", u8"GPS", btLine.c_str(), u8"電源管理"};
+        drawSetupList(display, width, height, u8"節點設定", items, kSetupNodeMenuCount, hermesSetupSelected, hermesSetupOffset);
+        if (hermesSetupToastUntilMs != 0) {
+            if (millis() > hermesSetupToastUntilMs) {
+                hermesSetupToastUntilMs = 0;
+                hermesSetupToast = "";
+            } else if (hermesSetupToast.length() > 0) {
+                graphics::HermesX_zh::drawMixedBounded(*display, 2, height - FONT_HEIGHT_SMALL, width - 4,
+                                                       hermesSetupToast.c_str(), graphics::HermesX_zh::GLYPH_WIDTH,
+                                                       FONT_HEIGHT_SMALL, nullptr);
+            }
+        }
+        return;
+    }
+
+    if (hermesSetupPage == HermesFastSetupPage::PowerMenu) {
+        applyPaletteList(kSetupPowerMenuCount);
+        String guardLine = String(u8"過放保護: ") + (HermesXBatteryProtection::isEnabled() ? u8"開" : u8"關");
+        const char *items[] = {u8"返回", guardLine.c_str()};
+        drawSetupList(display, width, height, u8"電源管理", items, kSetupPowerMenuCount, hermesSetupSelected, hermesSetupOffset);
         if (hermesSetupToastUntilMs != 0) {
             if (millis() > hermesSetupToastUntilMs) {
                 hermesSetupToastUntilMs = 0;
@@ -4898,6 +5952,7 @@ void Screen::handleSetOn(bool on, FrameCallback einkScreensaver)
             // 重新開啟後強制更新畫面，避免黑屏
             forceDisplay(true);
         } else {
+            dismissIncomingTextPopup();
             powerMon->clearState(meshtastic_PowerMon_State_Screen_On);
 #ifdef USE_EINK
             // eInkScreensaver parameter is usually NULL (default argument), default frame used instead
@@ -5459,8 +6514,10 @@ int32_t Screen::runOnce()
     const bool deferNormalFrames = gatePending || (nodeDB == nullptr) || hermesXBootHoldActive;
 
     if (!stealthRestoreChecked && !deferNormalFrames) {
+        logStealthStateProbe("pre-check");
         restoreStealthModeAfterBoot();
         recoverLegacyStealthCommsIfNeeded();
+        logStealthStateProbe("post-check");
         stealthRestoreChecked = true;
     }
 
@@ -5584,6 +6641,18 @@ int32_t Screen::runOnce()
         setFrames(FOCUS_PRESERVE);
     }
 
+    if (gIncomingTextPopupState.pending && screenOn) {
+        gIncomingTextPopupState.pending = false;
+        gIncomingTextPopupState.visible = true;
+        gIncomingTextPopupState.untilMs = millis() + kIncomingTextPopupMs;
+        fastUntilMs = gIncomingTextPopupState.untilMs + 50;
+        setFastFramerate();
+    } else if (gIncomingTextPopupState.visible && gIncomingTextPopupState.untilMs != 0 &&
+               millis() >= gIncomingTextPopupState.untilMs) {
+        dismissIncomingTextPopup();
+        setFastFramerate();
+    }
+
     if (!screenOn) { // If we didn't just wake and the screen is still off, then
                      // stop updating until it is on again
         enabled = false;
@@ -5597,8 +6666,16 @@ int32_t Screen::runOnce()
         hermesXBootHoldBootScreenAtMs = millis();
     }
 
+    bool skipUiUpdate = false;
+
 #if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
     defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
+    bool renderDirectHomeClock = false;
+    bool forceDirectHomeClockRedraw = false;
+    char directHomeTimeBuf[16];
+    directHomeTimeBuf[0] = '\0';
+    const uint64_t uiLastUpdateBefore = ui->getUiState()->lastUpdate;
+
     if (isHermesFastSetupActive()) {
         hermesFastSetupTftPaletteActive = true;
     } else if (hermesFastSetupTftPaletteActive) {
@@ -5610,15 +6687,121 @@ int32_t Screen::runOnce()
     const uint16_t normalFg = TFTDisplay::rgb565(0xFF, 0xFF, 0xFF);
     const uint16_t normalBg = TFTDisplay::rgb565(0x00, 0x00, 0x00);
     const uint16_t stealthFg = TFTDisplay::rgb565(0xFF, 0x20, 0x20);
-    tft->setColorPaletteDefaults(isStealthModeActive() ? stealthFg : normalFg, normalBg);
-    if (isStealthModeActive()) {
+    const bool onFixedMainFrame = showingNormalScreen && ui->getUiState()->frameState == FIXED &&
+                                  framesetInfo.positions.main < framesetInfo.frameCount &&
+                                  ui->getUiState()->currentFrame == framesetInfo.positions.main;
+    if (onFixedMainFrame && canUseDirectHermesXHomeClock(dispdev)) {
+        renderDirectHomeClock = true;
+        const bool enteringDirectHomeClock = !gDirectHomeClockWasVisible;
+
+        char homeDateBuf[24];
+        homeDateBuf[0] = '\0';
+        formatHermesXHomeTimeDate(directHomeTimeBuf, sizeof(directHomeTimeBuf), homeDateBuf, sizeof(homeDateBuf));
+
+        bool hasBattery = false;
+        int batteryVoltageMv = 0;
+        uint8_t batteryPercent = 0;
+        getHermesXHomeBatteryState(hasBattery, batteryVoltageMv, batteryPercent);
+        (void)batteryVoltageMv;
+
+        uint8_t satCount = 0;
+        if (gpsStatus && gpsStatus->getIsConnected()) {
+            satCount = static_cast<uint8_t>(std::min<uint32_t>(99, gpsStatus->getNumSatellites()));
+        }
+
+        const bool stealth = isStealthModeActive();
+        const uint32_t nowMs = millis();
+        const bool telemetryChanged = !gHermesXDirectHomeUiCache.valid || gHermesXDirectHomeUiCache.hasBattery != hasBattery ||
+                                      gHermesXDirectHomeUiCache.batteryPercent != batteryPercent ||
+                                      gHermesXDirectHomeUiCache.satCount != satCount;
+        const bool telemetryRefreshDue =
+            (gDirectHomeLastBaseRefreshMs == 0) || (nowMs - gDirectHomeLastBaseRefreshMs >= kDirectHomeBaseRefreshMinMs);
+        const bool telemetryDirty = telemetryChanged && (!gDirectHomeBasePainted || telemetryRefreshDue);
+        const bool baseDirty = enteringDirectHomeClock || !gHermesXDirectHomeUiCache.valid ||
+                               gHermesXDirectHomeUiCache.stealth != stealth ||
+                               gHermesXDirectHomeUiCache.role != config.device.role ||
+                               strcmp(gHermesXDirectHomeUiCache.date, homeDateBuf) != 0 || telemetryDirty;
+
+        if (targetFramerate < DIRECT_HOME_CLOCK_FRAMERATE) {
+            targetFramerate = DIRECT_HOME_CLOCK_FRAMERATE;
+            ui->setTargetFPS(targetFramerate);
+        }
+
+        if (enteringDirectHomeClock) {
+            // First frame when returning to Home must force a full UI-backed repaint, otherwise direct TFT clock can
+            // sit on top of stale pixels from previous frame buffers.
+            gHermesXDirectHomeUiCache.valid = false;
+            gHermesXDirectHomeUiCache.lastTimeValid = false;
+            gDirectHomeBasePainted = false;
+            forceDirectHomeClockRedraw = true;
+            skipUiUpdate = false;
+            ui->init();
+            tft->fillRect565(0, 0, dispdev->getWidth(), dispdev->getHeight(), normalBg);
+            clearDirectNeonClockRegion(tft, dispdev->getWidth(), 0);
+            tft->markColorPaletteDirty();
+        }
+
+        const bool canSkipUi = gDirectHomeBasePainted && !baseDirty && !gIncomingTextPopupState.pending && !gIncomingTextPopupState.visible;
+        if (canSkipUi) {
+            skipUiUpdate = true;
+        } else {
+            gHermesXDirectHomeUiCache.valid = true;
+            gHermesXDirectHomeUiCache.stealth = stealth;
+            gHermesXDirectHomeUiCache.hasBattery = hasBattery;
+            gHermesXDirectHomeUiCache.batteryPercent = batteryPercent;
+            gHermesXDirectHomeUiCache.satCount = satCount;
+            gHermesXDirectHomeUiCache.role = config.device.role;
+            strlcpy(gHermesXDirectHomeUiCache.date, homeDateBuf, sizeof(gHermesXDirectHomeUiCache.date));
+            gDirectHomeLastBaseRefreshMs = nowMs;
+            forceDirectHomeClockRedraw = true;
+        }
+    } else {
+        gHermesXDirectHomeUiCache.valid = false;
+        gHermesXDirectHomeUiCache.lastTimeValid = false;
+        gDirectHomeBasePainted = false;
+        gDirectHomeLastBaseRefreshMs = 0;
+    }
+
+    const bool leftDirectHomeClock = gDirectHomeClockWasVisible && !renderDirectHomeClock;
+    if (leftDirectHomeClock) {
+        skipUiUpdate = false;
+        clearDirectNeonClockRegion(tft, dispdev->getWidth(), 0);
+        gDirectHomeBasePainted = false;
+        gDirectHomeLastBaseRefreshMs = 0;
         tft->clearColorPaletteZones();
+        tft->setColorPaletteDefaults(isStealthModeActive() ? stealthFg : normalFg, normalBg);
+        ui->init();
+        // Direct TFT clock bypasses the OLED diff buffers; force one full TFT repaint after leaving Home.
+        tft->markColorPaletteDirty();
+    }
+
+    if (!skipUiUpdate) {
+        tft->clearColorPaletteZones();
+        tft->setColorPaletteDefaults(isStealthModeActive() ? stealthFg : normalFg, normalBg);
     }
 #endif
 
     // this must be before the frameState == FIXED check, because we always
     // want to draw at least one FIXED frame before doing forceDisplay
-    ui->update();
+    if (!skipUiUpdate) {
+        ui->update();
+    }
+
+#if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
+    defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
+    if (renderDirectHomeClock && !skipUiUpdate && ui->getUiState()->lastUpdate != uiLastUpdateBefore) {
+        gDirectHomeBasePainted = true;
+    }
+    if (renderDirectHomeClock) {
+        if (forceDirectHomeClockRedraw || !gHermesXDirectHomeUiCache.lastTimeValid ||
+            strcmp(gHermesXDirectHomeUiCache.lastTime, directHomeTimeBuf) != 0) {
+            renderDirectNeonClock(tft, dispdev->getWidth(), 0, directHomeTimeBuf, forceDirectHomeClockRedraw);
+            strlcpy(gHermesXDirectHomeUiCache.lastTime, directHomeTimeBuf, sizeof(gHermesXDirectHomeUiCache.lastTime));
+            gHermesXDirectHomeUiCache.lastTimeValid = true;
+        }
+    }
+    gDirectHomeClockWasVisible = renderDirectHomeClock;
+#endif
 
     if (showingNormalScreen && hasUnreadTextMessage && hasRecentTextMessages()) {
         const uint8_t currentFrame = ui->getUiState()->currentFrame;
@@ -5632,7 +6815,8 @@ int32_t Screen::runOnce()
     // Switch to a low framerate (to save CPU) when we are not in transition
     // but we should only call setTargetFPS when framestate changes, because
     // otherwise that breaks animations.
-    if (targetFramerate != IDLE_FRAMERATE && ui->getUiState()->frameState == FIXED && !hermesXBootHoldActive) {
+    if (targetFramerate != IDLE_FRAMERATE && ui->getUiState()->frameState == FIXED && !hermesXBootHoldActive &&
+        !gDirectHomeClockWasVisible) {
         if (isHermesFastSetupActive() || (hermesXEmUiModule && hermesXEmUiModule->isActive())) {
             // Keep UI responsive while interacting with HermesX screens.
             fastUntilMs = millis() + 1200;
@@ -5950,10 +7134,15 @@ void Screen::setFrames(FrameFocus focus)
     LOG_DEBUG("Finished build frames. numframes: %d", numframes);
 
     ui->setFrames(normalFrames, numframes);
-    ui->enableAllIndicators();
+    ui->disableAllIndicators();
 
     // Add function overlay here. This can show when notifications muted, modifier key is active etc
-    static OverlayCallback functionOverlay[] = {drawHermesXEmUiOverlay, drawHermesXMenuFooterOverlay, drawFunctionOverlay};
+    static OverlayCallback functionOverlay[] = {
+        drawHermesXEmUiOverlay,
+        drawHermesXMenuFooterOverlay,
+        drawFunctionOverlay,
+        drawIncomingTextPopupOverlay,
+    };
     static const int functionOverlayCount = sizeof(functionOverlay) / sizeof(functionOverlay[0]);
     ui->setOverlays(functionOverlay, functionOverlayCount);
     syncTextMessageNotification();
@@ -5979,6 +7168,9 @@ void Screen::setFrames(FrameFocus focus)
     case FOCUS_MODULE:
         // Whichever frame was marked by MeshModule::requestFocus(), if any
         // If no module requested focus, will show the first frame instead
+        LOG_INFO("[Screen] setFrames focus=module target=%u textList=%u frameCount=%u",
+                 static_cast<unsigned>(fsi.positions.focusedModule), static_cast<unsigned>(fsi.positions.textMessageList),
+                 static_cast<unsigned>(fsi.frameCount));
         ui->switchToFrame(fsi.positions.focusedModule);
         break;
 
@@ -6656,6 +7848,9 @@ int Screen::handleTextMessage(const meshtastic_MeshPacket *packet)
 {
     if (packet && shouldDrawMessage(packet)) {
         storeRecentTextMessage(*packet);
+        if (packet->from != 0 && config.display.screen_on_secs != 0 && !screenOn && !isStealthModeActive()) {
+            armIncomingTextPopup(*packet);
+        }
     }
 
     if (showingNormalScreen) {
@@ -6681,6 +7876,10 @@ int Screen::handleTextMessage(const meshtastic_MeshPacket *packet)
 int Screen::handleUIFrameEvent(const UIFrameEvent *event)
 {
     if (showingNormalScreen) {
+        const uint8_t beforeFrame = (ui && ui->getUiState()) ? ui->getUiState()->currentFrame : 0xFF;
+        LOG_INFO("[Screen] UIFrameEvent action=%u before=%u", static_cast<unsigned>(event->action),
+                 static_cast<unsigned>(beforeFrame));
+
         // Regenerate the frameset, potentially honoring a module's internal requestFocus() call
         if (event->action == UIFrameEvent::Action::REGENERATE_FRAMESET)
             setFrames(FOCUS_MODULE);
@@ -6692,6 +7891,10 @@ int Screen::handleUIFrameEvent(const UIFrameEvent *event)
         // Don't regenerate the frameset, just re-draw whatever is on screen ASAP
         else if (event->action == UIFrameEvent::Action::REDRAW_ONLY)
             setFastFramerate();
+
+        const uint8_t afterFrame = (ui && ui->getUiState()) ? ui->getUiState()->currentFrame : 0xFF;
+        LOG_INFO("[Screen] UIFrameEvent done action=%u after=%u", static_cast<unsigned>(event->action),
+                 static_cast<unsigned>(afterFrame));
     }
 
     return 0;
@@ -6740,9 +7943,9 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
             }
         }
     } else {
-        if (isUp || isLeft || isCcw) {
+        if (isLeft || isCcw) {
             navDir = -1;
-        } else if (isDown || isRight || isCw) {
+        } else if (isRight || isCw) {
             navDir = 1;
         }
     }
@@ -6790,10 +7993,18 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
         if (!ui || framesetInfo.positions.textMessageList >= framesetInfo.frameCount) {
             return false;
         }
+        if (cannedMessageModule) {
+            const auto runState = cannedMessageModule->getRunState();
+            if (runState != CANNED_MESSAGE_RUN_STATE_DISABLED && runState != CANNED_MESSAGE_RUN_STATE_INACTIVE) {
+                cannedMessageModule->exitMenu();
+            }
+        }
         if (hasRecentTextMessages()) {
             hasUnreadTextMessage = false;
             syncTextMessageNotification();
         }
+        LOG_INFO("[Screen] Open Recent Send list (count=%u, unread=%d)", gRecentTextMessageState.count,
+                 hasUnreadTextMessage ? 1 : 0);
         ui->switchToFrame(framesetInfo.positions.textMessageList);
         return true;
     };
@@ -7197,9 +8408,20 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
     }
 
     if (hermesSetupPage == HermesFastSetupPage::NodeMenu) {
-        if (handleMenuNav(3)) {
-            LOG_INFO("[HermesFastSetup] select=%d item=%s", hermesSetupSelected,
-                     (hermesSetupSelected == 0) ? "返回" : (hermesSetupSelected == 1 ? "Role" : "GPS"));
+        if (handleMenuNav(kSetupNodeMenuCount)) {
+            const char *itemName = "未知";
+            if (hermesSetupSelected == 0) {
+                itemName = "返回";
+            } else if (hermesSetupSelected == 1) {
+                itemName = "Role";
+            } else if (hermesSetupSelected == 2) {
+                itemName = "GPS";
+            } else if (hermesSetupSelected == 3) {
+                itemName = "Bluetooth";
+            } else if (hermesSetupSelected == 4) {
+                itemName = "Power";
+            }
+            LOG_INFO("[HermesFastSetup] select=%d item=%s", hermesSetupSelected, itemName);
             setFastFramerate();
             return true;
         }
@@ -7208,14 +8430,61 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                 resetMenu(HermesFastSetupPage::Root);
             } else if (hermesSetupSelected == 1) {
                 resetMenu(HermesFastSetupPage::RoleMenu);
-            } else {
+            } else if (hermesSetupSelected == 2) {
                 resetMenu(HermesFastSetupPage::GpsMenu);
+            } else if (hermesSetupSelected == 3) {
+                if (config.bluetooth.enabled) {
+                    config.bluetooth.enabled = false;
+                    if (nodeDB) {
+                        nodeDB->saveToDisk(SEGMENT_CONFIG);
+                    }
+                    disableBluetooth();
+                    hermesSetupToast = u8"藍牙已關閉";
+                    hermesSetupToastUntilMs = millis() + 1500;
+                } else {
+                    config.bluetooth.enabled = true;
+                    if (nodeDB) {
+                        nodeDB->saveToDisk(SEGMENT_CONFIG);
+                    }
+                    hermesSetupToast = u8"藍牙已開啟，重開中";
+                    hermesSetupToastUntilMs = millis() + 1500;
+                    rebootAtMsec = millis() + 1500;
+                }
+            } else if (hermesSetupSelected == 4) {
+                resetMenu(HermesFastSetupPage::PowerMenu);
             }
             setFastFramerate();
             return true;
         }
         if (isCancel) {
             resetMenu(HermesFastSetupPage::Root);
+            setFastFramerate();
+            return true;
+        }
+        return false;
+    }
+
+    if (hermesSetupPage == HermesFastSetupPage::PowerMenu) {
+        if (handleMenuNav(kSetupPowerMenuCount)) {
+            const char *itemName = (hermesSetupSelected == 0) ? "返回" : "過放保護";
+            LOG_INFO("[HermesFastSetup] select=%d item=%s", hermesSetupSelected, itemName);
+            setFastFramerate();
+            return true;
+        }
+        if (isSelect || isPress) {
+            if (hermesSetupSelected == 0) {
+                resetMenu(HermesFastSetupPage::NodeMenu);
+            } else {
+                const bool next = !HermesXBatteryProtection::isEnabled();
+                HermesXBatteryProtection::setEnabled(next);
+                hermesSetupToast = next ? u8"過放保護已開啟" : u8"過放保護已關閉";
+                hermesSetupToastUntilMs = millis() + 1500;
+            }
+            setFastFramerate();
+            return true;
+        }
+        if (isCancel) {
+            resetMenu(HermesFastSetupPage::NodeMenu);
             setFastFramerate();
             return true;
         }
@@ -7432,7 +8701,12 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
             } else {
                 const uint8_t index = hermesSetupSelected - 1;
                 if (index < kSetupRoleOptionCount) {
-                    config.device.role = kSetupRoleOptions[index].role;
+                    const auto selectedRole = kSetupRoleOptions[index].role;
+                    if (isTakModeActive() && selectedRole != meshtastic_Config_DeviceConfig_Role_TAK) {
+                        // Keep runtime TAK profile and config role changes from overlapping.
+                        disableTakMode();
+                    }
+                    config.device.role = selectedRole;
                     nodeDB->saveToDisk(SEGMENT_CONFIG);
                     hermesSetupToast = String(u8"角色已設定: ") + kSetupRoleOptions[index].label;
                     hermesSetupToastUntilMs = millis() + 1500;
@@ -7653,9 +8927,63 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
     return false;
 }
 
+bool Screen::handleTextMessagePopupInput(const InputEvent *event)
+{
+    if (!event || !isIncomingTextPopupVisible()) {
+        return false;
+    }
+
+    const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
+    const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
+    const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
+
+    const bool isSelect =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
+    const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
+    const bool wantsOpen = isSelect || isPress;
+
+    const bool isLeft =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
+    const bool isRight =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
+    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
+    const bool isDown =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
+    const bool isBack =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
+    const bool isCancel =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL);
+    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
+    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
+    const bool isRotary = (event->source && strncmp(event->source, "rotEnc", 6) == 0);
+    const bool hasRotaryFallback = isRotary && (eventCw == 0 && eventCcw == 0) && (isLeft || isRight || isUp || isDown);
+    const bool wantsDismiss = isLeft || isRight || isUp || isDown || isBack || isCancel || isCw || isCcw || hasRotaryFallback;
+
+    if (wantsOpen) {
+        dismissIncomingTextPopup();
+        if (hasRecentTextMessages()) {
+            gRecentTextMessageState.listCursor = 1;
+            gRecentTextMessageState.selectedIndex = 0;
+            gRecentTextMessageState.detailIndex = 0;
+            showTextMessageDetailPage();
+        } else {
+            setFastFramerate();
+        }
+        return true;
+    }
+
+    if (wantsDismiss) {
+        dismissIncomingTextPopup();
+        setFastFramerate();
+        return true;
+    }
+
+    return true; // While popup is visible, swallow other input so it doesn't leak through.
+}
+
 bool Screen::handleRecentTextMessageListInput(const InputEvent *event)
 {
-    if (!event || !hasRecentTextMessages()) {
+    if (!event) {
         return false;
     }
 
@@ -7681,39 +9009,116 @@ bool Screen::handleRecentTextMessageListInput(const InputEvent *event)
     const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
 
     int8_t navDir = 0;
-    if (isCcw || isUp || isLeft) {
-        navDir = -1;
-    } else if (isCw || isDown || isRight) {
-        navDir = 1;
+    const bool isRotary = (event->source && strncmp(event->source, "rotEnc", 6) == 0);
+    if (isRotary) {
+        if (isCcw) {
+            navDir = -1;
+        } else if (isCw) {
+            navDir = 1;
+        } else if (eventCw == 0 && eventCcw == 0) {
+            if (isUp || isLeft) {
+                navDir = -1;
+            } else if (isDown || isRight) {
+                navDir = 1;
+            }
+        }
+    } else {
+        if (isCcw || isUp || isLeft) {
+            navDir = -1;
+        } else if (isCw || isDown || isRight) {
+            navDir = 1;
+        }
     }
 
     if (navDir != 0) {
         clampRecentTextMessageIndices();
-        int selected = gRecentTextMessageState.selectedIndex + navDir;
-        if (selected < 0) {
-            selected = 0;
-        } else if (selected >= gRecentTextMessageState.count) {
-            selected = gRecentTextMessageState.count - 1;
+        const int totalEntries = static_cast<int>(getRecentTextMessageListEntryCount());
+        int nextCursor = static_cast<int>(gRecentTextMessageState.listCursor) + navDir;
+        if (nextCursor < 0) {
+            nextCursor = 0;
+        } else if (nextCursor >= totalEntries) {
+            nextCursor = totalEntries - 1;
         }
 
-        if (selected != gRecentTextMessageState.selectedIndex) {
-            gRecentTextMessageState.selectedIndex = static_cast<uint8_t>(selected);
+        if (nextCursor != gRecentTextMessageState.listCursor) {
+            gRecentTextMessageState.listCursor = static_cast<uint8_t>(nextCursor);
+            if (nextCursor > 0) {
+                gRecentTextMessageState.selectedIndex = static_cast<uint8_t>(nextCursor - 1);
+            }
+            LOG_INFO("[Screen] Recent Send cursor=%u selected=%u total=%d", gRecentTextMessageState.listCursor,
+                     gRecentTextMessageState.selectedIndex, totalEntries);
             setFastFramerate();
         }
         return true;
     }
 
     if (isSelect || isPress) {
-        showTextMessageDetailPage();
+        clampRecentTextMessageIndices();
+        if (gRecentTextMessageState.listCursor == 0) {
+            LOG_INFO("[Screen] Recent Send select -> back to action page");
+            showHermesXActionPage();
+            setFastFramerate();
+        } else {
+            gRecentTextMessageState.selectedIndex = gRecentTextMessageState.listCursor - 1;
+            LOG_INFO("[Screen] Recent Send open detail index=%u", gRecentTextMessageState.selectedIndex);
+            showTextMessageDetailPage();
+        }
         return true;
     }
 
     if (isCancel) {
-        showNextFrame();
+        LOG_INFO("[Screen] Recent Send cancel -> back to action page");
+        showHermesXActionPage();
+        setFastFramerate();
         return true;
     }
 
     return false;
+}
+
+bool Screen::handleRecentTextMessageDetailInput(const InputEvent *event)
+{
+    if (!event || !showingNormalScreen || !ui) {
+        return false;
+    }
+    if (framesetInfo.positions.textMessageList >= framesetInfo.frameCount) {
+        return false;
+    }
+
+    const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
+    const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
+
+    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
+    const bool isDown =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
+    const bool isLeft =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
+    const bool isRight =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
+    const bool isCancel =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
+
+    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
+    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
+    const bool isRotary = (event->source && strncmp(event->source, "rotEnc", 6) == 0);
+    const bool hasRotaryFallback = isRotary && (eventCw == 0 && eventCcw == 0) && (isUp || isDown || isLeft || isRight);
+    const bool wantsBack = isCancel || isCw || isCcw || hasRotaryFallback;
+
+    if (!wantsBack) {
+        return false;
+    }
+
+    if (cannedMessageModule) {
+        const auto runState = cannedMessageModule->getRunState();
+        if (runState != CANNED_MESSAGE_RUN_STATE_DISABLED && runState != CANNED_MESSAGE_RUN_STATE_INACTIVE) {
+            return false;
+        }
+    }
+
+    ui->switchToFrame(framesetInfo.positions.textMessageList);
+    setFastFramerate();
+    return true;
 }
 
 int Screen::handleInputEvent(const InputEvent *event)
@@ -7746,6 +9151,10 @@ int Screen::handleInputEvent(const InputEvent *event)
         const uint8_t currentFrame = this->ui->getUiState()->currentFrame;
         const bool hasMenuFooter = shouldShowHermesXMenuFooter(currentFrame);
 
+        if (handleTextMessagePopupInput(event)) {
+            return 0;
+        }
+
         if (currentFrame == framesetInfo.positions.mainAction) {
             if (handleHermesXActionInput(event)) {
                 return 0;
@@ -7762,10 +9171,16 @@ int Screen::handleInputEvent(const InputEvent *event)
             return 0;
         }
 
-        if (currentFrame == framesetInfo.positions.textMessageList && hasRecentTextMessages()) {
+        if (isRecentTextMessagesPageActive()) {
             handleRecentTextMessageListInput(event);
             // Recent message list handles its own navigation and open-detail flow.
             return 0;
+        }
+
+        if (isRecentTextMessageDetailPageActive()) {
+            if (handleRecentTextMessageDetailInput(event)) {
+                return 0;
+            }
         }
 
         const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
@@ -7829,10 +9244,47 @@ bool Screen::isHermesXActionPageActive() const
 
 bool Screen::isRecentTextMessagesPageActive() const
 {
-    if (!showingNormalScreen || !ui || !hasRecentTextMessages()) {
+    if (!showingNormalScreen || !ui) {
+        return false;
+    }
+    if (framesetInfo.positions.textMessageList >= framesetInfo.frameCount) {
         return false;
     }
     return ui->getUiState()->currentFrame == framesetInfo.positions.textMessageList;
+}
+
+bool Screen::isRecentTextMessageDetailPageActive() const
+{
+    if (!showingNormalScreen || !ui) {
+        return false;
+    }
+    if (framesetInfo.positions.textMessage >= framesetInfo.frameCount) {
+        return false;
+    }
+    return ui->getUiState()->currentFrame == framesetInfo.positions.textMessage;
+}
+
+uint8_t Screen::getCurrentFrameIndexForDebug() const
+{
+    if (!ui || !ui->getUiState()) {
+        return 0xFF;
+    }
+    return ui->getUiState()->currentFrame;
+}
+
+uint8_t Screen::getRecentListFrameIndexForDebug() const
+{
+    return framesetInfo.positions.textMessageList;
+}
+
+uint8_t Screen::getRecentDetailFrameIndexForDebug() const
+{
+    return framesetInfo.positions.textMessage;
+}
+
+uint8_t Screen::getFrameCountForDebug() const
+{
+    return framesetInfo.frameCount;
 }
 
 bool Screen::shouldShowHermesXMenuFooter(uint8_t frameIndex) const
@@ -7852,7 +9304,8 @@ bool Screen::shouldShowHermesXMenuFooter(uint8_t frameIndex) const
     if (frameIndex == framesetInfo.positions.main) { // Keep logo page free for canned message UX.
         return false;
     }
-    if (frameIndex == framesetInfo.positions.textMessageList) { // Press is repurposed here to open the selected message.
+    if ((framesetInfo.positions.textMessageList < framesetInfo.frameCount) &&
+        (frameIndex == framesetInfo.positions.textMessageList)) { // Press is repurposed here to open the selected message.
         return false;
     }
     if (frameIndex == framesetInfo.positions.mainAction) { // Already the menu page.
@@ -7873,6 +9326,34 @@ bool Screen::showHermesXActionPage()
         return false;
     }
     ui->switchToFrame(framesetInfo.positions.mainAction);
+    return true;
+}
+
+bool Screen::showHermesXMainPage()
+{
+    if (!showingNormalScreen || !ui) {
+        return false;
+    }
+    if (framesetInfo.positions.main >= framesetInfo.frameCount) {
+        return false;
+    }
+
+    ui->switchToFrame(framesetInfo.positions.main);
+    setFastFramerate();
+    return true;
+}
+
+bool Screen::showRecentTextMessageListPage()
+{
+    if (!showingNormalScreen || !ui) {
+        return false;
+    }
+    if (framesetInfo.positions.textMessageList >= framesetInfo.frameCount) {
+        return false;
+    }
+
+    ui->switchToFrame(framesetInfo.positions.textMessageList);
+    setFastFramerate();
     return true;
 }
 

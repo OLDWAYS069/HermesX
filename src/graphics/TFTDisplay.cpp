@@ -1117,6 +1117,24 @@ void TFTDisplay::addColorPaletteZone(const ColorZone &zone)
     colorZones[colorZoneCount++] = zone;
 }
 
+void TFTDisplay::fillRect565(int16_t x, int16_t y, int16_t width, int16_t height, uint16_t color)
+{
+    if (width <= 0 || height <= 0) {
+        return;
+    }
+    concurrency::LockGuard g(spiLock);
+    tft->fillRect(x, y, width, height, color);
+}
+
+void TFTDisplay::drawPixel565(int16_t x, int16_t y, uint16_t color)
+{
+    if (x < 0 || y < 0 || x >= displayWidth || y >= displayHeight) {
+        return;
+    }
+    concurrency::LockGuard g(spiLock);
+    tft->drawPixel(x, y, color);
+}
+
 // Write the buffer to the display memory
 void TFTDisplay::display(bool fromBlank)
 {
