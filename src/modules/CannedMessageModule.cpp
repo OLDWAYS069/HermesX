@@ -735,8 +735,15 @@ int CannedMessageModule::handleInputEvent(const InputEvent *event)
 void CannedMessageModule::captureReturnTarget()
 {
     returnTarget = CANNED_MESSAGE_RETURN_TARGET_NONE;
+    returnFrameIndex = 0xFF;
     if (!screen) {
         return;
+    }
+
+    const uint8_t currentFrame = screen->getCurrentFrameIndexForDebug();
+    const uint8_t frameCount = screen->getFrameCountForDebug();
+    if (currentFrame != 0xFF && currentFrame < frameCount) {
+        returnFrameIndex = currentFrame;
     }
 
     if (screen->isRecentTextMessageDetailPageActive()) {
@@ -746,36 +753,48 @@ void CannedMessageModule::captureReturnTarget()
     } else if (screen->isHermesXActionPageActive()) {
         returnTarget = CANNED_MESSAGE_RETURN_TARGET_ACTION;
     }
-    LOG_INFO("[CannedMessage] captureReturnTarget=%d", static_cast<int>(returnTarget));
+    LOG_INFO("[CannedMessage] captureReturnTarget=%d frame=%u", static_cast<int>(returnTarget),
+             static_cast<unsigned>(returnFrameIndex));
 }
 
 void CannedMessageModule::restoreReturnTarget()
 {
     if (!screen) {
         returnTarget = CANNED_MESSAGE_RETURN_TARGET_NONE;
+        returnFrameIndex = 0xFF;
         return;
     }
 
-    LOG_INFO("[CannedMessage] restoreReturnTarget=%d", static_cast<int>(returnTarget));
+    LOG_INFO("[CannedMessage] restoreReturnTarget=%d frame=%u", static_cast<int>(returnTarget),
+             static_cast<unsigned>(returnFrameIndex));
+    bool restored = false;
     switch (returnTarget) {
     case CANNED_MESSAGE_RETURN_TARGET_RECENT_DETAIL:
-        screen->showTextMessageDetailPage();
+        restored = screen->showTextMessageDetailPage();
         break;
     case CANNED_MESSAGE_RETURN_TARGET_RECENT_LIST:
-        screen->showRecentTextMessageListPage();
+        restored = screen->showRecentTextMessageListPage();
         break;
     case CANNED_MESSAGE_RETURN_TARGET_ACTION:
-        screen->showHermesXActionPage();
+        restored = screen->showHermesXActionPage();
         break;
     default:
-        // If no explicit return target was captured, prefer Home instead of relying on
-        // FOCUS_PRESERVE fallback (which can land on Recent Send when module frame is removed).
-        LOG_INFO("[CannedMessage] restoreReturnTarget default -> home");
-        screen->showHermesXMainPage();
         break;
     }
 
+    if (!restored && returnFrameIndex != 0xFF) {
+        restored = screen->showFrameByIndex(returnFrameIndex);
+    }
+
+    if (!restored) {
+        // If no target can be restored, prefer Home instead of relying on
+        // FOCUS_PRESERVE fallback (which can land on Recent Send when module frame is removed).
+        LOG_INFO("[CannedMessage] restoreReturnTarget fallback -> home");
+        screen->showHermesXMainPage();
+    }
+
     returnTarget = CANNED_MESSAGE_RETURN_TARGET_NONE;
+    returnFrameIndex = 0xFF;
 }
 
 void CannedMessageModule::sendText(NodeNum dest, ChannelIndex channel, const char *message, bool wantReplies)
@@ -832,6 +851,7 @@ int32_t CannedMessageModule::runOnce()
         // After a send/ack popup, always return to Home.
         // This avoids FOCUS_PRESERVE mapping frame 0 to Recent Send when module frame is removed.
         returnTarget = CANNED_MESSAGE_RETURN_TARGET_NONE;
+        returnFrameIndex = 0xFF;
         restoreReturnTarget();
     } else if (((this->runState == CANNED_MESSAGE_RUN_STATE_ACTIVE) || (this->runState == CANNED_MESSAGE_RUN_STATE_FREETEXT)) &&
                !Throttle::isWithinTimespanMs(this->lastTouchMillis, INACTIVATE_AFTER_MS)) {
@@ -849,6 +869,7 @@ int32_t CannedMessageModule::runOnce()
         this->notifyObservers(&e);
         // Inactivity timeout should also exit to Home for deterministic behavior.
         returnTarget = CANNED_MESSAGE_RETURN_TARGET_NONE;
+        returnFrameIndex = 0xFF;
         restoreReturnTarget();
     } else if (this->runState == CANNED_MESSAGE_RUN_STATE_ACTION_SELECT) {
         if (this->payload == CANNED_MESSAGE_RUN_STATE_FREETEXT) {

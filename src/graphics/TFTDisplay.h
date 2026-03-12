@@ -73,6 +73,8 @@ class TFTDisplay : public OLEDDisplay
     void addColorPaletteZone(const ColorZone &zone);
     void fillRect565(int16_t x, int16_t y, int16_t width, int16_t height, uint16_t color);
     void drawPixel565(int16_t x, int16_t y, uint16_t color);
+    void overlayBufferForeground565();
+    void overlayBufferForegroundRect565(int16_t x, int16_t y, int16_t width, int16_t height);
 
     /**
      * This is normally managed entirely by TFTDisplay, but some rare applications (heltec tracker) might need to replace the
@@ -88,7 +90,8 @@ class TFTDisplay : public OLEDDisplay
 #endif
 
   private:
-    static constexpr uint8_t kMaxColorZones = 8;
+    // Neon-heavy screens (Home clock / GPS poster) need more stacked palette bands.
+    static constexpr uint8_t kMaxColorZones = 24;
 
     ColorZone colorZones[kMaxColorZones]{};
     uint8_t colorZoneCount = 0;

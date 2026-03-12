@@ -1,0 +1,4 @@
+interface:
+  display_name: "HermesX Docs Operator"
+  short_description: "Use HermesX docs to drive precise implementation tasks"
+  default_prompt: "Use $hermesx-docs-operator to implement or review HermesX changes from docs requirements."

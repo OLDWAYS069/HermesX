@@ -18,12 +18,24 @@
 #include "esp_mac.h"
 #include "meshUtils.h"
 #include "sleep.h"
+#include "esp_system.h"
 #include "soc/rtc.h"
 #include "target_specific.h"
 #include <Preferences.h>
+#if defined(ARDUINO_USB_CDC_ON_BOOT) && (ARDUINO_USB_CDC_ON_BOOT == 1) && defined(ARDUINO_USB_MODE) && (ARDUINO_USB_MODE == 0)
+#include <USBCDC.h>
+#endif
 #include <driver/rtc_io.h>
 #include <nvs.h>
 #include <nvs_flash.h>
+
+RTC_DATA_ATTR static uint32_t gHermesEspRestartMarker = 0;
+static constexpr uint32_t kHermesEspRestartMagic = 0x48585253U; // "HXRS"
+
+static void markEspRestartPath()
+{
+    gHermesEspRestartMarker = kHermesEspRestartMagic;
+}
 
 #if !defined(CONFIG_IDF_TARGET_ESP32S2) && !MESHTASTIC_EXCLUDE_BLUETOOTH
 void setBluetoothEnable(bool enable)
@@ -102,6 +114,19 @@ void enableSlowCLK()
 
 void esp32Setup()
 {
+    esp_register_shutdown_handler(markEspRestartPath);
+
+    if (gHermesEspRestartMarker == kHermesEspRestartMagic) {
+        LOG_WARN("Previous reboot path: esp_restart/shutdown_handler");
+        gHermesEspRestartMarker = 0;
+    }
+
+#if defined(ARDUINO_USB_CDC_ON_BOOT) && (ARDUINO_USB_CDC_ON_BOOT == 1) && defined(ARDUINO_USB_MODE) && (ARDUINO_USB_MODE == 0)
+    // Prevent host DTR/RTS reconnect sequences from forcing USB reboot loops on native-USB boards.
+    Serial.enableReboot(false);
+    LOG_INFO("USB CDC auto-reboot disabled");
+#endif
+
     /* We explicitly don't want to do call randomSeed,
     // as that triggers the esp32 core to use a less secure pseudorandom function.
     uint32_t seed = esp_random();

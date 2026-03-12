@@ -171,6 +171,8 @@ static bool heartbeat = false;
 
 #define getStringCenteredX(s) ((SCREEN_WIDTH - display->getStringWidth(s)) / 2)
 
+static bool supportsDirectTftClockRendering(OLEDDisplay *display);
+
 // Check if the display can render a string (detect special chars; emoji)
 static bool haveGlyphs(const char *str)
 {
@@ -410,6 +412,11 @@ static void drawHermesXEmUiOverlay(OLEDDisplay *display, OLEDDisplayUiState *sta
 static void drawHermesXMenuFooterOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
 {
     if (!display || !state || !screen) {
+        return;
+    }
+    if (supportsDirectTftClockRendering(display)) {
+        // Compact direct-TFT pages (Home/GPS poster) are full-frame visuals; skip footer shortcut overlay
+        // to avoid persistent top-right artifacts between transitions.
         return;
     }
     if (!screen->shouldShowHermesXMenuFooter(state->currentFrame)) {
@@ -665,6 +672,7 @@ static HermesXBatteryCache gHermesXBatteryCache;
 static bool supportsDirectTftClockRendering(OLEDDisplay *display);
 static int16_t measurePattanakarnClockText(const char *text);
 static bool isStealthModeActive();
+static uint16_t mapDirectGpsWarmLayerColor(uint8_t value);
 
 struct HermesXDirectHomeUiCache {
     bool valid = false;
@@ -679,9 +687,58 @@ struct HermesXDirectHomeUiCache {
 };
 static HermesXDirectHomeUiCache gHermesXDirectHomeUiCache;
 static bool gDirectHomeClockWasVisible = false;
+static bool gDirectGpsPosterWasVisible = false;
 static bool gDirectHomeBasePainted = false;
+static bool gDirectHomeMeshPainted = false;
+static uint8_t gDirectHomeOrbLastPulsePercent = 0xFF;
+static uint32_t gDirectHomeOrbLastDrawMs = 0;
 static uint32_t gDirectHomeLastBaseRefreshMs = 0;
 static constexpr uint32_t kDirectHomeBaseRefreshMinMs = 3000;
+static constexpr uint32_t kDirectHomeOrbMinFrameIntervalMs = 90;
+// Stability A/B switch: disable Home right-bottom orb animation path to isolate panic source.
+static constexpr bool kEnableDirectHomeOrbAnimation = true;
+// Emergency guard: keep GPS direct-TFT neon post-render disabled until boot stability is verified.
+static constexpr bool kEnableDirectGpsPosterTitleNeon = true;
+static constexpr bool kEnableDirectGpsPosterDecorNeon = true;
+static constexpr bool kEnableDirectGpsPosterCoordinateNeon = true;
+
+struct DirectGpsPosterRenderCache {
+    bool valid = false;
+    bool gpsEnabled = false;
+    bool gpsConnected = false;
+    bool gpsHasLock = false;
+    uint8_t satCount = 0;
+    bool fixedPosition = false;
+    bool hasCoordinates = false;
+    int32_t latitudeE7 = INT32_MIN;
+    int32_t longitudeE7 = INT32_MIN;
+    int32_t altitude = INT32_MIN;
+    int16_t width = 0;
+    int16_t height = 0;
+};
+static DirectGpsPosterRenderCache gDirectGpsPosterRenderCache;
+static bool gDirectGpsNeedsFullFrameAfterSwitch = false;
+static bool gDirectGpsBasePainted = false;
+static uint8_t gDirectLastFrameIndex = 0xFF;
+static bool gNormalFramesInitializedAfterBoot = false;
+static constexpr uint32_t kScreenWakeInputGuardMs = 220;
+
+static void invalidateDirectTftWakeCaches()
+{
+    gHermesXDirectHomeUiCache.valid = false;
+    gHermesXDirectHomeUiCache.lastTimeValid = false;
+    gDirectHomeClockWasVisible = false;
+    gDirectGpsPosterWasVisible = false;
+    gDirectHomeBasePainted = false;
+    gDirectHomeMeshPainted = false;
+    gDirectHomeOrbLastPulsePercent = 0xFF;
+    gDirectHomeOrbLastDrawMs = 0;
+    gDirectHomeLastBaseRefreshMs = 0;
+    gDirectGpsPosterRenderCache.valid = false;
+    gDirectGpsNeedsFullFrameAfterSwitch = true;
+    gDirectGpsBasePainted = false;
+    gDirectLastFrameIndex = 0xFF;
+}
 
 static constexpr int16_t kDirectNeonClockGlowRadiusOuter = 5;
 static constexpr int16_t kDirectNeonClockMargin = kDirectNeonClockGlowRadiusOuter + 1;
@@ -819,6 +876,129 @@ static int16_t measurePattanakarnClockText(const char *text)
         width += glyph->width;
     }
     return width;
+}
+
+static constexpr int16_t kPattanakarnClockHalfHeight = (PattanakarnClock32::kGlyphHeight + 1) / 2;
+
+static bool isPattanakarnClockGlyphPixelOn(const PattanakarnClock32::GlyphInfo *glyph, std::uint8_t row, std::uint8_t col)
+{
+    if (!glyph || row >= PattanakarnClock32::kGlyphHeight || col >= glyph->width) {
+        return false;
+    }
+    const std::uint8_t byteIndex = static_cast<std::uint8_t>(col / 8);
+    const std::uint8_t bitIndex = static_cast<std::uint8_t>(col % 8);
+    const std::uint8_t rowBits = pgm_read_byte(glyph->bitmap + row * glyph->bytesPerRow + byteIndex);
+    return (rowBits & (0x80 >> bitIndex)) != 0;
+}
+
+static int16_t measurePattanakarnClockTextHalf(const char *text)
+{
+    if (!text) {
+        return 0;
+    }
+
+    int16_t width = 0;
+    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
+        const auto *glyph = findPattanakarnClockGlyph(*cursor);
+        if (!glyph) {
+            return 0;
+        }
+        width += static_cast<int16_t>((glyph->width + 1) / 2);
+    }
+    return width;
+}
+
+static void drawPattanakarnClockTextHalf(OLEDDisplay *display, int16_t x, int16_t y, const char *text)
+{
+    if (!display || !text) {
+        return;
+    }
+
+    int16_t cursorX = x;
+    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
+        const auto *glyph = findPattanakarnClockGlyph(*cursor);
+        if (!glyph) {
+            continue;
+        }
+
+        const int16_t halfW = static_cast<int16_t>((glyph->width + 1) / 2);
+        for (int16_t dy = 0; dy < kPattanakarnClockHalfHeight; ++dy) {
+            const std::uint8_t srcY = static_cast<std::uint8_t>(std::min<int16_t>(PattanakarnClock32::kGlyphHeight - 1, dy * 2));
+            for (int16_t dx = 0; dx < halfW; ++dx) {
+                const std::uint8_t srcX = static_cast<std::uint8_t>(std::min<int16_t>(glyph->width - 1, dx * 2));
+                bool on = isPattanakarnClockGlyphPixelOn(glyph, srcY, srcX);
+                if (!on && (srcX + 1) < glyph->width) {
+                    on = isPattanakarnClockGlyphPixelOn(glyph, srcY, static_cast<std::uint8_t>(srcX + 1));
+                }
+                if (!on && (srcY + 1) < PattanakarnClock32::kGlyphHeight) {
+                    on = isPattanakarnClockGlyphPixelOn(glyph, static_cast<std::uint8_t>(srcY + 1), srcX);
+                }
+                if (!on && (srcY + 1) < PattanakarnClock32::kGlyphHeight && (srcX + 1) < glyph->width) {
+                    on = isPattanakarnClockGlyphPixelOn(glyph, static_cast<std::uint8_t>(srcY + 1), static_cast<std::uint8_t>(srcX + 1));
+                }
+                if (on) {
+                    display->setPixel(cursorX + dx, y + dy);
+                }
+            }
+        }
+
+        cursorX += halfW;
+    }
+}
+
+static void drawPattanakarnClockTextHalfOutsideRect(OLEDDisplay *display,
+                                                    int16_t x,
+                                                    int16_t y,
+                                                    const char *text,
+                                                    int16_t excludeX,
+                                                    int16_t excludeY,
+                                                    int16_t excludeW,
+                                                    int16_t excludeH)
+{
+    if (!display || !text) {
+        return;
+    }
+
+    const int16_t excludeX2 = excludeX + excludeW;
+    const int16_t excludeY2 = excludeY + excludeH;
+
+    int16_t cursorX = x;
+    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
+        const auto *glyph = findPattanakarnClockGlyph(*cursor);
+        if (!glyph) {
+            continue;
+        }
+
+        const int16_t halfW = static_cast<int16_t>((glyph->width + 1) / 2);
+        for (int16_t dy = 0; dy < kPattanakarnClockHalfHeight; ++dy) {
+            const std::uint8_t srcY = static_cast<std::uint8_t>(std::min<int16_t>(PattanakarnClock32::kGlyphHeight - 1, dy * 2));
+            const int16_t py = y + dy;
+            for (int16_t dx = 0; dx < halfW; ++dx) {
+                const std::uint8_t srcX = static_cast<std::uint8_t>(std::min<int16_t>(glyph->width - 1, dx * 2));
+                bool on = isPattanakarnClockGlyphPixelOn(glyph, srcY, srcX);
+                if (!on && (srcX + 1) < glyph->width) {
+                    on = isPattanakarnClockGlyphPixelOn(glyph, srcY, static_cast<std::uint8_t>(srcX + 1));
+                }
+                if (!on && (srcY + 1) < PattanakarnClock32::kGlyphHeight) {
+                    on = isPattanakarnClockGlyphPixelOn(glyph, static_cast<std::uint8_t>(srcY + 1), srcX);
+                }
+                if (!on && (srcY + 1) < PattanakarnClock32::kGlyphHeight && (srcX + 1) < glyph->width) {
+                    on = isPattanakarnClockGlyphPixelOn(glyph, static_cast<std::uint8_t>(srcY + 1), static_cast<std::uint8_t>(srcX + 1));
+                }
+                if (!on) {
+                    continue;
+                }
+
+                const int16_t px = cursorX + dx;
+                if (px >= excludeX && py >= excludeY && px < excludeX2 && py < excludeY2) {
+                    continue;
+                }
+                display->setPixel(px, py);
+            }
+        }
+
+        cursorX += halfW;
+    }
 }
 
 static void drawPattanakarnClockText(OLEDDisplay *display, int16_t x, int16_t y, const char *text)
@@ -1207,25 +1387,53 @@ static void clearDirectNeonClockRegion(TFTDisplay *tft, int16_t displayW, int16_
     tft->fillRect565(regionX, regionY, regionW, regionH, TFTDisplay::rgb565(0x00, 0x00, 0x00));
 }
 
-static void renderDirectNeonClock(TFTDisplay *tft, int16_t width, int16_t originY, const char *timeBuf, bool forceFullRedraw = false)
+static bool getDirectNeonClockRegionRect(int16_t displayW,
+                                         int16_t originY,
+                                         int16_t &regionX,
+                                         int16_t &regionY,
+                                         int16_t &regionW,
+                                         int16_t &regionH,
+                                         int16_t &frameX)
+{
+    if (displayW <= 0) {
+        return false;
+    }
+
+    const int16_t frameW = getDirectNeonClockFrameWidth();
+    const int16_t glyphH = PattanakarnClock32::kGlyphHeight;
+    if (frameW <= 0 || frameW > (displayW - 4)) {
+        return false;
+    }
+
+    const int16_t timeY = originY + 8;
+    frameX = (displayW - frameW) / 2;
+    regionX = frameX - kDirectNeonClockMargin;
+    regionY = timeY - kDirectNeonClockMargin;
+    regionW = frameW + (kDirectNeonClockMargin * 2);
+    regionH = glyphH + (kDirectNeonClockMargin * 2);
+    if (regionW <= 0 || regionH <= 0 || regionW > kDirectNeonClockMaxRegionW || regionH > kDirectNeonClockMaxRegionH) {
+        return false;
+    }
+    return true;
+}
+
+static void renderDirectNeonClock(TFTDisplay *tft,
+                                  int16_t width,
+                                  int16_t originY,
+                                  const char *timeBuf,
+                                  bool forceFullRedraw = false,
+                                  bool clearBackground = true)
 {
     if (!tft || !timeBuf) {
         return;
     }
 
-    const int16_t frameW = getDirectNeonClockFrameWidth();
-    const int16_t glyphH = PattanakarnClock32::kGlyphHeight;
-    if (frameW <= 0 || frameW > (width - 4)) {
-        return;
-    }
-
-    const int16_t timeY = originY + 8;
-    const int16_t frameX = (width - frameW) / 2;
-    const int16_t regionX = frameX - kDirectNeonClockMargin;
-    const int16_t regionY = timeY - kDirectNeonClockMargin;
-    const int16_t regionW = frameW + (kDirectNeonClockMargin * 2);
-    const int16_t regionH = glyphH + (kDirectNeonClockMargin * 2);
-    if (regionW <= 0 || regionH <= 0 || regionW > kDirectNeonClockMaxRegionW || regionH > kDirectNeonClockMaxRegionH) {
+    int16_t regionX = 0;
+    int16_t regionY = 0;
+    int16_t regionW = 0;
+    int16_t regionH = 0;
+    int16_t frameX = 0;
+    if (!getDirectNeonClockRegionRect(width, originY, regionX, regionY, regionW, regionH, frameX)) {
         return;
     }
     const uint16_t black = TFTDisplay::rgb565(0x00, 0x00, 0x00);
@@ -1241,7 +1449,7 @@ static void renderDirectNeonClock(TFTDisplay *tft, int16_t width, int16_t origin
     const bool geometryChanged = !previousValid || previousRegionX != regionX || previousRegionY != regionY ||
                                  previousRegionW != regionW || previousRegionH != regionH;
 
-    if (geometryChanged && previousValid) {
+    if (clearBackground && geometryChanged && previousValid) {
         tft->fillRect565(previousRegionX, previousRegionY, previousRegionW, previousRegionH, black);
     }
 
@@ -1297,8 +1505,11 @@ static void renderDirectNeonClock(TFTDisplay *tft, int16_t width, int16_t origin
         composeSlot(slotIndex);
     }
 
-    if (geometryChanged || forceFullRedraw || !previousValid) {
-        tft->fillRect565(regionX, regionY, regionW, regionH, black);
+    const bool fullRepaintRequired = geometryChanged || forceFullRedraw || !previousValid;
+    if (fullRepaintRequired) {
+        if (clearBackground) {
+            tft->fillRect565(regionX, regionY, regionW, regionH, black);
+        }
         for (int16_t row = 0; row < regionH; ++row) {
             int16_t runStart = -1;
             uint8_t runValue = 0xFF;
@@ -1333,6 +1544,10 @@ static void renderDirectNeonClock(TFTDisplay *tft, int16_t width, int16_t origin
 
                 if (!changed || value != runValue) {
                     if (runStart >= 0) {
+                        if (runValue == 0 && !clearBackground) {
+                            runStart = -1;
+                            continue;
+                        }
                         const uint16_t color = (runValue > 0) ? mapDirectNeonClockLayerColor(runValue) : black;
                         tft->fillRect565(regionX + runStart, regionY + row, col - runStart, 1, color);
                         runStart = -1;
@@ -1358,6 +1573,1524 @@ static void renderDirectNeonClock(TFTDisplay *tft, int16_t width, int16_t origin
     previousRegionW = regionW;
     previousRegionH = regionH;
     previousValid = true;
+}
+
+// Direct neon text is only used on compact TFT layouts; keep the scratch map bounded to
+// avoid consuming excessive static RAM before Bluetooth init.
+static constexpr int16_t kDirectNeonTextMaxW = 208;
+static constexpr int16_t kDirectNeonTextMaxH = 64;
+
+static int16_t measurePattanakarnClockTextTracked(const char *text, bool halfScale, int16_t tracking)
+{
+    if (!text) {
+        return 0;
+    }
+
+    int16_t width = 0;
+    bool hasGlyph = false;
+    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
+        const auto *glyph = findPattanakarnClockGlyph(*cursor);
+        if (!glyph) {
+            continue;
+        }
+        if (hasGlyph) {
+            width += tracking;
+        }
+        width += halfScale ? static_cast<int16_t>((glyph->width + 1) / 2) : static_cast<int16_t>(glyph->width);
+        hasGlyph = true;
+    }
+    return width;
+}
+
+static bool renderDirectNeonPattanakarnText(TFTDisplay *tft,
+                                            int16_t drawX,
+                                            int16_t drawY,
+                                            const char *text,
+                                            bool halfScale,
+                                            uint16_t (*layerColorFn)(uint8_t) = nullptr,
+                                            bool clearBackground = true,
+                                            int16_t tracking = 0,
+                                            int16_t marginOverride = -1)
+{
+    if (!tft || !text || !*text) {
+        return false;
+    }
+    if (!layerColorFn) {
+        layerColorFn = mapDirectNeonClockLayerColor;
+    }
+
+    const int16_t coreW = measurePattanakarnClockTextTracked(text, halfScale, tracking);
+    if (coreW <= 0) {
+        return false;
+    }
+
+    const int16_t coreH = halfScale ? kPattanakarnClockHalfHeight : PattanakarnClock32::kGlyphHeight;
+    int16_t margin = halfScale ? static_cast<int16_t>((kDirectNeonClockMargin + 1) / 2) : kDirectNeonClockMargin;
+    if (marginOverride >= 0) {
+        margin = std::max<int16_t>(0, std::min<int16_t>(margin, marginOverride));
+    }
+    const int16_t regionX = drawX - margin;
+    const int16_t regionY = drawY - margin;
+    const int16_t regionW = coreW + (margin * 2);
+    const int16_t regionH = coreH + (margin * 2);
+    if (regionW <= 0 || regionH <= 0 || regionW > kDirectNeonTextMaxW || regionH > kDirectNeonTextMaxH) {
+        return false;
+    }
+
+    static uint8_t composedLayerMap[kDirectNeonTextMaxW * kDirectNeonTextMaxH];
+    memset(composedLayerMap, 0, static_cast<size_t>(regionW * regionH));
+
+    int16_t cursorX = drawX;
+    bool hasGlyph = false;
+    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
+        auto *cache = getDirectNeonClockGlyphCache(*cursor);
+        if (!cache) {
+            continue;
+        }
+        if (hasGlyph) {
+            cursorX += tracking;
+        }
+
+        const int16_t glyphX = cursorX - margin;
+        const int16_t glyphY = drawY - margin;
+        for (int16_t row = 0; row < cache->tileH; ++row) {
+            const int16_t py = glyphY + (halfScale ? (row / 2) : row);
+            if (py < regionY || py >= (regionY + regionH)) {
+                continue;
+            }
+            for (int16_t col = 0; col < cache->tileW; ++col) {
+                const uint8_t value = cache->layerMap[(row * kDirectNeonClockGlyphTileW) + col];
+                if (!value) {
+                    continue;
+                }
+
+                const int16_t px = glyphX + (halfScale ? (col / 2) : col);
+                if (px < regionX || px >= (regionX + regionW)) {
+                    continue;
+                }
+
+                const int16_t idx = ((py - regionY) * regionW) + (px - regionX);
+                if (value > composedLayerMap[idx]) {
+                    composedLayerMap[idx] = value;
+                }
+            }
+        }
+
+        cursorX += halfScale ? static_cast<int16_t>((cache->coreW + 1) / 2) : cache->coreW;
+        hasGlyph = true;
+    }
+
+    const uint16_t black = TFTDisplay::rgb565(0x00, 0x00, 0x00);
+    if (clearBackground) {
+        tft->fillRect565(regionX, regionY, regionW, regionH, black);
+    }
+    for (int16_t row = 0; row < regionH; ++row) {
+        int16_t runStart = -1;
+        uint8_t runValue = 0xFF;
+        for (int16_t col = 0; col <= regionW; ++col) {
+            const uint8_t value = (col < regionW) ? composedLayerMap[(row * regionW) + col] : 0xFF;
+            if (value == runValue) {
+                continue;
+            }
+            if (runStart >= 0 && runValue > 0) {
+                tft->fillRect565(regionX + runStart, regionY + row, col - runStart, 1, layerColorFn(runValue));
+            }
+            runValue = value;
+            runStart = (col < regionW) ? col : -1;
+        }
+    }
+
+    return true;
+}
+
+struct DirectGpsPosterLayout {
+    bool tiny = false;
+    int16_t leftX = 0;
+    int16_t leftW = 0;
+    int16_t titleY = 0;
+    int16_t coordY1 = 0;
+    int16_t coordY2 = 0;
+    int16_t altitudeY = 0;
+    int16_t globeCx = 0;
+    int16_t globeCy = 0;
+    int16_t globeR = 0;
+    int16_t mountainX = 0;
+    int16_t mountainY = 0;
+    int16_t mountainW = 0;
+    int16_t mountainH = 0;
+};
+
+static DirectGpsPosterLayout makeDirectGpsPosterLayout(int16_t width, int16_t height)
+{
+    DirectGpsPosterLayout layout;
+    layout.tiny = (width <= 176 || height <= 96);
+
+    layout.globeR = (height * (layout.tiny ? 33 : 44)) / 100;
+    if (layout.globeR < (layout.tiny ? 20 : 28)) {
+        layout.globeR = layout.tiny ? 20 : 28;
+    }
+    layout.globeCx = (width * (layout.tiny ? 84 : 77)) / 100;
+    const int16_t globeCxMin = layout.globeR + 2;
+    const int16_t globeCxMax = width - std::max<int16_t>(2, layout.globeR / 5);
+    if (layout.globeCx < globeCxMin) {
+        layout.globeCx = globeCxMin;
+    }
+    if (layout.globeCx > globeCxMax) {
+        layout.globeCx = globeCxMax;
+    }
+
+    layout.globeCy = (height * (layout.tiny ? 52 : 53)) / 100;
+    const int16_t globeCyMin = layout.globeR + 2;
+    const int16_t globeCyMax = height - std::max<int16_t>(2, layout.globeR / 6);
+    if (layout.globeCy < globeCyMin) {
+        layout.globeCy = globeCyMin;
+    }
+    if (layout.globeCy > globeCyMax) {
+        layout.globeCy = globeCyMax;
+    }
+
+    layout.leftX = layout.tiny ? 4 : 10;
+    int16_t leftRight = layout.globeCx - layout.globeR - (layout.tiny ? 2 : 10);
+    if (leftRight < layout.leftX + 40) {
+        leftRight = layout.leftX + 40;
+    }
+    if (leftRight > width - 4) {
+        leftRight = width - 4;
+    }
+    layout.leftW = leftRight - layout.leftX;
+    if (layout.leftW < 38) {
+        layout.leftW = 38;
+    }
+
+    layout.titleY = (height * (layout.tiny ? 8 : 12)) / 100;
+    layout.coordY1 = layout.titleY + (layout.tiny ? 19 : 26);
+    layout.coordY2 = layout.coordY1 + (layout.tiny ? 18 : 28);
+    layout.altitudeY = layout.coordY2 + (layout.tiny ? 18 : 22);
+    const int16_t maxAltitudeY = height - (layout.tiny ? 15 : 20);
+    if (layout.altitudeY > maxAltitudeY) {
+        const int16_t shiftUp = layout.altitudeY - maxAltitudeY;
+        layout.coordY1 -= shiftUp;
+        layout.coordY2 -= shiftUp;
+        layout.altitudeY -= shiftUp;
+    }
+    const int16_t minCoordY1 = layout.titleY + (layout.tiny ? 16 : 22);
+    if (layout.coordY1 < minCoordY1) {
+        const int16_t shiftDown = minCoordY1 - layout.coordY1;
+        layout.coordY1 += shiftDown;
+        layout.coordY2 += shiftDown;
+        layout.altitudeY += shiftDown;
+    }
+
+    layout.mountainW = layout.tiny ? 30 : 46;
+    layout.mountainH = layout.tiny ? 14 : 22;
+    layout.mountainX = layout.leftX + (layout.tiny ? 2 : 4);
+    const int16_t altitudeVisualH = kPattanakarnClockHalfHeight;
+    // Vertically align the mountain icon with the altitude text row.
+    layout.mountainY = layout.altitudeY + ((altitudeVisualH - layout.mountainH) / 2) + (layout.tiny ? 1 : 2);
+    const int16_t minMountainY = layout.coordY2 + (layout.tiny ? 10 : 14);
+    if (layout.mountainY < minMountainY) {
+        layout.mountainY = minMountainY;
+    }
+    const int16_t maxMountainY = std::max<int16_t>(0, height - layout.mountainH - 1);
+    if (layout.mountainY > maxMountainY) {
+        layout.mountainY = maxMountainY;
+    }
+
+    return layout;
+}
+
+static void renderDirectGpsPosterCoordinateNeon(TFTDisplay *tft, int16_t width, int16_t height, const GPSStatus *gps)
+{
+    if (!tft || width <= 0 || height <= 0) {
+        return;
+    }
+
+    const DirectGpsPosterLayout layout = makeDirectGpsPosterLayout(width, height);
+    const bool tinyPosterLayout = layout.tiny;
+    const bool gpsEnabled = config.position.gps_mode == meshtastic_Config_PositionConfig_GpsMode_ENABLED;
+    const bool hasGpsCoordinates =
+        gps && gpsEnabled && (config.position.fixed_position || (gps->getIsConnected() && gps->getHasLock()));
+    // Keep WGS84-style full decimal coordinates readable on small TFT by shrinking glyph size only.
+    const int16_t coordTracking = 0;
+    const int16_t altitudeTracking = tinyPosterLayout ? 1 : 1;
+    const bool coordHalfScale = true;
+    const bool altitudeHalfScale = true;
+    const int16_t neonMargin = 0;
+    const int16_t altitudeMargin = tinyPosterLayout ? 1 : 2;
+    const int16_t leftRegionMinX = layout.leftX + neonMargin;
+    const int16_t leftRegionMaxX = layout.leftX + layout.leftW - neonMargin;
+    const int16_t leftCenterX = layout.leftX + (layout.leftW / 2);
+
+    double lat = 0.0;
+    double lon = 0.0;
+    if (hasGpsCoordinates) {
+        lat = static_cast<double>(gps->getLatitude()) * 1e-7;
+        lon = static_cast<double>(gps->getLongitude()) * 1e-7;
+    }
+
+    char lonLine[24];
+    char latLine[24];
+    char altitudeLine[16];
+    auto writeCoordPlaceholder = [](char *out, size_t outSize, int wholeDigits, int decimals) {
+        if (!out || outSize == 0) {
+            return;
+        }
+        size_t pos = 0;
+        for (int i = 0; i < wholeDigits && pos < (outSize - 1); ++i) {
+            out[pos++] = '-';
+        }
+        if (pos < (outSize - 1)) {
+            out[pos++] = '.';
+        }
+        for (int i = 0; i < decimals && pos < (outSize - 1); ++i) {
+            out[pos++] = '-';
+        }
+        out[pos] = '\0';
+    };
+
+    int16_t lonClockW = 0;
+    int16_t latClockW = 0;
+    const int16_t coordUsableW = std::max<int16_t>(44, layout.leftW - (neonMargin * 2));
+    auto measureCoordText = [&](const char *line) { return measurePattanakarnClockTextTracked(line, coordHalfScale, coordTracking); };
+    if (hasGpsCoordinates) {
+        int coordDecimals = -1;
+        for (int decimals = 7; decimals >= 2; --decimals) {
+            snprintf(lonLine, sizeof(lonLine), "%.*f", decimals, lon);
+            snprintf(latLine, sizeof(latLine), "%.*f", decimals, lat);
+            lonClockW = measureCoordText(lonLine);
+            latClockW = measureCoordText(latLine);
+            if (lonClockW > 0 && latClockW > 0 && lonClockW <= coordUsableW && latClockW <= coordUsableW) {
+                coordDecimals = decimals;
+                break;
+            }
+        }
+        if (coordDecimals < 0) {
+            snprintf(lonLine, sizeof(lonLine), "%.2f", lon);
+            snprintf(latLine, sizeof(latLine), "%.2f", lat);
+            lonClockW = measureCoordText(lonLine);
+            latClockW = measureCoordText(latLine);
+        }
+    } else {
+        writeCoordPlaceholder(lonLine, sizeof(lonLine), 2, 2);
+        writeCoordPlaceholder(latLine, sizeof(latLine), 2, 2);
+        lonClockW = measureCoordText(lonLine);
+        latClockW = measureCoordText(latLine);
+    }
+
+    if (lonClockW <= 0 || latClockW <= 0) {
+        return;
+    }
+
+    const int32_t altitudeMeters = (hasGpsCoordinates && gps) ? gps->getAltitude() : INT32_MIN;
+    if (altitudeMeters == INT32_MIN) {
+        snprintf(altitudeLine, sizeof(altitudeLine), "--m");
+    } else {
+        snprintf(altitudeLine, sizeof(altitudeLine), "%ldm", static_cast<long>(altitudeMeters));
+    }
+    const int16_t altitudeW = measurePattanakarnClockTextTracked(altitudeLine, altitudeHalfScale, altitudeTracking);
+
+    auto clampLineX = [&](int16_t wantedX, int16_t lineW) {
+        const int16_t minX = leftRegionMinX;
+        const int16_t maxX = leftRegionMaxX - lineW;
+        if (maxX <= minX) {
+            return minX;
+        }
+        if (wantedX < minX) {
+            return minX;
+        }
+        if (wantedX > maxX) {
+            return maxX;
+        }
+        return wantedX;
+    };
+
+    const int16_t lonX = clampLineX(leftCenterX - (lonClockW / 2), lonClockW);
+    const int16_t latX = clampLineX(leftCenterX - (latClockW / 2), latClockW);
+
+    int16_t altitudeX = clampLineX(layout.mountainX + layout.mountainW + (tinyPosterLayout ? 6 : 8), altitudeW);
+    if (altitudeW > 0 && (altitudeX + altitudeW) > leftRegionMaxX) {
+        altitudeX = clampLineX(leftCenterX - (altitudeW / 2), altitudeW);
+    }
+
+    // Decor is fully repainted before text, so keep background intact to preserve raster lines behind neon.
+
+    renderDirectNeonPattanakarnText(
+        tft, lonX, layout.coordY1, lonLine, coordHalfScale, mapDirectGpsWarmLayerColor, false, coordTracking);
+    renderDirectNeonPattanakarnText(
+        tft, latX, layout.coordY2, latLine, coordHalfScale, mapDirectGpsWarmLayerColor, false, coordTracking);
+    if (altitudeW > 0) {
+        renderDirectNeonPattanakarnText(
+            tft, altitudeX, layout.altitudeY, altitudeLine, altitudeHalfScale, mapDirectGpsWarmLayerColor, false, altitudeTracking,
+            altitudeMargin);
+    }
+}
+
+static void directFillCircle565(TFTDisplay *tft, int16_t displayW, int16_t displayH, int16_t cx, int16_t cy, int16_t radius, uint16_t color)
+{
+    if (!tft || radius <= 0 || displayW <= 0 || displayH <= 0) {
+        return;
+    }
+
+    const int32_t rr = static_cast<int32_t>(radius) * static_cast<int32_t>(radius);
+    for (int16_t yy = -radius; yy <= radius; ++yy) {
+        const int16_t py = cy + yy;
+        if (py < 0 || py >= displayH) {
+            continue;
+        }
+        const int32_t dy2 = static_cast<int32_t>(yy) * static_cast<int32_t>(yy);
+        const int32_t dx2 = rr - dy2;
+        if (dx2 < 0) {
+            continue;
+        }
+        int16_t dx = static_cast<int16_t>(sqrtf(static_cast<float>(dx2)));
+        int16_t x0 = cx - dx;
+        int16_t x1 = cx + dx;
+        if (x1 < 0 || x0 >= displayW) {
+            continue;
+        }
+        if (x0 < 0) {
+            x0 = 0;
+        }
+        if (x1 >= displayW) {
+            x1 = displayW - 1;
+        }
+        const int16_t runW = x1 - x0 + 1;
+        if (runW > 0) {
+            tft->fillRect565(x0, py, runW, 1, color);
+        }
+    }
+}
+
+static void directDrawLine565(TFTDisplay *tft,
+                              int16_t displayW,
+                              int16_t displayH,
+                              int16_t x0,
+                              int16_t y0,
+                              int16_t x1,
+                              int16_t y1,
+                              uint16_t color)
+{
+    if (!tft) {
+        return;
+    }
+
+    int16_t x = x0;
+    int16_t y = y0;
+    const int16_t dx = std::abs(x1 - x0);
+    const int16_t sx = (x0 < x1) ? 1 : -1;
+    const int16_t dy = -std::abs(y1 - y0);
+    const int16_t sy = (y0 < y1) ? 1 : -1;
+    int16_t err = dx + dy;
+
+    while (true) {
+        if (x >= 0 && x < displayW && y >= 0 && y < displayH) {
+            tft->drawPixel565(x, y, color);
+        }
+        if (x == x1 && y == y1) {
+            break;
+        }
+        const int16_t e2 = static_cast<int16_t>(2 * err);
+        if (e2 >= dy) {
+            err += dy;
+            x += sx;
+        }
+        if (e2 <= dx) {
+            err += dx;
+            y += sy;
+        }
+    }
+}
+
+static void directDrawThickLine565(TFTDisplay *tft,
+                                   int16_t displayW,
+                                   int16_t displayH,
+                                   int16_t x0,
+                                   int16_t y0,
+                                   int16_t x1,
+                                   int16_t y1,
+                                   int16_t thickness,
+                                   uint16_t color)
+{
+    if (!tft || thickness <= 0) {
+        return;
+    }
+
+    if (thickness <= 1) {
+        directDrawLine565(tft, displayW, displayH, x0, y0, x1, y1, color);
+        return;
+    }
+
+    const int16_t dx = x1 - x0;
+    const int16_t dy = y1 - y0;
+    const int16_t steps = std::max<int16_t>(std::abs(dx), std::abs(dy));
+    const int16_t dotR = std::max<int16_t>(1, thickness / 2);
+    if (steps <= 0) {
+        directFillCircle565(tft, displayW, displayH, x0, y0, dotR, color);
+        return;
+    }
+
+    for (int16_t i = 0; i <= steps; ++i) {
+        const int16_t px = x0 + (dx * i) / steps;
+        const int16_t py = y0 + (dy * i) / steps;
+        directFillCircle565(tft, displayW, displayH, px, py, dotR, color);
+    }
+}
+
+static void directDrawNeonLine565(TFTDisplay *tft,
+                                  int16_t displayW,
+                                  int16_t displayH,
+                                  int16_t x0,
+                                  int16_t y0,
+                                  int16_t x1,
+                                  int16_t y1,
+                                  uint16_t coreColor,
+                                  uint16_t glowNearColor,
+                                  uint16_t glowFarColor,
+                                  int16_t coreThickness,
+                                  int16_t glowNearThickness,
+                                  int16_t glowFarThickness)
+{
+    if (!tft) {
+        return;
+    }
+    if (glowFarThickness > 0) {
+        directDrawThickLine565(tft, displayW, displayH, x0, y0, x1, y1, glowFarThickness, glowFarColor);
+    }
+    if (glowNearThickness > 0) {
+        directDrawThickLine565(tft, displayW, displayH, x0, y0, x1, y1, glowNearThickness, glowNearColor);
+    }
+    if (coreThickness > 0) {
+        directDrawThickLine565(tft, displayW, displayH, x0, y0, x1, y1, coreThickness, coreColor);
+    }
+}
+
+struct DirectDrawClipRect {
+    bool enabled = false;
+    int16_t minX = 0;
+    int16_t maxX = 0;
+    int16_t minY = 0;
+    int16_t maxY = 0;
+};
+
+static bool makeDirectDrawClipRect(int16_t x,
+                                   int16_t y,
+                                   int16_t w,
+                                   int16_t h,
+                                   int16_t displayW,
+                                   int16_t displayH,
+                                   DirectDrawClipRect &outClip)
+{
+    if (w <= 0 || h <= 0 || displayW <= 0 || displayH <= 0) {
+        outClip.enabled = false;
+        return false;
+    }
+    int16_t minX = x;
+    int16_t minY = y;
+    int16_t maxX = x + w - 1;
+    int16_t maxY = y + h - 1;
+    if (maxX < 0 || maxY < 0 || minX >= displayW || minY >= displayH) {
+        outClip.enabled = false;
+        return false;
+    }
+    if (minX < 0) {
+        minX = 0;
+    }
+    if (minY < 0) {
+        minY = 0;
+    }
+    if (maxX >= displayW) {
+        maxX = displayW - 1;
+    }
+    if (maxY >= displayH) {
+        maxY = displayH - 1;
+    }
+    outClip.enabled = true;
+    outClip.minX = minX;
+    outClip.maxX = maxX;
+    outClip.minY = minY;
+    outClip.maxY = maxY;
+    return true;
+}
+
+static bool directClipContains(const DirectDrawClipRect *clip, int16_t x, int16_t y)
+{
+    if (!clip || !clip->enabled) {
+        return true;
+    }
+    return x >= clip->minX && x <= clip->maxX && y >= clip->minY && y <= clip->maxY;
+}
+
+static void directFillCircle565Clipped(TFTDisplay *tft,
+                                       int16_t displayW,
+                                       int16_t displayH,
+                                       int16_t cx,
+                                       int16_t cy,
+                                       int16_t radius,
+                                       uint16_t color,
+                                       const DirectDrawClipRect *clip)
+{
+    if (!tft || radius <= 0 || displayW <= 0 || displayH <= 0) {
+        return;
+    }
+
+    const int32_t rr = static_cast<int32_t>(radius) * static_cast<int32_t>(radius);
+    for (int16_t yy = -radius; yy <= radius; ++yy) {
+        const int16_t py = cy + yy;
+        if (py < 0 || py >= displayH) {
+            continue;
+        }
+        if (clip && clip->enabled && (py < clip->minY || py > clip->maxY)) {
+            continue;
+        }
+
+        const int32_t dy2 = static_cast<int32_t>(yy) * static_cast<int32_t>(yy);
+        const int32_t dx2 = rr - dy2;
+        if (dx2 < 0) {
+            continue;
+        }
+        int16_t dx = static_cast<int16_t>(sqrtf(static_cast<float>(dx2)));
+        int16_t x0 = cx - dx;
+        int16_t x1 = cx + dx;
+        if (x1 < 0 || x0 >= displayW) {
+            continue;
+        }
+        if (x0 < 0) {
+            x0 = 0;
+        }
+        if (x1 >= displayW) {
+            x1 = displayW - 1;
+        }
+        if (clip && clip->enabled) {
+            if (x1 < clip->minX || x0 > clip->maxX) {
+                continue;
+            }
+            if (x0 < clip->minX) {
+                x0 = clip->minX;
+            }
+            if (x1 > clip->maxX) {
+                x1 = clip->maxX;
+            }
+        }
+        const int16_t runW = x1 - x0 + 1;
+        if (runW > 0) {
+            tft->fillRect565(x0, py, runW, 1, color);
+        }
+    }
+}
+
+static void directDrawLine565Clipped(TFTDisplay *tft,
+                                     int16_t displayW,
+                                     int16_t displayH,
+                                     int16_t x0,
+                                     int16_t y0,
+                                     int16_t x1,
+                                     int16_t y1,
+                                     uint16_t color,
+                                     const DirectDrawClipRect *clip)
+{
+    if (!tft) {
+        return;
+    }
+
+    int16_t x = x0;
+    int16_t y = y0;
+    const int16_t dx = std::abs(x1 - x0);
+    const int16_t sx = (x0 < x1) ? 1 : -1;
+    const int16_t dy = -std::abs(y1 - y0);
+    const int16_t sy = (y0 < y1) ? 1 : -1;
+    int16_t err = dx + dy;
+
+    while (true) {
+        if (x >= 0 && x < displayW && y >= 0 && y < displayH && directClipContains(clip, x, y)) {
+            tft->drawPixel565(x, y, color);
+        }
+        if (x == x1 && y == y1) {
+            break;
+        }
+        const int16_t e2 = static_cast<int16_t>(2 * err);
+        if (e2 >= dy) {
+            err += dy;
+            x += sx;
+        }
+        if (e2 <= dx) {
+            err += dx;
+            y += sy;
+        }
+    }
+}
+
+static void directDrawThickLine565Clipped(TFTDisplay *tft,
+                                          int16_t displayW,
+                                          int16_t displayH,
+                                          int16_t x0,
+                                          int16_t y0,
+                                          int16_t x1,
+                                          int16_t y1,
+                                          int16_t thickness,
+                                          uint16_t color,
+                                          const DirectDrawClipRect *clip)
+{
+    if (!tft || thickness <= 0) {
+        return;
+    }
+
+    if (thickness <= 1) {
+        directDrawLine565Clipped(tft, displayW, displayH, x0, y0, x1, y1, color, clip);
+        return;
+    }
+
+    const int16_t dx = x1 - x0;
+    const int16_t dy = y1 - y0;
+    const int16_t steps = std::max<int16_t>(std::abs(dx), std::abs(dy));
+    const int16_t dotR = std::max<int16_t>(1, thickness / 2);
+    if (steps <= 0) {
+        directFillCircle565Clipped(tft, displayW, displayH, x0, y0, dotR, color, clip);
+        return;
+    }
+
+    for (int16_t i = 0; i <= steps; ++i) {
+        const int16_t px = x0 + (dx * i) / steps;
+        const int16_t py = y0 + (dy * i) / steps;
+        directFillCircle565Clipped(tft, displayW, displayH, px, py, dotR, color, clip);
+    }
+}
+
+static void directDrawNeonLine565Clipped(TFTDisplay *tft,
+                                         int16_t displayW,
+                                         int16_t displayH,
+                                         int16_t x0,
+                                         int16_t y0,
+                                         int16_t x1,
+                                         int16_t y1,
+                                         uint16_t coreColor,
+                                         uint16_t glowNearColor,
+                                         uint16_t glowFarColor,
+                                         int16_t coreThickness,
+                                         int16_t glowNearThickness,
+                                         int16_t glowFarThickness,
+                                         const DirectDrawClipRect *clip)
+{
+    if (!tft) {
+        return;
+    }
+    if (glowFarThickness > 0) {
+        directDrawThickLine565Clipped(tft, displayW, displayH, x0, y0, x1, y1, glowFarThickness, glowFarColor, clip);
+    }
+    if (glowNearThickness > 0) {
+        directDrawThickLine565Clipped(tft, displayW, displayH, x0, y0, x1, y1, glowNearThickness, glowNearColor, clip);
+    }
+    if (coreThickness > 0) {
+        directDrawThickLine565Clipped(tft, displayW, displayH, x0, y0, x1, y1, coreThickness, coreColor, clip);
+    }
+}
+
+struct DirectHomeOrbLayout {
+    bool tiny = false;
+    int16_t boxX = 0;
+    int16_t boxY = 0;
+    int16_t boxW = 0;
+    int16_t boxH = 0;
+    int16_t cx = 0;
+    int16_t cy = 0;
+    int16_t boundsX = 0;
+    int16_t boundsY = 0;
+    int16_t boundsW = 0;
+    int16_t boundsH = 0;
+};
+
+static DirectHomeOrbLayout makeDirectHomeOrbLayout(int16_t width, int16_t height)
+{
+    DirectHomeOrbLayout out;
+    out.tiny = (width <= 176 || height <= 96);
+    // Keep the mesh in a fixed right-bottom box so it never drifts into other UI areas.
+    out.boxW = out.tiny ? 54 : 108;
+    out.boxH = out.tiny ? 42 : 92;
+    out.boxX = width - out.boxW - (out.tiny ? 4 : 10);
+    out.boxY = height - out.boxH - (out.tiny ? 4 : 10);
+    if (out.boxX < 2) {
+        out.boxX = 2;
+    }
+    if (out.boxY < 2) {
+        out.boxY = 2;
+    }
+
+    out.cx = out.boxX + (out.boxW / 2);
+    out.cy = out.boxY + (out.boxH / 2);
+
+    const int16_t glowPad = out.tiny ? 5 : 7;
+    const int16_t halfWPeak = static_cast<int16_t>(((static_cast<int32_t>(out.boxW) * 130) + 99) / 200);
+    const int16_t halfHPeak = static_cast<int16_t>(((static_cast<int32_t>(out.boxH) * 130) + 99) / 200);
+    out.boundsX = out.cx - halfWPeak - glowPad;
+    out.boundsY = out.cy - halfHPeak - glowPad;
+    out.boundsW = (halfWPeak + glowPad) * 2 + 1;
+    out.boundsH = (halfHPeak + glowPad) * 2 + 1;
+    return out;
+}
+
+static bool getDirectHomeOrbBoundsRect(int16_t width, int16_t height, int16_t &x, int16_t &y, int16_t &w, int16_t &h)
+{
+    if (width <= 0 || height <= 0) {
+        return false;
+    }
+    const DirectHomeOrbLayout layout = makeDirectHomeOrbLayout(width, height);
+    DirectDrawClipRect clip;
+    if (!makeDirectDrawClipRect(layout.boundsX, layout.boundsY, layout.boundsW, layout.boundsH, width, height, clip)) {
+        return false;
+    }
+    x = clip.minX;
+    y = clip.minY;
+    w = clip.maxX - clip.minX + 1;
+    h = clip.maxY - clip.minY + 1;
+    return w > 0 && h > 0;
+}
+
+static void renderDirectHomeOrangeMesh(TFTDisplay *tft,
+                                       int16_t width,
+                                       int16_t height,
+                                       const DirectDrawClipRect *clip = nullptr,
+                                       bool clearClip = false,
+                                       uint8_t pulsePercent = 100)
+{
+    if (!tft || width <= 0 || height <= 0) {
+        return;
+    }
+
+    const uint16_t black = TFTDisplay::rgb565(0x00, 0x00, 0x00);
+    const DirectHomeOrbLayout layout = makeDirectHomeOrbLayout(width, height);
+    if (layout.boxW <= 0 || layout.boxH <= 0) {
+        return;
+    }
+
+    if (clip && clip->enabled) {
+        const int16_t bx1 = layout.boundsX + layout.boundsW - 1;
+        const int16_t by1 = layout.boundsY + layout.boundsH - 1;
+        if (bx1 < clip->minX || layout.boundsX > clip->maxX || by1 < clip->minY || layout.boundsY > clip->maxY) {
+            return;
+        }
+    }
+
+    if (clearClip) {
+        if (clip && clip->enabled) {
+            const int16_t clipW = clip->maxX - clip->minX + 1;
+            const int16_t clipH = clip->maxY - clip->minY + 1;
+            if (clipW > 0 && clipH > 0) {
+                tft->fillRect565(clip->minX, clip->minY, clipW, clipH, black);
+            }
+        } else {
+            DirectDrawClipRect clearRect;
+            if (makeDirectDrawClipRect(layout.boundsX, layout.boundsY, layout.boundsW, layout.boundsH, width, height, clearRect)) {
+                tft->fillRect565(clearRect.minX, clearRect.minY, clearRect.maxX - clearRect.minX + 1, clearRect.maxY - clearRect.minY + 1, black);
+            }
+        }
+    }
+
+    if (pulsePercent < 100) {
+        pulsePercent = 100;
+    }
+    if (pulsePercent > 130) {
+        pulsePercent = 130;
+    }
+    const int16_t orbR = std::max<int16_t>(4, (std::min<int16_t>(layout.boxW, layout.boxH) * pulsePercent) / 280);
+
+    static constexpr int16_t kBloomLayers = 20;
+    static constexpr int16_t kBloomOuterPercent = 5;
+    static constexpr int16_t kBloomInnerPercent = 34;
+    const int16_t innerExtra = layout.tiny ? 1 : 2;
+    const int16_t extraStep = 1;
+    for (int16_t layer = kBloomLayers - 1; layer >= 0; --layer) {
+        const int16_t radius = orbR + innerExtra + (layer * extraStep);
+        const int16_t numerator = (kBloomInnerPercent - kBloomOuterPercent) * (kBloomLayers - 1 - layer);
+        const int16_t percent =
+            static_cast<int16_t>(kBloomOuterPercent + ((numerator + ((kBloomLayers - 1) / 2)) / (kBloomLayers - 1)));
+        const uint8_t r = static_cast<uint8_t>((0xFFU * percent) / 100U);
+        const uint8_t g = static_cast<uint8_t>((0x8AU * percent) / 100U);
+        const uint8_t b = static_cast<uint8_t>((0x1FU * percent) / 100U);
+        directFillCircle565Clipped(tft, width, height, layout.cx, layout.cy, radius, TFTDisplay::rgb565(r, g, b), clip);
+    }
+
+    struct OrbPoint {
+        int8_t x;
+        int8_t y;
+    };
+    // Hand-traced from the provided reference polyhedron.
+    static constexpr OrbPoint kPts[] = {
+        {0, 42},   // 0 left-mid
+        {7, 94},   // 1 left-bottom
+        {21, 15},  // 2 top-left
+        {36, 24},  // 3 upper-mid
+        {43, 51},  // 4 center
+        {35, 62},  // 5 mid-left-lower
+        {45, 86},  // 6 bottom-mid
+        {78, 0},   // 7 top-right
+        {63, 42},  // 8 center-right
+        {78, 31},  // 9 right-upper-mid
+        {88, 56},  // 10 right-mid
+        {77, 67},  // 11 right-mid-lower
+        {76, 100}, // 12 bottom-right
+    };
+    struct OrbEdge {
+        uint8_t a;
+        uint8_t b;
+    };
+    static constexpr OrbEdge kEdges[] = {
+        {0, 1},  {1, 12}, {12, 7}, {7, 2},  {2, 0}, // outer shell
+        {7, 9},  {9, 11}, {11, 12},                  // right spine
+        {2, 3},  {3, 7},  {2, 9},  {3, 9},           // top cap
+        {0, 4},  {0, 8},                              // left fan
+        {2, 4},  {2, 5},                              // upper-left internals
+        {3, 4},                                       // crown bridge
+        {4, 5},  {5, 6},  {4, 6},                     // center pillar
+        {4, 8},  {4, 9},  {4, 10}, {4, 12},           // center to right
+        {5, 1},  {6, 1},                              // left-bottom ties
+        {6, 12},                                      // bottom tie
+        {8, 9},  {8, 10}, {8, 11},                    // right upper web
+        {10, 11}, {10, 12}, {11, 12},                 // right lower web
+        {3, 6},                                       // long diagonal
+    };
+
+    const uint16_t edgeCore = TFTDisplay::rgb565(0xF7, 0x8A, 0x1F);
+    const uint16_t edgeGlowNear = TFTDisplay::rgb565(0xC4, 0x62, 0x16);
+    const uint16_t edgeGlowFar = TFTDisplay::rgb565(0x6A, 0x2E, 0x0B);
+    int16_t sx[sizeof(kPts) / sizeof(kPts[0])] = {0};
+    int16_t sy[sizeof(kPts) / sizeof(kPts[0])] = {0};
+    for (size_t i = 0; i < (sizeof(kPts) / sizeof(kPts[0])); ++i) {
+        const int16_t px = layout.boxX + static_cast<int16_t>((static_cast<int32_t>(layout.boxW) * kPts[i].x) / 100);
+        const int16_t py = layout.boxY + static_cast<int16_t>((static_cast<int32_t>(layout.boxH) * kPts[i].y) / 100);
+        sx[i] = layout.cx + static_cast<int16_t>((static_cast<int32_t>(px - layout.cx) * pulsePercent) / 100);
+        sy[i] = layout.cy + static_cast<int16_t>((static_cast<int32_t>(py - layout.cy) * pulsePercent) / 100);
+    }
+    for (size_t i = 0; i < (sizeof(kEdges) / sizeof(kEdges[0])); ++i) {
+        const OrbEdge &e = kEdges[i];
+        directDrawNeonLine565Clipped(tft, width, height, sx[e.a], sy[e.a], sx[e.b], sy[e.b], edgeCore, edgeGlowNear, edgeGlowFar, 1, 1, 2, clip);
+        if ((i & 0x07) == 0) {
+            yield();
+            esp_task_wdt_reset();
+        }
+    }
+
+    const uint16_t nodeCore = TFTDisplay::rgb565(0xD8, 0xFF, 0x00);
+    const uint16_t nodeGlow = TFTDisplay::rgb565(0x7A, 0x8E, 0x10);
+    const int16_t nodeR = layout.tiny ? 2 : 3;
+    const int16_t nodeGlowR = nodeR + 1;
+    for (size_t i = 0; i < (sizeof(kPts) / sizeof(kPts[0])); ++i) {
+        directFillCircle565Clipped(tft, width, height, sx[i], sy[i], nodeGlowR, nodeGlow, clip);
+        directFillCircle565Clipped(tft, width, height, sx[i], sy[i], nodeR, nodeCore, clip);
+    }
+}
+
+static bool repaintDirectHomeClockMeshRegion(TFTDisplay *tft, int16_t width, int16_t height, int16_t originY)
+{
+    if (!tft || width <= 0 || height <= 0) {
+        return false;
+    }
+
+    int16_t regionX = 0;
+    int16_t regionY = 0;
+    int16_t regionW = 0;
+    int16_t regionH = 0;
+    int16_t frameX = 0;
+    if (!getDirectNeonClockRegionRect(width, originY, regionX, regionY, regionW, regionH, frameX)) {
+        return false;
+    }
+
+    // Home mesh is constrained to the lower band; timer region on top never needs mesh repaint.
+    const int16_t meshTopY = static_cast<int16_t>((height * 52) / 100);
+    if ((regionY + regionH) <= meshTopY) {
+        return false;
+    }
+
+    DirectDrawClipRect clip;
+    if (!makeDirectDrawClipRect(regionX, regionY, regionW, regionH, width, height, clip)) {
+        return false;
+    }
+    renderDirectHomeOrangeMesh(tft, width, height, &clip, false);
+    return true;
+}
+
+static void renderDirectGpsGlobeBloom(TFTDisplay *tft,
+                                      int16_t width,
+                                      int16_t height,
+                                      int16_t globeCx,
+                                      int16_t globeCy,
+                                      int16_t globeR,
+                                      bool tinyLayout)
+{
+    if (!tft || width <= 0 || height <= 0 || globeR <= 6) {
+        return;
+    }
+
+    // Dense white bloom: 40 layers with very soft falloff to 1% at the outer rim.
+    static constexpr int kBloomLayers = 40;
+    const int16_t innerExtra = tinyLayout ? 5 : 8;
+    const int16_t extraStep = tinyLayout ? 1 : 2;
+
+    static constexpr int16_t kBloomInnerPercent = 72;
+    static constexpr int16_t kBloomOuterPercent = 1;
+    for (int layer = kBloomLayers - 1; layer >= 0; --layer) { // draw outer -> inner
+        const int16_t radius = globeR + innerExtra + (layer * extraStep);
+        if (radius <= 0) {
+            continue;
+        }
+        const int16_t numerator = (kBloomInnerPercent - kBloomOuterPercent) * (kBloomLayers - 1 - layer);
+        const int16_t percent = static_cast<int16_t>(kBloomOuterPercent + ((numerator + ((kBloomLayers - 1) / 2)) / (kBloomLayers - 1)));
+        const uint8_t v = static_cast<uint8_t>((255U * percent) / 100U);
+        const uint16_t color = TFTDisplay::rgb565(v, v, v);
+        directFillCircle565(tft, width, height, globeCx, globeCy, radius, color);
+    }
+}
+
+static void renderDirectGpsWireGlobe(TFTDisplay *tft,
+                                     int16_t width,
+                                     int16_t height,
+                                     int16_t globeCx,
+                                     int16_t globeCy,
+                                     int16_t globeR,
+                                     bool tinyLayout)
+{
+    if (!tft || width <= 0 || height <= 0 || globeR <= 6) {
+        return;
+    }
+
+    static constexpr int kMaxLonSegments = 14;
+    static constexpr int kMaxLatSegments = 8;
+    const int kLonSegments = tinyLayout ? 10 : kMaxLonSegments;
+    const int kLatSegments = tinyLayout ? 6 : kMaxLatSegments;
+    struct Point3D {
+        int16_t x = 0;
+        int16_t y = 0;
+        float z = 0.0f;
+    };
+    static Point3D pts[kMaxLatSegments + 1][kMaxLonSegments];
+
+    const float rotY = -0.55f;
+    const float tiltX = 0.45f;
+    const float cosY = cosf(rotY);
+    const float sinY = sinf(rotY);
+    const float cosX = cosf(tiltX);
+    const float sinX = sinf(tiltX);
+
+    const uint16_t lineCoreFront = TFTDisplay::rgb565(0xFF, 0xFF, 0xFF);
+    const uint16_t lineCoreBack = TFTDisplay::rgb565(0xD8, 0xDE, 0xE8);
+    const uint16_t nodeCore = TFTDisplay::rgb565(0xFF, 0xFF, 0xFF);
+
+    for (int latIdx = 0; latIdx <= kLatSegments; ++latIdx) {
+        const float v = static_cast<float>(latIdx) / static_cast<float>(kLatSegments);
+        const float lat = (-0.5f * PI) + (v * PI);
+        const float cosLat = cosf(lat);
+        const float sinLat = sinf(lat);
+        for (int lonIdx = 0; lonIdx < kLonSegments; ++lonIdx) {
+            const float u = static_cast<float>(lonIdx) / static_cast<float>(kLonSegments);
+            const float lon = u * 2.0f * PI;
+
+            float x = cosLat * cosf(lon);
+            float y = sinLat;
+            float z = cosLat * sinf(lon);
+
+            const float xr = (x * cosY) + (z * sinY);
+            const float zr = (-x * sinY) + (z * cosY);
+            const float yr = (y * cosX) - (zr * sinX);
+            const float zz = (y * sinX) + (zr * cosX);
+
+            pts[latIdx][lonIdx].x = globeCx + static_cast<int16_t>(lrintf(xr * globeR));
+            pts[latIdx][lonIdx].y = globeCy + static_cast<int16_t>(lrintf(yr * globeR));
+            pts[latIdx][lonIdx].z = zz;
+        }
+        yield();
+    }
+
+    auto drawEdge = [&](const Point3D &a, const Point3D &b) {
+        const float zAvg = (a.z + b.z) * 0.5f;
+        const bool backFace = zAvg < -0.12f;
+        const uint16_t core = backFace ? lineCoreBack : lineCoreFront;
+        directDrawLine565(tft, width, height, a.x, a.y, b.x, b.y, core);
+    };
+
+    for (int latIdx = 0; latIdx <= kLatSegments; ++latIdx) {
+        for (int lonIdx = 0; lonIdx < kLonSegments; ++lonIdx) {
+            const int nextLon = (lonIdx + 1) % kLonSegments;
+            drawEdge(pts[latIdx][lonIdx], pts[latIdx][nextLon]);
+            if (latIdx < kLatSegments) {
+                drawEdge(pts[latIdx][lonIdx], pts[latIdx + 1][lonIdx]);
+                drawEdge(pts[latIdx][lonIdx], pts[latIdx + 1][nextLon]);
+            }
+        }
+        yield();
+    }
+
+    for (int latIdx = 0; latIdx <= kLatSegments; ++latIdx) {
+        for (int lonIdx = 0; lonIdx < kLonSegments; ++lonIdx) {
+            const Point3D &p = pts[latIdx][lonIdx];
+            if (p.x < -2 || p.x > (width + 2) || p.y < -2 || p.y > (height + 2)) {
+                continue;
+            }
+            tft->drawPixel565(p.x, p.y, nodeCore);
+        }
+        yield();
+    }
+}
+
+static uint16_t mapDirectGpsWarmLayerColor(uint8_t value)
+{
+    switch (value) {
+    case 1:
+        return TFTDisplay::rgb565(0x1A, 0x07, 0x00);
+    case 2:
+        return TFTDisplay::rgb565(0x34, 0x10, 0x00);
+    case 3:
+        return TFTDisplay::rgb565(0x64, 0x1E, 0x00);
+    case 4:
+        return TFTDisplay::rgb565(0xA8, 0x36, 0x00);
+    case 5:
+        return TFTDisplay::rgb565(0xFF, 0x6A, 0x00);
+    case 6:
+        return TFTDisplay::rgb565(0xFF, 0x9E, 0x4A);
+    case 7:
+        return TFTDisplay::rgb565(0xFF, 0xF2, 0xE6);
+    default:
+        return TFTDisplay::rgb565(0x00, 0x00, 0x00);
+    }
+}
+
+static uint16_t mapDirectGpsCoolLayerColor(uint8_t value)
+{
+    switch (value) {
+    case 1:
+        return TFTDisplay::rgb565(0x03, 0x12, 0x2D);
+    case 2:
+        return TFTDisplay::rgb565(0x05, 0x30, 0x6B);
+    case 3:
+        return TFTDisplay::rgb565(0x00, 0x5E, 0xB6);
+    case 4:
+        return TFTDisplay::rgb565(0x20, 0xA6, 0xFF);
+    case 5:
+        return TFTDisplay::rgb565(0x73, 0xE6, 0xFF);
+    case 6:
+        return TFTDisplay::rgb565(0xCC, 0xFB, 0xFF);
+    case 7:
+        return TFTDisplay::rgb565(0xF6, 0xFF, 0xFF);
+    default:
+        return TFTDisplay::rgb565(0x00, 0x00, 0x00);
+    }
+}
+
+static uint16_t mapDirectGpsAlertLayerColor(uint8_t value)
+{
+    switch (value) {
+    case 1:
+        return TFTDisplay::rgb565(0x28, 0x09, 0x0E);
+    case 2:
+        return TFTDisplay::rgb565(0x4E, 0x12, 0x1F);
+    case 3:
+        return TFTDisplay::rgb565(0x7E, 0x1B, 0x34);
+    case 4:
+        return TFTDisplay::rgb565(0xBE, 0x2D, 0x50);
+    case 5:
+        return TFTDisplay::rgb565(0xFF, 0x5E, 0x86);
+    case 6:
+        return TFTDisplay::rgb565(0xFF, 0xB4, 0xC8);
+    case 7:
+        return TFTDisplay::rgb565(0xFF, 0xEF, 0xF3);
+    default:
+        return TFTDisplay::rgb565(0x00, 0x00, 0x00);
+    }
+}
+
+struct DirectGpsTitleGlyphPattern {
+    char ch;
+    const char *rows[7];
+};
+
+static const DirectGpsTitleGlyphPattern kDirectGpsTitleGlyphs[] = {
+    {'G', {" ### ", "#   #", "#    ", "# ###", "#   #", "#   #", " ### "}},
+    {'P', {"#### ", "#   #", "#   #", "#### ", "#    ", "#    ", "#    "}},
+    {'S', {" ####", "#    ", "#    ", " ### ", "    #", "    #", "#### "}},
+    {'O', {" ### ", "#   #", "#   #", "#   #", "#   #", "#   #", " ### "}},
+    {'N', {"#   #", "##  #", "# # #", "#  ##", "#   #", "#   #", "#   #"}},
+    {'F', {"#####", "#    ", "#    ", "#### ", "#    ", "#    ", "#    "}},
+};
+
+static const DirectGpsTitleGlyphPattern *findDirectGpsTitleGlyph(char ch)
+{
+    for (const auto &glyph : kDirectGpsTitleGlyphs) {
+        if (glyph.ch == ch) {
+            return &glyph;
+        }
+    }
+    return nullptr;
+}
+
+static int16_t measureDirectGpsTitleText(const char *text, int16_t scale, int16_t spacing)
+{
+    if (!text || scale <= 0) {
+        return 0;
+    }
+
+    int16_t width = 0;
+    bool hasGlyph = false;
+    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
+        if (*cursor == ' ') {
+            width += scale * 3;
+            continue;
+        }
+        const auto *glyph = findDirectGpsTitleGlyph(*cursor);
+        if (!glyph) {
+            continue;
+        }
+        if (hasGlyph) {
+            width += spacing;
+        }
+        width += scale * 5;
+        hasGlyph = true;
+    }
+    return width;
+}
+
+static void stampDirectGpsTitleMask(uint8_t *mask,
+                                    int16_t maskW,
+                                    int16_t maskH,
+                                    int16_t x,
+                                    int16_t y,
+                                    const char *text,
+                                    int16_t scale,
+                                    int16_t spacing)
+{
+    if (!mask || !text || maskW <= 0 || maskH <= 0 || scale <= 0) {
+        return;
+    }
+
+    int16_t cursorX = x;
+    bool hasGlyph = false;
+    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
+        const char ch = *cursor;
+        if (ch == ' ') {
+            cursorX += scale * 3;
+            continue;
+        }
+        const auto *glyph = findDirectGpsTitleGlyph(ch);
+        if (!glyph) {
+            continue;
+        }
+
+        if (hasGlyph) {
+            cursorX += spacing;
+        }
+
+        for (int16_t row = 0; row < 7; ++row) {
+            const char *line = glyph->rows[row];
+            if (!line) {
+                continue;
+            }
+            for (int16_t col = 0; col < 5; ++col) {
+                if (line[col] == ' ') {
+                    continue;
+                }
+                const int16_t px0 = cursorX + (col * scale);
+                const int16_t py0 = y + (row * scale);
+                for (int16_t sy = 0; sy < scale; ++sy) {
+                    const int16_t py = py0 + sy;
+                    if (py < 0 || py >= maskH) {
+                        continue;
+                    }
+                    const int16_t rowBase = py * maskW;
+                    for (int16_t sx = 0; sx < scale; ++sx) {
+                        const int16_t px = px0 + sx;
+                        if (px < 0 || px >= maskW) {
+                            continue;
+                        }
+                        mask[rowBase + px] = 1;
+                    }
+                }
+            }
+        }
+
+        cursorX += scale * 5;
+        hasGlyph = true;
+    }
+}
+
+static void renderDirectGpsPosterTitleWord(TFTDisplay *tft,
+                                           int16_t displayW,
+                                           int16_t displayH,
+                                           int16_t drawX,
+                                           int16_t drawY,
+                                           const char *text,
+                                           int16_t scale,
+                                           uint16_t (*layerColorFn)(uint8_t))
+{
+    if (!tft || !text || !*text || !layerColorFn || scale <= 0) {
+        return;
+    }
+
+    // Title words are only "GPS"/"ON"/"OFF" with scale 2-3, so we can keep a tight mask
+    // budget and avoid ~47KB of always-on static BSS.
+    static constexpr int16_t kMaxW = 96;
+    static constexpr int16_t kMaxH = 48;
+    static uint8_t fullMask[kMaxW * kMaxH];
+    static uint8_t coreMask[kMaxW * kMaxH];
+    static uint8_t layerMap[kMaxW * kMaxH];
+
+    const int16_t spacing = std::max<int16_t>(1, scale / 2);
+    const int16_t coreW = measureDirectGpsTitleText(text, scale, spacing);
+    const int16_t coreH = scale * 7;
+    const int16_t margin = std::max<int16_t>(4, scale + 1);
+    const int16_t regionX = drawX - margin;
+    const int16_t regionY = drawY - margin;
+    const int16_t regionW = coreW + (margin * 2);
+    const int16_t regionH = coreH + (margin * 2);
+    if (coreW <= 0 || coreH <= 0 || regionW <= 0 || regionH <= 0 || regionW > kMaxW || regionH > kMaxH) {
+        return;
+    }
+
+    memset(fullMask, 0, static_cast<size_t>(regionW * regionH));
+    memset(coreMask, 0, static_cast<size_t>(regionW * regionH));
+    memset(layerMap, 0, static_cast<size_t>(regionW * regionH));
+
+    stampDirectGpsTitleMask(fullMask, regionW, regionH, margin, margin, text, scale, spacing);
+
+    for (int16_t yy = 0; yy < regionH; ++yy) {
+        for (int16_t xx = 0; xx < regionW; ++xx) {
+            const int16_t idx = (yy * regionW) + xx;
+            if (!fullMask[idx]) {
+                continue;
+            }
+            if (isMaskInteriorPixel(fullMask, regionW, regionH, xx, yy)) {
+                coreMask[idx] = 1;
+            }
+        }
+    }
+
+    const int16_t outerRadius = std::max<int16_t>(3, scale + 1);
+    for (int16_t yy = 0; yy < regionH; ++yy) {
+        for (int16_t xx = 0; xx < regionW; ++xx) {
+            const int16_t idx = (yy * regionW) + xx;
+            uint8_t value = 0;
+            if (coreMask[idx]) {
+                value = 7;
+            } else if (fullMask[idx]) {
+                value = 6;
+            } else if (hasMaskPixelInRadius(fullMask, regionW, regionH, xx, yy, 1)) {
+                value = 5;
+            } else if (hasMaskPixelInRadius(fullMask, regionW, regionH, xx, yy, 2)) {
+                value = 4;
+            } else if (hasMaskPixelInRadius(fullMask, regionW, regionH, xx, yy, 3)) {
+                value = 3;
+            } else if (hasMaskPixelInRadius(fullMask, regionW, regionH, xx, yy, 4)) {
+                value = 2;
+            } else if (hasMaskPixelInRadius(fullMask, regionW, regionH, xx, yy, outerRadius)) {
+                value = 1;
+            }
+            layerMap[idx] = value;
+        }
+    }
+
+    for (int16_t row = 0; row < regionH; ++row) {
+        const int16_t py = regionY + row;
+        if (py < 0 || py >= displayH) {
+            continue;
+        }
+        int16_t runStart = -1;
+        uint8_t runValue = 0xFF;
+        for (int16_t col = 0; col <= regionW; ++col) {
+            const uint8_t value = (col < regionW) ? layerMap[(row * regionW) + col] : 0xFF;
+            if (value == runValue) {
+                continue;
+            }
+            if (runStart >= 0 && runValue > 0) {
+                int16_t x0 = regionX + runStart;
+                int16_t x1 = regionX + col - 1;
+                if (!(x1 < 0 || x0 >= displayW)) {
+                    if (x0 < 0) {
+                        x0 = 0;
+                    }
+                    if (x1 >= displayW) {
+                        x1 = displayW - 1;
+                    }
+                    const int16_t runW = x1 - x0 + 1;
+                    if (runW > 0) {
+                        tft->fillRect565(x0, py, runW, 1, layerColorFn(runValue));
+                    }
+                }
+            }
+            runValue = value;
+            runStart = (col < regionW) ? col : -1;
+        }
+    }
+}
+
+static void renderDirectGpsPosterTitleNeon(TFTDisplay *tft, int16_t width, int16_t height)
+{
+    if (!tft || width <= 0 || height <= 0) {
+        return;
+    }
+
+    const DirectGpsPosterLayout layout = makeDirectGpsPosterLayout(width, height);
+    const bool tinyPosterLayout = layout.tiny;
+    const bool gpsEnabled = config.position.gps_mode == meshtastic_Config_PositionConfig_GpsMode_ENABLED;
+    const char *gpsWord = "GPS";
+    const char *stateWord = gpsEnabled ? "ON" : "OFF";
+
+    // Small TFT title should be more compact (about 70% of previous size).
+    const int16_t scale = tinyPosterLayout ? 2 : 3;
+    const int16_t spacing = std::max<int16_t>(1, scale / 2);
+    const int16_t gpsW = measureDirectGpsTitleText(gpsWord, scale, spacing);
+    const int16_t stateW = measureDirectGpsTitleText(stateWord, scale, spacing);
+    if (gpsW <= 0 || stateW <= 0) {
+        return;
+    }
+
+    int16_t titleGap = width / 30;
+    if (titleGap < (tinyPosterLayout ? 4 : 6)) {
+        titleGap = tinyPosterLayout ? 4 : 6;
+    }
+    const int16_t titleW = gpsW + titleGap + stateW;
+    const int16_t leftCenterX = layout.leftX + (layout.leftW / 2);
+    int16_t titleX = leftCenterX - (titleW / 2);
+    if (titleX < layout.leftX) {
+        titleX = layout.leftX;
+    }
+    const int16_t maxTitleX = std::max<int16_t>(layout.leftX, layout.leftX + layout.leftW - titleW);
+    if (titleX > maxTitleX) {
+        titleX = maxTitleX;
+    }
+    const int16_t titleY = layout.titleY;
+    // Do not hard-clear title background here; keep poster raster/waves visible behind neon, including GPS OFF.
+    renderDirectGpsPosterTitleWord(tft, width, height, titleX, titleY, gpsWord, scale, mapDirectGpsWarmLayerColor);
+    renderDirectGpsPosterTitleWord(
+        tft, width, height, titleX + gpsW + titleGap, titleY, stateWord, scale, gpsEnabled ? mapDirectGpsCoolLayerColor : mapDirectGpsAlertLayerColor);
+}
+
+static void renderDirectGpsPosterDecor(TFTDisplay *tft, int16_t width, int16_t height, const GPSStatus *gps)
+{
+    if (!tft || width <= 0 || height <= 0) {
+        return;
+    }
+
+    const DirectGpsPosterLayout layout = makeDirectGpsPosterLayout(width, height);
+    const bool tinyPosterLayout = layout.tiny;
+    const uint16_t black = TFTDisplay::rgb565(0x00, 0x00, 0x00);
+    const uint16_t waveCore = TFTDisplay::rgb565(0x1D, 0xD7, 0xFF);
+    const uint16_t waveGlowNear = TFTDisplay::rgb565(0x08, 0x67, 0xC8);
+    const uint16_t waveGlowFar = TFTDisplay::rgb565(0x03, 0x23, 0x75);
+    const uint16_t mountainCore = TFTDisplay::rgb565(0xFF, 0xFF, 0xFF);
+    const uint16_t mountainGlowNear = TFTDisplay::rgb565(0x88, 0xDE, 0xFF);
+    const uint16_t mountainGlowFar = TFTDisplay::rgb565(0x0A, 0x2E, 0x74);
+
+    tft->fillRect565(0, 0, width, height, black);
+
+    // Draw bloom before raster lines so wave details stay visible on top.
+    renderDirectGpsGlobeBloom(tft, width, height, layout.globeCx, layout.globeCy, layout.globeR, layout.tiny);
+
+    // Blue wave bundle: from lower-left to the right side, converging through the globe region.
+    const int16_t waveLines = tinyPosterLayout ? 8 : 10;
+    const int16_t waveSegments = tinyPosterLayout ? 22 : 24;
+    const int16_t waveCoreThickness = 1;
+    const int16_t waveNearThickness = tinyPosterLayout ? 0 : 1;
+    const int16_t waveFarThickness = tinyPosterLayout ? 0 : 2;
+    const int16_t waveTargetY = layout.globeCy + layout.globeR / 4;
+    for (int16_t i = 0; i < waveLines; ++i) {
+        const float spread = static_cast<float>(i - (waveLines / 2));
+        const int16_t startY = height - 1 - (i * (tinyPosterLayout ? 3 : 5));
+        const int16_t endY = waveTargetY + static_cast<int16_t>(spread * (tinyPosterLayout ? 2.2f : 1.9f));
+        int16_t prevX = 0;
+        int16_t prevY = startY;
+        for (int16_t seg = 1; seg <= waveSegments; ++seg) {
+            const float t = static_cast<float>(seg) / static_cast<float>(waveSegments);
+            const int16_t x = static_cast<int16_t>(lrintf((width - 1) * t));
+            const float baseY = static_cast<float>(startY) * (1.0f - t) + static_cast<float>(endY) * t;
+            const float amp = (tinyPosterLayout ? 1.4f : 3.2f) * (1.0f - t);
+            const float wave = sinf((t * (tinyPosterLayout ? 2.1f : 2.5f) * PI) + (i * 0.32f)) * amp;
+            const int16_t y = static_cast<int16_t>(lrintf(baseY + wave));
+            directDrawNeonLine565(
+                tft, width, height, prevX, prevY, x, y, waveCore, waveGlowNear, waveGlowFar, waveCoreThickness, waveNearThickness, waveFarThickness);
+            prevX = x;
+            prevY = y;
+            if ((seg & 0x03) == 0) {
+                yield();
+            }
+        }
+        yield();
+    }
+
+    // Upper-right curved streaks.
+    const int16_t topArcLines = tinyPosterLayout ? 5 : 6;
+    const int16_t topArcSegments = tinyPosterLayout ? 16 : 16;
+    const int16_t topArcCoreThickness = 1;
+    const int16_t topArcNearThickness = tinyPosterLayout ? 0 : 1;
+    const int16_t topArcFarThickness = tinyPosterLayout ? 0 : 2;
+    for (int16_t i = 0; i < topArcLines; ++i) {
+        const int16_t startX = width - 1;
+        const int16_t startY = -4 + (i * (tinyPosterLayout ? 3 : 4));
+        const int16_t endX = layout.globeCx - (layout.globeR / 3) + (i / 2);
+        const int16_t endY = layout.globeCy - (layout.globeR / 2) + (i * (tinyPosterLayout ? 2 : 3));
+        int16_t prevX = startX;
+        int16_t prevY = startY;
+        for (int16_t seg = 1; seg <= topArcSegments; ++seg) {
+            const float t = static_cast<float>(seg) / static_cast<float>(topArcSegments);
+            const float curve = (1.0f - t) * t;
+            const int16_t x = static_cast<int16_t>(lrintf((startX * (1.0f - t)) + (endX * t) - curve * (tinyPosterLayout ? 18.0f : 28.0f)));
+            const int16_t y = static_cast<int16_t>(lrintf((startY * (1.0f - t)) + (endY * t) + sinf((t + (i * 0.06f)) * PI) * 2.0f));
+            directDrawNeonLine565(
+                tft, width, height, prevX, prevY, x, y, waveCore, waveGlowNear, waveGlowFar, topArcCoreThickness, topArcNearThickness,
+                topArcFarThickness);
+            prevX = x;
+            prevY = y;
+            if ((seg & 0x03) == 0) {
+                yield();
+            }
+        }
+        yield();
+    }
+
+    // Mountain outline icon (white core with blue neon halo).
+    const int16_t mx = layout.mountainX;
+    const int16_t my = layout.mountainY;
+    const int16_t mw = layout.mountainW;
+    const int16_t mh = layout.mountainH;
+    const int16_t mLx = mx;
+    const int16_t mLy = my + mh;
+    const int16_t mPx = mx + (mw * 40) / 100;
+    const int16_t mPy = my;
+    const int16_t mRx = mx + mw;
+    const int16_t mRy = my + mh;
+    const int16_t sLx = mx + (mw * 20) / 100;
+    const int16_t sLy = my + mh;
+    const int16_t sPx = mx + (mw * 47) / 100;
+    const int16_t sPy = my + (mh * 44) / 100;
+    const int16_t sRx = mx + (mw * 72) / 100;
+    const int16_t sRy = my + mh;
+    directDrawNeonLine565(tft, width, height, mLx, mLy, mPx, mPy, mountainCore, mountainGlowNear, mountainGlowFar, 1, 2, 3);
+    directDrawNeonLine565(tft, width, height, mPx, mPy, mRx, mRy, mountainCore, mountainGlowNear, mountainGlowFar, 1, 2, 3);
+    directDrawNeonLine565(tft, width, height, mLx, mLy, mRx, mRy, mountainCore, mountainGlowNear, mountainGlowFar, 1, 2, 3);
+    directDrawNeonLine565(tft, width, height, sLx, sLy, sPx, sPy, mountainCore, mountainGlowNear, mountainGlowFar, 1, 2, 3);
+    directDrawNeonLine565(tft, width, height, sPx, sPy, sRx, sRy, mountainCore, mountainGlowNear, mountainGlowFar, 1, 2, 3);
+
+    // Right-side neon wireframe globe.
+    renderDirectGpsWireGlobe(tft, width, height, layout.globeCx, layout.globeCy, layout.globeR, layout.tiny);
+
+    // Center number in globe = current satellite count.
+    uint8_t satCount = 0;
+    if (gps && gps->getIsConnected()) {
+        satCount = static_cast<uint8_t>(std::min<uint32_t>(99, gps->getNumSatellites()));
+    }
+    char satCountLine[4];
+    snprintf(satCountLine, sizeof(satCountLine), "%u", static_cast<unsigned>(satCount));
+    const bool satHalfScale = true;
+    const int16_t satTracking = tinyPosterLayout ? 1 : 2;
+    const int16_t satTextW = measurePattanakarnClockTextTracked(satCountLine, satHalfScale, satTracking);
+    const int16_t satTextH = kPattanakarnClockHalfHeight;
+    if (satTextW > 0) {
+        int16_t satX = layout.globeCx - (satTextW / 2);
+        int16_t satY = layout.globeCy - (satTextH / 2);
+        const int16_t neonMargin = static_cast<int16_t>((kDirectNeonClockMargin + 1) / 2);
+        const int16_t minX = 2 + neonMargin;
+        const int16_t maxX = width - satTextW - 2 - neonMargin;
+        const int16_t minY = 2 + neonMargin;
+        const int16_t maxY = height - satTextH - 2 - neonMargin;
+        satX = std::max<int16_t>(minX, std::min<int16_t>(satX, maxX));
+        satY = std::max<int16_t>(minY, std::min<int16_t>(satY, maxY));
+        renderDirectNeonPattanakarnText(
+            tft, satX, satY, satCountLine, satHalfScale, mapDirectGpsWarmLayerColor, false, satTracking);
+    }
 }
 
 static void drawHermesXBatteryIcon(OLEDDisplay *display, int16_t x, int16_t y, int16_t width, int16_t height, uint8_t percent)
@@ -2760,10 +4493,492 @@ static void drawHermesGpsSatelliteIcon(OLEDDisplay *display, int16_t x, int16_t 
     drawSignalArc(arcR2, (size >= 40) ? 2 : 1);
 }
 
+static void drawHermesGpsPosterSatelliteMark(OLEDDisplay *display, int16_t cx, int16_t cy, int16_t size)
+{
+    if (!display) {
+        return;
+    }
+
+    if (size < 30) {
+        size = 30;
+    }
+
+    int16_t hubRadius = size / 6;
+    if (hubRadius < 8) {
+        hubRadius = 8;
+    }
+
+    int16_t armSpan = size / 2;
+    if (armSpan < hubRadius + 8) {
+        armSpan = hubRadius + 8;
+    }
+
+    int16_t armThickness = size / 8;
+    if (armThickness < 4) {
+        armThickness = 4;
+    }
+
+    drawThickLine(display, cx - armSpan, cy + armSpan, cx - hubRadius, cy + hubRadius, armThickness);
+    drawThickLine(display, cx + hubRadius, cy - hubRadius, cx + armSpan, cy - armSpan, armThickness);
+    display->fillCircle(cx, cy, hubRadius);
+
+    const int16_t dishRadius = hubRadius / 2;
+    const int16_t dishCx = cx + hubRadius + dishRadius + 6;
+    const int16_t dishCy = cy + hubRadius - 1;
+    display->fillCircle(dishCx, dishCy, dishRadius);
+    display->setColor(BLACK);
+    display->fillCircle(dishCx + dishRadius / 2 + 1, dishCy, dishRadius);
+    display->setColor(WHITE);
+}
+
+static void drawHermesGpsFallbackCornerMapOutline(OLEDDisplay *display, int16_t x, int16_t y, int16_t width, int16_t height)
+{
+    if (!display || width < 150 || height < 86) {
+        return;
+    }
+
+    const bool compactLayout = (width < 220 || height < 120);
+    const int16_t earthR = compactLayout ? 18 : 26;
+    const int16_t earthCx = x + width + (compactLayout ? earthR / 3 : earthR / 4);
+    const int16_t earthCy = y + height + (compactLayout ? earthR / 5 : earthR / 7);
+    const int16_t haloOuterR = earthR + (compactLayout ? 5 : 7);
+    const int16_t haloInnerR = earthR + (compactLayout ? 3 : 5);
+    const int16_t landR1 = std::max<int16_t>(2, earthR / 5);
+    const int16_t landR2 = std::max<int16_t>(2, earthR / 6);
+    const int16_t landR3 = std::max<int16_t>(2, earthR / 7);
+
+    display->drawCircle(earthCx, earthCy, haloOuterR);
+    display->drawCircle(earthCx, earthCy, haloInnerR);
+    display->drawCircle(earthCx, earthCy, earthR);
+    display->drawCircle(earthCx - earthR / 2, earthCy - earthR / 2, landR1);
+    display->drawCircle(earthCx - earthR / 3, earthCy - earthR / 8, landR2);
+    display->drawCircle(earthCx - earthR / 2, earthCy + earthR / 3, landR3);
+}
+
+static void drawHermesGpsNeonAsciiText(OLEDDisplay *display,
+                                       int16_t drawX,
+                                       int16_t drawY,
+                                       const char *text,
+                                       int16_t textH,
+                                       uint16_t glowOuterColor,
+                                       uint16_t glowInnerColor,
+                                       uint16_t coreColor)
+{
+    if (!display || !text || !*text || textH <= 0) {
+        return;
+    }
+
+    const int16_t textW = display->getStringWidth(text);
+    if (textW <= 0) {
+        return;
+    }
+
+    const int16_t outerRadius = (textH >= FONT_HEIGHT_LARGE) ? 3 : 2;
+    const int16_t innerRadius = (outerRadius > 2) ? 2 : 1;
+    addTftColorZone(display,
+                    drawX - outerRadius,
+                    drawY - outerRadius,
+                    textW + outerRadius * 2,
+                    textH + outerRadius * 2,
+                    glowOuterColor,
+                    0x0000);
+    addTftColorZone(display,
+                    drawX - innerRadius,
+                    drawY - innerRadius,
+                    textW + innerRadius * 2,
+                    textH + innerRadius * 2,
+                    glowInnerColor,
+                    0x0000);
+    addTftColorZone(display, drawX, drawY, textW, textH, coreColor, 0x0000);
+
+    auto drawGlowRing = [&](int16_t radius, bool diagonal) {
+        if (radius <= 0) {
+            return;
+        }
+        display->drawString(drawX + radius, drawY, text);
+        display->drawString(drawX - radius, drawY, text);
+        display->drawString(drawX, drawY + radius, text);
+        display->drawString(drawX, drawY - radius, text);
+        if (diagonal) {
+            display->drawString(drawX + radius, drawY + radius, text);
+            display->drawString(drawX - radius, drawY + radius, text);
+            display->drawString(drawX + radius, drawY - radius, text);
+            display->drawString(drawX - radius, drawY - radius, text);
+        }
+    };
+
+    if (outerRadius > 0) {
+        drawGlowRing(outerRadius, true);
+    }
+    if (innerRadius > 0 && innerRadius != outerRadius) {
+        drawGlowRing(innerRadius, true);
+    }
+    display->drawString(drawX, drawY, text);
+}
+
+static void drawHermesGpsNeonClockText(OLEDDisplay *display,
+                                       int16_t drawX,
+                                       int16_t drawY,
+                                       const char *text,
+                                       uint16_t glowOuterColor,
+                                       uint16_t glowInnerColor,
+                                       uint16_t coreColor)
+{
+    if (!display || !text || !*text) {
+        return;
+    }
+
+    const int16_t textW = measurePattanakarnClockText(text);
+    if (textW <= 0) {
+        return;
+    }
+
+    const int16_t glyphH = PattanakarnClock32::kGlyphHeight;
+    const int16_t coreX = drawX;
+    const int16_t coreY = drawY;
+    const int16_t coreW = textW;
+    const int16_t coreH = glyphH;
+    const int16_t outerRadius = 3;
+    const int16_t innerRadius = 1;
+
+    addTftColorZone(display,
+                    drawX - outerRadius,
+                    drawY - outerRadius,
+                    textW + outerRadius * 2,
+                    glyphH + outerRadius * 2,
+                    glowOuterColor,
+                    0x0000);
+    addTftColorZone(display,
+                    drawX - innerRadius,
+                    drawY - innerRadius,
+                    textW + innerRadius * 2,
+                    glyphH + innerRadius * 2,
+                    glowInnerColor,
+                    0x0000);
+    addTftColorZone(display, drawX, drawY, textW, glyphH, coreColor, 0x0000);
+
+    auto drawGlowRing = [&](int16_t radius, bool diagonal) {
+        if (radius <= 0) {
+            return;
+        }
+        drawPattanakarnClockTextOutsideRect(display, drawX + radius, drawY, text, coreX, coreY, coreW, coreH);
+        drawPattanakarnClockTextOutsideRect(display, drawX - radius, drawY, text, coreX, coreY, coreW, coreH);
+        drawPattanakarnClockTextOutsideRect(display, drawX, drawY + radius, text, coreX, coreY, coreW, coreH);
+        drawPattanakarnClockTextOutsideRect(display, drawX, drawY - radius, text, coreX, coreY, coreW, coreH);
+        if (diagonal) {
+            drawPattanakarnClockTextOutsideRect(display, drawX + radius, drawY + radius, text, coreX, coreY, coreW, coreH);
+            drawPattanakarnClockTextOutsideRect(display, drawX - radius, drawY + radius, text, coreX, coreY, coreW, coreH);
+            drawPattanakarnClockTextOutsideRect(display, drawX + radius, drawY - radius, text, coreX, coreY, coreW, coreH);
+            drawPattanakarnClockTextOutsideRect(display, drawX - radius, drawY - radius, text, coreX, coreY, coreW, coreH);
+        }
+    };
+
+    if (outerRadius > 0) {
+        drawGlowRing(outerRadius, outerRadius > 1);
+    }
+    if (innerRadius > 0 && innerRadius != outerRadius) {
+        drawGlowRing(innerRadius, false);
+    }
+    drawPattanakarnClockText(display, drawX, drawY, text);
+}
+
+static void drawHermesGpsNeonClockTextHalf(OLEDDisplay *display,
+                                           int16_t drawX,
+                                           int16_t drawY,
+                                           const char *text,
+                                           uint16_t glowOuterColor,
+                                           uint16_t glowInnerColor,
+                                           uint16_t coreColor)
+{
+    if (!display || !text || !*text) {
+        return;
+    }
+
+    const int16_t textW = measurePattanakarnClockTextHalf(text);
+    if (textW <= 0) {
+        return;
+    }
+
+    const int16_t glyphH = kPattanakarnClockHalfHeight;
+    const int16_t coreX = drawX;
+    const int16_t coreY = drawY;
+    const int16_t coreW = textW;
+    const int16_t coreH = glyphH;
+    const int16_t outerRadius = 2;
+    const int16_t innerRadius = 1;
+    addTftColorZone(display,
+                    drawX - outerRadius,
+                    drawY - outerRadius,
+                    textW + outerRadius * 2,
+                    glyphH + outerRadius * 2,
+                    glowOuterColor,
+                    0x0000);
+    addTftColorZone(display,
+                    drawX - innerRadius,
+                    drawY - innerRadius,
+                    textW + innerRadius * 2,
+                    glyphH + innerRadius * 2,
+                    glowInnerColor,
+                    0x0000);
+    addTftColorZone(display, drawX, drawY, textW, glyphH, coreColor, 0x0000);
+
+    auto drawGlowRing = [&](int16_t radius, bool diagonal) {
+        if (radius <= 0) {
+            return;
+        }
+        drawPattanakarnClockTextHalfOutsideRect(display, drawX + radius, drawY, text, coreX, coreY, coreW, coreH);
+        drawPattanakarnClockTextHalfOutsideRect(display, drawX - radius, drawY, text, coreX, coreY, coreW, coreH);
+        drawPattanakarnClockTextHalfOutsideRect(display, drawX, drawY + radius, text, coreX, coreY, coreW, coreH);
+        drawPattanakarnClockTextHalfOutsideRect(display, drawX, drawY - radius, text, coreX, coreY, coreW, coreH);
+        if (diagonal) {
+            drawPattanakarnClockTextHalfOutsideRect(display, drawX + radius, drawY + radius, text, coreX, coreY, coreW, coreH);
+            drawPattanakarnClockTextHalfOutsideRect(display, drawX - radius, drawY + radius, text, coreX, coreY, coreW, coreH);
+            drawPattanakarnClockTextHalfOutsideRect(display, drawX + radius, drawY - radius, text, coreX, coreY, coreW, coreH);
+            drawPattanakarnClockTextHalfOutsideRect(display, drawX - radius, drawY - radius, text, coreX, coreY, coreW, coreH);
+        }
+    };
+
+    drawGlowRing(outerRadius, true);
+    drawGlowRing(innerRadius, true);
+    drawPattanakarnClockTextHalf(display, drawX, drawY, text);
+}
+
+static void drawHermesGpsMonoNeonStringMaxWidth(OLEDDisplay *display,
+                                                 int16_t drawX,
+                                                 int16_t drawY,
+                                                 int16_t maxW,
+                                                 const char *text,
+                                                 int16_t outerRadius,
+                                                 int16_t innerRadius)
+{
+    if (!display || !text || !*text || maxW <= 0) {
+        return;
+    }
+
+    auto drawAt = [&](int16_t dx, int16_t dy) { display->drawStringMaxWidth(drawX + dx, drawY + dy, maxW, text); };
+    auto drawRing = [&](int16_t radius, bool diagonal) {
+        if (radius <= 0) {
+            return;
+        }
+        drawAt(radius, 0);
+        drawAt(-radius, 0);
+        drawAt(0, radius);
+        drawAt(0, -radius);
+        if (diagonal) {
+            drawAt(radius, radius);
+            drawAt(-radius, radius);
+            drawAt(radius, -radius);
+            drawAt(-radius, -radius);
+        }
+    };
+
+    if (outerRadius > innerRadius) {
+        drawRing(outerRadius, true);
+    }
+    if (innerRadius > 0) {
+        drawRing(innerRadius, true);
+    }
+    drawAt(0, 0);
+}
+
+static void drawHermesGpsMonoNeonMixedBounded(OLEDDisplay *display,
+                                               int16_t drawX,
+                                               int16_t drawY,
+                                               int16_t maxW,
+                                               const char *text,
+                                               int16_t advanceX,
+                                               int16_t lineHeight,
+                                               int16_t outerRadius,
+                                               int16_t innerRadius)
+{
+    if (!display || !text || !*text || maxW <= 0 || advanceX <= 0 || lineHeight <= 0) {
+        return;
+    }
+
+    auto drawAt = [&](int16_t dx, int16_t dy) {
+        HermesX_zh::drawMixedBounded(*display, drawX + dx, drawY + dy, maxW, text, advanceX, lineHeight, nullptr);
+    };
+    auto drawRing = [&](int16_t radius, bool diagonal) {
+        if (radius <= 0) {
+            return;
+        }
+        drawAt(radius, 0);
+        drawAt(-radius, 0);
+        drawAt(0, radius);
+        drawAt(0, -radius);
+        if (diagonal) {
+            drawAt(radius, radius);
+            drawAt(-radius, radius);
+            drawAt(radius, -radius);
+            drawAt(-radius, -radius);
+        }
+    };
+
+    if (outerRadius > innerRadius) {
+        drawRing(outerRadius, true);
+    }
+    if (innerRadius > 0) {
+        drawRing(innerRadius, true);
+    }
+    drawAt(0, 0);
+}
+
 static void drawHermesGpsHeroFrame(OLEDDisplay *display, int16_t x, int16_t y, const GPSStatus *gps)
 {
     const int16_t width = display->getWidth();
     const int16_t height = display->getHeight();
+    const bool posterTftLayout = supportsDirectTftClockRendering(display);
+
+    if (posterTftLayout) {
+        if (x != 0 || y != 0) {
+            // During UI slide transitions, only clear our frame tile.
+            // Rendering full poster decorations here can leak into adjacent tiles and look like page residue.
+            display->setColor(BLACK);
+            display->fillRect(x, y, width, height);
+            display->setFont(FONT_SMALL);
+            return;
+        }
+        const bool tinyPosterLayout = (width <= 176 || height <= 96);
+
+        const uint16_t colorSatellite = TFTDisplay::rgb565(0x70, 0xB5, 0xD3);
+        const uint16_t colorEarthRedGlowOuter = TFTDisplay::rgb565(0x70, 0x08, 0x1A);
+        const uint16_t colorEarthRedGlowInner = TFTDisplay::rgb565(0xE4, 0x4C, 0x7A);
+        const uint16_t colorEarthGlowOuter = TFTDisplay::rgb565(0x1B, 0x59, 0x73);
+        const uint16_t colorEarthGlowInner = TFTDisplay::rgb565(0x67, 0xBA, 0xD7);
+        const uint16_t colorEarthBase = TFTDisplay::rgb565(0xA9, 0xD0, 0xE0);
+        const uint16_t colorEarthLand = TFTDisplay::rgb565(0x6D, 0xB1, 0xC9);
+        const uint16_t colorGpsGlowOuter = TFTDisplay::rgb565(0x8A, 0x2A, 0x00);
+        const uint16_t colorGpsGlowInner = TFTDisplay::rgb565(0xFF, 0xC5, 0x5F);
+        const uint16_t colorGpsCore = TFTDisplay::rgb565(0xFF, 0xF4, 0xDB);
+        const uint16_t colorOnGlowOuter = TFTDisplay::rgb565(0x00, 0x56, 0xAF);
+        const uint16_t colorOnGlowInner = TFTDisplay::rgb565(0x7D, 0xE5, 0xFF);
+        const uint16_t colorOnCore = TFTDisplay::rgb565(0xE4, 0xF5, 0xFF);
+        const uint16_t colorOffGlowOuter = TFTDisplay::rgb565(0x1B, 0x12, 0x12);
+        const uint16_t colorOffGlowInner = TFTDisplay::rgb565(0xA8, 0x58, 0x58);
+        const uint16_t colorOffCore = TFTDisplay::rgb565(0xFF, 0xE8, 0xE8);
+        const bool gpsEnabled = config.position.gps_mode == meshtastic_Config_PositionConfig_GpsMode_ENABLED;
+
+        display->setTextAlignment(TEXT_ALIGN_LEFT);
+        display->setColor(BLACK);
+        display->fillRect(x, y, width, height);
+
+        static const uint8_t kStars[][3] = {
+            {5, 4, 2},   {17, 16, 2}, {45, 9, 2},   {65, 6, 2},  {6, 50, 2},   {38, 61, 2},
+            {58, 44, 2}, {27, 85, 2}, {2, 97, 2},   {42, 98, 2}, {58, 86, 2},  {49, 29, 2},
+        };
+        display->setColor(WHITE);
+        for (const auto &star : kStars) {
+            const int16_t sx = x + static_cast<int16_t>((width * star[0]) / 100);
+            const int16_t sy = y + static_cast<int16_t>((height * star[1]) / 100);
+            display->fillCircle(sx, sy, tinyPosterLayout ? 1 : star[2]);
+        }
+
+        int16_t satSize = (width < height) ? width : height;
+        satSize = (satSize * (tinyPosterLayout ? 58 : 52)) / 100;
+        if (satSize < (tinyPosterLayout ? 34 : 46)) {
+            satSize = tinyPosterLayout ? 34 : 46;
+        }
+        const int16_t satCx = x + (width * (tinyPosterLayout ? 16 : 18)) / 100;
+        const int16_t satCy = y + (height * (tinyPosterLayout ? 52 : 49)) / 100;
+        const int16_t satPad = tinyPosterLayout ? 9 : 12;
+        addTftColorZone(display,
+                        satCx - satSize / 2 - satPad,
+                        satCy - satSize / 2 - satPad,
+                        satSize + satPad * 2,
+                        satSize + satPad * 2,
+                        colorSatellite,
+                        0x0000);
+        drawHermesGpsPosterSatelliteMark(display, satCx, satCy, satSize);
+
+        int16_t earthR = (height * (tinyPosterLayout ? 52 : 64)) / 100;
+        if (earthR < (tinyPosterLayout ? 28 : 40)) {
+            earthR = tinyPosterLayout ? 28 : 40;
+        }
+        const int16_t earthCx = x + width + (tinyPosterLayout ? std::max<int16_t>(4, earthR / 5) : earthR / 3);
+        const int16_t earthCy = y + height + (tinyPosterLayout ? std::max<int16_t>(4, earthR / 6) : earthR / 2);
+        const int16_t earthHaloRedOuterR = earthR + (tinyPosterLayout ? 10 : 13);
+        const int16_t earthHaloRedInnerR = earthR + (tinyPosterLayout ? 7 : 9);
+        const int16_t earthHaloOuterR = earthR + (tinyPosterLayout ? 4 : 6);
+        const int16_t earthHaloInnerR = earthR + (tinyPosterLayout ? 2 : 4);
+        addTftColorZone(display,
+                        earthCx - earthHaloRedOuterR,
+                        earthCy - earthHaloRedOuterR,
+                        earthHaloRedOuterR * 2 + 2,
+                        earthHaloRedOuterR * 2 + 2,
+                        colorEarthRedGlowOuter,
+                        0x0000);
+        addTftColorZone(display,
+                        earthCx - earthHaloRedInnerR,
+                        earthCy - earthHaloRedInnerR,
+                        earthHaloRedInnerR * 2 + 2,
+                        earthHaloRedInnerR * 2 + 2,
+                        colorEarthRedGlowInner,
+                        0x0000);
+        addTftColorZone(display,
+                        earthCx - earthHaloOuterR,
+                        earthCy - earthHaloOuterR,
+                        earthHaloOuterR * 2 + 2,
+                        earthHaloOuterR * 2 + 2,
+                        colorEarthGlowOuter,
+                        0x0000);
+        addTftColorZone(display,
+                        earthCx - earthHaloInnerR,
+                        earthCy - earthHaloInnerR,
+                        earthHaloInnerR * 2 + 2,
+                        earthHaloInnerR * 2 + 2,
+                        colorEarthGlowInner,
+                        0x0000);
+        addTftColorZone(display, earthCx - earthR, earthCy - earthR, earthR * 2 + 2, earthR * 2 + 2, colorEarthBase, 0x0000);
+        addTftColorZone(display,
+                        earthCx - earthR + earthR / 2,
+                        earthCy - earthR + earthR / 4,
+                        earthR,
+                        earthR + (earthR / 2),
+                        colorEarthLand,
+                        0x0000);
+        display->setColor(WHITE);
+        display->fillCircle(earthCx, earthCy, earthHaloRedOuterR);
+        display->fillCircle(earthCx, earthCy, earthHaloRedInnerR);
+        display->fillCircle(earthCx, earthCy, earthHaloOuterR);
+        display->fillCircle(earthCx, earthCy, earthHaloInnerR);
+        display->fillCircle(earthCx, earthCy, earthR);
+        display->fillCircle(earthCx - earthR / 2, earthCy - earthR / 2, earthR / 4);
+        display->fillCircle(earthCx - earthR / 3, earthCy - earthR / 8, earthR / 5);
+        display->fillCircle(earthCx - earthR / 2, earthCy + earthR / 3, earthR / 5);
+        display->fillCircle(earthCx - earthR / 5, earthCy + earthR / 6, earthR / 7);
+
+        display->setFont(tinyPosterLayout ? FONT_MEDIUM : FONT_LARGE);
+        int16_t titleFontH = tinyPosterLayout ? FONT_HEIGHT_MEDIUM : FONT_HEIGHT_LARGE;
+        if (!tinyPosterLayout && display->getStringWidth("GPS ON") > ((width * 52) / 100)) {
+            display->setFont(FONT_MEDIUM);
+            titleFontH = FONT_HEIGHT_MEDIUM;
+        }
+        const char *gpsWord = "GPS";
+        const char *onWord = gpsEnabled ? "ON" : "OFF";
+        int16_t titleGap = width / 30;
+        if (titleGap < (tinyPosterLayout ? 4 : 6)) {
+            titleGap = tinyPosterLayout ? 4 : 6;
+        }
+        const int16_t gpsW = display->getStringWidth(gpsWord);
+        const int16_t onW = display->getStringWidth(onWord);
+        const int16_t titleY = y + (height * (tinyPosterLayout ? 9 : 17)) / 100;
+        const int16_t titleCenterX = x + (width * (tinyPosterLayout ? 60 : 58)) / 100;
+        const int16_t titleX = titleCenterX - (gpsW + titleGap + onW) / 2;
+        const uint16_t stateGlowOuter = gpsEnabled ? colorOnGlowOuter : colorOffGlowOuter;
+        const uint16_t stateGlowInner = gpsEnabled ? colorOnGlowInner : colorOffGlowInner;
+        const uint16_t stateCore = gpsEnabled ? colorOnCore : colorOffCore;
+        drawHermesGpsNeonAsciiText(
+            display, titleX, titleY, gpsWord, titleFontH, colorGpsGlowOuter, colorGpsGlowInner, colorGpsCore);
+        drawHermesGpsNeonAsciiText(
+            display, titleX + gpsW + titleGap, titleY, onWord, titleFontH, stateGlowOuter, stateGlowInner, stateCore);
+
+        // Coordinates are rendered after ui->update() via direct-TFT neon (same pipeline as Home timer).
+        (void)gps;
+
+        display->setFont(FONT_SMALL);
+        return;
+    }
+
     const bool largeLayout = (width >= 240 && height >= 130);
     const bool compactLayout = (width < 220 || height < 120);
     const int16_t compactLineH = _fontHeight(FONT_SMALL_LOCAL);
@@ -2816,9 +5031,11 @@ static void drawHermesGpsHeroFrame(OLEDDisplay *display, int16_t x, int16_t y, c
         return;
     }
 
+    const bool gpsEnabled = config.position.gps_mode == meshtastic_Config_PositionConfig_GpsMode_ENABLED;
+    const char *gpsTitle = gpsEnabled ? "GPS ON" : "GPS OFF";
     const char *lockStatus = u8"已停用";
     const char *lockStatusShort = u8"停用";
-    if (config.position.gps_mode == meshtastic_Config_PositionConfig_GpsMode_ENABLED) {
+    if (gpsEnabled) {
         if (config.position.fixed_position) {
             lockStatus = u8"固定座標";
             lockStatusShort = u8"固定";
@@ -2880,10 +5097,14 @@ static void drawHermesGpsHeroFrame(OLEDDisplay *display, int16_t x, int16_t y, c
     if (compactLayout) {
         int16_t rowY = y + 2;
 
+        display->setFont(FONT_SMALL_LOCAL);
+        drawHermesGpsMonoNeonStringMaxWidth(display, rightX, rowY, rightWidth, gpsTitle, 1, 0);
+        rowY += compactLineH + 1;
+
         char lockLineCompact[40];
         snprintf(lockLineCompact, sizeof(lockLineCompact), "%s%s", u8"定位:", lockStatusShort);
-        HermesX_zh::drawMixedBounded(*display, rightX, rowY, rightWidth, lockLineCompact, HermesX_zh::GLYPH_WIDTH,
-                                     compactLineH, nullptr);
+        drawHermesGpsMonoNeonMixedBounded(
+            display, rightX, rowY, rightWidth, lockLineCompact, HermesX_zh::GLYPH_WIDTH, compactLineH, 1, 0);
         rowY += compactLineH + 1;
 
         const char *coordLabelCompact = u8"座標:";
@@ -2893,9 +5114,9 @@ static void drawHermesGpsHeroFrame(OLEDDisplay *display, int16_t x, int16_t y, c
         HermesX_zh::drawMixedBounded(*display, rightX, rowY, rightWidth, coordLabelCompact, HermesX_zh::GLYPH_WIDTH,
                                      compactLineH, nullptr);
         display->setFont(FONT_SMALL_LOCAL);
-        display->drawStringMaxWidth(coordCompactValueX, rowY, coordCompactValueW, lonLine);
+        drawHermesGpsMonoNeonStringMaxWidth(display, coordCompactValueX, rowY, coordCompactValueW, lonLine, 1, 0);
         rowY += compactLineH;
-        display->drawStringMaxWidth(coordCompactValueX, rowY, coordCompactValueW, latLine);
+        drawHermesGpsMonoNeonStringMaxWidth(display, coordCompactValueX, rowY, coordCompactValueW, latLine, 1, 0);
         rowY += compactLineH + 1;
 
         const char *timeLabelCompact = u8"時間:";
@@ -2904,7 +5125,7 @@ static void drawHermesGpsHeroFrame(OLEDDisplay *display, int16_t x, int16_t y, c
         const int16_t timeCompactValueW = rightWidth - (timeCompactValueX - rightX);
         HermesX_zh::drawMixedBounded(*display, rightX, rowY, rightWidth, timeLabelCompact, HermesX_zh::GLYPH_WIDTH,
                                      compactLineH, nullptr);
-        display->drawStringMaxWidth(timeCompactValueX, rowY, timeCompactValueW, compactTimeLine);
+        drawHermesGpsMonoNeonStringMaxWidth(display, timeCompactValueX, rowY, timeCompactValueW, compactTimeLine, 1, 0);
         display->setFont(FONT_SMALL_LOCAL);
         return;
     }
@@ -2914,10 +5135,22 @@ static void drawHermesGpsHeroFrame(OLEDDisplay *display, int16_t x, int16_t y, c
     const int16_t valueGap = largeLayout ? 2 : 1;
     int16_t rowY = y + (largeLayout ? 8 : 6);
 
+    display->setFont(largeLayout ? FONT_MEDIUM : FONT_SMALL);
+    const int16_t titleLineH = largeLayout ? FONT_HEIGHT_MEDIUM : FONT_HEIGHT_SMALL;
+    drawHermesGpsMonoNeonStringMaxWidth(display, rightX, rowY, rightWidth, gpsTitle, 2, 1);
+    rowY += titleLineH + sectionGap;
+
     char lockLine[64];
     snprintf(lockLine, sizeof(lockLine), "%s%s", u8"衛星定位：", lockStatus);
-    HermesX_zh::drawMixedBounded(*display, rightX, rowY, rightWidth, lockLine, HermesX_zh::GLYPH_WIDTH,
-                                 largeLayout ? FONT_HEIGHT_MEDIUM : FONT_HEIGHT_SMALL, nullptr);
+    drawHermesGpsMonoNeonMixedBounded(display,
+                                      rightX,
+                                      rowY,
+                                      rightWidth,
+                                      lockLine,
+                                      HermesX_zh::GLYPH_WIDTH,
+                                      largeLayout ? FONT_HEIGHT_MEDIUM : FONT_HEIGHT_SMALL,
+                                      1,
+                                      0);
     rowY += (largeLayout ? FONT_HEIGHT_MEDIUM : FONT_HEIGHT_SMALL) + sectionGap;
 
     const char *coordLabel = u8"座標：";
@@ -2927,9 +5160,9 @@ static void drawHermesGpsHeroFrame(OLEDDisplay *display, int16_t x, int16_t y, c
     HermesX_zh::drawMixedBounded(*display, rightX, rowY, rightWidth, coordLabel, HermesX_zh::GLYPH_WIDTH,
                                  largeLayout ? FONT_HEIGHT_MEDIUM : FONT_HEIGHT_SMALL, nullptr);
     display->setFont(largeLayout ? FONT_MEDIUM : FONT_SMALL);
-    display->drawStringMaxWidth(coordValueX, rowY, coordValueW, lonLine);
+    drawHermesGpsMonoNeonStringMaxWidth(display, coordValueX, rowY, coordValueW, lonLine, 2, 1);
     rowY += valueFontHeight + valueGap;
-    display->drawStringMaxWidth(coordValueX, rowY, coordValueW, latLine);
+    drawHermesGpsMonoNeonStringMaxWidth(display, coordValueX, rowY, coordValueW, latLine, 2, 1);
     rowY += valueFontHeight + sectionGap;
 
     const char *timeLabel = u8"時間：";
@@ -2943,6 +5176,7 @@ static void drawHermesGpsHeroFrame(OLEDDisplay *display, int16_t x, int16_t y, c
     display->drawStringMaxWidth(timeValueX, rowY, timeValueW, dateLine);
     rowY += valueFontHeight + valueGap;
     display->drawStringMaxWidth(timeValueX, rowY, timeValueW, timeLine);
+    drawHermesGpsFallbackCornerMapOutline(display, x, y, width, usableHeight);
     display->setFont(FONT_SMALL);
 }
 #endif
@@ -4422,20 +6656,13 @@ void Screen::drawHermesXMain(OLEDDisplay *display, OLEDDisplayUiState * /*state*
     }
     const bool hasSatFix = satCount > 0;
 
-    const int16_t decoCx = width + (compactLayout ? 24 : 28);
-    const int16_t decoCy = height + (compactLayout ? 18 : 20);
-    display->drawCircle(decoCx, decoCy, compactLayout ? 46 : 60);
-    display->drawCircle(decoCx, decoCy, compactLayout ? 32 : 42);
-    display->drawLine(width - (compactLayout ? 50 : 62), height - 1, width - (compactLayout ? 20 : 28),
-                      height - (compactLayout ? 28 : 36));
-    display->drawLine(width - (compactLayout ? 22 : 30), height - (compactLayout ? 27 : 35), width - (compactLayout ? 6 : 8),
-                      height - (compactLayout ? 36 : 46));
-    display->drawLine(width - (compactLayout ? 22 : 30), height - (compactLayout ? 27 : 35), width - (compactLayout ? 36 : 48),
-                      height - (compactLayout ? 40 : 52));
-
     const int16_t badgeW = compactLayout ? 24 : 32;
     const int16_t badgeH = compactLayout ? 18 : 24;
-    const int16_t badgeX = width - badgeW - (compactLayout ? 12 : 18);
+    const int16_t badgeShiftLeft = 20;
+    int16_t badgeX = width - badgeW - (compactLayout ? 12 : 18) - badgeShiftLeft;
+    if (badgeX < 2) {
+        badgeX = 2;
+    }
     const int16_t badgeY = height - badgeH - (compactLayout ? 10 : 16);
     addTftColorZone(display, badgeX, badgeY, badgeW, badgeH,
                     hasSatFix ? TFTDisplay::rgb565(0xB5, 0xED, 0x00) : TFTDisplay::rgb565(0xD9, 0x2D, 0x20), 0x0000);
@@ -4452,6 +6679,7 @@ void Screen::drawHermesXMain(OLEDDisplay *display, OLEDDisplayUiState * /*state*
     display->drawString(badgeX + badgeW / 2, satTextY, satBuf);
     display->setTextAlignment(TEXT_ALIGN_LEFT);
     display->setColor(WHITE);
+
 }
 
 void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*state*/, int16_t /*x*/, int16_t /*y*/)
@@ -5903,6 +8131,9 @@ void Screen::handleSetOn(bool on, FrameCallback einkScreensaver)
 
     if (on != screenOn) {
         if (on) {
+            const uint8_t wakeRestoreFrameIndex =
+                (showingNormalScreen && ui && ui->getUiState()) ? ui->getUiState()->currentFrame : 0xFF;
+            bool reinitUiOnWake = false;
             LOG_INFO("Turn on screen");
             if (buttonThread) {
                 buttonThread->setScreenFlag(true);
@@ -5928,12 +8159,14 @@ void Screen::handleSetOn(bool on, FrameCallback einkScreensaver)
             // If the TFT VEXT power is not enabled, initialize the UI.
             if (!tft_vext_enabled) {
                 ui->init();
+                reinitUiOnWake = true;
             }
 #endif
 #ifdef USE_ST7789
             pinMode(VTFT_CTRL, OUTPUT);
             digitalWrite(VTFT_CTRL, LOW);
             ui->init();
+            reinitUiOnWake = true;
 #ifdef ESP_PLATFORM
             analogWrite(VTFT_LEDA, BRIGHTNESS_DEFAULT);
 #else
@@ -5945,13 +8178,27 @@ void Screen::handleSetOn(bool on, FrameCallback einkScreensaver)
 #if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||     \
     defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
             ui->init();
+            reinitUiOnWake = true;
 #endif
+            if (reinitUiOnWake) {
+                invalidateDirectTftWakeCaches();
+                if (showingNormalScreen && gNormalFramesInitializedAfterBoot) {
+                    setFrames(FOCUS_DEFAULT);
+                    if (wakeRestoreFrameIndex < framesetInfo.frameCount) {
+                        ui->switchToFrame(wakeRestoreFrameIndex);
+                    }
+                    setFastFramerate();
+                }
+            }
             enabled = true;
+            wakeInputGuardUntilMs = millis() + kScreenWakeInputGuardMs;
             setInterval(0); // Draw ASAP
             runASAP = true;
             // 重新開啟後強制更新畫面，避免黑屏
             forceDisplay(true);
         } else {
+            invalidateDirectTftWakeCaches();
+            wakeInputGuardUntilMs = 0;
             dismissIncomingTextPopup();
             powerMon->clearState(meshtastic_PowerMon_State_Screen_On);
 #ifdef USE_EINK
@@ -6638,7 +8885,8 @@ int32_t Screen::runOnce()
 
     if (!deferNormalFrames && pendingNormalFrames) {
         pendingNormalFrames = false;
-        setFrames(FOCUS_PRESERVE);
+        setFrames(gNormalFramesInitializedAfterBoot ? FOCUS_PRESERVE : FOCUS_DEFAULT);
+        gNormalFramesInitializedAfterBoot = true;
     }
 
     if (gIncomingTextPopupState.pending && screenOn) {
@@ -6687,9 +8935,32 @@ int32_t Screen::runOnce()
     const uint16_t normalFg = TFTDisplay::rgb565(0xFF, 0xFF, 0xFF);
     const uint16_t normalBg = TFTDisplay::rgb565(0x00, 0x00, 0x00);
     const uint16_t stealthFg = TFTDisplay::rgb565(0xFF, 0x20, 0x20);
+    const uint8_t currentFrameIndex = ui->getUiState()->currentFrame;
+    const bool frameIndexChanged = currentFrameIndex != gDirectLastFrameIndex;
+    const bool isCurrentGpsFrame = showingNormalScreen && (framesetInfo.positions.settings < framesetInfo.frameCount) &&
+                                   (currentFrameIndex == framesetInfo.positions.settings);
+    const bool switchedToGpsFrame = frameIndexChanged && isCurrentGpsFrame;
+    if (switchedToGpsFrame) {
+        // Frame just switched to GPS: require one FIXED full repaint before any skip-ui optimization.
+        gDirectGpsNeedsFullFrameAfterSwitch = true;
+        gDirectGpsBasePainted = false;
+        gDirectGpsPosterRenderCache.valid = false;
+        gDirectGpsPosterWasVisible = false;
+        tft->resetColorPalette(true);
+        tft->markColorPaletteDirty();
+    } else if (frameIndexChanged && !isCurrentGpsFrame) {
+        gDirectGpsNeedsFullFrameAfterSwitch = false;
+        gDirectGpsBasePainted = false;
+    }
     const bool onFixedMainFrame = showingNormalScreen && ui->getUiState()->frameState == FIXED &&
                                   framesetInfo.positions.main < framesetInfo.frameCount &&
                                   ui->getUiState()->currentFrame == framesetInfo.positions.main;
+    const bool onFixedGpsFrame = showingNormalScreen && ui->getUiState()->frameState == FIXED &&
+                                 framesetInfo.positions.settings < framesetInfo.frameCount &&
+                                 ui->getUiState()->currentFrame == framesetInfo.positions.settings;
+    const bool directGpsPosterNeonEnabled =
+        kEnableDirectGpsPosterTitleNeon || kEnableDirectGpsPosterDecorNeon || kEnableDirectGpsPosterCoordinateNeon;
+    const bool directGpsPosterVisible = directGpsPosterNeonEnabled && onFixedGpsFrame && supportsDirectTftClockRendering(dispdev);
     if (onFixedMainFrame && canUseDirectHermesXHomeClock(dispdev)) {
         renderDirectHomeClock = true;
         const bool enteringDirectHomeClock = !gDirectHomeClockWasVisible;
@@ -6733,11 +9004,12 @@ int32_t Screen::runOnce()
             gHermesXDirectHomeUiCache.valid = false;
             gHermesXDirectHomeUiCache.lastTimeValid = false;
             gDirectHomeBasePainted = false;
+            gDirectHomeMeshPainted = false;
+            gDirectHomeOrbLastPulsePercent = 0xFF;
+            gDirectHomeOrbLastDrawMs = 0;
             forceDirectHomeClockRedraw = true;
             skipUiUpdate = false;
             ui->init();
-            tft->fillRect565(0, 0, dispdev->getWidth(), dispdev->getHeight(), normalBg);
-            clearDirectNeonClockRegion(tft, dispdev->getWidth(), 0);
             tft->markColorPaletteDirty();
         }
 
@@ -6759,6 +9031,9 @@ int32_t Screen::runOnce()
         gHermesXDirectHomeUiCache.valid = false;
         gHermesXDirectHomeUiCache.lastTimeValid = false;
         gDirectHomeBasePainted = false;
+        gDirectHomeMeshPainted = false;
+        gDirectHomeOrbLastPulsePercent = 0xFF;
+        gDirectHomeOrbLastDrawMs = 0;
         gDirectHomeLastBaseRefreshMs = 0;
     }
 
@@ -6767,12 +9042,81 @@ int32_t Screen::runOnce()
         skipUiUpdate = false;
         clearDirectNeonClockRegion(tft, dispdev->getWidth(), 0);
         gDirectHomeBasePainted = false;
+        gDirectHomeMeshPainted = false;
+        gDirectHomeOrbLastPulsePercent = 0xFF;
+        gDirectHomeOrbLastDrawMs = 0;
         gDirectHomeLastBaseRefreshMs = 0;
-        tft->clearColorPaletteZones();
+        tft->resetColorPalette(false);
         tft->setColorPaletteDefaults(isStealthModeActive() ? stealthFg : normalFg, normalBg);
         ui->init();
         // Direct TFT clock bypasses the OLED diff buffers; force one full TFT repaint after leaving Home.
         tft->markColorPaletteDirty();
+    }
+
+    const bool enteredDirectGpsPoster = directGpsPosterVisible && !gDirectGpsPosterWasVisible;
+    const bool leftDirectGpsPoster = gDirectGpsPosterWasVisible && !directGpsPosterVisible;
+    if (enteredDirectGpsPoster || leftDirectGpsPoster) {
+        // Mirror Home page behavior: only invalidate palette regions on GPS page transitions.
+        tft->resetColorPalette(false);
+        tft->setColorPaletteDefaults(isStealthModeActive() ? stealthFg : normalFg, normalBg);
+        tft->markColorPaletteDirty();
+    }
+    if (enteredDirectGpsPoster) {
+        // Match Home direct-TFT entry behavior: ensure one full UI-backed base redraw before any neon overlay.
+        gDirectGpsBasePainted = false;
+        gDirectGpsPosterRenderCache.valid = false;
+        skipUiUpdate = false;
+        ui->init();
+        tft->fillRect565(0, 0, dispdev->getWidth(), dispdev->getHeight(), normalBg);
+        tft->markColorPaletteDirty();
+    }
+    if (leftDirectGpsPoster) {
+        gDirectGpsBasePainted = false;
+        gDirectGpsPosterRenderCache.valid = false;
+    }
+    if (directGpsPosterVisible && !skipUiUpdate) {
+        const int16_t renderW = dispdev->getWidth();
+        const int16_t renderH = dispdev->getHeight();
+        const bool gpsEnabled = config.position.gps_mode == meshtastic_Config_PositionConfig_GpsMode_ENABLED;
+        bool gpsConnected = false;
+        bool gpsHasLock = false;
+        uint8_t satCount = 0;
+        bool fixedPosition = false;
+        bool hasCoordinates = false;
+        int32_t latitudeE7 = INT32_MIN;
+        int32_t longitudeE7 = INT32_MIN;
+        int32_t altitude = INT32_MIN;
+        if (kEnableDirectGpsPosterDecorNeon && gpsStatus && gpsStatus->getIsConnected()) {
+            satCount = static_cast<uint8_t>(std::min<uint32_t>(99, gpsStatus->getNumSatellites()));
+        }
+        if (kEnableDirectGpsPosterCoordinateNeon) {
+            gpsConnected = gpsStatus && gpsStatus->getIsConnected();
+            gpsHasLock = gpsStatus && gpsStatus->getHasLock();
+            fixedPosition = config.position.fixed_position;
+            hasCoordinates = gpsStatus && gpsEnabled && (fixedPosition || (gpsConnected && gpsHasLock));
+            latitudeE7 = hasCoordinates ? gpsStatus->getLatitude() : INT32_MIN;
+            longitudeE7 = hasCoordinates ? gpsStatus->getLongitude() : INT32_MIN;
+            altitude = hasCoordinates ? gpsStatus->getAltitude() : INT32_MIN;
+        }
+
+        const bool gpsPosterDirty = enteredDirectGpsPoster || !gDirectGpsPosterRenderCache.valid ||
+                                    gDirectGpsPosterRenderCache.width != renderW || gDirectGpsPosterRenderCache.height != renderH ||
+                                    (kEnableDirectGpsPosterTitleNeon && gDirectGpsPosterRenderCache.gpsEnabled != gpsEnabled) ||
+                                    (kEnableDirectGpsPosterDecorNeon && gDirectGpsPosterRenderCache.satCount != satCount) ||
+                                    (kEnableDirectGpsPosterCoordinateNeon &&
+                                     (gDirectGpsPosterRenderCache.gpsConnected != gpsConnected ||
+                                      gDirectGpsPosterRenderCache.gpsHasLock != gpsHasLock ||
+                                      gDirectGpsPosterRenderCache.fixedPosition != fixedPosition ||
+                                      gDirectGpsPosterRenderCache.hasCoordinates != hasCoordinates ||
+                                      gDirectGpsPosterRenderCache.latitudeE7 != latitudeE7 ||
+                                      gDirectGpsPosterRenderCache.longitudeE7 != longitudeE7 ||
+                                      gDirectGpsPosterRenderCache.altitude != altitude));
+        const bool canSkipGpsUi = gDirectGpsBasePainted && gDirectGpsPosterRenderCache.valid && !gpsPosterDirty &&
+                                  !gIncomingTextPopupState.pending && !gIncomingTextPopupState.visible &&
+                                  !gDirectGpsNeedsFullFrameAfterSwitch;
+        if (canSkipGpsUi) {
+            skipUiUpdate = true;
+        }
     }
 
     if (!skipUiUpdate) {
@@ -6789,18 +9133,152 @@ int32_t Screen::runOnce()
 
 #if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
     defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
-    if (renderDirectHomeClock && !skipUiUpdate && ui->getUiState()->lastUpdate != uiLastUpdateBefore) {
+    const bool uiRenderedThisTick = !skipUiUpdate && ui->getUiState()->lastUpdate != uiLastUpdateBefore;
+    if (onFixedGpsFrame && uiRenderedThisTick) {
+        gDirectGpsNeedsFullFrameAfterSwitch = false;
+        gDirectGpsBasePainted = true;
+    } else if (!onFixedGpsFrame) {
+        gDirectGpsBasePainted = false;
+    }
+    if (renderDirectHomeClock && kEnableDirectHomeOrbAnimation) {
+        static constexpr uint32_t kOrbPulseCycleMs = 5000U;
+        const uint32_t nowMs = millis();
+        const uint32_t cyclePhaseMs = nowMs % kOrbPulseCycleMs;
+        uint8_t pulsePercent = 100;
+        if (cyclePhaseMs <= (kOrbPulseCycleMs / 2U)) {
+            pulsePercent = static_cast<uint8_t>(100U + static_cast<uint8_t>((30U * cyclePhaseMs + 1250U) / 2500U));
+        } else {
+            const uint32_t downPhase = cyclePhaseMs - (kOrbPulseCycleMs / 2U);
+            pulsePercent = static_cast<uint8_t>(130U - static_cast<uint8_t>((30U * downPhase + 1250U) / 2500U));
+        }
+        // Quantize to 1% steps for smoother visible motion.
+        if (pulsePercent < 100U) {
+            pulsePercent = 100U;
+        } else if (pulsePercent > 130U) {
+            pulsePercent = 130U;
+        }
+        pulsePercent = static_cast<uint8_t>(100U + (pulsePercent - 100U));
+        const bool repaintHomeOrbBase = !gDirectHomeMeshPainted || uiRenderedThisTick;
+        const bool pulsePhaseChanged = gDirectHomeOrbLastPulsePercent != pulsePercent;
+        const bool pulseFrameDue =
+            (gDirectHomeOrbLastDrawMs == 0) || ((nowMs - gDirectHomeOrbLastDrawMs) >= kDirectHomeOrbMinFrameIntervalMs);
+        if (repaintHomeOrbBase) {
+            renderDirectHomeOrangeMesh(tft, dispdev->getWidth(), dispdev->getHeight(), nullptr, false, pulsePercent);
+            // Re-stamp only the orb box so clock/date/role/battery areas are not repeatedly full-screen overdrawn.
+            int16_t orbX = 0;
+            int16_t orbY = 0;
+            int16_t orbW = 0;
+            int16_t orbH = 0;
+            if (getDirectHomeOrbBoundsRect(dispdev->getWidth(), dispdev->getHeight(), orbX, orbY, orbW, orbH)) {
+                tft->overlayBufferForegroundRect565(orbX, orbY, orbW, orbH);
+            } else {
+                tft->overlayBufferForeground565();
+            }
+            gDirectHomeMeshPainted = true;
+            gDirectHomeOrbLastPulsePercent = pulsePercent;
+            gDirectHomeOrbLastDrawMs = nowMs;
+        } else if (pulsePhaseChanged && pulseFrameDue) {
+            int16_t orbX = 0;
+            int16_t orbY = 0;
+            int16_t orbW = 0;
+            int16_t orbH = 0;
+            DirectDrawClipRect orbClip;
+            if (getDirectHomeOrbBoundsRect(dispdev->getWidth(), dispdev->getHeight(), orbX, orbY, orbW, orbH) &&
+                makeDirectDrawClipRect(orbX, orbY, orbW, orbH, dispdev->getWidth(), dispdev->getHeight(), orbClip)) {
+                renderDirectHomeOrangeMesh(tft, dispdev->getWidth(), dispdev->getHeight(), &orbClip, true, pulsePercent);
+                tft->overlayBufferForegroundRect565(orbX, orbY, orbW, orbH);
+            }
+            gDirectHomeOrbLastPulsePercent = pulsePercent;
+            gDirectHomeOrbLastDrawMs = nowMs;
+        }
+        if (uiRenderedThisTick) {
+            gDirectHomeBasePainted = true;
+        }
+    } else if (renderDirectHomeClock && uiRenderedThisTick) {
         gDirectHomeBasePainted = true;
     }
     if (renderDirectHomeClock) {
         if (forceDirectHomeClockRedraw || !gHermesXDirectHomeUiCache.lastTimeValid ||
             strcmp(gHermesXDirectHomeUiCache.lastTime, directHomeTimeBuf) != 0) {
-            renderDirectNeonClock(tft, dispdev->getWidth(), 0, directHomeTimeBuf, forceDirectHomeClockRedraw);
+            const bool repaintClockBackground = repaintDirectHomeClockMeshRegion(tft, dispdev->getWidth(), dispdev->getHeight(), 0);
+            renderDirectNeonClock(tft,
+                                  dispdev->getWidth(),
+                                  0,
+                                  directHomeTimeBuf,
+                                  forceDirectHomeClockRedraw || repaintClockBackground,
+                                  !repaintClockBackground);
             strlcpy(gHermesXDirectHomeUiCache.lastTime, directHomeTimeBuf, sizeof(gHermesXDirectHomeUiCache.lastTime));
             gHermesXDirectHomeUiCache.lastTimeValid = true;
         }
     }
+    if (directGpsPosterVisible) {
+        const int16_t renderW = dispdev->getWidth();
+        const int16_t renderH = dispdev->getHeight();
+        const bool gpsEnabled = config.position.gps_mode == meshtastic_Config_PositionConfig_GpsMode_ENABLED;
+        bool gpsConnected = false;
+        bool gpsHasLock = false;
+        uint8_t satCount = 0;
+        bool fixedPosition = false;
+        bool hasCoordinates = false;
+        int32_t latitudeE7 = INT32_MIN;
+        int32_t longitudeE7 = INT32_MIN;
+        int32_t altitude = INT32_MIN;
+        if (kEnableDirectGpsPosterDecorNeon && gpsStatus && gpsStatus->getIsConnected()) {
+            satCount = static_cast<uint8_t>(std::min<uint32_t>(99, gpsStatus->getNumSatellites()));
+        }
+        if (kEnableDirectGpsPosterCoordinateNeon) {
+            gpsConnected = gpsStatus && gpsStatus->getIsConnected();
+            gpsHasLock = gpsStatus && gpsStatus->getHasLock();
+            fixedPosition = config.position.fixed_position;
+            hasCoordinates = gpsStatus && gpsEnabled && (fixedPosition || (gpsConnected && gpsHasLock));
+            latitudeE7 = hasCoordinates ? gpsStatus->getLatitude() : INT32_MIN;
+            longitudeE7 = hasCoordinates ? gpsStatus->getLongitude() : INT32_MIN;
+            altitude = hasCoordinates ? gpsStatus->getAltitude() : INT32_MIN;
+        }
+
+        const bool gpsPosterDirty = enteredDirectGpsPoster || !gDirectGpsPosterRenderCache.valid ||
+                                    gDirectGpsPosterRenderCache.width != renderW || gDirectGpsPosterRenderCache.height != renderH ||
+                                    (kEnableDirectGpsPosterTitleNeon && gDirectGpsPosterRenderCache.gpsEnabled != gpsEnabled) ||
+                                    (kEnableDirectGpsPosterDecorNeon && gDirectGpsPosterRenderCache.satCount != satCount) ||
+                                    (kEnableDirectGpsPosterCoordinateNeon &&
+                                     (gDirectGpsPosterRenderCache.gpsConnected != gpsConnected ||
+                                      gDirectGpsPosterRenderCache.gpsHasLock != gpsHasLock ||
+                                      gDirectGpsPosterRenderCache.fixedPosition != fixedPosition ||
+                                      gDirectGpsPosterRenderCache.hasCoordinates != hasCoordinates ||
+                                      gDirectGpsPosterRenderCache.latitudeE7 != latitudeE7 ||
+                                      gDirectGpsPosterRenderCache.longitudeE7 != longitudeE7 ||
+                                      gDirectGpsPosterRenderCache.altitude != altitude));
+        const bool gpsPosterNeedsRepaint = gDirectGpsBasePainted && (gpsPosterDirty || uiRenderedThisTick);
+        if (gpsPosterNeedsRepaint) {
+            // GPS base frame is still drawn by ui->update(); re-apply enabled direct layers after any UI repaint.
+            if (kEnableDirectGpsPosterDecorNeon) {
+                renderDirectGpsPosterDecor(tft, renderW, renderH, gpsStatus);
+            }
+            if (kEnableDirectGpsPosterTitleNeon) {
+                renderDirectGpsPosterTitleNeon(tft, renderW, renderH);
+            }
+            if (kEnableDirectGpsPosterCoordinateNeon) {
+                renderDirectGpsPosterCoordinateNeon(tft, renderW, renderH, gpsStatus);
+            }
+            gDirectGpsPosterRenderCache.valid = true;
+            gDirectGpsPosterRenderCache.gpsEnabled = gpsEnabled;
+            gDirectGpsPosterRenderCache.gpsConnected = gpsConnected;
+            gDirectGpsPosterRenderCache.gpsHasLock = gpsHasLock;
+            gDirectGpsPosterRenderCache.satCount = satCount;
+            gDirectGpsPosterRenderCache.fixedPosition = fixedPosition;
+            gDirectGpsPosterRenderCache.hasCoordinates = hasCoordinates;
+            gDirectGpsPosterRenderCache.latitudeE7 = latitudeE7;
+            gDirectGpsPosterRenderCache.longitudeE7 = longitudeE7;
+            gDirectGpsPosterRenderCache.altitude = altitude;
+            gDirectGpsPosterRenderCache.width = renderW;
+            gDirectGpsPosterRenderCache.height = renderH;
+        }
+    } else {
+        gDirectGpsBasePainted = false;
+    }
     gDirectHomeClockWasVisible = renderDirectHomeClock;
+    gDirectGpsPosterWasVisible = directGpsPosterVisible;
+    gDirectLastFrameIndex = currentFrameIndex;
 #endif
 
     if (showingNormalScreen && hasUnreadTextMessage && hasRecentTextMessages()) {
@@ -7426,6 +9904,14 @@ void Screen::handlePrint(const char *text)
 
 void Screen::handleOnPress()
 {
+    if (wakeInputGuardUntilMs != 0) {
+        const uint32_t now = millis();
+        if (now < wakeInputGuardUntilMs) {
+            return;
+        }
+        wakeInputGuardUntilMs = 0;
+    }
+
     // FastSetup page locks frame switching unless Exit is pressed.
     if (isHermesFastSetupActive() || isHermesXActionPageActive()) {
         return;
@@ -8100,6 +10586,19 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
         }
     } else if (hermesActionSelected == 2) {
         if (ui && framesetInfo.positions.settings < framesetInfo.frameCount) {
+#if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
+    defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
+            // Entering GPS from Action must force one full repaint, otherwise
+            // direct-GPS cache can occasionally leave only the title neon on top
+            // of the previous page.
+            gDirectGpsPosterRenderCache.valid = false;
+            gDirectGpsPosterWasVisible = false;
+            if (supportsDirectTftClockRendering(dispdev)) {
+                auto *tft = static_cast<TFTDisplay *>(dispdev);
+                tft->resetColorPalette(true);
+                tft->markColorPaletteDirty();
+            }
+#endif
             ui->switchToFrame(framesetInfo.positions.settings);
         } else if (screen) {
             screen->print("GPS page unavailable\n");
@@ -9127,6 +11626,14 @@ int Screen::handleInputEvent(const InputEvent *event)
         return 0;
     }
 
+    if (wakeInputGuardUntilMs != 0) {
+        const uint32_t now = millis();
+        if (now < wakeInputGuardUntilMs) {
+            return 0;
+        }
+        wakeInputGuardUntilMs = 0;
+    }
+
     if (isStealthModeActive() && screenOn) {
         armStealthWakeWindow();
     }
@@ -9314,6 +11821,9 @@ bool Screen::shouldShowHermesXMenuFooter(uint8_t frameIndex) const
     if (frameIndex == framesetInfo.positions.setup) { // FastSetup already has its own navigation model.
         return false;
     }
+    if (frameIndex == framesetInfo.positions.settings) { // GPS hero poster reserves top-right corner visuals.
+        return false;
+    }
     return true;
 }
 
@@ -9326,6 +11836,20 @@ bool Screen::showHermesXActionPage()
         return false;
     }
     ui->switchToFrame(framesetInfo.positions.mainAction);
+    return true;
+}
+
+bool Screen::showFrameByIndex(uint8_t frameIndex)
+{
+    if (!showingNormalScreen || !ui) {
+        return false;
+    }
+    if (frameIndex >= framesetInfo.frameCount) {
+        return false;
+    }
+
+    ui->switchToFrame(frameIndex);
+    setFastFramerate();
     return true;
 }
 

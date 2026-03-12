@@ -38,3 +38,11 @@ release/
 /compile_commands.json
 src/mesh/raspihttp/certificate.pem
 src/mesh/raspihttp/private_key.pem
+
+# local runtime secrets
+data/prefs/lighthouse_passphrase.txt
+data/prefs/lighthouse_whitelist.txt
+
+# local build/debug artifacts
+build.log
+tmp/

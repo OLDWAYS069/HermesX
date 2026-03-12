@@ -2,6 +2,46 @@
 
 本文件為可對外發布版本的更新紀錄，整理 HermesX 韌體的重要功能更新、體驗調整與修正項目。
 
+## 2026-03-12
+
+### 改進
+
+- GPS 座標顯示策略改為「只縮整體，不壓字距」：保留半尺寸字形縮放（`coordHalfScale=true`），並將字距追蹤回復正常（`coordTracking=0`），降低數字擠壓感。
+
+### 繪製邏輯註記
+
+- `Neon effect`（文字）：
+  - 由 `renderDirectNeonPattanakarnText()` 先合併每個字元的 layer map（同像素取最大層級），再依層級 palette 進行 scanline-run 輸出。
+  - 層級輸出順序形成「外暈 -> 內暈 -> 核心」的 direct-TFT 霓虹效果，且可用 `clearBackground=false` 保留底圖不強制鋪黑。
+- `Bloom effect`（球體）：
+  - GPS 右側球體由 `renderDirectGpsGlobeBloom()` 以 40 層同心填圓渲染，亮度由外圈 `1%` 緩升至內圈 `72%`（外層先畫、內層後畫）。
+  - Home 右下球體由 `renderDirectHomeOrangeMesh()` 以 20 層橘色同心 Bloom 渲染，亮度由外圈 `5%` 緩升至內圈 `34%`，再疊加線框與節點層。
+
+## 2026-03-07
+
+### 改進
+
+- GPS 頁 Hero 視覺改版：強化 `GPS ON` 與座標資訊的霓虹層次，座標維持 `Pattanakarn` 字型與動態小數位寬度自適應。
+- GPS 霓虹補強：半尺寸座標改為核心外描 + 雙層 glow，避免核心筆畫吞掉外暈，並同步拉開標題/座標 glow 色階。
+- GPS 座標霓虹改為與 Home Timer 相同的 direct-TFT neon 演算法：改在 `ui->update()` 後直繪，沿用同一套多層 glow 與層級色帶邏輯。
+- 右下角地圖改為「藍地球 + 紅外暈」：保留藍色地球主體與藍色內暈，新增淡紅外層 halo，提升輪廓辨識。
+- 非 TFT fallback 加入黑白近似霓虹樣式：關鍵文字改為雙層白色描邊 + 核心字，並在可用空間足夠時新增右下角地圖外圈描邊。
+
+## 2026-03-06
+
+### 修正
+
+- 修正 `CannedMessage` 送出後畫面誤跳到 `Recent Send` 的問題。
+- 修正 `CannedMessage` ACK/回饋視窗清場後，`FOCUS_PRESERVE` 因 frame index 映射到 `Recent Send` 的焦點偏移行為。
+
+### 改進
+
+- `CannedMessage` 在送出/ACK/訊息回饋清場與逾時退場後，改為明確返回 `Home`，不再依賴 module frame 移除後的索引保留結果。
+- 新增 `CannedMessage` 返回路徑診斷 log：
+  - `captureReturnTarget=...`
+  - `restoreReturnTarget=...`
+  便於現場快速確認返回目標是否正確。
+
 ## 2026-03-05
 
 ### 修正

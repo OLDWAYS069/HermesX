@@ -46,6 +46,7 @@ static BluetoothPhoneAPI *bluetoothPhoneAPI;
 
 // Last ToRadio value received from the phone
 static uint8_t lastToRadio[MAX_TO_FROM_RADIO_SIZE];
+static size_t lastToRadioLen = 0;
 
 class NimbleBluetoothToRadioCallback : public NimBLECharacteristicCallbacks
 {
@@ -53,11 +54,18 @@ class NimbleBluetoothToRadioCallback : public NimBLECharacteristicCallbacks
     {
         LOG_DEBUG("To Radio onwrite");
         auto val = pCharacteristic->getValue();
+        const size_t len = val.length();
 
-        if (memcmp(lastToRadio, val.data(), val.length()) != 0) {
+        if (lastToRadioLen != len || memcmp(lastToRadio, val.data(), len) != 0) {
             LOG_DEBUG("New ToRadio packet");
-            memcpy(lastToRadio, val.data(), val.length());
-            bluetoothPhoneAPI->handleToRadio(val.data(), val.length());
+            if (len <= sizeof(lastToRadio)) {
+                memcpy(lastToRadio, val.data(), len);
+                lastToRadioLen = len;
+            } else {
+                // Should never happen with current protobuf sizing, but guard to avoid overflow.
+                lastToRadioLen = 0;
+            }
+            bluetoothPhoneAPI->handleToRadio(val.data(), len);
         } else {
             LOG_DEBUG("Drop dup ToRadio packet we just saw");
         }
@@ -141,6 +149,8 @@ class NimbleBluetoothServerCallback : public NimBLEServerCallbacks
     virtual void onDisconnect(NimBLEServer *pServer, ble_gap_conn_desc *desc)
     {
         LOG_INFO("BLE disconnect");
+        memset(lastToRadio, 0, sizeof(lastToRadio));
+        lastToRadioLen = 0;
 
         bluetoothStatus->updateStatus(
             new meshtastic::BluetoothStatus(meshtastic::BluetoothStatus::ConnectionState::DISCONNECTED));

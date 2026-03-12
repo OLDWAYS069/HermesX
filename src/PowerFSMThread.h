@@ -32,6 +32,8 @@ class PowerFSMThread : public OSThread
                    millis() > (timeLastPowered +
                                Default::getConfiguredOrDefaultMs(
                                    config.power.on_battery_shutdown_after_secs))) { // shutdown after 30 minutes unpowered
+            LOG_WARN("PowerFSM auto-shutdown trigger: usb=0 now=%u lastPowered=%u cfg_secs=%u", static_cast<unsigned>(millis()),
+                     static_cast<unsigned>(timeLastPowered), static_cast<unsigned>(config.power.on_battery_shutdown_after_secs));
             powerFSM.trigger(EVENT_SHUTDOWN);
         }
 

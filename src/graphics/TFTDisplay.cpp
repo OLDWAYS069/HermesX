@@ -1135,6 +1135,43 @@ void TFTDisplay::drawPixel565(int16_t x, int16_t y, uint16_t color)
     tft->drawPixel(x, y, color);
 }
 
+void TFTDisplay::overlayBufferForeground565()
+{
+    overlayBufferForegroundRect565(0, 0, displayWidth, displayHeight);
+}
+
+void TFTDisplay::overlayBufferForegroundRect565(int16_t x, int16_t y, int16_t width, int16_t height)
+{
+    if (!buffer || width <= 0 || height <= 0 || displayWidth <= 0 || displayHeight <= 0) {
+        return;
+    }
+
+    const int16_t x0 = std::max<int16_t>(0, x);
+    const int16_t y0 = std::max<int16_t>(0, y);
+    const int16_t x1 = std::min<int16_t>(displayWidth, static_cast<int16_t>(x + width));
+    const int16_t y1 = std::min<int16_t>(displayHeight, static_cast<int16_t>(y + height));
+    if (x1 <= x0 || y1 <= y0) {
+        return;
+    }
+
+    for (int16_t yy = y0; yy < y1; ++yy) {
+        {
+            concurrency::LockGuard g(spiLock);
+            for (int16_t xx = x0; xx < x1; ++xx) {
+                const uint16_t pos = static_cast<uint16_t>(xx + (yy / 8) * displayWidth);
+                const uint8_t mask = static_cast<uint8_t>(1u << (yy & 7));
+                if ((buffer[pos] & mask) == 0) {
+                    continue;
+                }
+                tft->drawPixel(xx, yy, resolveForegroundColor(xx, yy));
+            }
+        }
+        if ((yy & 0x07) == 0) {
+            yield();
+        }
+    }
+}
+
 // Write the buffer to the display memory
 void TFTDisplay::display(bool fromBlank)
 {

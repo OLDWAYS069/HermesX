@@ -17,6 +17,7 @@
 #include "graphics/Screen.h"
 #include "main.h"
 #include "sleep.h"
+#include "sleep_hooks.h"
 #include "target_specific.h"
 
 #if HAS_WIFI && !defined(ARCH_PORTDUINO) || defined(MESHTASTIC_EXCLUDE_WIFI)
@@ -65,6 +66,8 @@ static void sdsEnter()
 static void lowBattSDSEnter()
 {
     LOG_DEBUG("State: Lower batt SDS");
+    // Give HermesX a chance to run its shutdown visuals before a forced low-battery deep sleep.
+    runPreDeepSleepHook(SleepPreHookParams{0});
     doDeepSleep(Default::getConfiguredOrDefaultMs(config.power.sds_secs), false, true);
 }
 extern Power *power;

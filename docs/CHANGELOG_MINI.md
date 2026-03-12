@@ -1,6 +1,27 @@
 # HermesX Mini Change Log
 （每次只寫極簡亮點，便於快速回顧）
 
+## 2026-03-12
+- GPS 座標顯示微調：改為「只縮整體、不壓字距」，座標維持半尺寸顯示（`coordHalfScale=true`）且字距回復正常（`coordTracking=0`），避免數字擠壓。
+- 註記 `Neon effect` 繪製邏輯：`renderDirectNeonPattanakarnText()` 先合併字形 layer map（逐像素取最大層級），再依層級 palette 以 scanline run 方式輸出，形成「外暈 -> 內暈 -> 核心」。
+- 註記 `Bloom effect` 繪製邏輯（GPS 球體）：`renderDirectGpsGlobeBloom()` 以 40 層同心填圓堆疊，亮度由外圈 `1%` 遞增至內圈 `72%`，外層先畫、內層後畫。
+- 註記 `Bloom effect` 繪製邏輯（Home 右下球體）：`renderDirectHomeOrangeMesh()` 以 20 層橘色同心 Bloom 堆疊，亮度由外圈 `5%` 遞增至內圈 `34%`，再疊加線框與節點。
+
+## 2026-03-07
+- GPS 頁視覺改版：TFT Hero 版強化 `GPS ON` 標題與座標霓虹層次，維持 `Pattanakarn` 座標字型與動態小數位自適應。
+- GPS 霓虹補強：半尺寸座標改為核心外描 + 雙層 glow，避免字體核心覆蓋光暈；同步提升標題/座標 glow 色階可見度。
+- GPS 座標霓虹改為「Home Timer 同款 direct-TFT 演算法」：改在 `ui->update()` 後直繪，多層 glow 與層級色帶邏輯完整沿用 Home。
+- 右下地圖新增迷紅光暈：保留藍色地球本體與藍色內暈，外層加入紅色 halo（藍地球 + 紅外暈）。
+- 非 TFT fallback 新增黑白近似霓虹：關鍵文字改為雙層白色描邊 + 核心字，並在版面足夠時加入右下角地圖外圈描邊。
+
+## 2026-03-06
+- 新增電池過放保護：偵測到電池電壓連續低於 `3.5V` 時，自動進入電池保護並深睡眠。
+- 新增 USB 例外：若目前為 USB 供電，則不觸發過放保護。
+- FastSetup 新增「`節點設定 -> 電源管理 -> 過放保護`」開關，支援現場直接切換並保留設定。
+- 修正 `CannedMessage` 送出後誤跳 `Recent Send`：送出/ACK 清場與逾時退場改為固定回 `Home`。
+- 修正 `FOCUS_PRESERVE` 在 module frame 移除後的索引映射偏移，避免焦點落到 `Recent Send`。
+- 新增 `CannedMessage` 返回路徑診斷 log：`captureReturnTarget` / `restoreReturnTarget`。
+
 ## 2026-03-05
 - 修正 Home Timer 每秒整頁重刷：改為時鐘差分更新，降低閃爍。
 - 修正返回 Home 殘影與只剩 Timer 問題：加強進出 Home 清區與首次完整重繪。

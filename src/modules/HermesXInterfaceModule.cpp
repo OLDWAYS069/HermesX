@@ -924,7 +924,6 @@ int HermesXInterfaceModule::handleInputEvent(const InputEvent *event)
     }
 
     rotaryLedAdjustActive = true;
-    rotaryHadRotation = true;
     rotaryPressConsume = true;
     // 旋轉調光期間暫停長按關機偵測（每次旋轉延長 1s）
     ButtonThread::suppressLongPressFor(kRotaryLongPressGraceMs);
@@ -1523,33 +1522,11 @@ int32_t HermesXInterfaceModule::runOnce() {
         hermesXEmUiModule->tickSiren(now);
     }
 #if !MESHTASTIC_EXCLUDE_INPUTBROKER
-    const bool emergencyUiActive = isEmergencyUiActive();
     const bool rotaryHeld = isRotaryPressHeld();
     if (rotaryHeld && !rotaryPressHeld) {
         rotaryPressHeld = true;
-        rotaryPressStartMs = now;
-        rotaryHadRotation = false;
     } else if (!rotaryHeld && rotaryPressHeld) {
         rotaryPressHeld = false;
-        const uint32_t heldMs = rotaryPressStartMs ? (now - rotaryPressStartMs) : 0;
-        rotaryPressStartMs = 0;
-
-        if (!emergencyUiActive &&
-            !rotaryHadRotation &&
-            heldMs >= kRotaryLedToggleHoldMs &&
-            (heldMs + 20) < (BUTTON_LONGPRESS_MS + kRotaryShutdownDelayMs)) {
-            if (ledUserBrightness == 0) {
-                const uint8_t restore = ledUserBrightnessRestore ? ledUserBrightnessRestore : kLedBrightnessDefault;
-                setUserLedBrightness(restore);
-                HERMESX_LOG_INFO("Rotary LED: toggle on -> %u", ledUserBrightness);
-            } else {
-                setUserLedBrightness(0);
-                HERMESX_LOG_INFO("Rotary LED: toggle off");
-            }
-            rotaryPressConsume = true;
-        }
-
-        rotaryHadRotation = false;
 
         if (rotaryLedAdjustActive || rotaryPressConsume) {
             rotaryLedAdjustActive = false;

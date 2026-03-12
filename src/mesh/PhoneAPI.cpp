@@ -31,6 +31,11 @@
 #include "Throttle.h"
 #include <RTC.h>
 
+// Temporary stability guard:
+// We still accept nonce=69421 from clients, but disable the internal ONLY_NODES fast-path
+// because field reports show repeatable ESP32 panic right after this branch.
+static constexpr bool kEnableOnlyNodesNonceFlow = false;
+
 PhoneAPI::PhoneAPI()
 {
     lastContactMsec = millis();
@@ -54,18 +59,29 @@ void PhoneAPI::handleStartConfig()
     }
 
     // even if we were already connected - restart our state machine
-    if (config_nonce == SPECIAL_NONCE_ONLY_NODES) {
+    if (kEnableOnlyNodesNonceFlow && config_nonce == SPECIAL_NONCE_ONLY_NODES) {
         // If client only wants node info, jump directly to sending nodes
         state = STATE_SEND_OWN_NODEINFO;
         LOG_INFO("Client only wants node info, skipping other config");
     } else {
+        if (!kEnableOnlyNodesNonceFlow && config_nonce == SPECIAL_NONCE_ONLY_NODES) {
+            LOG_WARN("Client requested ONLY_NODES nonce=%u, but fast-path is temporarily disabled for stability", config_nonce);
+        }
         state = STATE_SEND_MY_INFO;
     }
     pauseBluetoothLogging = true;
-    spiLock->lock();
-    filesManifest = getFiles("/", 10);
-    spiLock->unlock();
-    LOG_DEBUG("Got %d files in manifest", filesManifest.size());
+    const bool skipFilesManifestForOnlyNodesRequest =
+        (!kEnableOnlyNodesNonceFlow && config_nonce == SPECIAL_NONCE_ONLY_NODES);
+    if (skipFilesManifestForOnlyNodesRequest) {
+        // Stability workaround: avoid SPI FS scan on the app's second config pass (nonce 69421).
+        filesManifest.clear();
+        LOG_WARN("Skip file manifest rebuild for ONLY_NODES nonce=%u (stability workaround)", config_nonce);
+    } else {
+        spiLock->lock();
+        filesManifest = getFiles("/", 10);
+        spiLock->unlock();
+        LOG_DEBUG("Got %d files in manifest", filesManifest.size());
+    }
 
     LOG_INFO("Start API client config");
     nodeInfoForPhone.num = 0; // Don't keep returning old nodeinfos
@@ -129,6 +145,14 @@ bool PhoneAPI::handleToRadio(const uint8_t *buf, size_t bufLength)
         case meshtastic_ToRadio_want_config_id_tag:
             config_nonce = toRadioScratch.want_config_id;
             LOG_INFO("Client wants config, nonce=%u", config_nonce);
+            if (!kEnableOnlyNodesNonceFlow && config_nonce == SPECIAL_NONCE_ONLY_NODES) {
+                // Stability workaround: respond to ONLY_NODES with a minimal completion packet,
+                // without restarting the full config state machine.
+                LOG_WARN("Client requested ONLY_NODES nonce=%u, replying config-complete only (stability workaround)",
+                         config_nonce);
+                state = STATE_SEND_COMPLETE_ID;
+                break;
+            }
             handleStartConfig();
             break;
         case meshtastic_ToRadio_disconnect_tag:
@@ -230,7 +254,7 @@ size_t PhoneAPI::getFromRadio(uint8_t *buf)
             // Should allow us to resume sending NodeInfo in STATE_SEND_OTHER_NODEINFOS
             nodeInfoForPhone.num = 0;
         }
-        if (config_nonce == SPECIAL_NONCE_ONLY_NODES) {
+        if (kEnableOnlyNodesNonceFlow && config_nonce == SPECIAL_NONCE_ONLY_NODES) {
             // If client only wants node info, jump directly to sending nodes
             state = STATE_SEND_OTHER_NODEINFOS;
         } else {
@@ -433,7 +457,7 @@ size_t PhoneAPI::getFromRadio(uint8_t *buf)
         LOG_DEBUG("FromRadio=STATE_SEND_FILEMANIFEST");
         // last element
         if (config_state == filesManifest.size() ||
-            config_nonce == SPECIAL_NONCE_ONLY_NODES) { // also handles an empty filesManifest
+            (kEnableOnlyNodesNonceFlow && config_nonce == SPECIAL_NONCE_ONLY_NODES)) { // also handles an empty filesManifest
             config_state = 0;
             filesManifest.clear();
             // Skip to complete packet

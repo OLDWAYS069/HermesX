@@ -1,0 +1,4 @@
+# Copy to lighthouse_whitelist.txt locally before uploading data/.
+# Do not commit the real whitelist file.
+# One NodeNum per line; hex values are supported.
+0x23abcd01

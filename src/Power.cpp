@@ -800,8 +800,10 @@ void Power::readPowerStatus()
 #if !MESHTASTIC_EXCLUDE_HERMESX
     static constexpr uint16_t kOverdischargeThresholdMv = 3500;
     static constexpr uint8_t kOverdischargeTripCount = 3;
-    const bool shouldCheckOverdischarge = batteryLevel && powerStatus2.getHasBattery() && !powerStatus2.getHasUSB() &&
-                                          HermesXBatteryProtection::isEnabled();
+    // HermesX policy: if USB is connected (or charging is detected), never enter low-voltage guard.
+    const bool usbPresentForGuard = powerStatus2.getHasUSB() || powerStatus2.getIsCharging();
+    const bool shouldCheckOverdischarge =
+        batteryLevel && powerStatus2.getHasBattery() && !usbPresentForGuard && HermesXBatteryProtection::isEnabled();
 
     if (shouldCheckOverdischarge) {
         const int batteryVoltageMvNow = powerStatus2.getBatteryVoltageMv();

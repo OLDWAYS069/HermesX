@@ -186,6 +186,7 @@ class CannedMessageModule : public SinglePortModule, public Observable<const UIF
     unsigned long lastTouchMillis = 0;
     String temporaryMessage;
     cannedMessageReturnTarget returnTarget = CANNED_MESSAGE_RETURN_TARGET_NONE;
+    uint8_t returnFrameIndex = 0xFF;
 
 #if defined(USE_VIRTUAL_KEYBOARD)
     Letter keyboard[2][4][10] = {{{{"Q", 20, 0, 0, 0, 0},

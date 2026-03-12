@@ -34,6 +34,7 @@ class Screen
     void endAlert() {}
     bool isStealthModeConstrained() const { return false; }
     void armStealthWakeWindow() {}
+    bool showFrameByIndex(uint8_t) { return false; }
     bool showRecentTextMessageListPage() { return false; }
 };
 } // namespace graphics
@@ -276,6 +277,7 @@ class Screen : public concurrency::OSThread
     bool isStealthModeConstrained() const;
     void armStealthWakeWindow();
     bool shouldShowHermesXMenuFooter(uint8_t frameIndex) const;
+    bool showFrameByIndex(uint8_t frameIndex);
     bool showHermesXActionPage();
     bool showHermesXMainPage();
     bool showRecentTextMessageListPage();
@@ -726,6 +728,7 @@ class Screen : public concurrency::OSThread
     bool useDisplay = false;
     /// Whether the display is currently powered
     bool screenOn = false;
+    uint32_t wakeInputGuardUntilMs = 0;
     // Whether we are showing the regular screen (as opposed to booth screen or
     // Bluetooth PIN screen)
     bool showingNormalScreen = false;

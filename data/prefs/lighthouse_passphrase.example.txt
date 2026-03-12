@@ -1,0 +1,4 @@
+# Copy to lighthouse_passphrase.txt locally before uploading data/.
+# Do not commit the real passphrase file.
+# Single passphrase; passphrase OR whitelist will authorize @EmergencyActive.
+REPLACE_WITH_LOCAL_PASSPHRASE
