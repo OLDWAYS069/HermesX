@@ -2010,6 +2010,19 @@ void HermesXInterfaceModule::playShutdownEffect(uint32_t durationMs)
     legacyShutdownAnimation(durationMs);
 }
 
+void HermesXInterfaceModule::playBlockingShutdownEffect(uint32_t durationMs)
+{
+    if (outputsDisabled) {
+        forceAllLedsOff();
+        music.stopTone();
+        stopTone();
+        return;
+    }
+
+    // Deep-sleep pre-hooks need a blocking effect so the animation finishes before sleep begins.
+    legacyShutdownAnimation(durationMs);
+}
+
 void HermesXInterfaceModule::legacyShutdownAnimation(uint32_t durationMs)
 {
     const uint32_t effectiveDuration = durationMs ? durationMs : 700;
@@ -2049,7 +2062,7 @@ void runPreDeepSleepHook(const SleepPreHookParams &params)
 {
     uint32_t ms = params.suggested_duration_ms ? params.suggested_duration_ms : 700;
     if (HermesXInterfaceModule::instance) {
-        HermesXInterfaceModule::instance->playShutdownEffect(ms);
+        HermesXInterfaceModule::instance->playBlockingShutdownEffect(ms);
     } else {
         // 沒�? HermesX ?�環境�??��?底方�?
         fallbackShutdownEffect(ms);

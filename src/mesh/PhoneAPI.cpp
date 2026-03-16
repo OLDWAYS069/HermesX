@@ -6,6 +6,7 @@
 #include "Channels.h"
 #include "Default.h"
 #include "FSCommon.h"
+#include "HeapDebug.h"
 #include "MeshService.h"
 #include "NodeDB.h"
 #include "PacketHistory.h"
@@ -15,6 +16,7 @@
 #include "Router.h"
 #include "SPILock.h"
 #include "TypeConversions.h"
+#include "concurrency/LockGuard.h"
 #include "main.h"
 #include "xmodem.h"
 
@@ -30,11 +32,6 @@
 #endif
 #include "Throttle.h"
 #include <RTC.h>
-
-// Temporary stability guard:
-// We still accept nonce=69421 from clients, but disable the internal ONLY_NODES fast-path
-// because field reports show repeatable ESP32 panic right after this branch.
-static constexpr bool kEnableOnlyNodesNonceFlow = false;
 
 PhoneAPI::PhoneAPI()
 {
@@ -58,33 +55,34 @@ void PhoneAPI::handleStartConfig()
 #endif
     }
 
+    // Allow transports to prepare for the bursty config handshake.
+    onConfigStart();
+    LOG_INFO("Config start hook complete");
+
     // even if we were already connected - restart our state machine
-    if (kEnableOnlyNodesNonceFlow && config_nonce == SPECIAL_NONCE_ONLY_NODES) {
+    if (config_nonce == SPECIAL_NONCE_ONLY_NODES) {
         // If client only wants node info, jump directly to sending nodes
         state = STATE_SEND_OWN_NODEINFO;
         LOG_INFO("Client only wants node info, skipping other config");
     } else {
-        if (!kEnableOnlyNodesNonceFlow && config_nonce == SPECIAL_NONCE_ONLY_NODES) {
-            LOG_WARN("Client requested ONLY_NODES nonce=%u, but fast-path is temporarily disabled for stability", config_nonce);
-        }
         state = STATE_SEND_MY_INFO;
     }
     pauseBluetoothLogging = true;
-    const bool skipFilesManifestForOnlyNodesRequest =
-        (!kEnableOnlyNodesNonceFlow && config_nonce == SPECIAL_NONCE_ONLY_NODES);
-    if (skipFilesManifestForOnlyNodesRequest) {
-        // Stability workaround: avoid SPI FS scan on the app's second config pass (nonce 69421).
-        filesManifest.clear();
-        LOG_WARN("Skip file manifest rebuild for ONLY_NODES nonce=%u (stability workaround)", config_nonce);
-    } else {
-        spiLock->lock();
-        filesManifest = getFiles("/", 10);
-        spiLock->unlock();
-        LOG_DEBUG("Got %d files in manifest", filesManifest.size());
-    }
+    LOG_INFO("Start file manifest rebuild");
+    LOG_INFO("Acquiring SPI lock for file manifest");
+    spiLock->lock();
+    LOG_INFO("SPI lock acquired for file manifest");
+    filesManifest = getFiles("/", 10);
+    spiLock->unlock();
+    LOG_INFO("SPI lock released for file manifest");
+    LOG_DEBUG("Got %d files in manifest", filesManifest.size());
 
     LOG_INFO("Start API client config");
-    nodeInfoForPhone.num = 0; // Don't keep returning old nodeinfos
+    {
+        concurrency::LockGuard guard(&nodeInfoMutex);
+        nodeInfoForPhone = {};
+        nodeInfoQueue.clear();
+    }
     resetReadIndex();
 }
 
@@ -106,7 +104,11 @@ void PhoneAPI::close()
         onConnectionChanged(false);
         fromRadioScratch = {};
         toRadioScratch = {};
-        nodeInfoForPhone = {};
+        {
+            concurrency::LockGuard guard(&nodeInfoMutex);
+            nodeInfoForPhone = {};
+            nodeInfoQueue.clear();
+        }
         packetForPhone = NULL;
         filesManifest.clear();
         fromRadioNum = 0;
@@ -145,14 +147,6 @@ bool PhoneAPI::handleToRadio(const uint8_t *buf, size_t bufLength)
         case meshtastic_ToRadio_want_config_id_tag:
             config_nonce = toRadioScratch.want_config_id;
             LOG_INFO("Client wants config, nonce=%u", config_nonce);
-            if (!kEnableOnlyNodesNonceFlow && config_nonce == SPECIAL_NONCE_ONLY_NODES) {
-                // Stability workaround: respond to ONLY_NODES with a minimal completion packet,
-                // without restarting the full config state machine.
-                LOG_WARN("Client requested ONLY_NODES nonce=%u, replying config-complete only (stability workaround)",
-                         config_nonce);
-                state = STATE_SEND_COMPLETE_ID;
-                break;
-            }
             handleStartConfig();
             break;
         case meshtastic_ToRadio_disconnect_tag:
@@ -170,6 +164,7 @@ bool PhoneAPI::handleToRadio(const uint8_t *buf, size_t bufLength)
             LOG_DEBUG("Got MqttClientProxy message");
             if (mqtt && moduleConfig.mqtt.proxy_to_client_enabled && moduleConfig.mqtt.enabled &&
                 (channels.anyMqttEnabled() || moduleConfig.mqtt.map_reporting_enabled)) {
+                logHeapSnapshot("PhoneAPI mqtt proxy before onClientProxyReceive");
                 mqtt->onClientProxyReceive(toRadioScratch.mqttClientProxyMessage);
             } else {
                 LOG_WARN("MqttClientProxy received but proxy is not enabled, no channels have up/downlink, or map reporting "
@@ -246,17 +241,25 @@ size_t PhoneAPI::getFromRadio(uint8_t *buf)
         LOG_DEBUG("Send My NodeInfo");
         auto us = nodeDB->readNextMeshNode(readIndex);
         if (us) {
-            nodeInfoForPhone = TypeConversions::ConvertToNodeInfo(us);
-            nodeInfoForPhone.has_hops_away = false;
-            nodeInfoForPhone.is_favorite = true;
+            auto info = TypeConversions::ConvertToNodeInfo(us);
+            info.has_hops_away = false;
+            info.is_favorite = true;
+            {
+                concurrency::LockGuard guard(&nodeInfoMutex);
+                nodeInfoForPhone = info;
+            }
             fromRadioScratch.which_payload_variant = meshtastic_FromRadio_node_info_tag;
-            fromRadioScratch.node_info = nodeInfoForPhone;
+            fromRadioScratch.node_info = info;
             // Should allow us to resume sending NodeInfo in STATE_SEND_OTHER_NODEINFOS
-            nodeInfoForPhone.num = 0;
+            {
+                concurrency::LockGuard guard(&nodeInfoMutex);
+                nodeInfoForPhone.num = 0;
+            }
         }
-        if (kEnableOnlyNodesNonceFlow && config_nonce == SPECIAL_NONCE_ONLY_NODES) {
+        if (config_nonce == SPECIAL_NONCE_ONLY_NODES) {
             // If client only wants node info, jump directly to sending nodes
             state = STATE_SEND_OTHER_NODEINFOS;
+            onNowHasData(0);
         } else {
             state = STATE_SEND_METADATA;
         }
@@ -436,16 +439,28 @@ size_t PhoneAPI::getFromRadio(uint8_t *buf)
         break;
 
     case STATE_SEND_OTHER_NODEINFOS: {
-        LOG_DEBUG("Send known nodes");
-        if (nodeInfoForPhone.num != 0) {
-            LOG_INFO("nodeinfo: num=0x%x, lastseen=%u, id=%s, name=%s", nodeInfoForPhone.num, nodeInfoForPhone.last_heard,
-                     nodeInfoForPhone.user.id, nodeInfoForPhone.user.long_name);
+        meshtastic_NodeInfo infoToSend = {};
+        {
+            concurrency::LockGuard guard(&nodeInfoMutex);
+            if (nodeInfoForPhone.num == 0 && !nodeInfoQueue.empty()) {
+                nodeInfoForPhone = nodeInfoQueue.front();
+                nodeInfoQueue.pop_front();
+            }
+            infoToSend = nodeInfoForPhone;
+            if (infoToSend.num != 0)
+                nodeInfoForPhone = {};
+        }
+
+        if (infoToSend.num != 0) {
             fromRadioScratch.which_payload_variant = meshtastic_FromRadio_node_info_tag;
-            fromRadioScratch.node_info = nodeInfoForPhone;
-            // Stay in current state until done sending nodeinfos
-            nodeInfoForPhone.num = 0; // We just consumed a nodeinfo, will need a new one next time
+            fromRadioScratch.node_info = infoToSend;
+            prefetchNodeInfos();
         } else {
             LOG_DEBUG("Done sending nodeinfo");
+            {
+                concurrency::LockGuard guard(&nodeInfoMutex);
+                nodeInfoQueue.clear();
+            }
             state = STATE_SEND_FILEMANIFEST;
             // Go ahead and send that ID right now
             return getFromRadio(buf);
@@ -456,8 +471,7 @@ size_t PhoneAPI::getFromRadio(uint8_t *buf)
     case STATE_SEND_FILEMANIFEST: {
         LOG_DEBUG("FromRadio=STATE_SEND_FILEMANIFEST");
         // last element
-        if (config_state == filesManifest.size() ||
-            (kEnableOnlyNodesNonceFlow && config_nonce == SPECIAL_NONCE_ONLY_NODES)) { // also handles an empty filesManifest
+        if (config_state == filesManifest.size() || config_nonce == SPECIAL_NONCE_ONLY_NODES) { // also handles an empty filesManifest
             config_state = 0;
             filesManifest.clear();
             // Skip to complete packet
@@ -530,6 +544,7 @@ void PhoneAPI::sendConfigComplete()
     fromRadioScratch.config_complete_id = config_nonce;
     config_nonce = 0;
     state = STATE_SEND_PACKETS;
+    onConfigComplete();
     pauseBluetoothLogging = false;
 }
 
@@ -547,6 +562,32 @@ void PhoneAPI::releaseQueueStatusPhonePacket()
         service->releaseQueueStatusToPool(queueStatusPacketForPhone);
         queueStatusPacketForPhone = NULL;
     }
+}
+
+void PhoneAPI::prefetchNodeInfos()
+{
+    bool added = false;
+    {
+        concurrency::LockGuard guard(&nodeInfoMutex);
+        while (nodeInfoQueue.size() < kNodePrefetchDepth) {
+            auto nextNode = nodeDB->readNextMeshNode(readIndex);
+            if (!nextNode)
+                break;
+
+            auto info = TypeConversions::ConvertToNodeInfo(nextNode);
+            bool isUs = info.num == nodeDB->getNodeNum();
+            info.hops_away = isUs ? 0 : info.hops_away;
+            info.last_heard = isUs ? getValidTime(RTCQualityFromNet) : info.last_heard;
+            info.snr = isUs ? 0 : info.snr;
+            info.via_mqtt = isUs ? false : info.via_mqtt;
+            info.is_favorite = info.is_favorite || isUs; // Our node is always a favorite
+            nodeInfoQueue.push_back(info);
+            added = true;
+        }
+    }
+
+    if (added)
+        onNowHasData(0);
 }
 
 void PhoneAPI::releaseMqttClientProxyPhonePacket()
@@ -584,20 +625,16 @@ bool PhoneAPI::available()
     case STATE_SEND_COMPLETE_ID:
         return true;
 
-    case STATE_SEND_OTHER_NODEINFOS:
-        if (nodeInfoForPhone.num == 0) {
-            auto nextNode = nodeDB->readNextMeshNode(readIndex);
-            if (nextNode) {
-                nodeInfoForPhone = TypeConversions::ConvertToNodeInfo(nextNode);
-                bool isUs = nodeInfoForPhone.num == nodeDB->getNodeNum();
-                nodeInfoForPhone.hops_away = isUs ? 0 : nodeInfoForPhone.hops_away;
-                nodeInfoForPhone.last_heard = isUs ? getValidTime(RTCQualityFromNet) : nodeInfoForPhone.last_heard;
-                nodeInfoForPhone.snr = isUs ? 0 : nodeInfoForPhone.snr;
-                nodeInfoForPhone.via_mqtt = isUs ? false : nodeInfoForPhone.via_mqtt;
-                nodeInfoForPhone.is_favorite = nodeInfoForPhone.is_favorite || isUs; // Our node is always a favorite
-            }
+    case STATE_SEND_OTHER_NODEINFOS: {
+        concurrency::LockGuard guard(&nodeInfoMutex);
+        if (nodeInfoQueue.empty()) {
+            goto PREFETCH_NODEINFO;
         }
         return true; // Always say we have something, because we might need to advance our state machine
+    }
+    PREFETCH_NODEINFO:
+        prefetchNodeInfos();
+        return true;
     case STATE_SEND_PACKETS: {
         if (!queueStatusPacketForPhone)
             queueStatusPacketForPhone = service->getQueueStatusForPhone();

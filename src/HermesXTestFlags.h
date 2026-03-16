@@ -1,0 +1,17 @@
+#pragma once
+
+// Coarse-grained "all HermesX UI off" mode expands into the finer test toggles below.
+#if defined(HERMESX_TEST_NO_UI)
+#ifndef HERMESX_TEST_DISABLE_HERMES_MODULES
+#define HERMESX_TEST_DISABLE_HERMES_MODULES 1
+#endif
+#ifndef HERMESX_TEST_DISABLE_HERMES_PAGES
+#define HERMESX_TEST_DISABLE_HERMES_PAGES 1
+#endif
+#ifndef HERMESX_TEST_DISABLE_HERMES_OVERLAYS
+#define HERMESX_TEST_DISABLE_HERMES_OVERLAYS 1
+#endif
+#ifndef HERMESX_TEST_DISABLE_HERMES_ALERTS
+#define HERMESX_TEST_DISABLE_HERMES_ALERTS 1
+#endif
+#endif

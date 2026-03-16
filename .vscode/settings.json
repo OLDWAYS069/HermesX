@@ -5,6 +5,7 @@
   "files.insertFinalNewline": false,
   "files.trimFinalNewlines": false,
   "cmake.configureOnOpen": false,
+  "platformio-ide.useBuiltinPIOCore": true,
   "[cpp]": {
     "editor.defaultFormatter": "trunk.io"
   },

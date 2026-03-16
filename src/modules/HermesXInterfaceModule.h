@@ -137,6 +137,7 @@ public:
 
     void playStartupLEDAnimation(uint32_t color);
     void playShutdownEffect(uint32_t durationMs);   // << ?��???
+    void playBlockingShutdownEffect(uint32_t durationMs);
 
     void renderLEDs();
     void updateLED();  // << ?��???

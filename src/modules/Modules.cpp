@@ -1,4 +1,5 @@
 #include "configuration.h"
+#include "HermesXTestFlags.h"
 #if !MESHTASTIC_EXCLUDE_INPUTBROKER
 #include "input/ExpressLRSFiveWay.h"
 #include "input/InputBroker.h"
@@ -169,6 +170,7 @@ void setupModules()
         new PowerStressModule();
 #endif
 #if !MESHTASTIC_EXCLUDE_HERMESX
+#if !defined(HERMESX_TEST_DISABLE_HERMES_MODULES)
 #if defined(HERMESX_GUARD_POWER_ANIMATIONS)
         if (!globalHermes && HermesXPowerGuard::guardEnabled() && HermesXPowerGuard::bootHoldPending()) {
             HermesXInterfaceModule::deferStartupVisuals();
@@ -185,6 +187,9 @@ void setupModules()
         } else {
             HERMESX_LOG_INFO("HermesInterface already created");
         }
+#else
+        HERMESX_LOG_INFO("HermesX modules disabled for test build");
+#endif
 #endif
         // Example: Put your module here
         // new ReplyModule();

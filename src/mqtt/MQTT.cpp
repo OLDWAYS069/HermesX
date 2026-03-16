@@ -24,6 +24,7 @@
 #define ETH ETH2
 #endif // HAS_ETHERNET
 #include "Default.h"
+#include "HeapDebug.h"
 #if !defined(ARCH_NRF52) || NRF52_USE_JSON
 #include "serialization/JSON.h"
 #include "serialization/MeshPacketSerializer.h"
@@ -53,8 +54,10 @@ static bool isMqttServerAddressPrivate = false;
 
 inline void onReceiveProto(char *topic, byte *payload, size_t length)
 {
+    logHeapSnapshot("MQTT onReceiveProto before ServiceEnvelope decode");
     const DecodedServiceEnvelope e(payload, length);
     if (!e.validDecode || e.channel_id == NULL || e.gateway_id == NULL || e.packet == NULL) {
+        logHeapSnapshot("MQTT onReceiveProto invalid ServiceEnvelope");
         LOG_ERROR("Invalid MQTT service envelope, topic %s, len %u!", topic, length);
         return;
     }
@@ -336,6 +339,7 @@ void MQTT::mqttCallback(char *topic, byte *payload, unsigned int length)
 
 void MQTT::onClientProxyReceive(meshtastic_MqttClientProxyMessage msg)
 {
+    logHeapSnapshot("MQTT onClientProxyReceive entry");
     onReceive(msg.topic, msg.payload_variant.data.bytes, msg.payload_variant.data.size);
 }
 

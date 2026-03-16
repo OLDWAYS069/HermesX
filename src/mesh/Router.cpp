@@ -1,6 +1,7 @@
 #include "Router.h"
 #include "Channels.h"
 #include "CryptoEngine.h"
+#include "HeapDebug.h"
 #include "MeshRadio.h"
 #include "MeshService.h"
 #include "NodeDB.h"
@@ -281,6 +282,8 @@ ErrorCode Router::send(meshtastic_MeshPacket *p)
     // If the packet is not yet encrypted, do so now
     if (p->which_payload_variant == meshtastic_MeshPacket_decoded_tag) {
         ChannelIndex chIndex = p->channel; // keep as a local because we are about to change it
+        if (p->via_mqtt || !isFromUs(p))
+            logHeapSnapshot("Router::send before decoded allocCopy");
         meshtastic_MeshPacket *p_decoded = packetPool.allocCopy(*p);
 
         auto encodeResult = perhapsEncode(p);

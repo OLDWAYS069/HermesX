@@ -266,6 +266,7 @@ class Screen : public concurrency::OSThread
     }
 
     void startHermesXAlert(const char *text);
+    bool isHermesXMainPageActive() const;
     bool isHermesFastSetupActive() const;
     bool isHermesXActionPageActive() const;
     bool isRecentTextMessagesPageActive() const;
@@ -695,6 +696,7 @@ class Screen : public concurrency::OSThread
     void drawHermesXShareChannel(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     bool handleRecentTextMessageListInput(const InputEvent *event);
     bool handleRecentTextMessageDetailInput(const InputEvent *event);
+    bool handleIncomingNodePopupInput(const InputEvent *event);
     bool handleTextMessagePopupInput(const InputEvent *event);
     void syncTextMessageNotification();
 
@@ -749,21 +751,32 @@ class Screen : public concurrency::OSThread
         UiBrightnessSelect,
         UiScreenSleepSelect,
         NodeMenu,
+        MqttMenu,
+        MqttMapReportMenu,
+        MqttMapPrecisionSelect,
+        MqttMapPublishSelect,
+        ChannelMenu,
+        ChannelDetailMenu,
+        ChannelPrecisionSelect,
         PowerMenu,
         PassEdit,
+        FrequencyEdit,
         PassShow,
-        RoleMenu,
-        RoleSelect,
-        HopSelect,
+        LoraMenu,
+        LoraPresetSelect,
+        LoraRegionSelect,
+        LoraChannelSlotSelect,
         CannedMenu,
         CannedChannelSelect,
         GpsMenu,
         GpsUpdateSelect,
         GpsBroadcastSelect,
+        GpsSmartDistanceSelect,
+        GpsSmartIntervalSelect,
     };
     HermesFastSetupPage hermesSetupPage = HermesFastSetupPage::Entry;
-    int8_t hermesSetupSelected = 0;
-    int8_t hermesSetupOffset = 0;
+    int16_t hermesSetupSelected = 0;
+    int16_t hermesSetupOffset = 0;
     uint32_t hermesSetupLastNavAtMs = 0;
     int8_t hermesSetupLastNavDir = 0;
     int8_t hermesActionSelected = 0;
@@ -777,7 +790,9 @@ class Screen : public concurrency::OSThread
     uint8_t hermesSetupKeyRow = 0;
     uint8_t hermesSetupKeyCol = 0;
     uint8_t hermesSetupEditingSlot = 0;
+    uint8_t hermesSetupChannelIndex = 0;
     String hermesSetupPassDraft;
+    String hermesSetupFrequencyDraft;
     String hermesSetupToast;
     uint32_t hermesSetupToastUntilMs = 0;
     float compassHeading;
