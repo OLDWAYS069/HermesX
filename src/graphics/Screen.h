@@ -759,6 +759,7 @@ class Screen : public concurrency::OSThread
         ChannelDetailMenu,
         ChannelPrecisionSelect,
         PowerMenu,
+        PowerGuardVoltageSelect,
         PassEdit,
         FrequencyEdit,
         PassShow,

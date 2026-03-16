@@ -6148,7 +6148,7 @@ static const uint8_t kSetupRootCount = sizeof(kSetupRootItems) / sizeof(kSetupRo
 static const char *kSetupEmacItems[] = {u8"返回", u8"設定密碼A", u8"設定密碼B", u8"顯示密碼", u8"EMAC解除"};
 static const uint8_t kSetupEmacCount = sizeof(kSetupEmacItems) / sizeof(kSetupEmacItems[0]);
 static const uint8_t kSetupNodeMenuCount = 7;
-static const uint8_t kSetupPowerMenuCount = 2;
+static const uint8_t kSetupPowerMenuCount = 3;
 static const uint8_t kSetupUiMenuCount = 5;
 static const uint8_t kSetupMqttMenuCount = 4;
 static const uint8_t kSetupMqttMapReportMenuCount = 4;
@@ -6224,6 +6224,25 @@ struct SetupBrightnessOption {
     uint8_t value;
     const char *label;
 };
+
+struct SetupVoltageOption {
+    uint16_t millivolts;
+    const char *label;
+};
+
+static const SetupVoltageOption kSetupPowerGuardThresholdOptions[] = {
+    {3000, "3.0V"},
+    {3100, "3.1V"},
+    {3200, "3.2V"},
+    {3300, "3.3V"},
+    {3400, "3.4V"},
+    {3500, "3.5V"},
+    {3600, "3.6V"},
+    {3700, "3.7V"},
+};
+static const uint8_t kSetupPowerGuardThresholdCount =
+    sizeof(kSetupPowerGuardThresholdOptions) / sizeof(kSetupPowerGuardThresholdOptions[0]);
+
 static const SetupBrightnessOption kSetupBrightnessOptions[] = {
     {0, u8"關閉"},
     {30, u8"低"},
@@ -6412,6 +6431,11 @@ static String formatSetupFrequencyLabel(float value)
     return String(buf);
 }
 
+static String formatSetupVoltageMvLabel(uint16_t millivolts)
+{
+    return String(millivolts / 1000U) + "." + String((millivolts % 1000U) / 100U) + "V";
+}
+
 static const RegionInfo *findSetupRegionInfo(meshtastic_Config_LoRaConfig_RegionCode code)
 {
     for (size_t i = 0;; ++i) {
@@ -6508,6 +6532,24 @@ static uint8_t getSetupChannelPrecisionSelection(uint32_t value)
             return i + 1;
         }
         const uint32_t diff = (value > optionValue) ? (value - optionValue) : (optionValue - value);
+        if (diff < bestDiff) {
+            bestDiff = diff;
+            selected = i + 1;
+        }
+    }
+    return selected;
+}
+
+static uint8_t getSetupPowerGuardThresholdSelection(uint16_t millivolts)
+{
+    uint8_t selected = 1;
+    uint16_t bestDiff = UINT16_MAX;
+    for (uint8_t i = 0; i < kSetupPowerGuardThresholdCount; ++i) {
+        const uint16_t optionValue = kSetupPowerGuardThresholdOptions[i].millivolts;
+        if (optionValue == millivolts) {
+            return i + 1;
+        }
+        const uint16_t diff = (millivolts > optionValue) ? (millivolts - optionValue) : (optionValue - millivolts);
         if (diff < bestDiff) {
             bestDiff = diff;
             selected = i + 1;
@@ -9155,8 +9197,23 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
     if (hermesSetupPage == HermesFastSetupPage::PowerMenu) {
         applyPaletteList(kSetupPowerMenuCount);
         String guardLine = String(u8"過放保護: ") + (HermesXBatteryProtection::isEnabled() ? u8"開" : u8"關");
-        const char *items[] = {u8"返回", guardLine.c_str()};
+        String thresholdLine =
+            String(u8"過放門檻: ") + formatSetupVoltageMvLabel(HermesXBatteryProtection::getThresholdMv());
+        const char *items[] = {u8"返回", guardLine.c_str(), thresholdLine.c_str()};
         drawSetupList(display, width, height, u8"電源管理", items, kSetupPowerMenuCount, hermesSetupSelected, hermesSetupOffset);
+        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        return;
+    }
+
+    if (hermesSetupPage == HermesFastSetupPage::PowerGuardVoltageSelect) {
+        const int itemCount = kSetupPowerGuardThresholdCount + 1;
+        applyPaletteList(itemCount);
+        const char *items[kSetupPowerGuardThresholdCount + 1];
+        items[0] = u8"返回";
+        for (uint8_t i = 0; i < kSetupPowerGuardThresholdCount; ++i) {
+            items[i + 1] = kSetupPowerGuardThresholdOptions[i].label;
+        }
+        drawSetupList(display, width, height, u8"過放門檻", items, itemCount, hermesSetupSelected, hermesSetupOffset);
         drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
         return;
     }
@@ -12775,7 +12832,14 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
 
     if (hermesSetupPage == HermesFastSetupPage::PowerMenu) {
         if (handleMenuNav(kSetupPowerMenuCount)) {
-            const char *itemName = (hermesSetupSelected == 0) ? "返回" : "過放保護";
+            const char *itemName = "未知";
+            if (hermesSetupSelected == 0) {
+                itemName = "返回";
+            } else if (hermesSetupSelected == 1) {
+                itemName = "過放保護";
+            } else if (hermesSetupSelected == 2) {
+                itemName = "過放門檻";
+            }
             LOG_INFO("[HermesFastSetup] select=%d item=%s", hermesSetupSelected, itemName);
             setFastFramerate();
             return true;
@@ -12783,17 +12847,50 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         if (isSelect || isPress) {
             if (hermesSetupSelected == 0) {
                 resetMenu(HermesFastSetupPage::NodeMenu);
-            } else {
+            } else if (hermesSetupSelected == 1) {
                 const bool next = !HermesXBatteryProtection::isEnabled();
                 HermesXBatteryProtection::setEnabled(next);
                 hermesSetupToast = next ? u8"過放保護已開啟" : u8"過放保護已關閉";
                 hermesSetupToastUntilMs = millis() + 1500;
+            } else if (hermesSetupSelected == 2) {
+                const uint8_t selected =
+                    getSetupPowerGuardThresholdSelection(HermesXBatteryProtection::getThresholdMv());
+                enterMenu(HermesFastSetupPage::PowerGuardVoltageSelect, kSetupPowerGuardThresholdCount + 1, selected);
             }
             setFastFramerate();
             return true;
         }
         if (isCancel) {
             resetMenu(HermesFastSetupPage::NodeMenu);
+            setFastFramerate();
+            return true;
+        }
+        return false;
+    }
+
+    if (hermesSetupPage == HermesFastSetupPage::PowerGuardVoltageSelect) {
+        const int count = kSetupPowerGuardThresholdCount + 1;
+        if (handleMenuNav(count)) {
+            setFastFramerate();
+            return true;
+        }
+        if (isSelect || isPress) {
+            if (hermesSetupSelected == 0) {
+                resetMenu(HermesFastSetupPage::PowerMenu);
+            } else {
+                const uint8_t index = hermesSetupSelected - 1;
+                if (index < kSetupPowerGuardThresholdCount) {
+                    HermesXBatteryProtection::setThresholdMv(kSetupPowerGuardThresholdOptions[index].millivolts);
+                    hermesSetupToast = String(u8"過放門檻: ") + kSetupPowerGuardThresholdOptions[index].label;
+                    hermesSetupToastUntilMs = millis() + 1500;
+                }
+                resetMenu(HermesFastSetupPage::PowerMenu);
+            }
+            setFastFramerate();
+            return true;
+        }
+        if (isCancel) {
+            resetMenu(HermesFastSetupPage::PowerMenu);
             setFastFramerate();
             return true;
         }

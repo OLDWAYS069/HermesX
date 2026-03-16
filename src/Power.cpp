@@ -794,24 +794,25 @@ void Power::readPowerStatus()
 #endif
 
     // Over-discharge protection (HermesX):
-    // - Trigger deep sleep when battery voltage stays below 3.5V.
+    // - Trigger deep sleep when battery voltage stays below the configured threshold.
     // - Ignore this protection when USB power is present.
     // - Protection can be toggled from Hermes FastSetup.
 #if !MESHTASTIC_EXCLUDE_HERMESX
-    static constexpr uint16_t kOverdischargeThresholdMv = 3500;
     static constexpr uint8_t kOverdischargeTripCount = 3;
     // HermesX policy: if USB is connected (or charging is detected), never enter low-voltage guard.
     const bool usbPresentForGuard = powerStatus2.getHasUSB() || powerStatus2.getIsCharging();
+    const uint16_t overdischargeThresholdMv = HermesXBatteryProtection::getThresholdMv();
     const bool shouldCheckOverdischarge =
         batteryLevel && powerStatus2.getHasBattery() && !usbPresentForGuard && HermesXBatteryProtection::isEnabled();
 
     if (shouldCheckOverdischarge) {
         const int batteryVoltageMvNow = powerStatus2.getBatteryVoltageMv();
-        if (batteryVoltageMvNow > 0 && batteryVoltageMvNow < kOverdischargeThresholdMv) {
+        if (batteryVoltageMvNow > 0 && batteryVoltageMvNow < overdischargeThresholdMv) {
             if (low_voltage_counter < UINT8_MAX) {
                 low_voltage_counter++;
             }
-            LOG_WARN("Over-discharge guard: %dmV (%u/%u)", batteryVoltageMvNow, low_voltage_counter, kOverdischargeTripCount);
+            LOG_WARN("Over-discharge guard: %dmV < %umV (%u/%u)", batteryVoltageMvNow, overdischargeThresholdMv,
+                     low_voltage_counter, kOverdischargeTripCount);
             if (low_voltage_counter >= kOverdischargeTripCount) {
 #ifdef ARCH_NRF52
                 // We can't trigger deep sleep on NRF52, it's freezing the board
