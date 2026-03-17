@@ -101,6 +101,7 @@ public:
     void playSendSuccessFeedback();
     void playNodeInfoFeedback();
     void setUiLedBrightness(uint8_t brightness);
+    void setUiLedBrightnessPreference(uint8_t brightness);
     uint8_t getUiLedBrightness() const;
     void setEmergencyLampEnabled(bool enabled);
     bool isEmergencyLampEnabled() const;
@@ -187,6 +188,7 @@ private:
     bool isRotaryPressHeld() const;
 #endif
     void applyUserLedBrightness();
+    void restoreUiLedBrightnessPreference();
     void setUserLedBrightness(uint8_t brightness);
     bool audioAllowed() const;
 

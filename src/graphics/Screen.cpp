@@ -13019,7 +13019,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                 const uint8_t idx = static_cast<uint8_t>(hermesSetupSelected - 1);
                 if (idx < kSetupBrightnessCount) {
                     if (HermesXInterfaceModule::instance) {
-                        HermesXInterfaceModule::instance->setUiLedBrightness(kSetupBrightnessOptions[idx].value);
+                        HermesXInterfaceModule::instance->setUiLedBrightnessPreference(kSetupBrightnessOptions[idx].value);
                     }
                     hermesSetupToast = String(u8"LED亮度: ") + kSetupBrightnessOptions[idx].label;
                     hermesSetupToastUntilMs = millis() + 1500;

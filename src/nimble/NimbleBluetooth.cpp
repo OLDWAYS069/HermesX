@@ -8,14 +8,15 @@
 #include "main.h"
 #include "mesh/PhoneAPI.h"
 #include "mesh/mesh-pb-constants.h"
+#include "platform/esp32/HermesCrashBreadcrumb.h"
 #include "sleep.h"
 #include <NimBLEDevice.h>
 #include <array>
 #include <atomic>
 #include <mutex>
 
-#define NIMBLE_BLUETOOTH_TO_PHONE_QUEUE_SIZE 3
-#define NIMBLE_BLUETOOTH_FROM_PHONE_QUEUE_SIZE 3
+#define NIMBLE_BLUETOOTH_TO_PHONE_QUEUE_SIZE 8
+#define NIMBLE_BLUETOOTH_FROM_PHONE_QUEUE_SIZE 4
 
 // Isolation switch: if config still panics, keep BLE config traffic on default connection params
 // so we can separate "conn param update" from "manifest scan" failures.
@@ -42,13 +43,55 @@ class BluetoothPhoneAPI : public PhoneAPI, public concurrency::OSThread
     std::atomic<size_t> toPhoneQueueSize{0};
     std::array<std::array<uint8_t, meshtastic_FromRadio_size>, NIMBLE_BLUETOOTH_TO_PHONE_QUEUE_SIZE> toPhoneQueue{};
     std::array<size_t, NIMBLE_BLUETOOTH_TO_PHONE_QUEUE_SIZE> toPhoneQueueByteSizes{};
+    size_t toPhoneQueueHead{0};
+    std::array<uint8_t, meshtastic_FromRadio_size> toPhoneReadScratch{};
     std::atomic<bool> onReadCallbackIsWaitingForData{false};
 
     std::atomic<int32_t> readCount{0};
     std::atomic<int32_t> notifyCount{0};
     std::atomic<int32_t> writeCount{0};
 
+    bool enqueueToPhoneQueue(const uint8_t *data, size_t numBytes)
+    {
+        std::lock_guard<std::mutex> guard(toPhoneMutex);
+        const size_t queueSize = toPhoneQueueSize.load();
+        if (queueSize >= NIMBLE_BLUETOOTH_TO_PHONE_QUEUE_SIZE) {
+            return false;
+        }
+
+        const size_t storeAtIndex = (toPhoneQueueHead + queueSize) % NIMBLE_BLUETOOTH_TO_PHONE_QUEUE_SIZE;
+        memcpy(toPhoneQueue[storeAtIndex].data(), data, numBytes);
+        toPhoneQueueByteSizes[storeAtIndex] = numBytes;
+        toPhoneQueueSize = queueSize + 1;
+        return true;
+    }
+
+    size_t dequeueToPhoneQueue()
+    {
+        std::lock_guard<std::mutex> guard(toPhoneMutex);
+        const size_t queueSize = toPhoneQueueSize.load();
+        if (queueSize == 0) {
+            return 0;
+        }
+
+        const size_t readIndex = toPhoneQueueHead;
+        const size_t numBytes = toPhoneQueueByteSizes[readIndex];
+        memcpy(toPhoneReadScratch.data(), toPhoneQueue[readIndex].data(), numBytes);
+        toPhoneQueueHead = (toPhoneQueueHead + 1) % NIMBLE_BLUETOOTH_TO_PHONE_QUEUE_SIZE;
+        toPhoneQueueSize = queueSize - 1;
+        return numBytes;
+    }
+
+    void clearToPhoneQueue()
+    {
+        std::lock_guard<std::mutex> guard(toPhoneMutex);
+        toPhoneQueueHead = 0;
+        toPhoneQueueSize = 0;
+    }
+
   protected:
+    virtual size_t getNodePrefetchDepth() const override { return 12; }
+
     virtual int32_t runOnce() override
     {
         while (runOnceHasWorkToDo()) {
@@ -63,6 +106,7 @@ class BluetoothPhoneAPI : public PhoneAPI, public concurrency::OSThread
     virtual void onConfigStart() override
     {
         LOG_INFO("BLE onConfigStart");
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::BleConfigStart);
 
         if (!kEnableBleConfigConnParamUpgrade) {
             LOG_WARN("BLE config conn param upgrade disabled for isolation");
@@ -82,6 +126,7 @@ class BluetoothPhoneAPI : public PhoneAPI, public concurrency::OSThread
     virtual void onConfigComplete() override
     {
         LOG_INFO("BLE onConfigComplete");
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::BleConfigComplete);
 
         if (!kEnableBleConfigConnParamUpgrade) {
             return;
@@ -114,19 +159,18 @@ class BluetoothPhoneAPI : public PhoneAPI, public concurrency::OSThread
     {
         uint8_t fromRadioBytes[meshtastic_FromRadio_size] = {0};
         size_t numBytes = 0;
+        const bool wasWaitingForData = onReadCallbackIsWaitingForData;
+        const bool queueWasEmpty = toPhoneQueueSize == 0;
 
         if (onReadCallbackIsWaitingForData || runOnceToPhoneCanPreloadNextPacket()) {
             numBytes = getFromRadio(fromRadioBytes);
 
             if (numBytes != 0) {
-                if (toPhoneQueueSize < NIMBLE_BLUETOOTH_TO_PHONE_QUEUE_SIZE) {
-                    std::lock_guard<std::mutex> guard(toPhoneMutex);
-                    size_t storeAtIndex = toPhoneQueueSize.load();
-                    memcpy(toPhoneQueue[storeAtIndex].data(), fromRadioBytes, numBytes);
-                    toPhoneQueueByteSizes[storeAtIndex] = numBytes;
-                    toPhoneQueueSize++;
-                } else {
+                if (!enqueueToPhoneQueue(fromRadioBytes, numBytes)) {
+                    hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::BleToPhoneQueueFull, numBytes & 0xffffU);
                     LOG_ERROR("Shouldn't happen! Drop FromRadio packet, toPhoneQueue full (%u bytes)", numBytes);
+                } else if (wasWaitingForData || queueWasEmpty) {
+                    hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::BleToPhoneEnqueue, numBytes & 0xffffU);
                 }
             }
 
@@ -202,6 +246,7 @@ class NimbleBluetoothToRadioCallback : public NimBLECharacteristicCallbacks
         bluetoothPhoneAPI->writeCount.fetch_add(1);
         auto val = pCharacteristic->getValue();
         const size_t len = val.length();
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::BleFromPhoneWrite, len & 0xffffU);
 
         if (lastToRadioLen != len || memcmp(lastToRadio, val.data(), len) != 0) {
             if (bluetoothPhoneAPI->fromPhoneQueueSize < NIMBLE_BLUETOOTH_FROM_PHONE_QUEUE_SIZE) {
@@ -237,6 +282,7 @@ class NimbleBluetoothFromRadioCallback : public NimBLECharacteristicCallbacks
         int tries = 0;
 
         if (bluetoothPhoneAPI->toPhoneQueueSize == 0) {
+            hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::BleReadWait);
             bluetoothPhoneAPI->onReadCallbackIsWaitingForData = true;
 
             while (bluetoothPhoneAPI->onReadCallbackIsWaitingForData && tries < 4000) {
@@ -252,29 +298,12 @@ class NimbleBluetoothFromRadioCallback : public NimBLECharacteristicCallbacks
             }
         }
 
-        uint8_t fromRadioBytes[meshtastic_FromRadio_size] = {0};
-        size_t numBytes = 0;
-        {
-            std::lock_guard<std::mutex> guard(bluetoothPhoneAPI->toPhoneMutex);
-            size_t toPhoneQueueSize = bluetoothPhoneAPI->toPhoneQueueSize.load();
-            if (toPhoneQueueSize > 0) {
-                memcpy(fromRadioBytes, bluetoothPhoneAPI->toPhoneQueue[0].data(), bluetoothPhoneAPI->toPhoneQueueByteSizes[0]);
-                numBytes = bluetoothPhoneAPI->toPhoneQueueByteSizes[0];
-
-                for (uint8_t i = 1; i < toPhoneQueueSize; i++) {
-                    memcpy(bluetoothPhoneAPI->toPhoneQueue[i - 1].data(), bluetoothPhoneAPI->toPhoneQueue[i].data(),
-                           bluetoothPhoneAPI->toPhoneQueueByteSizes[i]);
-                    bluetoothPhoneAPI->toPhoneQueueByteSizes[i - 1] = bluetoothPhoneAPI->toPhoneQueueByteSizes[i];
-                }
-
-                if (bluetoothPhoneAPI->toPhoneQueueSize > 0)
-                    bluetoothPhoneAPI->toPhoneQueueSize--;
-            }
+        const size_t numBytes = bluetoothPhoneAPI->dequeueToPhoneQueue();
+        if (numBytes == 0 && tries > 0) {
+            hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::BleReadWait, tries & 0xffffU);
         }
-
-        std::string fromRadioByteString(fromRadioBytes, fromRadioBytes + numBytes);
-
-        pCharacteristic->setValue(fromRadioByteString);
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::BleReadDequeue, numBytes & 0xffffU);
+        pCharacteristic->setValue(bluetoothPhoneAPI->toPhoneReadScratch.data(), numBytes);
 
         if (numBytes != 0) {
             bluetoothPhoneAPI->setIntervalFromNow(0);
@@ -350,6 +379,7 @@ class NimbleBluetoothServerCallback : public NimBLEServerCallbacks
     virtual void onDisconnect(NimBLEServer *pServer, ble_gap_conn_desc *desc)
     {
         LOG_INFO("BLE disconnect");
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::BleDisconnect);
         memset(lastToRadio, 0, sizeof(lastToRadio));
         lastToRadioLen = 0;
 
@@ -365,10 +395,7 @@ class NimbleBluetoothServerCallback : public NimBLEServerCallbacks
             }
 
             bluetoothPhoneAPI->onReadCallbackIsWaitingForData = false;
-            {
-                std::lock_guard<std::mutex> guard(bluetoothPhoneAPI->toPhoneMutex);
-                bluetoothPhoneAPI->toPhoneQueueSize = 0;
-            }
+            bluetoothPhoneAPI->clearToPhoneQueue();
 
             bluetoothPhoneAPI->readCount = 0;
             bluetoothPhoneAPI->notifyCount = 0;

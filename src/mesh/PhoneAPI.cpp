@@ -18,6 +18,7 @@
 #include "TypeConversions.h"
 #include "concurrency/LockGuard.h"
 #include "main.h"
+#include "platform/esp32/HermesCrashBreadcrumb.h"
 #include "xmodem.h"
 
 #if FromRadio_size > MAX_TO_FROM_RADIO_SIZE
@@ -46,6 +47,9 @@ PhoneAPI::~PhoneAPI()
 
 void PhoneAPI::handleStartConfig()
 {
+    hermesCrashBreadcrumbClear();
+    hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhoneConfigStart, config_nonce & 0xffffU);
+
     // Must be before setting state (because state is how we know !connected)
     if (!isConnected()) {
         onConnectionChanged(true);
@@ -91,6 +95,7 @@ void PhoneAPI::close()
     LOG_DEBUG("PhoneAPI::close()");
 
     if (state != STATE_SEND_NOTHING) {
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhoneClose);
         state = STATE_SEND_NOTHING;
         resetReadIndex();
         unobserve(&service->fromNumChanged);
@@ -115,6 +120,9 @@ void PhoneAPI::close()
         config_nonce = 0;
         config_state = 0;
         pauseBluetoothLogging = false;
+        hermesCrashBreadcrumbClear();
+    } else {
+        hermesCrashBreadcrumbClear();
     }
 }
 
@@ -220,6 +228,7 @@ size_t PhoneAPI::getFromRadio(uint8_t *buf)
         break;
     case STATE_SEND_MY_INFO:
         LOG_DEBUG("FromRadio=STATE_SEND_MY_INFO");
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhoneStateMyInfo);
         // If the user has specified they don't want our node to share its location, make sure to tell the phone
         // app not to send locations on our behalf.
         fromRadioScratch.which_payload_variant = meshtastic_FromRadio_my_info_tag;
@@ -232,6 +241,7 @@ size_t PhoneAPI::getFromRadio(uint8_t *buf)
 
     case STATE_SEND_UIDATA:
         LOG_INFO("getFromRadio=STATE_SEND_UIDATA");
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhoneStateUiData);
         fromRadioScratch.which_payload_variant = meshtastic_FromRadio_deviceuiConfig_tag;
         fromRadioScratch.deviceuiConfig = uiconfig;
         state = STATE_SEND_OWN_NODEINFO;
@@ -239,6 +249,7 @@ size_t PhoneAPI::getFromRadio(uint8_t *buf)
 
     case STATE_SEND_OWN_NODEINFO: {
         LOG_DEBUG("Send My NodeInfo");
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhoneStateOwnNodeInfo, readIndex & 0xffffU);
         auto us = nodeDB->readNextMeshNode(readIndex);
         if (us) {
             auto info = TypeConversions::ConvertToNodeInfo(us);
@@ -268,12 +279,14 @@ size_t PhoneAPI::getFromRadio(uint8_t *buf)
 
     case STATE_SEND_METADATA:
         LOG_DEBUG("Send device metadata");
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhoneStateMetadata);
         fromRadioScratch.which_payload_variant = meshtastic_FromRadio_metadata_tag;
         fromRadioScratch.metadata = getDeviceMetadata();
         state = STATE_SEND_CHANNELS;
         break;
 
     case STATE_SEND_CHANNELS:
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhoneStateChannels, config_state);
         fromRadioScratch.which_payload_variant = meshtastic_FromRadio_channel_tag;
         fromRadioScratch.channel = channels.getByIndex(config_state);
         config_state++;
@@ -286,6 +299,7 @@ size_t PhoneAPI::getFromRadio(uint8_t *buf)
         break;
 
     case STATE_SEND_CONFIG:
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhoneStateConfig, config_state);
         fromRadioScratch.which_payload_variant = meshtastic_FromRadio_config_tag;
         switch (config_state) {
         case meshtastic_Config_device_tag:
@@ -352,6 +366,7 @@ size_t PhoneAPI::getFromRadio(uint8_t *buf)
         break;
 
     case STATE_SEND_MODULECONFIG:
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhoneStateModuleConfig, config_state);
         fromRadioScratch.which_payload_variant = meshtastic_FromRadio_moduleConfig_tag;
         switch (config_state) {
         case meshtastic_ModuleConfig_mqtt_tag:
@@ -439,6 +454,7 @@ size_t PhoneAPI::getFromRadio(uint8_t *buf)
         break;
 
     case STATE_SEND_OTHER_NODEINFOS: {
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhoneStateOtherNodeInfos, readIndex & 0xffffU);
         meshtastic_NodeInfo infoToSend = {};
         {
             concurrency::LockGuard guard(&nodeInfoMutex);
@@ -470,6 +486,7 @@ size_t PhoneAPI::getFromRadio(uint8_t *buf)
 
     case STATE_SEND_FILEMANIFEST: {
         LOG_DEBUG("FromRadio=STATE_SEND_FILEMANIFEST");
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhoneStateFileManifest, config_state);
         // last element
         if (config_state == filesManifest.size() || config_nonce == SPECIAL_NONCE_ONLY_NODES) { // also handles an empty filesManifest
             config_state = 0;
@@ -540,6 +557,7 @@ size_t PhoneAPI::getFromRadio(uint8_t *buf)
 void PhoneAPI::sendConfigComplete()
 {
     LOG_INFO("Config Send Complete");
+    hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhoneStateConfigComplete, config_nonce & 0xffffU);
     fromRadioScratch.which_payload_variant = meshtastic_FromRadio_config_complete_id_tag;
     fromRadioScratch.config_complete_id = config_nonce;
     config_nonce = 0;
@@ -567,9 +585,10 @@ void PhoneAPI::releaseQueueStatusPhonePacket()
 void PhoneAPI::prefetchNodeInfos()
 {
     bool added = false;
+    const size_t prefetchDepth = getNodePrefetchDepth();
     {
         concurrency::LockGuard guard(&nodeInfoMutex);
-        while (nodeInfoQueue.size() < kNodePrefetchDepth) {
+        while (nodeInfoQueue.size() < prefetchDepth) {
             auto nextNode = nodeDB->readNextMeshNode(readIndex);
             if (!nextNode)
                 break;
@@ -586,8 +605,10 @@ void PhoneAPI::prefetchNodeInfos()
         }
     }
 
-    if (added)
+    if (added) {
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhonePrefetch, readIndex & 0xffffU);
         onNowHasData(0);
+    }
 }
 
 void PhoneAPI::releaseMqttClientProxyPhonePacket()

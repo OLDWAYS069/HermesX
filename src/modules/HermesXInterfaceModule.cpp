@@ -136,9 +136,20 @@ constexpr uint32_t kShutdownAnimationStepMs = 20;
 
 constexpr uint32_t kPowerHoldFadeDurationMs = 1200;
 constexpr uint32_t kPowerHoldRedColor = 0xFF0000;
+constexpr uint8_t kPersistedUiLedBrightnessValues[] = {0, 30, 60, 120, 200};
 // 放慢逐格進度的視覺速度，但邏輯門檻仍在原本的 holdDuration。
 // 視覺完成時間 = holdDuration * kPowerHoldVisualStretch，達門檻或關機時會直接鎖紅。
 constexpr float kPowerHoldVisualStretch = 1.0f;
+
+bool isPersistedUiLedBrightnessValue(uint8_t brightness)
+{
+    for (const uint8_t value : kPersistedUiLedBrightnessValues) {
+        if (value == brightness) {
+            return true;
+        }
+    }
+    return false;
+}
 
 } // namespace
 
@@ -823,6 +834,7 @@ HermesXInterfaceModule::HermesXInterfaceModule()
     observe(&service->fromNumChanged);
     isPromiscuous = true;
     loopbackOk = true;
+    restoreUiLedBrightnessPreference();
     initLED();
 #if !MESHTASTIC_EXCLUDE_INPUTBROKER
     if (inputBroker) {
@@ -1118,6 +1130,21 @@ void HermesXInterfaceModule::setUiLedBrightness(uint8_t brightness)
     setUserLedBrightness(brightness);
 }
 
+void HermesXInterfaceModule::setUiLedBrightnessPreference(uint8_t brightness)
+{
+    setUiLedBrightness(brightness);
+
+    if (!isPersistedUiLedBrightnessValue(brightness)) {
+        return;
+    }
+
+    uiconfig.screen_brightness = brightness;
+    if (nodeDB &&
+        !nodeDB->saveProto(uiconfigFileName, meshtastic_DeviceUIConfig_size, &meshtastic_DeviceUIConfig_msg, &uiconfig)) {
+        HERMESX_LOG_WARN("Failed to save WS2812 brightness preference");
+    }
+}
+
 uint8_t HermesXInterfaceModule::getUiLedBrightness() const
 {
     return ledUserBrightness;
@@ -1168,6 +1195,19 @@ void HermesXInterfaceModule::applyUserLedBrightness()
     }
     rgb.setBrightness(ledUserBrightness);
     appliedLedBrightness = ledUserBrightness;
+}
+
+void HermesXInterfaceModule::restoreUiLedBrightnessPreference()
+{
+    const uint8_t persistedBrightness = uiconfig.screen_brightness;
+    if (!isPersistedUiLedBrightnessValue(persistedBrightness)) {
+        return;
+    }
+
+    ledUserBrightness = persistedBrightness;
+    if (persistedBrightness > 0) {
+        ledUserBrightnessRestore = persistedBrightness;
+    }
 }
 
 void HermesXInterfaceModule::setUserLedBrightness(uint8_t brightness)

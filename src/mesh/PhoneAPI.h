@@ -84,7 +84,7 @@ class PhoneAPI
     // Prefetched node info entries ready for immediate transmission to the phone.
     std::deque<meshtastic_NodeInfo> nodeInfoQueue;
     // Keep a small cache so BLE reads can stay responsive without touching the DB in callback context.
-    static constexpr size_t kNodePrefetchDepth = 4;
+    static constexpr size_t kDefaultNodePrefetchDepth = 4;
     // Protect nodeInfoForPhone + nodeInfoQueue because NimBLE callbacks can run in another FreeRTOS task.
     concurrency::Lock nodeInfoMutex;
 
@@ -162,6 +162,7 @@ class PhoneAPI
     /// Subclasses can use these lifecycle hooks for transport-specific behavior around config/steady-state.
     virtual void onConfigStart() {}
     virtual void onConfigComplete() {}
+    virtual size_t getNodePrefetchDepth() const { return kDefaultNodePrefetchDepth; }
 
     /// begin a new connection
     void handleStartConfig();

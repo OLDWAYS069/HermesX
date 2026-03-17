@@ -13,6 +13,7 @@
 #include "detect/LoRaRadioType.h"
 #include "error.h"
 #include "main.h"
+#include "platform/esp32/HermesCrashBreadcrumb.h"
 #include "sleep.h"
 #include "target_specific.h"
 
@@ -227,6 +228,8 @@ void initDeepSleep()
     LOG_INFO("Booted, wake cause %d (boot count %d), reset_reason=%s(%d), esp_reset_reason=%s(%d)", wakeCause, bootCount, reason,
              (int)hwReason, espReason, (int)resetReason);
 #endif
+
+    hermesCrashBreadcrumbReportBoot(resetReason);
 
 #if SOC_RTCIO_HOLD_SUPPORTED
     // If waking from sleep, release any and all RTC GPIOs
