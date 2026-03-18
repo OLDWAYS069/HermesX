@@ -18,7 +18,7 @@ meshtastic --set canned_message.inputbroker_event_press SELECT
 meshtastic --set canned_message.enabled true
 meshtastic --set canned_message.rotary1_enabled true
 meshtastic --set canned_message.allow_input_source rotEnc1
-meshtastic --set-canned-message "這是HermesXB0.2.8|你好|有人在嗎?"
+meshtastic --set-canned-message "這是HermesXB0.2.9_civ|@ab HermesX|HI !"
 
 Channels:
   Index 0: PRIMARY psk=secret { "psk": "isDhHrNpJPlGX3GBJBX6kjuK7KQNp4Z0M7OTDpnX5N4=", "name": "MeshTW", "id": 1, "uplinkEnabled": true, "downlinkEnabled": true, "moduleSettings": { "positionPrecision": 15, "isClientMuted": false }, "channelNum": 0 }

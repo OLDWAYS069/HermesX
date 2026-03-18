@@ -33,9 +33,9 @@ HermesX 的核心目標是提供更直覺的操作介面與緊急模式控制，
 
 ### Get Started
 
-- 🧰 **[Build Instructions](#建置方式-build-instructions)** – 安裝 PlatformIO、選擇環境並編譯韌體。
-- ⚡ **[Auto Flash Script](bin/auto-flash-meshtastic.ps1)** – 使用 PowerShell 腳本快速燒錄。
-- 📦 **[Project Layout](#專案結構-project-layout)** – 了解模組與自訂 proto 的位置。
+- 🧰 **[Build Instructions]** – 安裝 PlatformIO、選擇環境並編譯韌體。
+- ⚡ **[Auto Flash Script]** – 使用 PowerShell 腳本快速燒錄。
+- 📦 **[Project Layout]** – 了解模組與自訂 proto 的位置。
 
 ## 專案特點
 
