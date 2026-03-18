@@ -20,19 +20,15 @@ title: '自動設定工具'
 
 1. 下載 [自動設定工具](https://github.com/OLDWAYS069/HermesX/tree/master/auto_flash_tool)
    這是一個zip檔，內含：
-
 `flash_and_config.ps1`：設定工具本身
-
 `flash_and_config.log`：設定工具的LOG
-
-`release`：目前最新版的韌體都會在裡頭
-
+`release`：我們需要設定的韌體，請丟進去這裡
 `CLI.md`：你想要設定的參數都可以透過這裡調整，參數設定請參閱[Meshtastic.org](https://meshtastic.org/docs/software/python/cli/)
 `README.md` ：你現在正在看的東西
 2. 將一根細的Pin針插入裝置正面、螢幕左上角的小洞
 同時使用USB-C電纜連接到你的PC
 
-3. 打開 `命令工具行`
+3. 打開 `自動設定工具.exe`
 此時自動設定工具會開始運行，接下來就請盯著序列視窗，他會指導你該怎麼做。
 
 4. 設定完畢後，工具會自動關閉，然後就結束了！
