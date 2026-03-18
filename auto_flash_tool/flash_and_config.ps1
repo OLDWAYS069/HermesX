@@ -1,6 +1,6 @@
 param(
     [string]$FirmwarePath = "",
-    [string]$FirmwareFileName = "HermesX_0.2.8-beta0002-update.bin",
+    [string]$FirmwareFileName = "HermesX_0.2.9_civ-alpha00002_firmware.bin",
     [string]$CliConfigPath = "",
     [string]$CliConfigFileName = "CLI.md",
     [int]$PostFlashWaitSeconds = 60,
