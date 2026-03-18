@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+
+auto_flash_tool/build/
+auto_flash_tool/dist/
+auto_flash_tool/flash_and_config.log
