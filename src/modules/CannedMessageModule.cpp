@@ -1113,7 +1113,7 @@ static const char *displayLabel(const char *msg)
     return (msg && strcmp(msg, "~") == 0) ? "Cancel" : msg;
 }
 
-const char *CannedMessageModule::getNodeName(NodeNum node)
+const char *CannedMessageModule::getNodeName(NodeNum node) const
 {
     if (node == NODENUM_BROADCAST) {
         return "Broadcast";
@@ -1125,6 +1125,21 @@ const char *CannedMessageModule::getNodeName(NodeNum node)
             return "Unknown";
         }
     }
+}
+
+String CannedMessageModule::getDestinationDisplayName(NodeNum node) const
+{
+    if (node != NODENUM_BROADCAST) {
+        return String(getNodeName(node));
+    }
+
+    const ChannelIndex channelIndex = (channel < numChannels) ? indexChannels[channel] : getPreferredChannel();
+    const char *channelName = channels.getName(channelIndex);
+    if (channelName && channelName[0] != '\0') {
+        return String(channelName);
+    }
+
+    return String("Broadcast");
 }
 
 bool CannedMessageModule::shouldDraw()
@@ -1532,29 +1547,30 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
         display->setTextAlignment(TEXT_ALIGN_LEFT);
         display->setFont(FONT_SMALL);
         const int smallLineHeight = FONT_HEIGHT_SMALL;
+        const String destinationDisplayName = cannedMessageModule->getDestinationDisplayName(this->dest);
         if (this->destSelect != CANNED_MESSAGE_DESTINATION_TYPE_NONE) {
             display->fillRect(0 + x, 0 + y, x + display->getWidth(), y + FONT_HEIGHT_SMALL);
             display->setColor(BLACK);
         }
         switch (this->destSelect) {
         case CANNED_MESSAGE_DESTINATION_TYPE_NODE:
-            snprintf(buffer, sizeof(buffer), "To: >%s<@%s", cannedMessageModule->getNodeName(this->dest),
+            snprintf(buffer, sizeof(buffer), "To: >%s<@%s", destinationDisplayName.c_str(),
                      channels.getName(indexChannels[this->channel]));
             drawMixedText(*display, 1 + x, y, buffer, smallLineHeight);
             drawMixedText(*display, 0 + x, y, buffer, smallLineHeight);
             break;
         case CANNED_MESSAGE_DESTINATION_TYPE_CHANNEL:
-            snprintf(buffer, sizeof(buffer), "To: %s@>%s<", cannedMessageModule->getNodeName(this->dest),
+            snprintf(buffer, sizeof(buffer), "To: %s@>%s<", destinationDisplayName.c_str(),
                      channels.getName(indexChannels[this->channel]));
             drawMixedText(*display, 1 + x, y, buffer, smallLineHeight);
             drawMixedText(*display, 0 + x, y, buffer, smallLineHeight);
             break;
         default:
             if (display->getWidth() > 128) {
-                snprintf(buffer, sizeof(buffer), "To: %s@%s", cannedMessageModule->getNodeName(this->dest),
+                snprintf(buffer, sizeof(buffer), "To: %s@%s", destinationDisplayName.c_str(),
                          channels.getName(indexChannels[this->channel]));
             } else {
-                snprintf(buffer, sizeof(buffer), "To: %.5s@%.5s", cannedMessageModule->getNodeName(this->dest),
+                snprintf(buffer, sizeof(buffer), "To: %.5s@%.5s", destinationDisplayName.c_str(),
                          channels.getName(indexChannels[this->channel]));
             }
             drawMixedText(*display, 0 + x, y, buffer, smallLineHeight);
@@ -1577,7 +1593,8 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
             display->setTextAlignment(TEXT_ALIGN_LEFT);
             display->setFont(FONT_SMALL);
             const int smallLineHeight = FONT_HEIGHT_SMALL;
-            snprintf(buffer, sizeof(buffer), "To: %s", cannedMessageModule->getNodeName(this->dest));
+            const String destinationDisplayName = cannedMessageModule->getDestinationDisplayName(this->dest);
+            snprintf(buffer, sizeof(buffer), "To: %s", destinationDisplayName.c_str());
             drawMixedText(*display, 0 + x, 0 + y, buffer, smallLineHeight);
             int lines = (display->getHeight() / FONT_HEIGHT_SMALL) - 1;
             if (lines == 3) {

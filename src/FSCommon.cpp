@@ -111,47 +111,37 @@ bool renameFile(const char *pathFrom, const char *pathTo)
  * @param levels The number of levels of subdirectories to list.
  * @return A vector of strings containing the full path of each file in the directory.
  */
-static void collectFiles(const char *dirname, uint8_t levels, std::vector<meshtastic_FileInfo> &filenames)
+std::vector<meshtastic_FileInfo> getFiles(const char *dirname, uint8_t levels)
 {
+    std::vector<meshtastic_FileInfo> filenames = {};
 #ifdef FSCom
-    LOG_INFO("getFiles enter: dir=%s levels=%u", dirname, levels);
     File root = FSCom.open(dirname, FILE_O_READ);
-    if (!root) {
-        LOG_WARN("getFiles open failed: %s", dirname);
-        return;
-    }
-    if (!root.isDirectory()) {
-        LOG_WARN("getFiles not a directory: %s", dirname);
-        return;
-    }
+    if (!root)
+        return filenames;
+    if (!root.isDirectory())
+        return filenames;
 
     File file = root.openNextFile();
-    LOG_INFO("getFiles first entry ready: dir=%s hasEntry=%d", dirname, static_cast<int>(!!file));
-    while (
-        file &&
-        file.name()[0]) { // Mirror listDir()'s guard so manifest building skips bogus empty-name entries too.
-        LOG_INFO("getFiles inspect: dir=%s name=%s isDir=%d size=%u", dirname, file.name(), static_cast<int>(file.isDirectory()),
-                 static_cast<unsigned>(file.size()));
+    while (file) {
         if (file.isDirectory() && !String(file.name()).endsWith(".")) {
             if (levels) {
 #ifdef ARCH_ESP32
-                collectFiles(file.path(), levels - 1, filenames);
+                std::vector<meshtastic_FileInfo> subDirFilenames = getFiles(file.path(), levels - 1);
 #else
-                collectFiles(file.name(), levels - 1, filenames);
+                std::vector<meshtastic_FileInfo> subDirFilenames = getFiles(file.name(), levels - 1);
 #endif
+                filenames.insert(filenames.end(), subDirFilenames.begin(), subDirFilenames.end());
+                file.close();
             }
-            file.close();
         } else {
             meshtastic_FileInfo fileInfo = {"", static_cast<uint32_t>(file.size())};
 #ifdef ARCH_ESP32
-            strncpy(fileInfo.file_name, file.path(), sizeof(fileInfo.file_name) - 1);
+            strcpy(fileInfo.file_name, file.path());
 #else
-            strncpy(fileInfo.file_name, file.name(), sizeof(fileInfo.file_name) - 1);
+            strcpy(fileInfo.file_name, file.name());
 #endif
-            fileInfo.file_name[sizeof(fileInfo.file_name) - 1] = '\0';
             if (!String(fileInfo.file_name).endsWith(".")) {
                 filenames.push_back(fileInfo);
-                LOG_INFO("getFiles appended: path=%s total=%u", fileInfo.file_name, static_cast<unsigned>(filenames.size()));
             }
             file.close();
         }
@@ -159,13 +149,6 @@ static void collectFiles(const char *dirname, uint8_t levels, std::vector<meshta
     }
     root.close();
 #endif
-}
-
-std::vector<meshtastic_FileInfo> getFiles(const char *dirname, uint8_t levels)
-{
-    std::vector<meshtastic_FileInfo> filenames = {};
-    filenames.reserve(32);
-    collectFiles(dirname, levels, filenames);
     return filenames;
 }
 

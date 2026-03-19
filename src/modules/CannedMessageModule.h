@@ -61,7 +61,8 @@ class CannedMessageModule : public SinglePortModule, public Observable<const UIF
     const char *getPrevMessage();
     const char *getNextMessage();
     const char *getMessageByIndex(int index);
-    const char *getNodeName(NodeNum node);
+    const char *getNodeName(NodeNum node) const;
+    String getDestinationDisplayName(NodeNum node) const;
     bool shouldDraw();
     bool hasMessages();
     void exitMenu(); // 自訂：退出 canned message 選單

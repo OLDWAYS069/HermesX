@@ -30,6 +30,7 @@ class WindowManager
     void nextTile();
     void openMenu();
     void nextApplet();
+    bool showApplet(const char *name);
     void rotate();
     void toggleBatteryIcon();
 

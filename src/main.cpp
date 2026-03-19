@@ -12,6 +12,7 @@
 #include "buzz.h"
 
 #include "FSCommon.h"
+#include "HeapDebug.h"
 #include "Led.h"
 #include "RTC.h"
 #include "SPILock.h"
@@ -931,6 +932,7 @@ void setup()
     // We do this as early as possible because this loads preferences from flash
     // but we need to do this after main cpu init (esp32setup), because we need the random seed set
     nodeDB = new NodeDB;
+    logHeapSnapshot("main after NodeDB");
 
     // If we're taking on the repeater role, use NextHopRouter and turn off 3V3_S rail because peripherals are not needed
     if (config.device.role == meshtastic_Config_DeviceConfig_Role_REPEATER) {
@@ -1036,6 +1038,7 @@ void setup()
 #if HAS_SCREEN
     if (!screen) {
         screen = new graphics::Screen(screen_found, screen_model, screen_geometry);
+        logHeapSnapshot("main after Screen ctor");
     }
 #endif
 
@@ -1124,8 +1127,10 @@ void setup()
 
     if (!service) {
         service = new MeshService();
+        logHeapSnapshot("main after MeshService ctor");
     }
     service->init();
+    logHeapSnapshot("main after MeshService init");
 
     // Now that the mesh service is created, create any modules
     setupModules();
@@ -1436,6 +1441,7 @@ void setup()
 
 #if !MESHTASTIC_EXCLUDE_MQTT
     mqttInit();
+    logHeapSnapshot("main after mqttInit");
 #endif
 
 #ifdef RF95_FAN_EN
@@ -1490,6 +1496,7 @@ void setup()
     // This must be _after_ service.init because we need our preferences loaded from flash to have proper timeout values
     PowerFSM_setup(); // we will transition to ON in a couple of seconds, FIXME, only do this for cold boots, not waking from SDS
     powerFSMthread = new PowerFSMThread();
+    logHeapSnapshot("main after PowerFSMThread");
 
 #if !HAS_TFT
     setCPUFast(false); // 80MHz is fine for our slow peripherals

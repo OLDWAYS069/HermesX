@@ -155,6 +155,43 @@ void InkHUD::WindowManager::nextApplet()
     inkhud->forceUpdate(EInk::UpdateTypes::FAST); // bringToForeground already requested, but we're manually forcing FAST
 }
 
+bool InkHUD::WindowManager::showApplet(const char *name)
+{
+    if (!name || userTiles.empty()) {
+        return false;
+    }
+
+    Tile *t = userTiles.at(settings->userTiles.focused);
+    if (!t) {
+        return false;
+    }
+
+    for (uint8_t i = 0; i < inkhud->userApplets.size(); i++) {
+        Applet *a = inkhud->userApplets.at(i);
+        if (!a || !a->name || strcmp(a->name, name) != 0) {
+            continue;
+        }
+        if (!a->isActive()) {
+            return false;
+        }
+        if (t->getAssignedApplet() == a && a->isForeground()) {
+            inkhud->forceUpdate(EInk::UpdateTypes::FAST);
+            return true;
+        }
+
+        if (t->getAssignedApplet()) {
+            t->getAssignedApplet()->sendToBackground();
+        }
+        t->assignApplet(a);
+        a->bringToForeground();
+        settings->userTiles.displayedUserApplet[settings->userTiles.focused] = i;
+        inkhud->forceUpdate(EInk::UpdateTypes::FAST);
+        return true;
+    }
+
+    return false;
+}
+
 // Rotate the display image by 90 degrees
 void InkHUD::WindowManager::rotate()
 {

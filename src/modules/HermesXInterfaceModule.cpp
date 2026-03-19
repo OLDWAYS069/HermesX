@@ -16,6 +16,8 @@
 #include "HermesXPacketUtils.h"
 
 #include "MusicModule.h"
+#include "FSCommon.h"
+#include "SPILock.h"
 #include "sleep_hooks.h"
 #include "Led.h"
 #include "buzz/buzz.h"
@@ -137,6 +139,7 @@ constexpr uint32_t kShutdownAnimationStepMs = 20;
 constexpr uint32_t kPowerHoldFadeDurationMs = 1200;
 constexpr uint32_t kPowerHoldRedColor = 0xFF0000;
 constexpr uint8_t kPersistedUiLedBrightnessValues[] = {0, 30, 60, 120, 200};
+constexpr const char *kHermesUiLedBrightnessFile = "/prefs/hermesx_ui_led_brightness.txt";
 // 放慢逐格進度的視覺速度，但邏輯門檻仍在原本的 holdDuration。
 // 視覺完成時間 = holdDuration * kPowerHoldVisualStretch，達門檻或關機時會直接鎖紅。
 constexpr float kPowerHoldVisualStretch = 1.0f;
@@ -151,10 +154,79 @@ bool isPersistedUiLedBrightnessValue(uint8_t brightness)
     return false;
 }
 
+void ensureHermesPrefsDir()
+{
+#ifdef FSCom
+    if (!FSCom.exists("/prefs")) {
+        FSCom.mkdir("/prefs");
+    }
+#endif
+}
+
+bool saveHermesUiLedBrightness(uint8_t brightness)
+{
+#ifdef FSCom
+    concurrency::LockGuard guard(spiLock);
+    ensureHermesPrefsDir();
+    if (FSCom.exists(kHermesUiLedBrightnessFile)) {
+        FSCom.remove(kHermesUiLedBrightnessFile);
+    }
+    auto f = FSCom.open(kHermesUiLedBrightnessFile, FILE_O_WRITE);
+    if (!f) {
+        HERMESX_LOG_WARN("Status LED save open failed: path=%s value=%u", kHermesUiLedBrightnessFile,
+                         static_cast<unsigned>(brightness));
+        return false;
+    }
+    f.print(static_cast<unsigned int>(brightness));
+    f.flush();
+    f.close();
+    HERMESX_LOG_INFO("Status LED saved: path=%s value=%u", kHermesUiLedBrightnessFile, static_cast<unsigned>(brightness));
+    return true;
+#else
+    (void)brightness;
+    HERMESX_LOG_WARN("Status LED save unavailable: FSCom disabled");
+    return false;
+#endif
+}
+
+bool loadHermesUiLedBrightness(uint8_t &brightness)
+{
+#ifdef FSCom
+    concurrency::LockGuard guard(spiLock);
+    if (!FSCom.exists(kHermesUiLedBrightnessFile)) {
+        HERMESX_LOG_INFO("Status LED load miss: path=%s", kHermesUiLedBrightnessFile);
+        return false;
+    }
+    auto f = FSCom.open(kHermesUiLedBrightnessFile, FILE_O_READ);
+    if (!f) {
+        HERMESX_LOG_WARN("Status LED load open failed: path=%s", kHermesUiLedBrightnessFile);
+        return false;
+    }
+    const String raw = f.readStringUntil('\n');
+    f.close();
+    const long parsed = raw.toInt();
+    if (parsed < 0 || parsed > 255) {
+        HERMESX_LOG_WARN("Status LED load invalid: path=%s raw=%s parsed=%ld", kHermesUiLedBrightnessFile, raw.c_str(),
+                         parsed);
+        return false;
+    }
+    brightness = static_cast<uint8_t>(parsed);
+    HERMESX_LOG_INFO("Status LED loaded: path=%s value=%u raw=%s", kHermesUiLedBrightnessFile,
+                     static_cast<unsigned>(brightness), raw.c_str());
+    return true;
+#else
+    (void)brightness;
+    HERMESX_LOG_INFO("Status LED load unavailable: FSCom disabled");
+    return false;
+#endif
+}
+
 } // namespace
 
 LEDAnimation HermesXInterfaceModule::selectActiveAnimation() const
 {
+    if (userOutputsMuted && !emergencyLampEnabled)
+        return LEDAnimation::None;
     if (powerHoldActive)
         return LEDAnimation::PowerHoldProgress;
     if (powerHoldFadeActive)
@@ -439,6 +511,12 @@ void HermesXInterfaceModule::tickLEDAnimation(uint32_t now)
     LEDAnimation selected = selectActiveAnimation();
     if (selected != gLedState.activeAnimation) {
         startLEDAnimation(selected);
+    }
+
+    if (selected == LEDAnimation::None) {
+        rgb.clear();
+        rgb.show();
+        return;
     }
 
     switch (gLedState.activeAnimation) {
@@ -831,7 +909,6 @@ HermesXInterfaceModule::HermesXInterfaceModule()
 #if defined(HERMESX_GUARD_POWER_ANIMATIONS)
     powerHoldReady = HermesXPowerGuard::isPowerHoldReady();
 #endif
-    observe(&service->fromNumChanged);
     isPromiscuous = true;
     loopbackOk = true;
     restoreUiLedBrightnessPreference();
@@ -854,18 +931,31 @@ HermesXInterfaceModule::HermesXInterfaceModule()
 
     HERMESX_LOG_DEBUG("constroct");
 #if defined(HERMESX_GUARD_POWER_ANIMATIONS)
-    if (HermesXPowerGuard::startupVisualsAllowed()) {
+    if (!userOutputsMuted && HermesXPowerGuard::startupVisualsAllowed()) {
         startupEffectActive = true;
         startLEDAnimation(LEDAnimation::StartupEffect);
     }
 #else
-    startupEffectActive = true;
-    startLEDAnimation(LEDAnimation::StartupEffect);
+    if (!userOutputsMuted) {
+        startupEffectActive = true;
+        startLEDAnimation(LEDAnimation::StartupEffect);
+    }
 #endif
 }
 
 void HermesXInterfaceModule::setup()
 {
+    restoreUiLedBrightnessPreference();
+    applyUserLedBrightness();
+    HERMESX_LOG_INFO("Status LED setup restore: brightness=%u muted=%d restore=%u startup=%d", static_cast<unsigned>(ledUserBrightness),
+                     userOutputsMuted ? 1 : 0, static_cast<unsigned>(ledUserBrightnessRestore),
+                     startupEffectActive ? 1 : 0);
+    if (userOutputsMuted) {
+        stopLEDAnimation(LEDAnimation::StartupEffect);
+        startupEffectActive = false;
+        rgb.clear();
+        rgb.show();
+    }
     applyRoleOutputPolicy();
 }
 
@@ -879,7 +969,7 @@ void HermesXInterfaceModule::applyRoleOutputPolicy()
     if (outputsDisabled && !emergencyLampEnabled) {
         forceAllLedsOff();
     }
-    if (outputsDisabled || userOutputsMuted) {
+    if (outputsDisabled) {
         music.stopTone();
         if (!isEmergencyUiActive()) {
             stopTone();
@@ -1138,10 +1228,8 @@ void HermesXInterfaceModule::setUiLedBrightnessPreference(uint8_t brightness)
         return;
     }
 
-    uiconfig.screen_brightness = brightness;
-    if (nodeDB &&
-        !nodeDB->saveProto(uiconfigFileName, meshtastic_DeviceUIConfig_size, &meshtastic_DeviceUIConfig_msg, &uiconfig)) {
-        HERMESX_LOG_WARN("Failed to save WS2812 brightness preference");
+    if (!saveHermesUiLedBrightness(brightness)) {
+        HERMESX_LOG_WARN("Failed to save status LED brightness preference");
     }
 }
 
@@ -1173,7 +1261,7 @@ void HermesXInterfaceModule::setEmergencyLampEnabled(bool enabled)
     emergencyLampPrevBrightness = ledUserBrightness;
     emergencyLampBrightnessForced = false;
 
-    // Stealth can mute WS2812 brightness to 0; bring it back before forcing red.
+    // Stealth can mute status LED brightness to 0; bring it back before forcing red.
     if (ledUserBrightness == 0) {
         emergencyLampBrightnessForced = true;
         const uint8_t restore = ledUserBrightnessRestore ? ledUserBrightnessRestore : kLedBrightnessDefault;
@@ -1199,12 +1287,21 @@ void HermesXInterfaceModule::applyUserLedBrightness()
 
 void HermesXInterfaceModule::restoreUiLedBrightnessPreference()
 {
-    const uint8_t persistedBrightness = uiconfig.screen_brightness;
+    uint8_t persistedBrightness = 0;
+    const bool loadedFromHermesPrefs = loadHermesUiLedBrightness(persistedBrightness);
+    if (!loadedFromHermesPrefs) {
+        persistedBrightness = uiconfig.screen_brightness;
+        HERMESX_LOG_INFO("Status LED restore fallback: source=uiconfig value=%u", static_cast<unsigned>(persistedBrightness));
+    } else {
+        HERMESX_LOG_INFO("Status LED restore source=hermes_prefs value=%u", static_cast<unsigned>(persistedBrightness));
+    }
     if (!isPersistedUiLedBrightnessValue(persistedBrightness)) {
+        HERMESX_LOG_WARN("Status LED restore ignored invalid value=%u", static_cast<unsigned>(persistedBrightness));
         return;
     }
 
     ledUserBrightness = persistedBrightness;
+    userOutputsMuted = (persistedBrightness == 0);
     if (persistedBrightness > 0) {
         ledUserBrightnessRestore = persistedBrightness;
     }
@@ -1224,16 +1321,12 @@ void HermesXInterfaceModule::setUserLedBrightness(uint8_t brightness)
     if (userOutputsMuted) {
         rgb.clear();
         rgb.show();
-        music.stopTone();
-        if (!isEmergencyUiActive()) {
-            stopTone();
-        }
     }
 }
 
 bool HermesXInterfaceModule::audioAllowed() const
 {
-    return !outputsDisabled && !userOutputsMuted && isBuzzerGloballyEnabled();
+    return !outputsDisabled && isBuzzerGloballyEnabled();
 }
 
 
@@ -1244,6 +1337,12 @@ void HermesXInterfaceModule::updateLED() {
     }
     if (outputsDisabled && emergencyLampEnabled) {
         renderEmergencyLampRed();
+        return;
+    }
+
+    if (userOutputsMuted && !emergencyLampEnabled) {
+        rgb.clear();
+        rgb.show();
         return;
     }
 
@@ -1578,7 +1677,7 @@ int32_t HermesXInterfaceModule::runOnce() {
     }
 #endif
 
-    bool outputsAllowed = !outputsDisabled && !userOutputsMuted;
+    bool outputsAllowed = !outputsDisabled;
 #if defined(HERMESX_GUARD_POWER_ANIMATIONS)
     if (HermesXPowerGuard::guardEnabled() && HermesXPowerGuard::bootHoldPending()) {
         outputsAllowed = false;
@@ -1589,6 +1688,15 @@ int32_t HermesXInterfaceModule::runOnce() {
     if (firstTime) {
         firstTime = false;
         music.begin();
+        HERMESX_LOG_INFO("Status LED first runOnce: brightness=%u muted=%d outputsAllowed=%d startup=%d",
+                         static_cast<unsigned>(ledUserBrightness), userOutputsMuted ? 1 : 0, outputsAllowed ? 1 : 0,
+                         startupEffectActive ? 1 : 0);
+        if (userOutputsMuted) {
+            stopLEDAnimation(LEDAnimation::StartupEffect);
+            startupEffectActive = false;
+            rgb.clear();
+            rgb.show();
+        }
         if (outputsAllowed) {
             music.playStartupSound();
         }
@@ -1992,7 +2100,7 @@ void HermesXInterfaceModule::startPowerHoldFade(uint32_t now) {
 }
 
 void HermesXInterfaceModule::playStartupLEDAnimation(uint32_t color) {
-    if (outputsDisabled)
+    if (outputsDisabled || userOutputsMuted)
         return;
 
     if (useCentralLedManager) {
@@ -2006,7 +2114,7 @@ void HermesXInterfaceModule::playStartupLEDAnimation(uint32_t color) {
 
 void HermesXInterfaceModule::legacyStartupAnimation(uint32_t color)
 {
-    if (outputsDisabled)
+    if (outputsDisabled || userOutputsMuted)
         return;
 
     rgb.clear();

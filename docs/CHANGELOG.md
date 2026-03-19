@@ -2,6 +2,49 @@
 
 本文件為可對外發布版本的更新紀錄，整理 HermesX 韌體的重要功能更新、體驗調整與修正項目。
 
+## 2026-03-20
+
+### 修正
+
+- 修正 HermesX direct neon cache/scratch 常駐 RAM 過大，導致在 TFT Home、GPS neon、BLE 與 MQTT client proxy 併用時，系統可用 heap 被明顯壓低的問題。
+- 修正 Home 與 GPS neon 改為共用 scratch buffer 後，shared buffer 過小造成的 Home 時鐘右側殘影/錯位問題。
+- 修正 InkHUD 訊息 Banner 彈出後，主按鍵短按只能關閉通知、無法直接進入 `Recent Send / All Messages` 的問題；現在短按會優先切到訊息頁，未啟用時才退回單純關閉 Banner。
+- 修正 `Recent Send` 列表對 UTF-8/中文摘要的顯示不穩定問題；列表行改為使用 HermesX 混排字型繪製，避免 sender / preview 被截成亂碼或 `???`。
+
+### 改進
+
+- 將 Home clock 與 GPS neon text 的 `composedLayerMap` 改為共用同一塊 scratch buffer，減少重複常駐記憶體。
+- 將 Home direct neon clock 的 region 上限縮為實際固定值 `152x37`，不再為過大的保守上限保留記憶體。
+- 將 GPS title neon 的 `coreMask` 常駐陣列移除，改為直接以 `fullMask` 即時計算核心層，進一步減少靜態 RAM 佔用。
+- 新增 direct neon / heap 診斷 log，便於現場比對 Home、GPS 與 MQTT client proxy 佔用情況。
+- 將 HermesX 新訊息 popup 顯示時間由 `3s` 延長為 `5s`。
+- 調整 `Recent Send` 訊息 detail 頁版面：標頭改為兩行緊湊資訊，正文區域放大並加入上下滾動與右側簡易 scrollbar，減少長訊息頁面的空白浪費。
+
+### 備註
+
+- 本次調整後，開機與進入 Home 頁面的 free heap 已明顯回升；目前工程判斷認為，先前 HermesX 分支較容易 panic，主因之一高度懷疑為整體記憶體壓力過高。
+- HermesX 新訊息 popup 的 `Press` 直開最新訊息 detail 仍有已知時序問題；目前現場測試在某些喚醒/重繪時機下仍可能只關閉 popup，後續需再追 `pending -> visible` 與輸入事件先後順序。
+
+## 2026-03-19
+
+### 修正
+
+- 修正 BLE 配對後在同步設定或接收封包時，HermesX 分支較容易異常重啟的問題；`getFiles()` 檔案清單建立流程已同步回官方版實作，降低與官方行為差異。
+- 修正 `狀態燈亮度` 設為 `0` 時，蜂鳴器也被一併靜音的問題；現在 `狀態燈亮度 = 0` 只會關閉 LED，不再影響 buzzer。
+- 修正 `狀態燈亮度` 在裝置重新開機後無法正確保留的問題。
+- 修正 `狀態燈亮度 = 0` 時，開機動畫、一般 LED 動畫與長按電源提示燈效仍可能被重新點亮的問題。
+
+### 改進
+
+- 將 HermesX 狀態燈亮度改為獨立偏好設定儲存，不再借用 `uiconfig.screen_brightness`。
+- 新增 HermesX 狀態燈亮度儲存檔：`/prefs/hermesx_ui_led_brightness.txt`。
+- 調整 HermesX LED 輸出邏輯：當狀態燈亮度為 `0` 時，除非為緊急紅燈模式，其他一般 LED 動畫都不再顯示。
+
+### 介面調整
+
+- 將 UI 設定名稱由 `WS2812亮度` 改為 `狀態燈亮度`。
+- 將相關提示文字與日誌文案統一改為 `狀態燈 / status LED`，避免與螢幕亮度設定混淆。
+
 ## 2026-03-12
 
 ### 改進

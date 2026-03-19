@@ -1,6 +1,24 @@
 # HermesX Mini Change Log
 （每次只寫極簡亮點，便於快速回顧）
 
+## 2026-03-20
+- Home 與 GPS neon 改為共用 scratch buffer，減少 direct-TFT 霓虹快取的重複常駐 RAM。
+- Home 時鐘 region 上限縮為實際 `152x37`，GPS title neon 再少一塊 `coreMask` 常駐陣列。
+- 修正共用 scratch 初版過小造成的 Home 時鐘右側殘影/錯位。
+- 修正 InkHUD 訊息 Banner 短按時無法直接進入 `Recent Send / All Messages`，現在會優先跳到訊息頁。
+- HermesX 新訊息 popup 顯示時間延長為 `5s`。
+- `Recent Send` 列表摘要改為 UTF-8 安全渲染，修正中文/混合文字顯示異常。
+- `Recent Send` detail 頁新增上下滾動與右側 scrollbar，版面同步壓緊以減少空白。
+- HermesX popup 的 `Press` 直開最新訊息 detail 仍有已知時序問題，這輪尚未完全修復。
+- 現場量測顯示 free heap 明顯回升；先前頻繁 panic 高度懷疑與記憶體壓力過高有關。
+
+## 2026-03-19
+- 修正 BLE 配對後 HermesX 分支在設定同步/收包時較易異常的問題，`getFiles()` 已同步回官方版實作。
+- `狀態燈亮度 = 0` 現在只關 LED，不再把蜂鳴器一起靜音。
+- 修正 `狀態燈亮度` 重開機後不保留的問題，改為獨立存到 `/prefs/hermesx_ui_led_brightness.txt`。
+- 修正亮度為 `0` 時，開機動畫、一般 LED 動畫與長按電源提示仍可能亮起的問題。
+- UI 文案由 `WS2812亮度` 改為 `狀態燈亮度`。
+
 ## 2026-03-12
 - GPS 座標顯示微調：改為「只縮整體、不壓字距」，座標維持半尺寸顯示（`coordHalfScale=true`）且字距回復正常（`coordTracking=0`），避免數字擠壓。
 - 註記 `Neon effect` 繪製邏輯：`renderDirectNeonPattanakarnText()` 先合併字形 layer map（逐像素取最大層級），再依層級 palette 以 scanline run 方式輸出，形成「外暈 -> 內暈 -> 核心」。

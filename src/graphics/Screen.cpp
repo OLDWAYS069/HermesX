@@ -50,6 +50,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "graphics/fonts/PattanakarnClock32.h"
 // --- HermesX Remove TFT fast-path START
 #include "graphics/fonts/HermesX_zh/HermesX_CN12.h"
+#include "HeapDebug.h"
 #include <inttypes.h>
 #include <math.h>
 #include <time.h>
@@ -773,8 +774,18 @@ static constexpr int16_t kDirectNeonClockGlyphMaxW = 21;
 static constexpr int16_t kDirectNeonClockGlyphTileW = kDirectNeonClockGlyphMaxW + (kDirectNeonClockMargin * 2);
 static constexpr int16_t kDirectNeonClockGlyphTileH = PattanakarnClock32::kGlyphHeight + (kDirectNeonClockMargin * 2);
 static constexpr int16_t kDirectNeonClockSlotCount = 8;
-static constexpr int16_t kDirectNeonClockMaxRegionW = 176;
-static constexpr int16_t kDirectNeonClockMaxRegionH = 52;
+static constexpr int16_t kDirectNeonClockMaxRegionW = (kDirectNeonClockGlyphMaxW * 6) + 14 + (kDirectNeonClockMargin * 2);
+static constexpr int16_t kDirectNeonClockMaxRegionH = PattanakarnClock32::kGlyphHeight + (kDirectNeonClockMargin * 2);
+// GPS neon text uses a smaller region than the Home clock, but both share one scratch map.
+// Keep the shared map large enough for the larger Home clock region to avoid overruns.
+static constexpr int16_t kDirectNeonTextMaxW = 128;
+static constexpr int16_t kDirectNeonTextMaxH = 32;
+static constexpr int16_t kDirectNeonSharedMaxW =
+    (kDirectNeonClockMaxRegionW > kDirectNeonTextMaxW) ? kDirectNeonClockMaxRegionW : kDirectNeonTextMaxW;
+static constexpr int16_t kDirectNeonSharedMaxH =
+    (kDirectNeonClockMaxRegionH > kDirectNeonTextMaxH) ? kDirectNeonClockMaxRegionH : kDirectNeonTextMaxH;
+static constexpr size_t kDirectNeonSharedComposedLayerMapSize =
+    static_cast<size_t>(kDirectNeonSharedMaxW) * static_cast<size_t>(kDirectNeonSharedMaxH);
 
 struct DirectNeonClockGlyphCache {
     bool valid = false;
@@ -786,6 +797,23 @@ struct DirectNeonClockGlyphCache {
 };
 
 static DirectNeonClockGlyphCache gDirectNeonClockGlyphCache[PattanakarnClock32::kGlyphCount];
+static uint32_t gDirectNeonClockGlyphCacheBuildCount = 0;
+// Home clock and GPS neon text never render concurrently, so they can share one scratch map.
+static uint8_t gDirectNeonSharedComposedLayerMap[kDirectNeonSharedComposedLayerMapSize];
+
+static void logDirectHomeNeonSummary(const char *label)
+{
+    uint32_t validGlyphCaches = 0;
+    for (size_t i = 0; i < PattanakarnClock32::kGlyphCount; ++i) {
+        if (gDirectNeonClockGlyphCache[i].valid) {
+            ++validGlyphCaches;
+        }
+    }
+    LOG_DEBUG("[DirectHome] %s glyphCaches=%lu glyphTile=%dx%d clockRegion=%dx%d buildCount=%lu", label,
+              (unsigned long)validGlyphCaches, kDirectNeonClockGlyphTileW, kDirectNeonClockGlyphTileH,
+              kDirectNeonClockMaxRegionW, kDirectNeonClockMaxRegionH, (unsigned long)gDirectNeonClockGlyphCacheBuildCount);
+    logHeapSnapshot(label);
+}
 
 static void getHermesXHomeBatteryState(bool &hasBattery, int &batteryVoltageMv, uint8_t &batteryPercent)
 {
@@ -1350,6 +1378,10 @@ static DirectNeonClockGlyphCache *getDirectNeonClockGlyphCache(char ch)
     cache.coreW = glyph->width;
     cache.tileW = glyph->width + (kDirectNeonClockMargin * 2);
     cache.tileH = kDirectNeonClockGlyphTileH;
+    ++gDirectNeonClockGlyphCacheBuildCount;
+    LOG_DEBUG("[DirectHome] build glyph cache ch='%c' index=%u coreW=%u tile=%ux%u bytes=%u", ch, (unsigned)glyphIndex,
+              (unsigned)cache.coreW, (unsigned)cache.tileW, (unsigned)cache.tileH, (unsigned)sizeof(cache.layerMap));
+    logDirectHomeNeonSummary("DirectHome glyph cache built");
     return &cache;
 }
 
@@ -1484,6 +1516,8 @@ static void renderDirectNeonClock(TFTDisplay *tft,
     if (!geometryChanged && !forceFullRedraw && !timeChanged) {
         return;
     }
+    LOG_DEBUG("[DirectHome] renderDirectNeonClock geometryChanged=%d forceFullRedraw=%d timeChanged=%d region=%dx%d",
+              geometryChanged ? 1 : 0, forceFullRedraw ? 1 : 0, timeChanged ? 1 : 0, regionW, regionH);
 
     int16_t slotStartX[kDirectNeonClockSlotCount + 1];
     slotStartX[0] = frameX;
@@ -1491,7 +1525,7 @@ static void renderDirectNeonClock(TFTDisplay *tft,
         slotStartX[slotIndex + 1] = slotStartX[slotIndex] + getDirectNeonClockSlotWidth(slotIndex);
     }
 
-    static uint8_t composedLayerMap[kDirectNeonClockMaxRegionW * kDirectNeonClockMaxRegionH];
+    uint8_t *composedLayerMap = gDirectNeonSharedComposedLayerMap;
     memset(composedLayerMap, 0, static_cast<size_t>(regionW * regionH));
 
     const auto composeSlot = [&](size_t slotIndex) {
@@ -1602,11 +1636,6 @@ static void renderDirectNeonClock(TFTDisplay *tft,
     previousValid = true;
 }
 
-// Direct neon text is only used on compact TFT layouts; keep the scratch map bounded to
-// avoid consuming excessive static RAM before Bluetooth init.
-static constexpr int16_t kDirectNeonTextMaxW = 208;
-static constexpr int16_t kDirectNeonTextMaxH = 64;
-
 static int16_t measurePattanakarnClockTextTracked(const char *text, bool halfScale, int16_t tracking)
 {
     if (!text) {
@@ -1663,8 +1692,10 @@ static bool renderDirectNeonPattanakarnText(TFTDisplay *tft,
     if (regionW <= 0 || regionH <= 0 || regionW > kDirectNeonTextMaxW || regionH > kDirectNeonTextMaxH) {
         return false;
     }
+    LOG_DEBUG("[DirectHome] direct neon text text='%s' half=%d tracking=%d margin=%d region=%dx%d", text, halfScale ? 1 : 0,
+              tracking, margin, regionW, regionH);
 
-    static uint8_t composedLayerMap[kDirectNeonTextMaxW * kDirectNeonTextMaxH];
+    uint8_t *composedLayerMap = gDirectNeonSharedComposedLayerMap;
     memset(composedLayerMap, 0, static_cast<size_t>(regionW * regionH));
 
     int16_t cursorX = drawX;
@@ -2853,7 +2884,6 @@ static void renderDirectGpsPosterTitleWord(TFTDisplay *tft,
     static constexpr int16_t kMaxW = 96;
     static constexpr int16_t kMaxH = 48;
     static uint8_t fullMask[kMaxW * kMaxH];
-    static uint8_t coreMask[kMaxW * kMaxH];
     static uint8_t layerMap[kMaxW * kMaxH];
 
     const int16_t spacing = std::max<int16_t>(1, scale / 2);
@@ -2867,31 +2897,19 @@ static void renderDirectGpsPosterTitleWord(TFTDisplay *tft,
     if (coreW <= 0 || coreH <= 0 || regionW <= 0 || regionH <= 0 || regionW > kMaxW || regionH > kMaxH) {
         return;
     }
+    LOG_DEBUG("[DirectHome] gps title neon text='%s' scale=%d spacing=%d region=%dx%d", text, scale, spacing, regionW, regionH);
 
     memset(fullMask, 0, static_cast<size_t>(regionW * regionH));
-    memset(coreMask, 0, static_cast<size_t>(regionW * regionH));
     memset(layerMap, 0, static_cast<size_t>(regionW * regionH));
 
     stampDirectGpsTitleMask(fullMask, regionW, regionH, margin, margin, text, scale, spacing);
-
-    for (int16_t yy = 0; yy < regionH; ++yy) {
-        for (int16_t xx = 0; xx < regionW; ++xx) {
-            const int16_t idx = (yy * regionW) + xx;
-            if (!fullMask[idx]) {
-                continue;
-            }
-            if (isMaskInteriorPixel(fullMask, regionW, regionH, xx, yy)) {
-                coreMask[idx] = 1;
-            }
-        }
-    }
 
     const int16_t outerRadius = std::max<int16_t>(3, scale + 1);
     for (int16_t yy = 0; yy < regionH; ++yy) {
         for (int16_t xx = 0; xx < regionW; ++xx) {
             const int16_t idx = (yy * regionW) + xx;
             uint8_t value = 0;
-            if (coreMask[idx]) {
+            if (fullMask[idx] && isMaskInteriorPixel(fullMask, regionW, regionH, xx, yy)) {
                 value = 7;
             } else if (fullMask[idx]) {
                 value = 6;
@@ -3737,7 +3755,7 @@ bool deltaToTimestamp(uint32_t secondsAgo, uint8_t *hours, uint8_t *minutes, int
 }
 
 static constexpr uint8_t kRecentTextMessageCapacity = 8;
-static constexpr uint32_t kIncomingTextPopupMs = 3000;
+static constexpr uint32_t kIncomingTextPopupMs = 5000;
 static constexpr uint32_t kIncomingNodePopupMs = 3500;
 
 struct RecentTextMessageState {
@@ -3746,6 +3764,8 @@ struct RecentTextMessageState {
     uint8_t listCursor = 0;
     uint8_t selectedIndex = 0;
     uint8_t detailIndex = 0;
+    uint16_t detailScrollY = 0;
+    uint16_t detailMaxScrollY = 0;
 };
 static RecentTextMessageState gRecentTextMessageState;
 
@@ -3775,6 +3795,11 @@ static void dismissIncomingTextPopup()
 static bool isIncomingTextPopupVisible()
 {
     return gIncomingTextPopupState.visible && screen && screen->isHermesXMainPageActive();
+}
+
+static bool isIncomingTextPopupActive()
+{
+    return gIncomingTextPopupState.pending || isIncomingTextPopupVisible();
 }
 
 static void dismissIncomingNodePopup()
@@ -3891,6 +3916,7 @@ static void setRecentTextMessageDetailToSelected()
 {
     clampRecentTextMessageIndices();
     gRecentTextMessageState.detailIndex = gRecentTextMessageState.selectedIndex;
+    gRecentTextMessageState.detailScrollY = 0;
 }
 
 static void storeRecentTextMessage(const meshtastic_MeshPacket &packet)
@@ -3923,6 +3949,8 @@ static void storeRecentTextMessage(const meshtastic_MeshPacket &packet)
     gRecentTextMessageState.listCursor = 1;
     gRecentTextMessageState.selectedIndex = 0;
     gRecentTextMessageState.detailIndex = 0;
+    gRecentTextMessageState.detailScrollY = 0;
+    gRecentTextMessageState.detailMaxScrollY = 0;
 }
 
 static size_t utf8SequenceLength(uint8_t firstByte)
@@ -4014,6 +4042,53 @@ static void copyUtf8Snippet(const char *src, size_t srcLen, char *out, size_t ou
 static void makeTextMessageSnippet(const meshtastic_MeshPacket &packet, char *out, size_t outSize, size_t maxCodepoints)
 {
     copyUtf8Snippet(reinterpret_cast<const char *>(packet.decoded.payload.bytes), packet.decoded.payload.size, out, outSize, maxCodepoints);
+}
+
+static uint16_t measureMixedWrappedTextHeight(OLEDDisplay *display, const char *text, int16_t maxWidth, int lineHeight,
+                                              int advanceX = graphics::HermesX_zh::GLYPH_WIDTH)
+{
+    if (!display || !text || maxWidth <= 0) {
+        return static_cast<uint16_t>(std::max(lineHeight, 0));
+    }
+
+    int x = 0;
+    int lines = 1;
+    const char *cursor = text;
+    const char *end = cursor + std::strlen(text);
+    while (cursor < end) {
+        std::uint32_t cp = graphics::HermesX_zh::nextCodepoint(cursor, end);
+        if (cp == 0) {
+            break;
+        }
+        if (cp == '\r') {
+            continue;
+        }
+        if (cp == '\n') {
+            x = 0;
+            ++lines;
+            continue;
+        }
+        if (cp >= 0x20u && cp < 0x7Fu) {
+            String asciiChar(static_cast<char>(cp));
+            int glyphWidth = static_cast<int>(display->getStringWidth(asciiChar));
+            if (glyphWidth <= 0) {
+                glyphWidth = advanceX;
+            }
+            if (x + glyphWidth > maxWidth) {
+                x = 0;
+                ++lines;
+            }
+            x += glyphWidth;
+        } else {
+            if (x + advanceX > maxWidth) {
+                x = 0;
+                ++lines;
+            }
+            x += advanceX;
+        }
+    }
+
+    return static_cast<uint16_t>(std::max(lines * lineHeight, lineHeight));
 }
 
 static void formatIncomingNodePopupShortId(const meshtastic_NodeInfoLite &node, char *out, size_t outSize)
@@ -4267,7 +4342,20 @@ static void drawRecentTextMessagesFrame(OLEDDisplay *display, OLEDDisplayUiState
         }
 
         meshtastic_NodeInfoLite *node = nodeDB->getMeshNode(getFrom(packet));
-        const char *sender = (node && node->has_user) ? node->user.short_name : "???";
+        char senderBuf[24];
+        senderBuf[0] = '\0';
+        if (node && node->has_user) {
+            if (node->user.short_name[0] != '\0') {
+                copyUtf8Snippet(node->user.short_name, strnlen(node->user.short_name, sizeof(node->user.short_name)), senderBuf,
+                                sizeof(senderBuf), 8);
+            } else if (node->user.long_name[0] != '\0') {
+                copyUtf8Snippet(node->user.long_name, strnlen(node->user.long_name, sizeof(node->user.long_name)), senderBuf,
+                                sizeof(senderBuf), 8);
+            }
+        }
+        if (senderBuf[0] == '\0') {
+            strlcpy(senderBuf, "???", sizeof(senderBuf));
+        }
 
         char preview[40];
         makeTextMessageSnippet(*packet, preview, sizeof(preview), 14);
@@ -4278,10 +4366,11 @@ static void drawRecentTextMessagesFrame(OLEDDisplay *display, OLEDDisplayUiState
         const int16_t channelX = x + width - channelW - 2;
         display->drawString(channelX, rowY, channelBuf);
 
-        char lineBuf[64];
-        snprintf(lineBuf, sizeof(lineBuf), "%s: %s", sender, preview);
+        char lineBuf[96];
+        snprintf(lineBuf, sizeof(lineBuf), "%s: %s", senderBuf, preview);
         const int16_t textWidth = channelX - x - 4;
-        display->drawStringMaxWidth(x + 2, rowY, textWidth > 0 ? textWidth : width - 4, lineBuf);
+        HermesX_zh::drawMixedBounded(*display, x + 2, rowY, textWidth > 0 ? textWidth : width - 4, lineBuf,
+                                     HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
     }
 
     if (!hasRecentTextMessages() && visibleRows > 1) {
@@ -4305,51 +4394,74 @@ static void drawTextMessageFrame(OLEDDisplay *display, OLEDDisplayUiState *state
 
     const meshtastic_MeshPacket &mp = *packet;
     meshtastic_NodeInfoLite *node = nodeDB->getMeshNode(getFrom(packet));
-    // LOG_DEBUG("Draw text message from 0x%x: %s", mp.from,
-    // mp.decoded.variant.data.decoded.bytes);
-
-    // Demo for drawStringMaxWidth:
-    // with the third parameter you can define the width after which words will
-    // be wrapped. Currently only spaces and "-" are allowed for wrapping
     display->setTextAlignment(TEXT_ALIGN_LEFT);
     display->setFont(FONT_SMALL);
+
+    const int16_t width = display->getWidth();
+    const int16_t height = display->getHeight();
+    const int16_t headerLineHeight = FONT_HEIGHT_SMALL;
+    const int16_t headerGap = 2;
+    const int16_t dividerY = y + headerLineHeight * 2 + headerGap;
+    const int16_t bodyTop = dividerY + 2;
+    const int16_t scrollbarW = 4;
+    const int16_t bodyW = std::max<int16_t>(width - scrollbarW - 3, 12);
+    const int16_t bodyH = std::max<int16_t>(height - bodyTop - 1, headerLineHeight);
+    const int16_t bodyX = x;
+    const int lineHeight = FONT_HEIGHT_SMALL + 2;
+
     if (config.display.displaymode == meshtastic_Config_DisplayConfig_DisplayMode_INVERTED) {
-        display->fillRect(0 + x, 0 + y, x + display->getWidth(), y + FONT_HEIGHT_SMALL);
+        display->fillRect(x, y, width, dividerY - y);
         display->setColor(BLACK);
     }
 
-    // For time delta
-    uint32_t seconds = sinceReceived(&mp);
-    uint32_t minutes = seconds / 60;
-    uint32_t hours = minutes / 60;
-    uint32_t days = hours / 24;
-
-    // For timestamp
-    uint8_t timestampHours, timestampMinutes;
-    int32_t daysAgo;
-    bool useTimestamp = deltaToTimestamp(seconds, &timestampHours, &timestampMinutes, &daysAgo);
-
-    // If bold, draw twice, shifting right by one pixel
-    for (uint8_t xOff = 0; xOff <= (config.display.heading_bold ? 1 : 0); xOff++) {
-        // Show a timestamp if received today, but longer than 15 minutes ago
-        if (useTimestamp && minutes >= 15 && daysAgo == 0) {
-            display->drawStringf(xOff + x, 0 + y, tempBuf, "At %02hu:%02hu from %s", timestampHours, timestampMinutes,
-                                 (node && node->has_user) ? node->user.short_name : "???");
-        }
-        // Timestamp yesterday (if display is wide enough)
-        else if (useTimestamp && daysAgo == 1 && display->width() >= 200) {
-            display->drawStringf(xOff + x, 0 + y, tempBuf, "Yesterday %02hu:%02hu from %s", timestampHours, timestampMinutes,
-                                 (node && node->has_user) ? node->user.short_name : "???");
-        }
-        // Otherwise, show a time delta
-        else {
-            display->drawStringf(xOff + x, 0 + y, tempBuf, "%s ago from %s",
-                                 screen->drawTimeDelta(days, hours, minutes, seconds).c_str(),
-                                 (node && node->has_user) ? node->user.short_name : "???");
+    char senderBuf[24];
+    senderBuf[0] = '\0';
+    if (node && node->has_user) {
+        if (node->user.short_name[0] != '\0') {
+            copyUtf8Snippet(node->user.short_name, strnlen(node->user.short_name, sizeof(node->user.short_name)), senderBuf,
+                            sizeof(senderBuf), 10);
+        } else if (node->user.long_name[0] != '\0') {
+            copyUtf8Snippet(node->user.long_name, strnlen(node->user.long_name, sizeof(node->user.long_name)), senderBuf,
+                            sizeof(senderBuf), 10);
         }
     }
+    if (senderBuf[0] == '\0') {
+        strlcpy(senderBuf, "???", sizeof(senderBuf));
+    }
 
+    const uint32_t seconds = sinceReceived(&mp);
+    const uint32_t minutes = seconds / 60;
+    const uint32_t hours = minutes / 60;
+    const uint32_t days = hours / 24;
+    uint8_t timestampHours, timestampMinutes;
+    int32_t daysAgo;
+    const bool useTimestamp = deltaToTimestamp(seconds, &timestampHours, &timestampMinutes, &daysAgo);
+
+    char headerLine1[48];
+    snprintf(headerLine1, sizeof(headerLine1), "%s", senderBuf);
+    char headerLine2[64];
+    if (useTimestamp && minutes >= 15 && daysAgo == 0) {
+        snprintf(headerLine2, sizeof(headerLine2), "At %02hu:%02hu", timestampHours, timestampMinutes);
+    } else if (useTimestamp && daysAgo == 1 && width >= 200) {
+        snprintf(headerLine2, sizeof(headerLine2), "Yesterday %02hu:%02hu", timestampHours, timestampMinutes);
+    } else {
+        snprintf(headerLine2, sizeof(headerLine2), "%s ago", screen->drawTimeDelta(days, hours, minutes, seconds).c_str());
+    }
+
+    graphics::HermesX_zh::drawMixedBounded(*display, x, y, width - 1, headerLine1, graphics::HermesX_zh::GLYPH_WIDTH,
+                                           headerLineHeight, nullptr);
+    graphics::HermesX_zh::drawMixedBounded(*display, x, y + headerLineHeight, width - 1, headerLine2,
+                                           graphics::HermesX_zh::GLYPH_WIDTH, headerLineHeight, nullptr);
+    display->drawLine(x, dividerY, x + width - 1, dividerY);
     display->setColor(WHITE);
+
+    snprintf(tempBuf, sizeof(tempBuf), "%s", mp.decoded.payload.bytes);
+    const uint16_t contentHeight = measureMixedWrappedTextHeight(display, tempBuf, bodyW, lineHeight);
+    gRecentTextMessageState.detailMaxScrollY = (contentHeight > bodyH) ? (contentHeight - bodyH) : 0;
+    if (gRecentTextMessageState.detailScrollY > gRecentTextMessageState.detailMaxScrollY) {
+        gRecentTextMessageState.detailScrollY = gRecentTextMessageState.detailMaxScrollY;
+    }
+
 #ifndef EXCLUDE_EMOJI
     const char *msg = reinterpret_cast<const char *>(mp.decoded.payload.bytes);
     // NOTE: Emoji comparisons below use explicit UTF-8 literals; keep this block UTF-8 encoded and do not replace with '?' placeholders
@@ -4414,27 +4526,33 @@ static void drawTextMessageFrame(OLEDDisplay *display, OLEDDisplayUiState *state
         display->drawXbm(x + (SCREEN_WIDTH - heart_width) / 2,
                          y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - heart_height) / 2 + 2 + 5, heart_width, heart_height, heart);
     } else {
-        snprintf(tempBuf, sizeof(tempBuf), "%s", mp.decoded.payload.bytes);
-        // --- HermesX Remove TFT fast-path START
-        if (screen)
-            HermesX_zh::drawMixedBounded(*display, 0 + x, 0 + y + FONT_HEIGHT_SMALL, display->getWidth(), tempBuf, 12,
-                                         FONT_HEIGHT_SMALL, nullptr);
-        else
-            HermesX_zh::drawMixedBounded(*display, 0 + x, 0 + y + FONT_HEIGHT_SMALL, display->getWidth(), tempBuf, 12,
-                                         FONT_HEIGHT_SMALL, nullptr);
-        // --- HermesX Remove TFT fast-path END
+        HermesX_zh::drawMixedBounded(*display, bodyX, bodyTop - static_cast<int16_t>(gRecentTextMessageState.detailScrollY), bodyW,
+                                     tempBuf, 12, lineHeight, nullptr);
     }
 #else
-    snprintf(tempBuf, sizeof(tempBuf), "%s", mp.decoded.payload.bytes);
-    // --- HermesX Remove TFT fast-path START
-    if (screen)
-        HermesX_zh::drawMixedBounded(*display, 0 + x, 0 + y + FONT_HEIGHT_SMALL, display->getWidth(), tempBuf, 12,
-                                     FONT_HEIGHT_SMALL, nullptr);
-    else
-        HermesX_zh::drawMixedBounded(*display, 0 + x, 0 + y + FONT_HEIGHT_SMALL, display->getWidth(), tempBuf, 12,
-                                     FONT_HEIGHT_SMALL, nullptr);
-    // --- HermesX Remove TFT fast-path END
+    HermesX_zh::drawMixedBounded(*display, bodyX, bodyTop - static_cast<int16_t>(gRecentTextMessageState.detailScrollY), bodyW,
+                                 tempBuf, 12, lineHeight, nullptr);
 #endif
+
+    if (gRecentTextMessageState.detailMaxScrollY > 0) {
+        const int16_t trackX = x + width - scrollbarW;
+        display->drawRect(trackX, bodyTop, scrollbarW, bodyH);
+        const int16_t thumbH =
+            std::max<int16_t>(6, static_cast<int16_t>((static_cast<int32_t>(bodyH) * bodyH) / contentHeight));
+        const int16_t thumbTravel = std::max<int16_t>(bodyH - thumbH - 2, 0);
+        const int16_t thumbY =
+            bodyTop + 1 +
+            static_cast<int16_t>((static_cast<int32_t>(thumbTravel) * gRecentTextMessageState.detailScrollY) /
+                                 gRecentTextMessageState.detailMaxScrollY);
+        if (config.display.displaymode == meshtastic_Config_DisplayConfig_DisplayMode_INVERTED) {
+            display->fillRect(trackX + 1, thumbY, scrollbarW - 2, thumbH);
+            display->setColor(BLACK);
+            display->fillRect(trackX + 1, thumbY, scrollbarW - 2, thumbH);
+            display->setColor(WHITE);
+        } else {
+            display->fillRect(trackX + 1, thumbY, scrollbarW - 2, thumbH);
+        }
+    }
 }
 
 /// Draw a series of fields in a column, wrapping to multiple columns if needed
@@ -9040,7 +9158,7 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
         const uint8_t ledBrightness =
             HermesXInterfaceModule::instance ? HermesXInterfaceModule::instance->getUiLedBrightness() : 60;
         const bool ambientEnabled = moduleConfig.has_ambient_lighting && moduleConfig.ambient_lighting.led_state;
-        String brightnessLine = String(u8"WS2812亮度: ") + getSetupBrightnessLabel(ledBrightness);
+        String brightnessLine = String(u8"狀態燈亮度: ") + getSetupBrightnessLabel(ledBrightness);
         String ambientLine = String(u8"狀態燈設定: ") + (ambientEnabled ? u8"開" : u8"關");
         String screenSleepLine = String(u8"螢幕休眠: ") + getSetupScreenSleepLabel(getSetupCurrentScreenSleepSeconds());
         const char *items[] = {u8"返回", label.c_str(), brightnessLine.c_str(), ambientLine.c_str(), screenSleepLine.c_str()};
@@ -9055,7 +9173,7 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
         for (uint8_t i = 0; i < kSetupBrightnessCount; ++i) {
             items[i + 1] = kSetupBrightnessOptions[i].label;
         }
-        drawSetupList(display, width, height, u8"WS2812亮度調整", items, kSetupBrightnessCount + 1, hermesSetupSelected,
+        drawSetupList(display, width, height, u8"狀態燈亮度調整", items, kSetupBrightnessCount + 1, hermesSetupSelected,
                       hermesSetupOffset);
         drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
         return;
@@ -10435,6 +10553,14 @@ int32_t Screen::runOnce()
                                gHermesXDirectHomeUiCache.stealth != stealth ||
                                gHermesXDirectHomeUiCache.role != config.device.role ||
                                strcmp(gHermesXDirectHomeUiCache.date, homeDateBuf) != 0 || telemetryDirty;
+        if (enteringDirectHomeClock || telemetryDirty || baseDirty) {
+            LOG_DEBUG("[DirectHome] state enter=%d telemetryChanged=%d telemetryRefreshDue=%d telemetryDirty=%d baseDirty=%d "
+                      "basePainted=%d meshPainted=%d skipUi=%d",
+                      enteringDirectHomeClock ? 1 : 0, telemetryChanged ? 1 : 0, telemetryRefreshDue ? 1 : 0,
+                      telemetryDirty ? 1 : 0, baseDirty ? 1 : 0, gDirectHomeBasePainted ? 1 : 0,
+                      gDirectHomeMeshPainted ? 1 : 0, skipUiUpdate ? 1 : 0);
+            logDirectHomeNeonSummary("DirectHome state update");
+        }
 
         if (targetFramerate < DIRECT_HOME_CLOCK_FRAMERATE) {
             targetFramerate = DIRECT_HOME_CLOCK_FRAMERATE;
@@ -10454,6 +10580,7 @@ int32_t Screen::runOnce()
             skipUiUpdate = false;
             ui->init();
             tft->markColorPaletteDirty();
+            logDirectHomeNeonSummary("DirectHome entering");
         }
 
         const bool canSkipUi = gDirectHomeBasePainted && !baseDirty && !gIncomingTextPopupState.pending && !gIncomingTextPopupState.visible;
@@ -10658,6 +10785,9 @@ int32_t Screen::runOnce()
         if (forceDirectHomeClockRedraw || !gHermesXDirectHomeUiCache.lastTimeValid ||
             strcmp(gHermesXDirectHomeUiCache.lastTime, directHomeTimeBuf) != 0) {
             const bool repaintClockBackground = repaintDirectHomeClockMeshRegion(tft, dispdev->getWidth(), dispdev->getHeight(), 0);
+            LOG_DEBUG("[DirectHome] redraw time='%s' force=%d repaintClockBackground=%d lastTimeValid=%d", directHomeTimeBuf,
+                      forceDirectHomeClockRedraw ? 1 : 0, repaintClockBackground ? 1 : 0,
+                      gHermesXDirectHomeUiCache.lastTimeValid ? 1 : 0);
             renderDirectNeonClock(tft,
                                   dispdev->getWidth(),
                                   0,
@@ -10666,6 +10796,7 @@ int32_t Screen::runOnce()
                                   !repaintClockBackground);
             strlcpy(gHermesXDirectHomeUiCache.lastTime, directHomeTimeBuf, sizeof(gHermesXDirectHomeUiCache.lastTime));
             gHermesXDirectHomeUiCache.lastTimeValid = true;
+            logDirectHomeNeonSummary("DirectHome after redraw");
         }
     }
     if (directGpsPosterVisible) {
@@ -12947,7 +13078,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
             } else if (hermesSetupSelected == 1) {
                 itemName = "全域蜂鳴器";
             } else if (hermesSetupSelected == 2) {
-                itemName = "WS2812亮度調整";
+                itemName = "狀態燈亮度調整";
             } else if (hermesSetupSelected == 3) {
                 itemName = "狀態燈設定";
             } else if (hermesSetupSelected == 4) {
@@ -13021,7 +13152,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                     if (HermesXInterfaceModule::instance) {
                         HermesXInterfaceModule::instance->setUiLedBrightnessPreference(kSetupBrightnessOptions[idx].value);
                     }
-                    hermesSetupToast = String(u8"LED亮度: ") + kSetupBrightnessOptions[idx].label;
+                    hermesSetupToast = String(u8"狀態燈亮度: ") + kSetupBrightnessOptions[idx].label;
                     hermesSetupToastUntilMs = millis() + 1500;
                 }
                 resetMenu(HermesFastSetupPage::UiMenu);
@@ -13493,7 +13624,7 @@ bool Screen::handleIncomingNodePopupInput(const InputEvent *event)
 
 bool Screen::handleTextMessagePopupInput(const InputEvent *event)
 {
-    if (!event || !isIncomingTextPopupVisible()) {
+    if (!event || !isIncomingTextPopupActive()) {
         return false;
     }
 
@@ -13503,8 +13634,8 @@ bool Screen::handleTextMessagePopupInput(const InputEvent *event)
 
     const bool isSelect =
         event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
-    const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
-    const bool wantsOpen = isSelect || isPress;
+    const bool isConfiguredPress = (eventPress != 0) && (event->inputEvent == eventPress);
+    const bool wantsOpen = isConfiguredPress || (eventPress == 0 && isSelect);
 
     const bool isLeft =
         event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
@@ -13667,7 +13798,41 @@ bool Screen::handleRecentTextMessageDetailInput(const InputEvent *event)
     const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
     const bool isRotary = (event->source && strncmp(event->source, "rotEnc", 6) == 0);
     const bool hasRotaryFallback = isRotary && (eventCw == 0 && eventCcw == 0) && (isUp || isDown || isLeft || isRight);
-    const bool wantsBack = isCancel || isCw || isCcw || hasRotaryFallback;
+
+    int8_t navDir = 0;
+    if (isRotary) {
+        if (isCcw) {
+            navDir = -1;
+        } else if (isCw) {
+            navDir = 1;
+        } else if (eventCw == 0 && eventCcw == 0) {
+            if (isUp) {
+                navDir = -1;
+            } else if (isDown) {
+                navDir = 1;
+            }
+        }
+    } else {
+        if (isUp) {
+            navDir = -1;
+        } else if (isDown) {
+            navDir = 1;
+        }
+    }
+
+    if (navDir != 0 && gRecentTextMessageState.detailMaxScrollY > 0) {
+        const uint16_t kDetailScrollStep = FONT_HEIGHT_SMALL + 2;
+        const int nextScroll =
+            clamp<int>(static_cast<int>(gRecentTextMessageState.detailScrollY) + navDir * kDetailScrollStep, 0,
+                       static_cast<int>(gRecentTextMessageState.detailMaxScrollY));
+        if (nextScroll != static_cast<int>(gRecentTextMessageState.detailScrollY)) {
+            gRecentTextMessageState.detailScrollY = static_cast<uint16_t>(nextScroll);
+            setFastFramerate();
+        }
+        return true;
+    }
+
+    const bool wantsBack = isCancel || isLeft || isRight || hasRotaryFallback;
 
     if (!wantsBack) {
         return false;

@@ -206,6 +206,11 @@ class BluetoothPhoneAPI : public PhoneAPI, public concurrency::OSThread
     {
         PhoneAPI::onNowHasData(fromRadioNum);
 
+        if (!fromNumCharacteristic || !bleServer || bleServer->getConnectedCount() == 0) {
+            LOG_DEBUG("Skip BLE fromNum notify, no active connection");
+            return;
+        }
+
         notifyCount.fetch_add(1);
 
         uint8_t val[4];
@@ -284,7 +289,6 @@ class NimbleBluetoothFromRadioCallback : public NimBLECharacteristicCallbacks
         if (bluetoothPhoneAPI->toPhoneQueueSize == 0) {
             hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::BleReadWait);
             bluetoothPhoneAPI->onReadCallbackIsWaitingForData = true;
-
             while (bluetoothPhoneAPI->onReadCallbackIsWaitingForData && tries < 4000) {
                 bluetoothPhoneAPI->setIntervalFromNow(0);
                 concurrency::mainDelay.interrupt();

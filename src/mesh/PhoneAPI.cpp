@@ -544,6 +544,8 @@ size_t PhoneAPI::getFromRadio(uint8_t *buf)
     if (fromRadioScratch.which_payload_variant != 0) {
         // Encapsulate as a FromRadio packet
         size_t numbytes = pb_encode_to_bytes(buf, meshtastic_FromRadio_size, &meshtastic_FromRadio_msg, &fromRadioScratch);
+        LOG_INFO("PhoneAPI getFromRadio encoded variant=%u state=%d bytes=%u", fromRadioScratch.which_payload_variant, (int)state,
+                 (unsigned)numbytes);
 
         // VERY IMPORTANT to not print debug messages while writing to fromRadioScratch - because we use that same buffer
         // for logging (when we are encapsulating with protobufs)
