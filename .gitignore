@@ -4,3 +4,6 @@ __pycache__/
 auto_flash_tool/build/
 auto_flash_tool/dist/
 auto_flash_tool/flash_and_config.log
+.pio/
+build.log
+compile_commands.json
