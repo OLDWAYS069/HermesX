@@ -1,0 +1,5 @@
+[console_scripts]
+esp_rfc2217_server = esp_rfc2217_server.__init__:main
+espefuse = espefuse.__init__:_main
+espsecure = espsecure.__init__:_main
+esptool = esptool.__init__:_main

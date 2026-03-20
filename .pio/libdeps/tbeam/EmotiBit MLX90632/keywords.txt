@@ -1,0 +1,45 @@
+#######################################
+# Syntax Coloring Map 
+#######################################
+
+#######################################
+# Datatypes (KEYWORD1)
+#######################################
+
+MLX90632	KEYWORD1
+
+#######################################
+# Methods and Functions (KEYWORD2)
+#######################################
+
+begin	KEYWORD2
+
+writeEEPROM	KEYWORD2
+writeI2CAddress	KEYWORD2
+enableDebugging	KEYWORD2
+disableDebugging	KEYWORD2
+getObjectTemp	KEYWORD2
+getObjectTempF	KEYWORD2
+getSensorTemp	KEYWORD2
+
+deviceBusy	KEYWORD2
+eepromBusy	KEYWORD2
+getCyclePosition	KEYWORD2
+dataAvailable	KEYWORD2
+setBrownOut	KEYWORD2
+clearNewData	KEYWORD2
+getStatus	KEYWORD2
+
+sleepMode	KEYWORD2
+stepMode	KEYWORD2
+continuousMode	KEYWORD2
+getMode	KEYWORD2
+setSOC	KEYWORD2
+
+readRegister16	KEYWORD2
+readRegister32	KEYWORD2
+writeRegister16	KEYWORD2
+
+#######################################
+# Constants (LITERAL1)
+#######################################

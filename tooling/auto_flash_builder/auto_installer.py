@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import logging
 import os
 import re
@@ -103,6 +104,11 @@ def pause_before_exit(message: str) -> None:
         pass
 
 
+def notify_user_attention(message: str) -> None:
+    print("\a", end="", flush=True)
+    print(message, flush=True)
+
+
 @dataclass
 class MeshtasticCommand:
     type: str
@@ -125,8 +131,11 @@ class MeshtasticAutoFlash:
         parser = argparse.ArgumentParser(description="Meshtastic 自動刷寫和設定工具")
         parser.add_argument("--firmware-path", default="", help="韌體檔案路徑")
         parser.add_argument("--firmware-file-name", default="HermesX_0.2.8-beta0002-update.bin", help="韌體檔案名稱")
-        parser.add_argument("--cli-config-path", default="", help="CLI 設定檔案路徑")
-        parser.add_argument("--cli-config-file-name", default="CLI.md", help="CLI 設定檔案名稱")
+        parser.add_argument("--config-path", default="", help="設定檔路徑，支援 YAML 或舊版 CLI.md")
+        parser.add_argument("--config-file-name", default="config.yaml", help="設定檔檔名")
+        parser.add_argument("--cli-config-path", default="", help="舊版 CLI 設定檔路徑")
+        parser.add_argument("--cli-config-file-name", default="CLI.md", help="舊版 CLI 設定檔檔名")
+        parser.add_argument("--export-config-yaml", default="", help="將現有 CLI.md 轉成 YAML 並輸出到指定路徑後結束")
         parser.add_argument("--post-flash-wait-seconds", type=int, default=60, help="刷寫後等待秒數")
         parser.add_argument("--reboot-batch-size", type=int, default=2, help="重啟批次大小")
         parser.add_argument("--reboot-wait-seconds", type=int, default=10, help="重啟等待秒數")
@@ -226,7 +235,7 @@ class MeshtasticAutoFlash:
         except UnicodeDecodeError:
             return raw.decode("big5")
 
-    def resolve_firmware_path(self) -> Path:
+    def resolve_firmware_path(self, preferred_file_name: str = "") -> Path:
         if self.args.firmware_path:
             candidate = Path(self.args.firmware_path).expanduser()
             if candidate.exists():
@@ -240,6 +249,13 @@ class MeshtasticAutoFlash:
         matches = sorted(target_dir.glob("*.bin"), key=lambda item: item.stat().st_mtime, reverse=True)
         if not matches:
             raise FileNotFoundError(f"Target 資料夾找不到任何 .bin: {target_dir}")
+
+        preferred_name = preferred_file_name.strip()
+        if preferred_name:
+            preferred_matches = [item for item in matches if item.name == preferred_name]
+            if preferred_matches:
+                self.log(f"設定檔指定韌體：{preferred_name}，將直接使用這個檔案。")
+                return preferred_matches[0].resolve()
 
         if len(matches) == 1:
             return matches[0].resolve()
@@ -270,6 +286,78 @@ class MeshtasticAutoFlash:
             if candidate.exists():
                 return candidate.resolve()
         raise FileNotFoundError(f"找不到 CLI 設定檔，預期檔名為：{self.args.cli_config_file_name}")
+
+    def resolve_config_path(self) -> Path:
+        if self.args.config_path:
+            candidate = Path(self.args.config_path).expanduser()
+            if candidate.exists():
+                return candidate.resolve()
+            raise FileNotFoundError(f"找不到設定檔：{candidate}")
+        candidates = [
+            self.script_dir / self.args.config_file_name,
+            self.repo_root / self.args.config_file_name,
+            self.script_dir / self.args.cli_config_file_name,
+            self.repo_root / self.args.cli_config_file_name,
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate.resolve()
+        raise FileNotFoundError(
+            f"找不到設定檔，預期檔名為：{self.args.config_file_name} 或 {self.args.cli_config_file_name}"
+        )
+
+    @staticmethod
+    def is_yaml_config(path: Path) -> bool:
+        return path.suffix.lower() in {".yaml", ".yml"}
+
+    @staticmethod
+    def quote_yaml_string(value: object) -> str:
+        return json.dumps("" if value is None else str(value), ensure_ascii=False)
+
+    @staticmethod
+    def dump_yaml_scalar(value: object) -> str:
+        if value is None:
+            return "null"
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return str(value)
+        return MeshtasticAutoFlash.quote_yaml_string(value)
+
+    @classmethod
+    def dump_yaml_data(cls, value: object, indent: int = 0) -> list[str]:
+        prefix = " " * indent
+        if isinstance(value, dict):
+            lines: list[str] = []
+            for key, child in value.items():
+                if isinstance(child, (dict, list)):
+                    lines.append(f"{prefix}{key}:")
+                    lines.extend(cls.dump_yaml_data(child, indent + 2))
+                else:
+                    lines.append(f"{prefix}{key}: {cls.dump_yaml_scalar(child)}")
+            return lines or [f"{prefix}{{}}"]
+        if isinstance(value, list):
+            lines = []
+            for child in value:
+                if isinstance(child, dict):
+                    lines.append(f"{prefix}-")
+                    lines.extend(cls.dump_yaml_data(child, indent + 2))
+                elif isinstance(child, list):
+                    lines.append(f"{prefix}-")
+                    lines.extend(cls.dump_yaml_data(child, indent + 2))
+                else:
+                    lines.append(f"{prefix}- {cls.dump_yaml_scalar(child)}")
+            return lines or [f"{prefix}[]"]
+        return [f"{prefix}{cls.dump_yaml_scalar(value)}"]
+
+    @staticmethod
+    def load_yaml_text(text: str) -> dict:
+        import yaml
+
+        data = yaml.safe_load(text) or {}
+        if not isinstance(data, dict):
+            raise RuntimeError("YAML 設定檔的根節點必須是 object/map。")
+        return data
 
     def get_serial_ports(self) -> list:
         return list(serial.tools.list_ports.comports())
@@ -312,6 +400,33 @@ class MeshtasticAutoFlash:
                     raise RuntimeError(f"等待 {timeout} 秒後仍未偵測到任何序列埠。") from exc
                 self.log(f"尚未偵測到序列埠，{poll} 秒後重試...")
                 time.sleep(poll)
+
+    def wait_for_serial_port_with_user_reconnect(self, preferred_port: Optional[str], reason: str) -> str:
+        while True:
+            try:
+                return self.wait_for_serial_port(preferred_port)
+            except RuntimeError as exc:
+                notify_user_attention(
+                    "注意：裝置連線需要人工處理。\n"
+                    f"{reason}\n"
+                    f"{exc}\n"
+                    "請重新插拔裝置後，按 Enter 繼續重試。"
+                )
+                try:
+                    input()
+                except EOFError:
+                    time.sleep(2)
+
+    def wait_for_operator_acknowledgement(self, reason: str) -> None:
+        notify_user_attention(
+            "注意：設定寫入已暫停。\n"
+            f"{reason}\n"
+            "請重新插拔裝置，確認系統已重新辨識後，按 Enter 繼續。"
+        )
+        try:
+            input()
+        except EOFError:
+            time.sleep(2)
 
     def run_process(self, args: list[str], timeout: Optional[int] = None) -> tuple[int, str]:
         process = subprocess.Popen(
@@ -531,10 +646,146 @@ class MeshtasticAutoFlash:
                 last_channel_index = index
         if last_channel_index < 0:
             return list(commands) + list(channel_commands)
-        return list(commands[: last_channel_index + 1]) + list(channel_commands) + list(commands[last_channel_index + 1 :])
+            return list(commands[: last_channel_index + 1]) + list(channel_commands) + list(commands[last_channel_index + 1 :])
+
+    def build_config_from_cli_text(self, text: str, source_name: str = "CLI.md") -> dict:
+        commands = self.get_meshtastic_commands_from_text(text)
+        channels: list[dict] = []
+        for line in self.get_channels_block_from_text(text):
+            parsed = self.parse_channel_line(line)
+            if not parsed:
+                continue
+            channels.append(
+                {
+                    "index": parsed["Index"],
+                    "role": parsed["Role"],
+                    "psk_tag": parsed["PskTag"],
+                    "settings": parsed.get("Settings") or {},
+                }
+            )
+
+        config = {
+            "config_version": 1,
+            "source": {
+                "format": "cli-md",
+                "path": source_name,
+                "generated_at_runtime": True,
+            },
+            "firmware": {
+                "preferred_file": self.args.firmware_file_name,
+            },
+            "flash": {
+                "chip": "esp32s3",
+                "baud": 115200,
+                "before": "default_reset",
+                "after": "hard_reset",
+                "address": "0x10000",
+            },
+            "channel_urls": self.get_channel_urls_from_text(text),
+            "channel_defaults": {
+                "reapply_index": 3,
+                "channels": channels,
+            },
+            "commands": [self.command_to_config_entry(command) for command in commands],
+        }
+        return config
+
+    def export_cli_to_yaml(self, cli_path: Path, output_path: Path) -> Path:
+        config = self.build_config_from_cli_text(self.read_text_file_best_encoding(cli_path), cli_path.name)
+        yaml_text = "\n".join(self.dump_yaml_data(config)) + "\n"
+        output_path.write_text(yaml_text, encoding="utf-8")
+        return output_path
+
+    @staticmethod
+    def command_to_config_entry(command: MeshtasticCommand) -> dict:
+        entry = {"type": command.type}
+        if command.field is not None:
+            entry["field"] = command.field
+        if command.value is not None:
+            entry["value"] = command.value
+        if command.message is not None:
+            entry["message"] = command.message
+        if command.url is not None:
+            entry["url"] = command.url
+        if command.index is not None:
+            entry["index"] = command.index
+        if command.raw:
+            entry["raw"] = command.raw
+        return entry
+
+    @staticmethod
+    def command_from_config_entry(entry: dict) -> MeshtasticCommand:
+        command_type = str(entry.get("type") or "").strip()
+        if not command_type:
+            raise RuntimeError("YAML commands 項目缺少 type。")
+        command = MeshtasticCommand(
+            type=command_type,
+            raw=str(entry.get("raw") or "").strip(),
+            field=entry.get("field"),
+            value=None if entry.get("value") is None else str(entry.get("value")),
+            message=None if entry.get("message") is None else str(entry.get("message")),
+            url=None if entry.get("url") is None else str(entry.get("url")),
+            index=None if entry.get("index") is None else int(entry.get("index")),
+        )
+        if command.raw:
+            return command
+        if command.type == "SetField":
+            command.raw = f"meshtastic --set {command.field} {command.value}"
+        elif command.type == "SetCannedMessage":
+            command.raw = f"meshtastic --set-canned-message {command.message}"
+        elif command.type == "SetChannelUrl":
+            command.raw = f"meshtastic --ch-set-url {command.url}"
+        elif command.type == "AddChannelUrl":
+            command.raw = f"meshtastic --ch-add-url {command.url}"
+        elif command.type == "SetChannelField":
+            command.raw = f"meshtastic --ch-set {command.field} {command.value} --ch-index {command.index}"
+        else:
+            command.raw = command.type
+        return command
+
+    def build_channel_default_commands_from_config(self, config: dict) -> list[MeshtasticCommand]:
+        channel_defaults = config.get("channel_defaults") or {}
+        reapply_index = int(channel_defaults.get("reapply_index", 3))
+        for entry in channel_defaults.get("channels") or []:
+            if int(entry.get("index", -1)) != reapply_index:
+                continue
+            commands: list[MeshtasticCommand] = []
+            psk_tag = str(entry.get("psk_tag") or "").lower()
+            settings = entry.get("settings") or {}
+            if psk_tag in {"default", "none", "random"}:
+                cmd = self.new_channel_set_command(reapply_index, "psk", psk_tag)
+                if cmd:
+                    commands.append(cmd)
+            elif settings.get("psk"):
+                cmd = self.new_channel_set_command(reapply_index, "psk", settings.get("psk"))
+                if cmd:
+                    commands.append(cmd)
+            fields = [
+                ("name", settings.get("name")),
+                ("uplink_enabled", settings.get("uplinkEnabled")),
+                ("downlink_enabled", settings.get("downlinkEnabled")),
+                ("channel_num", settings.get("channelNum")),
+                ("id", settings.get("id")),
+            ]
+            module_settings = settings.get("moduleSettings") or {}
+            fields.extend(
+                [
+                    ("module_settings.position_precision", module_settings.get("positionPrecision")),
+                    ("module_settings.is_client_muted", module_settings.get("isClientMuted")),
+                ]
+            )
+            for field, value in fields:
+                cmd = self.new_channel_set_command(reapply_index, field, value)
+                if cmd:
+                    commands.append(cmd)
+            return commands
+        return []
 
     def get_meshtastic_commands(self, path: Path) -> list[MeshtasticCommand]:
         text = self.read_text_file_best_encoding(path)
+        return self.get_meshtastic_commands_from_text(text)
+
+    def get_meshtastic_commands_from_text(self, text: str) -> list[MeshtasticCommand]:
         commands: list[MeshtasticCommand] = []
         explicit_channel = False
         primary_url = None
@@ -630,6 +881,22 @@ class MeshtasticAutoFlash:
             else:
                 commands = commands[:channel_insert_index] + [channel_command] + commands[channel_insert_index:]
         return commands
+
+    def load_runtime_config(self, path: Path) -> tuple[list[MeshtasticCommand], Optional[str], list[MeshtasticCommand], dict]:
+        text = self.read_text_file_best_encoding(path)
+        if self.is_yaml_config(path):
+            config = self.load_yaml_text(text)
+            commands = [self.command_from_config_entry(entry) for entry in (config.get("commands") or [])]
+            channel_urls = config.get("channel_urls") or {}
+            expected_channel_url = self.get_preferred_channel_url(channel_urls)
+            channel_default_commands = self.build_channel_default_commands_from_config(config)
+            return commands, expected_channel_url, channel_default_commands, config
+
+        config = self.build_config_from_cli_text(text, path.name)
+        commands = [self.command_from_config_entry(entry) for entry in config.get("commands") or []]
+        expected_channel_url = self.get_preferred_channel_url(config.get("channel_urls") or {})
+        channel_default_commands = self.build_channel_default_commands_from_config(config)
+        return commands, expected_channel_url, channel_default_commands, config
 
     @staticmethod
     def test_reboot_command(command: MeshtasticCommand) -> bool:
@@ -734,46 +1001,67 @@ class MeshtasticAutoFlash:
     ) -> str:
         current_port = port
         retry_count = max(1, self.args.meshtastic_retry_count)
-        for attempt in range(1, retry_count + 1):
-            try:
-                code, output = self.run_internal_tool(
-                    "meshtastic",
-                    ["--port", current_port, "--timeout", str(self.args.meshtastic_timeout_seconds), *meshtastic_args],
-                    timeout=self.args.meshtastic_timeout_seconds,
-                )
-            except Exception as exc:
-                code, output = 1, str(exc)
+        while True:
+            last_output = ""
+            for attempt in range(1, retry_count + 1):
+                try:
+                    code, output = self.run_internal_tool(
+                        "meshtastic",
+                        ["--port", current_port, "--timeout", str(self.args.meshtastic_timeout_seconds), *meshtastic_args],
+                        timeout=self.args.meshtastic_timeout_seconds,
+                    )
+                except Exception as exc:
+                    code, output = 1, str(exc)
 
-            success = code == 0
-            if success and require_ack:
-                success, missing = self.test_output_for_commands(output, expected_commands or [])
-                if not success and missing:
-                    self.log("缺少預期的 CLI 回應：\n" + "\n".join(missing))
-            if success:
-                return current_port
-            manual_reconnect = self.test_manual_reconnect_required(output)
-            connection_issue = self.test_connection_issue(output)
-            if attempt < retry_count:
-                if manual_reconnect:
-                    self.log("序列埠開啟失敗，請檢查是否被其他程式占用，或重新插拔裝置。")
-                    current_port = self.wait_for_serial_port(current_port)
-                    self.log(f"重新連線後使用序列埠：{current_port}")
-                    current_port = self.wait_for_meshtastic_ready(current_port)
+                last_output = output
+                success = code == 0
+                if success and require_ack:
+                    success, missing = self.test_output_for_commands(output, expected_commands or [])
+                    if not success and missing:
+                        self.log("缺少預期的 CLI 回應：\n" + "\n".join(missing))
+                if success:
+                    return current_port
+                manual_reconnect = self.test_manual_reconnect_required(output)
+                connection_issue = self.test_connection_issue(output)
+                if attempt < retry_count:
+                    if manual_reconnect:
+                        self.log("序列埠開啟失敗，請檢查是否被其他程式占用，或重新插拔裝置。")
+                        current_port = self.wait_for_serial_port_with_user_reconnect(
+                            current_port,
+                            "系統目前無法重新開啟裝置序列埠。",
+                        )
+                        self.log(f"重新連線後使用序列埠：{current_port}")
+                        current_port = self.wait_for_meshtastic_ready(current_port)
+                        continue
+                    if connection_issue:
+                        self.log("偵測到序列連線異常，請等待裝置重新枚舉或手動重新插拔。")
+                        current_port = self.wait_for_serial_port_with_user_reconnect(
+                            current_port,
+                            "設定寫入期間發生序列連線異常。",
+                        )
+                        self.log(f"重新連線後使用序列埠：{current_port}")
+                        current_port = self.wait_for_meshtastic_ready(current_port)
+                        continue
+                    if self.args.meshtastic_retry_delay_seconds > 0:
+                        self.log(f"meshtastic 指令失敗（第 {attempt}/{retry_count} 次），{self.args.meshtastic_retry_delay_seconds} 秒後重試...")
+                        time.sleep(self.args.meshtastic_retry_delay_seconds)
+                    else:
+                        self.log(f"meshtastic 指令失敗（第 {attempt}/{retry_count} 次），立即重試...")
                     continue
-                if connection_issue:
-                    self.log("偵測到序列連線異常，請等待裝置重新枚舉或手動重新插拔。")
-                    current_port = self.wait_for_serial_port(current_port)
-                    self.log(f"重新連線後使用序列埠：{current_port}")
-                    current_port = self.wait_for_meshtastic_ready(current_port)
-                    continue
-                if self.args.meshtastic_retry_delay_seconds > 0:
-                    self.log(f"meshtastic 指令失敗（第 {attempt}/{retry_count} 次），{self.args.meshtastic_retry_delay_seconds} 秒後重試...")
-                    time.sleep(self.args.meshtastic_retry_delay_seconds)
-                else:
-                    self.log(f"meshtastic 指令失敗（第 {attempt}/{retry_count} 次），立即重試...")
-                continue
-            raise RuntimeError(f"meshtastic 指令失敗：{raw}\n{output}")
-        raise RuntimeError(f"meshtastic 指令失敗：{raw}")
+
+            self.wait_for_operator_acknowledgement(
+                "裝置多次無法寫入設定，流程不會結束。\n"
+                "我會在你重新插拔裝置後，繼續從目前步驟重試。"
+            )
+            current_port = self.wait_for_serial_port_with_user_reconnect(
+                current_port,
+                "請確認裝置已重新插拔並重新出現在系統中。",
+            )
+            self.log(f"使用者介入後重新連線到序列埠：{current_port}")
+            current_port = self.wait_for_meshtastic_ready(current_port)
+            if last_output:
+                self.log("前一次失敗輸出摘要如下：")
+                self.log(last_output, delay_after=False)
 
     def invoke_meshtastic_commands(self, port: str, commands: list[MeshtasticCommand]) -> str:
         reboot_commands = [command for command in commands if self.test_reboot_command(command)]
@@ -984,6 +1272,7 @@ class MeshtasticAutoFlash:
             "meshtastic": "meshtastic",
             "esptool": "esptool",
             "serial": "pyserial",
+            "yaml": "PyYAML",
         }
         missing = [package for module_name, package in package_names.items() if importlib.util.find_spec(module_name) is None]
         if not missing:
@@ -997,89 +1286,27 @@ class MeshtasticAutoFlash:
     def run(self) -> None:
         self.print_startup_banner()
         self.ensure_dependencies()
-        if not shutil.which(sys.executable):
-            raise RuntimeError("系統找不到 Python，請先確認 Python 已安裝且在 PATH 中。")
 
-        firmware_path = self.resolve_firmware_path()
-        cli_config_path = self.resolve_cli_config_path()
-        self.log("=== Meshtastic 自動刷寫流程開始 ===")
-        self.log(f"本次使用韌體：{firmware_path}")
-        self.log(f"本次使用 CLI 設定：{cli_config_path}")
+        if self.args.export_config_yaml:
+            cli_path = self.resolve_cli_config_path()
+            output_path = Path(self.args.export_config_yaml).expanduser()
+            self.export_cli_to_yaml(cli_path, output_path)
+            self.log(f"已輸出 YAML 設定檔：{output_path}")
+            return
 
-        cli_text = self.read_text_file_best_encoding(cli_config_path)
-        expected_channel_url = self.get_preferred_channel_url(self.get_channel_urls_from_text(cli_text))
-        channel_default_commands = self.get_channel_default_commands_from_text(cli_text, 3)
-
-        initial_port = self.select_serial_port()
-        self.log(f"目前使用序列埠：{initial_port}")
-        self.log("下一步將開始刷寫韌體，請不要拔掉 USB，也不要關閉其他需要的驅動程式。")
-
-        self.invoke_esptool_flash(initial_port, firmware_path)
-        self.log(f"韌體刷寫完成，等待 {self.args.post_flash_wait_seconds} 秒讓裝置重新開機...")
-        self.log("如果裝置重啟較慢，請保持連線並等待，不要立刻重新插拔。")
-        time.sleep(max(0, self.args.post_flash_wait_seconds))
-
-        port_after = self.wait_for_serial_port(initial_port)
-        self.log(f"重開機後偵測到的序列埠：{port_after}")
-        port_after = self.wait_for_meshtastic_ready(port_after)
-
-        commands = self.get_meshtastic_commands(cli_config_path)
-        if not commands:
-            raise RuntimeError(f"在 CLI 設定檔中找不到任何 meshtastic 設定命令：{cli_config_path}")
+        config_path = self.resolve_config_path()
+        commands, expected_channel_url, channel_default_commands, config = self.load_runtime_config(config_path)
         commands = self.insert_channel_commands_after_url(commands, channel_default_commands)
-        self.log(f"總共排入 {len(commands)} 筆設定命令，下一步開始下發設定。")
+        if not commands:
+            raise RuntimeError(f"在設定檔中找不到任何 meshtastic 設定命令：{config_path}")
 
-        port_after = self.invoke_meshtastic_commands(port_after, commands)
-
-        if self.args.reboot_after_config:
-            self.log("設定已下發完成，下一步主動重開機讓設定完整生效...")
-            port_after = self.invoke_meshtastic_with_retry(port_after, ["--reboot"], "meshtastic --reboot")
-            self.log(f"等待 {self.args.post_config_reboot_wait_seconds} 秒讓設定後重開機完成...")
-            time.sleep(max(0, self.args.post_config_reboot_wait_seconds))
-            port_after = self.wait_for_serial_port(port_after)
-            self.log(f"設定重開機後使用序列埠：{port_after}")
-            port_after = self.wait_for_meshtastic_ready(port_after)
-
-        port_after = self.verify_device_settings(port_after, commands, expected_channel_url, channel_default_commands)
-        port_after = self.verify_canned_message(port_after, commands)
-
-        force_fields = [
-            ("canned_message.inputbroker_pin_a", "37"),
-            ("canned_message.inputbroker_pin_b", "26"),
-            ("canned_message.inputbroker_pin_press", "4"),
-            ("canned_message.inputbroker_event_cw", "UP"),
-            ("canned_message.inputbroker_event_ccw", "DOWN"),
-            ("canned_message.inputbroker_event_press", "SELECT"),
-            ("canned_message.enabled", "true"),
-            ("canned_message.rotary1_enabled", "true"),
-            ("canned_message.allow_input_source", "rotEnc1"),
-        ]
-        force_commands = [MeshtasticCommand(type="SetField", field=field, value=value, raw=f"meshtastic --set {field} {value}") for field, value in force_fields]
-        self.log("最後一步：強制寫入 canned_message input broker 相關設定...")
-        self.invoke_meshtastic_with_retry(
-            port_after,
-            self.build_meshtastic_args(force_commands),
-            " ".join(command.raw for command in force_commands),
-            force_commands,
-            True,
-        )
-        self.log("=== 所有命令執行完成 ===")
-        self.log("接下來請實際檢查裝置是否正常開機、可連線、且設定值已生效。")
-
-
-    def run(self) -> None:
-        self.print_startup_banner()
-        self.ensure_dependencies()
-
-        firmware_path = self.resolve_firmware_path()
-        cli_config_path = self.resolve_cli_config_path()
+        firmware_name = ((config.get("firmware") or {}).get("preferred_file") or "").strip()
+        firmware_path = self.resolve_firmware_path(firmware_name)
         self.log("=== Meshtastic 自動刷寫流程開始 ===")
         self.log(f"本次使用韌體：{firmware_path}")
-        self.log(f"本次使用 CLI 設定：{cli_config_path}")
-
-        cli_text = self.read_text_file_best_encoding(cli_config_path)
-        expected_channel_url = self.get_preferred_channel_url(self.get_channel_urls_from_text(cli_text))
-        channel_default_commands = self.get_channel_default_commands_from_text(cli_text, 3)
+        self.log(f"本次使用設定檔：{config_path}")
+        if firmware_name and firmware_name != firmware_path.name:
+            self.log(f"設定檔偏好的韌體名稱為 {firmware_name}，目前實際使用 {firmware_path.name}。")
 
         initial_port = self.select_serial_port()
         self.log(f"目前使用序列埠：{initial_port}")
@@ -1093,11 +1320,6 @@ class MeshtasticAutoFlash:
         port_after = self.wait_for_serial_port(initial_port)
         self.log(f"重開機後偵測到序列埠：{port_after}")
         port_after = self.wait_for_meshtastic_ready(port_after)
-
-        commands = self.get_meshtastic_commands(cli_config_path)
-        if not commands:
-            raise RuntimeError(f"在 CLI 設定檔中找不到任何 meshtastic 設定命令：{cli_config_path}")
-        commands = self.insert_channel_commands_after_url(commands, channel_default_commands)
         self.log(f"共解析出 {len(commands)} 筆設定命令，開始寫入裝置。")
 
         port_after = self.invoke_meshtastic_commands(port_after, commands)

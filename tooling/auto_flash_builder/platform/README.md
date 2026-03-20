@@ -11,6 +11,7 @@ This folder separates platform-specific packaging work from the shared flashing 
 
 End-user runtime files stay next to the built application:
 
+- `config.yaml`
 - `CLI.md`
 - `Target/`
 - `README.md`
@@ -20,3 +21,4 @@ The goal is:
 
 1. Developers build once per platform.
 2. End users do not need to install Python, `meshtastic`, or `esptool`.
+3. New builds should prefer `config.yaml`; `CLI.md` remains as a fallback and migration source.

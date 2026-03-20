@@ -1,0 +1,14 @@
+Pypubsub 4.0.7 (Dec 2025)
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- Modern packaging: PEP 621/pyproject, setuptools-scm tag-driven versions, tox-uv, GitHub Actions CI/release.
+- Supported/tested Python versions: 3.7 through 3.14 (legacy support for 3.3–3.6 removed).
+- Helper tooling: release management (`release.py`), example runner (`examples/runall.sh`), Make targets for docs/venv.
+- Docs refreshed (Sphinx 7 + Furo); cleanup of legacy configs and files (Travis, landscape, MANIFEST, setup.py).
+
+Upgrade notes
+^^^^^^^^^^^^^
+
+- Version now comes from git tags; bump by tagging (e.g., `v4.0.7`), no manual `__version__` edits.
+- If you need wx examples, install wxPython 4.2.4 via the extras feed and SDL2 runtime on Ubuntu (see README).
+- Python <3.7 is no longer supported/tested.

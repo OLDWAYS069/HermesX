@@ -1,0 +1,329 @@
+config_version: 1
+source:
+  format: "cli-md"
+  path: "CLI.md"
+  generated_at_runtime: false
+firmware:
+  preferred_file: "HermesX_0.2.9_civ-alpha00003_firmware.bin"
+flash:
+  chip: "esp32s3"
+  baud: 115200
+  before: "default_reset"
+  after: "hard_reset"
+  address: "0x10000"
+channel_urls:
+  Primary: "https://meshtastic.org/e/#CjcSIIrA4R6zaST5Rl9xgSQV-pI7iuykDaeGdDOzkw6Z1-TeGgZNZXNoVFclAQAAACgBMAE6AggPEhUIARAEGPoBIAsoBTgIQANIAVAbWAE"
+  Complete: "https://meshtastic.org/e/#CjcSIIrA4R6zaST5Rl9xgSQV-pI7iuykDaeGdDOzkw6Z1-TeGgZNZXNoVFclAQAAACgBMAE6AggPCjYSIMtR3IlYKZeR84dOSiVHv7pllB_F4Rt1I0da72R31BxVGgpTaWduYWxUZXN0KAEwAToCCA8KNBIgy2jnf86fTpf_4AFAf-mCwbzRoxpCV0P90dqJo0-w_SYaCkVtZXJnZW5jeSEoAToCCCAKCRIBASgBOgIIDxIVCAEQBBj6ASALKAU4CEADSAFQG1gB"
+channel_defaults:
+  reapply_index: 3
+  channels:
+    -
+      index: 0
+      role: "PRIMARY"
+      psk_tag: "secret"
+      settings:
+        psk: "isDhHrNpJPlGX3GBJBX6kjuK7KQNp4Z0M7OTDpnX5N4="
+        name: "MeshTW"
+        id: 1
+        uplinkEnabled: true
+        downlinkEnabled: true
+        moduleSettings:
+          positionPrecision: 15
+          isClientMuted: false
+        channelNum: 0
+    -
+      index: 1
+      role: "SECONDARY"
+      psk_tag: "secret"
+      settings:
+        psk: "y1HciVgpl5Hzh05KJUe/umWUH8XhG3UjR1rvZHfUHFU="
+        name: "SignalTest"
+        uplinkEnabled: true
+        downlinkEnabled: true
+        moduleSettings:
+          positionPrecision: 15
+          isClientMuted: false
+        channelNum: 0
+        id: 0
+    -
+      index: 2
+      role: "SECONDARY"
+      psk_tag: "secret"
+      settings:
+        psk: "y2jnf86fTpf/4AFAf+mCwbzRoxpCV0P90dqJo0+w/SY="
+        name: "Emergency!"
+        uplinkEnabled: true
+        moduleSettings:
+          positionPrecision: 32
+          isClientMuted: false
+        channelNum: 0
+        id: 0
+        downlinkEnabled: false
+    -
+      index: 3
+      role: "SECONDARY"
+      psk_tag: "default"
+      settings:
+        psk: "AQ=="
+        uplinkEnabled: true
+        moduleSettings:
+          positionPrecision: 15
+          isClientMuted: false
+        channelNum: 0
+        name: ""
+        id: 0
+        downlinkEnabled: false
+commands:
+  -
+    type: "SetField"
+    field: "canned_message.inputbroker_pin_a"
+    value: "37"
+    raw: "meshtastic --set canned_message.inputbroker_pin_a 37"
+  -
+    type: "SetField"
+    field: "canned_message.inputbroker_pin_b"
+    value: "26"
+    raw: "meshtastic --set canned_message.inputbroker_pin_b 26"
+  -
+    type: "SetField"
+    field: "canned_message.inputbroker_pin_press"
+    value: "4"
+    raw: "meshtastic --set canned_message.inputbroker_pin_press 4"
+  -
+    type: "SetField"
+    field: "canned_message.inputbroker_event_cw"
+    value: "UP"
+    raw: "meshtastic --set canned_message.inputbroker_event_cw UP"
+  -
+    type: "SetField"
+    field: "canned_message.inputbroker_event_ccw"
+    value: "DOWN"
+    raw: "meshtastic --set canned_message.inputbroker_event_ccw DOWN"
+  -
+    type: "SetField"
+    field: "canned_message.inputbroker_event_press"
+    value: "SELECT"
+    raw: "meshtastic --set canned_message.inputbroker_event_press SELECT"
+  -
+    type: "SetField"
+    field: "canned_message.enabled"
+    value: "true"
+    raw: "meshtastic --set canned_message.enabled true"
+  -
+    type: "SetField"
+    field: "canned_message.rotary1_enabled"
+    value: "true"
+    raw: "meshtastic --set canned_message.rotary1_enabled true"
+  -
+    type: "SetField"
+    field: "canned_message.allow_input_source"
+    value: "rotEnc1"
+    raw: "meshtastic --set canned_message.allow_input_source rotEnc1"
+  -
+    type: "SetCannedMessage"
+    message: "這是HermesXB0.2.9_civ|@ab HermesX|HI !"
+    raw: "meshtastic --set-canned-message \"這是HermesXB0.2.9_civ|@ab HermesX|HI !\""
+  -
+    type: "SetChannelUrl"
+    url: "https://meshtastic.org/e/#CjcSIIrA4R6zaST5Rl9xgSQV-pI7iuykDaeGdDOzkw6Z1-TeGgZNZXNoVFclAQAAACgBMAE6AggPCjYSIMtR3IlYKZeR84dOSiVHv7pllB_F4Rt1I0da72R31BxVGgpTaWduYWxUZXN0KAEwAToCCA8KNBIgy2jnf86fTpf_4AFAf-mCwbzRoxpCV0P90dqJo0-w_SYaCkVtZXJnZW5jeSEoAToCCCAKCRIBASgBOgIIDxIVCAEQBBj6ASALKAU4CEADSAFQG1gB"
+    raw: "meshtastic --ch-set-url https://meshtastic.org/e/#CjcSIIrA4R6zaST5Rl9xgSQV-pI7iuykDaeGdDOzkw6Z1-TeGgZNZXNoVFclAQAAACgBMAE6AggPCjYSIMtR3IlYKZeR84dOSiVHv7pllB_F4Rt1I0da72R31BxVGgpTaWduYWxUZXN0KAEwAToCCA8KNBIgy2jnf86fTpf_4AFAf-mCwbzRoxpCV0P90dqJo0-w_SYaCkVtZXJnZW5jeSEoAToCCCAKCRIBASgBOgIIDxIVCAEQBBj6ASALKAU4CEADSAFQG1gB"
+  -
+    type: "SetField"
+    field: "mqtt.address"
+    value: "mqtt.meshtastic.org"
+    raw: "meshtastic --set mqtt.address mqtt.meshtastic.org"
+  -
+    type: "SetField"
+    field: "mqtt.username"
+    value: "meshdev"
+    raw: "meshtastic --set mqtt.username meshdev"
+  -
+    type: "SetField"
+    field: "mqtt.password"
+    value: "large4cats"
+    raw: "meshtastic --set mqtt.password large4cats"
+  -
+    type: "SetField"
+    field: "mqtt.encryptionEnabled"
+    value: "true"
+    raw: "meshtastic --set mqtt.encryptionEnabled true"
+  -
+    type: "SetField"
+    field: "mqtt.root"
+    value: "msh/TW"
+    raw: "meshtastic --set mqtt.root msh/TW"
+  -
+    type: "SetField"
+    field: "mqtt.enabled"
+    value: "false"
+    raw: "meshtastic --set mqtt.enabled false"
+  -
+    type: "SetField"
+    field: "mqtt.jsonEnabled"
+    value: "false"
+    raw: "meshtastic --set mqtt.jsonEnabled false"
+  -
+    type: "SetField"
+    field: "mqtt.tlsEnabled"
+    value: "false"
+    raw: "meshtastic --set mqtt.tlsEnabled false"
+  -
+    type: "SetField"
+    field: "mqtt.proxyToClientEnabled"
+    value: "false"
+    raw: "meshtastic --set mqtt.proxyToClientEnabled false"
+  -
+    type: "SetField"
+    field: "mqtt.mapReportingEnabled"
+    value: "false"
+    raw: "meshtastic --set mqtt.mapReportingEnabled false"
+  -
+    type: "SetField"
+    field: "lora.usePreset"
+    value: "true"
+    raw: "meshtastic --set lora.usePreset true"
+  -
+    type: "SetField"
+    field: "lora.modemPreset"
+    value: "MEDIUM_FAST"
+    raw: "meshtastic --set lora.modemPreset MEDIUM_FAST"
+  -
+    type: "SetField"
+    field: "lora.bandwidth"
+    value: "250"
+    raw: "meshtastic --set lora.bandwidth 250"
+  -
+    type: "SetField"
+    field: "lora.spreadFactor"
+    value: "11"
+    raw: "meshtastic --set lora.spreadFactor 11"
+  -
+    type: "SetField"
+    field: "lora.codingRate"
+    value: "5"
+    raw: "meshtastic --set lora.codingRate 5"
+  -
+    type: "SetField"
+    field: "lora.region"
+    value: "TW"
+    raw: "meshtastic --set lora.region TW"
+  -
+    type: "SetField"
+    field: "lora.hopLimit"
+    value: "3"
+    raw: "meshtastic --set lora.hopLimit 3"
+  -
+    type: "SetField"
+    field: "lora.txEnabled"
+    value: "true"
+    raw: "meshtastic --set lora.txEnabled true"
+  -
+    type: "SetField"
+    field: "lora.txPower"
+    value: "27"
+    raw: "meshtastic --set lora.txPower 27"
+  -
+    type: "SetField"
+    field: "lora.channelNum"
+    value: "1"
+    raw: "meshtastic --set lora.channelNum 1"
+  -
+    type: "SetField"
+    field: "lora.frequencyOffset"
+    value: "0.0"
+    raw: "meshtastic --set lora.frequencyOffset 0.0"
+  -
+    type: "SetField"
+    field: "lora.overrideDutyCycle"
+    value: "false"
+    raw: "meshtastic --set lora.overrideDutyCycle false"
+  -
+    type: "SetField"
+    field: "lora.sx126xRxBoostedGain"
+    value: "false"
+    raw: "meshtastic --set lora.sx126xRxBoostedGain false"
+  -
+    type: "SetField"
+    field: "lora.overrideFrequency"
+    value: "0.0"
+    raw: "meshtastic --set lora.overrideFrequency 0.0"
+  -
+    type: "SetField"
+    field: "lora.paFanDisabled"
+    value: "false"
+    raw: "meshtastic --set lora.paFanDisabled false"
+  -
+    type: "SetField"
+    field: "lora.ignoreMqtt"
+    value: "false"
+    raw: "meshtastic --set lora.ignoreMqtt false"
+  -
+    type: "SetField"
+    field: "lora.configOkToMqtt"
+    value: "false"
+    raw: "meshtastic --set lora.configOkToMqtt false"
+  -
+    type: "SetField"
+    field: "position.positionBroadcastSecs"
+    value: "60"
+    raw: "meshtastic --set position.positionBroadcastSecs 60"
+  -
+    type: "SetField"
+    field: "position.positionBroadcastSmartEnabled"
+    value: "true"
+    raw: "meshtastic --set position.positionBroadcastSmartEnabled true"
+  -
+    type: "SetField"
+    field: "position.gpsUpdateInterval"
+    value: "60"
+    raw: "meshtastic --set position.gpsUpdateInterval 60"
+  -
+    type: "SetField"
+    field: "position.positionFlags"
+    value: "811"
+    raw: "meshtastic --set position.positionFlags 811"
+  -
+    type: "SetField"
+    field: "position.broadcastSmartMinimumDistance"
+    value: "100"
+    raw: "meshtastic --set position.broadcastSmartMinimumDistance 100"
+  -
+    type: "SetField"
+    field: "position.broadcastSmartMinimumIntervalSecs"
+    value: "30"
+    raw: "meshtastic --set position.broadcastSmartMinimumIntervalSecs 30"
+  -
+    type: "SetField"
+    field: "position.gpsMode"
+    value: "ENABLED"
+    raw: "meshtastic --set position.gpsMode ENABLED"
+  -
+    type: "SetField"
+    field: "position.fixedPosition"
+    value: "false"
+    raw: "meshtastic --set position.fixedPosition false"
+  -
+    type: "SetField"
+    field: "position.gpsEnabled"
+    value: "false"
+    raw: "meshtastic --set position.gpsEnabled false"
+  -
+    type: "SetField"
+    field: "position.gpsAttemptTime"
+    value: "0"
+    raw: "meshtastic --set position.gpsAttemptTime 0"
+  -
+    type: "SetField"
+    field: "position.rxGpio"
+    value: "0"
+    raw: "meshtastic --set position.rxGpio 0"
+  -
+    type: "SetField"
+    field: "position.txGpio"
+    value: "0"
+    raw: "meshtastic --set position.txGpio 0"
+  -
+    type: "SetField"
+    field: "position.gpsEnGpio"
+    value: "0"
+    raw: "meshtastic --set position.gpsEnGpio 0"

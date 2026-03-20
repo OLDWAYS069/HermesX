@@ -1,0 +1,1 @@
+{"type": "library", "name": "esp32_https_server", "version": "1.0.0", "spec": {"owner": null, "id": null, "name": "esp32_https_server", "requirements": null, "uri": "https://github.com/meshtastic/esp32_https_server/archive/896f1771ceb5979987a0b41028bf1b4e7aad419b.zip"}}
