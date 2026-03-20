@@ -708,10 +708,10 @@ class MeshtasticAutoFlash:
                 return candidate.resolve()
             raise FileNotFoundError(f"找不到設定檔：{candidate}")
         candidates = [
-            self.script_dir / self.args.config_file_name,
-            self.repo_root / self.args.config_file_name,
             self.script_dir / self.args.cli_config_file_name,
             self.repo_root / self.args.cli_config_file_name,
+            self.script_dir / self.args.config_file_name,
+            self.repo_root / self.args.config_file_name,
         ]
         for candidate in candidates:
             if candidate.exists():
@@ -1798,6 +1798,18 @@ class MeshtasticAutoFlash:
 
         config_path = self.resolve_config_path()
         commands, expected_channel_url, channel_default_commands, config = self.load_runtime_config(config_path)
+        if (
+            not self.args.config_path
+            and self.is_yaml_config(config_path)
+            and not commands
+        ):
+            fallback_cli_path = self.resolve_cli_config_path()
+            if fallback_cli_path != config_path:
+                self.log(
+                    f"偵測到 YAML 設定檔沒有任何 meshtastic 命令，改用舊版 CLI 設定檔：{fallback_cli_path}"
+                )
+                config_path = fallback_cli_path
+                commands, expected_channel_url, channel_default_commands, config = self.load_runtime_config(config_path)
         commands = self.insert_channel_commands_after_url(commands, channel_default_commands)
         if not commands:
             raise RuntimeError(f"?????????? meshtastic ?????{config_path}")
