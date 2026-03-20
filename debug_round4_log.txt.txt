@@ -1,0 +1,448 @@
+========================================
+HermesX AutoFlasher Windows Build Round 3
+============================================
+SCRIPT_DIR=C:\Users\user\Downloads\HermesX-master\HermesX-master\auto_flash_tool\
+ROOT=C:\Users\user\Downloads\HermesX-master\HermesX-master
+VENV=C:\Users\user\Downloads\HermesX-master\HermesX-master\.venv
+BUILD_PS1=C:\Users\user\Downloads\HermesX-master\HermesX-master\tooling\auto_flash_builder\platform\windows\build.ps1
+OUT_EXE=C:\Users\user\Downloads\HermesX-master\HermesX-master\auto_flash_tool\tool_windows\Meshtastic_Auto_Flash.exe
+
+[STEP 1] Check paths
+--------------------------------------------
+
+[STEP 2] Check py launcher
+--------------------------------------------
+ -V:3.13 *        C:\Users\user\AppData\Local\Programs\Python\Python313\python.exe
+
+[STEP 3] Recreate clean Python 3.13 venv
+--------------------------------------------
+
+[STEP 4] Activate venv
+--------------------------------------------
+
+[STEP 5] Verify Python executable
+--------------------------------------------
+C:\Users\user\Downloads\HermesX-master\HermesX-master\.venv\Scripts\python.exe
+Python 3.13.12
+
+[STEP 6] Install build dependencies
+--------------------------------------------
+Requirement already satisfied: pip in c:\users\user\downloads\hermesx-master\hermesx-master\.venv\lib\site-packages (25.3)
+Collecting pip
+  Using cached pip-26.0.1-py3-none-any.whl.metadata (4.7 kB)
+Using cached pip-26.0.1-py3-none-any.whl (1.8 MB)
+Installing collected packages: pip
+  Attempting uninstall: pip
+    Found existing installation: pip 25.3
+    Uninstalling pip-25.3:
+      Successfully uninstalled pip-25.3
+Successfully installed pip-26.0.1
+Collecting pyinstaller
+  Using cached pyinstaller-6.19.0-py3-none-win_amd64.whl.metadata (8.5 kB)
+Collecting meshtastic
+  Using cached meshtastic-2.7.8-py3-none-any.whl.metadata (5.2 kB)
+Collecting esptool
+  Using cached esptool-5.2.0-py3-none-any.whl
+Collecting pyserial
+  Using cached pyserial-3.5-py2.py3-none-any.whl.metadata (1.6 kB)
+Collecting pyyaml
+  Using cached pyyaml-6.0.3-cp313-cp313-win_amd64.whl.metadata (2.4 kB)
+Collecting altgraph (from pyinstaller)
+  Using cached altgraph-0.17.5-py2.py3-none-any.whl.metadata (7.5 kB)
+Collecting packaging>=22.0 (from pyinstaller)
+  Using cached packaging-26.0-py3-none-any.whl.metadata (3.3 kB)
+Collecting pefile>=2022.5.30 (from pyinstaller)
+  Using cached pefile-2024.8.26-py3-none-any.whl.metadata (1.4 kB)
+Collecting pyinstaller-hooks-contrib>=2026.0 (from pyinstaller)
+  Using cached pyinstaller_hooks_contrib-2026.3-py3-none-any.whl.metadata (16 kB)
+Collecting pywin32-ctypes>=0.2.1 (from pyinstaller)
+  Using cached pywin32_ctypes-0.2.3-py3-none-any.whl.metadata (3.9 kB)
+Collecting setuptools>=42.0.0 (from pyinstaller)
+  Using cached setuptools-82.0.1-py3-none-any.whl.metadata (6.5 kB)
+Collecting bleak>=0.22.3 (from meshtastic)
+  Using cached bleak-2.1.1-py3-none-any.whl.metadata (5.2 kB)
+Collecting packaging>=22.0 (from pyinstaller)
+  Using cached packaging-24.2-py3-none-any.whl.metadata (3.2 kB)
+Collecting protobuf>=4.21.12 (from meshtastic)
+  Using cached protobuf-7.34.1-cp310-abi3-win_amd64.whl.metadata (595 bytes)
+Collecting pypubsub<5.0.0,>=4.0.3 (from meshtastic)
+  Using cached pypubsub-4.0.7-py3-none-any.whl.metadata (5.9 kB)
+Collecting requests<3.0.0,>=2.31.0 (from meshtastic)
+  Using cached requests-2.32.5-py3-none-any.whl.metadata (4.9 kB)
+Collecting tabulate<0.10.0,>=0.9.0 (from meshtastic)
+  Using cached tabulate-0.9.0-py3-none-any.whl.metadata (34 kB)
+Collecting charset_normalizer<4,>=2 (from requests<3.0.0,>=2.31.0->meshtastic)
+  Using cached charset_normalizer-3.4.6-cp313-cp313-win_amd64.whl.metadata (41 kB)
+Collecting idna<4,>=2.5 (from requests<3.0.0,>=2.31.0->meshtastic)
+  Using cached idna-3.11-py3-none-any.whl.metadata (8.4 kB)
+Collecting urllib3<3,>=1.21.1 (from requests<3.0.0,>=2.31.0->meshtastic)
+  Using cached urllib3-2.6.3-py3-none-any.whl.metadata (6.9 kB)
+Collecting certifi>=2017.4.17 (from requests<3.0.0,>=2.31.0->meshtastic)
+  Using cached certifi-2026.2.25-py3-none-any.whl.metadata (2.5 kB)
+Collecting bitstring!=4.2.0,>=3.1.6 (from esptool)
+  Using cached bitstring-4.4.0-py3-none-any.whl.metadata (5.6 kB)
+Collecting cryptography>=43.0.0 (from esptool)
+  Using cached cryptography-46.0.5-cp311-abi3-win_amd64.whl.metadata (5.7 kB)
+Collecting reedsolo<1.8,>=1.5.3 (from esptool)
+  Using cached reedsolo-1.7.0-py3-none-any.whl.metadata (23 kB)
+Collecting intelhex (from esptool)
+  Using cached intelhex-2.3.0-py2.py3-none-any.whl.metadata (2.7 kB)
+Collecting rich_click<2 (from esptool)
+  Using cached rich_click-1.9.7-py3-none-any.whl.metadata (8.7 kB)
+Collecting click<9 (from esptool)
+  Using cached click-8.3.1-py3-none-any.whl.metadata (2.6 kB)
+Collecting colorama (from click<9->esptool)
+  Using cached colorama-0.4.6-py2.py3-none-any.whl.metadata (17 kB)
+Collecting rich>=12 (from rich_click<2->esptool)
+  Using cached rich-14.3.3-py3-none-any.whl.metadata (18 kB)
+Collecting bitarray<4.0,>=3.0.0 (from bitstring!=4.2.0,>=3.1.6->esptool)
+  Using cached bitarray-3.8.0-cp313-cp313-win_amd64.whl.metadata (35 kB)
+Collecting tibs<0.6,>=0.5.6 (from bitstring!=4.2.0,>=3.1.6->esptool)
+  Using cached tibs-0.5.7-cp38-abi3-win_amd64.whl.metadata (8.3 kB)
+Collecting winrt-Windows.Devices.Bluetooth>=3.1 (from bleak>=0.22.3->meshtastic)
+  Using cached winrt_windows_devices_bluetooth-3.2.1-cp313-cp313-win_amd64.whl.metadata (1.6 kB)
+Collecting winrt-Windows.Devices.Bluetooth.Advertisement>=3.1 (from bleak>=0.22.3->meshtastic)
+  Using cached winrt_windows_devices_bluetooth_advertisement-3.2.1-cp313-cp313-win_amd64.whl.metadata (1.4 kB)
+Collecting winrt-Windows.Devices.Bluetooth.GenericAttributeProfile>=3.1 (from bleak>=0.22.3->meshtastic)
+  Using cached winrt_windows_devices_bluetooth_genericattributeprofile-3.2.1-cp313-cp313-win_amd64.whl.metadata (1.5 kB)
+Collecting winrt-Windows.Devices.Enumeration>=3.1 (from bleak>=0.22.3->meshtastic)
+  Using cached winrt_windows_devices_enumeration-3.2.1-cp313-cp313-win_amd64.whl.metadata (1.5 kB)
+Collecting winrt-Windows.Devices.Radios>=3.1 (from bleak>=0.22.3->meshtastic)
+  Using cached winrt_windows_devices_radios-3.2.1-cp313-cp313-win_amd64.whl.metadata (1.1 kB)
+Collecting winrt-Windows.Foundation>=3.1 (from bleak>=0.22.3->meshtastic)
+  Using cached winrt_windows_foundation-3.2.1-cp313-cp313-win_amd64.whl.metadata (1.0 kB)
+Collecting winrt-Windows.Foundation.Collections>=3.1 (from bleak>=0.22.3->meshtastic)
+  Using cached winrt_windows_foundation_collections-3.2.1-cp313-cp313-win_amd64.whl.metadata (1.1 kB)
+Collecting winrt-Windows.Storage.Streams>=3.1 (from bleak>=0.22.3->meshtastic)
+  Using cached winrt_windows_storage_streams-3.2.1-cp313-cp313-win_amd64.whl.metadata (1.3 kB)
+Collecting winrt-runtime>=3.1 (from bleak>=0.22.3->meshtastic)
+  Using cached winrt_runtime-3.2.1-cp313-cp313-win_amd64.whl.metadata (780 bytes)
+Collecting cffi>=2.0.0 (from cryptography>=43.0.0->esptool)
+  Using cached cffi-2.0.0-cp313-cp313-win_amd64.whl.metadata (2.6 kB)
+Collecting pycparser (from cffi>=2.0.0->cryptography>=43.0.0->esptool)
+  Using cached pycparser-3.0-py3-none-any.whl.metadata (8.2 kB)
+Collecting markdown-it-py>=2.2.0 (from rich>=12->rich_click<2->esptool)
+  Using cached markdown_it_py-4.0.0-py3-none-any.whl.metadata (7.3 kB)
+Collecting pygments<3.0.0,>=2.13.0 (from rich>=12->rich_click<2->esptool)
+  Using cached pygments-2.19.2-py3-none-any.whl.metadata (2.5 kB)
+Collecting mdurl~=0.1 (from markdown-it-py>=2.2.0->rich>=12->rich_click<2->esptool)
+  Using cached mdurl-0.1.2-py3-none-any.whl.metadata (1.6 kB)
+Collecting typing_extensions>=4.12.2 (from winrt-runtime>=3.1->bleak>=0.22.3->meshtastic)
+  Using cached typing_extensions-4.15.0-py3-none-any.whl.metadata (3.3 kB)
+Using cached pyinstaller-6.19.0-py3-none-win_amd64.whl (1.4 MB)
+Using cached meshtastic-2.7.8-py3-none-any.whl (345 kB)
+Using cached pyserial-3.5-py2.py3-none-any.whl (90 kB)
+Using cached pyyaml-6.0.3-cp313-cp313-win_amd64.whl (154 kB)
+Using cached packaging-24.2-py3-none-any.whl (65 kB)
+Using cached pypubsub-4.0.7-py3-none-any.whl (72 kB)
+Using cached requests-2.32.5-py3-none-any.whl (64 kB)
+Using cached charset_normalizer-3.4.6-cp313-cp313-win_amd64.whl (154 kB)
+Using cached idna-3.11-py3-none-any.whl (71 kB)
+Using cached tabulate-0.9.0-py3-none-any.whl (35 kB)
+Using cached urllib3-2.6.3-py3-none-any.whl (131 kB)
+Using cached click-8.3.1-py3-none-any.whl (108 kB)
+Using cached reedsolo-1.7.0-py3-none-any.whl (32 kB)
+Using cached rich_click-1.9.7-py3-none-any.whl (71 kB)
+Using cached bitstring-4.4.0-py3-none-any.whl (76 kB)
+Using cached bitarray-3.8.0-cp313-cp313-win_amd64.whl (149 kB)
+Using cached tibs-0.5.7-cp38-abi3-win_amd64.whl (304 kB)
+Using cached bleak-2.1.1-py3-none-any.whl (141 kB)
+Using cached certifi-2026.2.25-py3-none-any.whl (153 kB)
+Using cached cryptography-46.0.5-cp311-abi3-win_amd64.whl (3.5 MB)
+Using cached cffi-2.0.0-cp313-cp313-win_amd64.whl (183 kB)
+Using cached pefile-2024.8.26-py3-none-any.whl (74 kB)
+Using cached protobuf-7.34.1-cp310-abi3-win_amd64.whl (437 kB)
+Using cached pyinstaller_hooks_contrib-2026.3-py3-none-any.whl (454 kB)
+Using cached pywin32_ctypes-0.2.3-py3-none-any.whl (30 kB)
+Using cached rich-14.3.3-py3-none-any.whl (310 kB)
+Using cached pygments-2.19.2-py3-none-any.whl (1.2 MB)
+Using cached markdown_it_py-4.0.0-py3-none-any.whl (87 kB)
+Using cached mdurl-0.1.2-py3-none-any.whl (10.0 kB)
+Using cached setuptools-82.0.1-py3-none-any.whl (1.0 MB)
+Using cached winrt_runtime-3.2.1-cp313-cp313-win_amd64.whl (241 kB)
+Using cached typing_extensions-4.15.0-py3-none-any.whl (44 kB)
+Using cached winrt_windows_devices_bluetooth-3.2.1-cp313-cp313-win_amd64.whl (113 kB)
+Using cached winrt_windows_devices_bluetooth_advertisement-3.2.1-cp313-cp313-win_amd64.whl (95 kB)
+Using cached winrt_windows_devices_bluetooth_genericattributeprofile-3.2.1-cp313-cp313-win_amd64.whl (187 kB)
+Using cached winrt_windows_devices_enumeration-3.2.1-cp313-cp313-win_amd64.whl (141 kB)
+Using cached winrt_windows_devices_radios-3.2.1-cp313-cp313-win_amd64.whl (40 kB)
+Using cached winrt_windows_foundation-3.2.1-cp313-cp313-win_amd64.whl (118 kB)
+Using cached winrt_windows_foundation_collections-3.2.1-cp313-cp313-win_amd64.whl (69 kB)
+Using cached winrt_windows_storage_streams-3.2.1-cp313-cp313-win_amd64.whl (131 kB)
+Using cached altgraph-0.17.5-py2.py3-none-any.whl (21 kB)
+Using cached colorama-0.4.6-py2.py3-none-any.whl (25 kB)
+Using cached intelhex-2.3.0-py2.py3-none-any.whl (50 kB)
+Using cached pycparser-3.0-py3-none-any.whl (48 kB)
+Installing collected packages: reedsolo, pyserial, intelhex, bitarray, altgraph, urllib3, typing_extensions, tibs, tabulate, setuptools, pyyaml, pywin32-ctypes, pypubsub, pygments, pycparser, protobuf, pefile, packaging, mdurl, idna, colorama, charset_normalizer, certifi, winrt-runtime, requests, pyinstaller-hooks-contrib, markdown-it-py, click, cffi, bitstring, winrt-Windows.Storage.Streams, winrt-Windows.Foundation.Collections, winrt-Windows.Foundation, winrt-Windows.Devices.Radios, winrt-Windows.Devices.Enumeration, winrt-Windows.Devices.Bluetooth.GenericAttributeProfile, winrt-Windows.Devices.Bluetooth.Advertisement, winrt-Windows.Devices.Bluetooth, rich, pyinstaller, cryptography, rich_click, bleak, meshtastic, esptool
+Successfully installed altgraph-0.17.5 bitarray-3.8.0 bitstring-4.4.0 bleak-2.1.1 certifi-2026.2.25 cffi-2.0.0 charset_normalizer-3.4.6 click-8.3.1 colorama-0.4.6 cryptography-46.0.5 esptool-5.2.0 idna-3.11 intelhex-2.3.0 markdown-it-py-4.0.0 mdurl-0.1.2 meshtastic-2.7.8 packaging-24.2 pefile-2024.8.26 protobuf-7.34.1 pycparser-3.0 pygments-2.19.2 pyinstaller-6.19.0 pyinstaller-hooks-contrib-2026.3 pypubsub-4.0.7 pyserial-3.5 pywin32-ctypes-0.2.3 pyyaml-6.0.3 reedsolo-1.7.0 requests-2.32.5 rich-14.3.3 rich_click-1.9.7 setuptools-82.0.1 tabulate-0.9.0 tibs-0.5.7 typing_extensions-4.15.0 urllib3-2.6.3 winrt-Windows.Devices.Bluetooth-3.2.1 winrt-Windows.Devices.Bluetooth.Advertisement-3.2.1 winrt-Windows.Devices.Bluetooth.GenericAttributeProfile-3.2.1 winrt-Windows.Devices.Enumeration-3.2.1 winrt-Windows.Devices.Radios-3.2.1 winrt-Windows.Foundation-3.2.1 winrt-Windows.Foundation.Collections-3.2.1 winrt-Windows.Storage.Streams-3.2.1 winrt-runtime-3.2.1
+
+[STEP 7] Build Windows executable
+--------------------------------------------
+Building standalone Windows bundle...
+269 INFO: PyInstaller: 6.19.0, contrib hooks: 2026.3
+270 INFO: Python: 3.13.12
+308 INFO: Platform: Windows-11-10.0.26200-SP0
+308 INFO: Python environment: C:\Users\user\Downloads\HermesX-master\HermesX-master\.venv
+312 INFO: Removing temporary files and cleaning cache in C:\Users\user\AppData\Local\pyinstaller
+513 WARNING: Failed to collect submodules for 'meshtastic.slog' because importing 'meshtastic.slog' raised: ModuleNotFoundError: No module named 'parse'
+5883 INFO: Module search paths (PYTHONPATH):
+['C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\auto_flash_tool',
+ 'C:\\Users\\user\\AppData\\Local\\Programs\\Python\\Python313\\python313.zip',
+ 'C:\\Users\\user\\AppData\\Local\\Programs\\Python\\Python313\\DLLs',
+ 'C:\\Users\\user\\AppData\\Local\\Programs\\Python\\Python313\\Lib',
+ 'C:\\Users\\user\\AppData\\Local\\Programs\\Python\\Python313',
+ 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv',
+ 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages',
+ 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\tooling\\auto_flash_builder']
+6277 INFO: Appending 'datas' from .spec
+6298 INFO: checking Analysis
+6298 INFO: Building Analysis because Analysis-00.toc is non existent
+6298 INFO: Looking for Python shared library...
+6298 INFO: Using Python shared library: C:\Users\user\AppData\Local\Programs\Python\Python313\python313.dll
+6298 INFO: Running Analysis Analysis-00.toc
+6298 INFO: Target bytecode optimization level: 0
+6299 INFO: Initializing module dependency graph...
+6300 INFO: Initializing module graph hook caches...
+6327 INFO: Analyzing modules for base_library.zip ...
+7862 INFO: Processing standard module hook 'hook-encodings.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+9882 INFO: Processing standard module hook 'hook-pickle.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+10984 INFO: Processing standard module hook 'hook-heapq.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+11500 INFO: Caching module dependency graph...
+11540 INFO: Analyzing C:\Users\user\Downloads\HermesX-master\HermesX-master\tooling\auto_flash_builder\auto_installer.py
+11762 INFO: Processing standard module hook 'hook-sysconfig.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+11769 INFO: Processing standard module hook 'hook-_ctypes.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+11920 INFO: Processing standard module hook 'hook-platform.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+12578 INFO: Processing standard module hook 'hook-pubsub.core.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+13135 INFO: Processing pre-safe-import-module hook 'hook-packaging.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+13138 INFO: SetuptoolsInfo: initializing cached setuptools info...
+13874 INFO: Processing standard module hook 'hook-urllib3.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+14113 INFO: Processing pre-safe-import-module hook 'hook-backports.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+14114 INFO: Setuptools: 'backports' appears to be a full setuptools-vendored copy - creating alias to 'setuptools._vendor.backports'!
+14121 INFO: Processing standard module hook 'hook-setuptools.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+14137 INFO: Processing pre-safe-import-module hook 'hook-distutils.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+14174 INFO: Processing pre-safe-import-module hook 'hook-jaraco.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+14175 INFO: Setuptools: 'jaraco' appears to be a full setuptools-vendored copy - creating alias to 'setuptools._vendor.jaraco'!
+14204 INFO: Processing pre-safe-import-module hook 'hook-more_itertools.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+14205 INFO: Setuptools: 'more_itertools' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.more_itertools'!
+14361 INFO: Processing pre-safe-import-module hook 'hook-typing_extensions.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+14654 INFO: Processing standard module hook 'hook-multiprocessing.util.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+14772 INFO: Processing standard module hook 'hook-xml.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+15792 INFO: Processing standard module hook 'hook-setuptools._vendor.jaraco.text.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+15794 INFO: Processing pre-safe-import-module hook 'hook-importlib_resources.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+16238 INFO: Processing pre-safe-import-module hook 'hook-importlib_metadata.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+16239 INFO: Setuptools: 'importlib_metadata' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.importlib_metadata'!
+16271 INFO: Processing standard module hook 'hook-setuptools._vendor.importlib_metadata.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+16299 INFO: Processing pre-safe-import-module hook 'hook-zipp.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+16300 INFO: Setuptools: 'zipp' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.zipp'!
+16607 INFO: Processing pre-safe-import-module hook 'hook-tomli.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+16607 INFO: Setuptools: 'tomli' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.tomli'!
+17255 INFO: Processing pre-safe-import-module hook 'hook-wheel.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+17256 INFO: Setuptools: 'wheel' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.wheel'!
+17819 INFO: Processing standard module hook 'hook-charset_normalizer.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+17989 INFO: Processing standard module hook 'hook-cryptography.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+19381 INFO: hook-cryptography: cryptography does not seem to be using dynamically linked OpenSSL.
+19894 INFO: Processing standard module hook 'hook-certifi.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+20496 INFO: Processing standard module hook 'hook-bleak.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+21301 INFO: Processing pre-safe-import-module hook 'hook-platformdirs.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+21302 INFO: Setuptools: 'platformdirs' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.platformdirs'!
+21741 INFO: Processing standard module hook 'hook-difflib.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+21975 INFO: Processing standard module hook 'hook-rich.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+22767 INFO: Processing standard module hook 'hook-pygments.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+25739 INFO: Analyzing hidden import 'meshtastic.analysis'
+25740 INFO: Analyzing hidden import 'meshtastic.analysis.__main__'
+25750 INFO: Analyzing hidden import 'meshtastic.protobuf.atak_pb2'
+25752 INFO: Analyzing hidden import 'meshtastic.protobuf.cannedmessages_pb2'
+25753 INFO: Analyzing hidden import 'meshtastic.protobuf.clientonly_pb2'
+25755 INFO: Analyzing hidden import 'meshtastic.protobuf.deviceonly_pb2'
+25759 INFO: Analyzing hidden import 'meshtastic.protobuf.interdevice_pb2'
+25760 INFO: Analyzing hidden import 'meshtastic.protobuf.rtttl_pb2'
+25762 INFO: Analyzing hidden import 'meshtastic.tests'
+25762 INFO: Analyzing hidden import 'meshtastic.tests.conftest'
+25984 INFO: Analyzing hidden import 'meshtastic.tests.test_analysis'
+25986 INFO: Analyzing hidden import 'meshtastic.tests.test_examples'
+25987 INFO: Analyzing hidden import 'meshtastic.tests.test_init'
+25991 INFO: Analyzing hidden import 'meshtastic.tests.test_int'
+25993 INFO: Analyzing hidden import 'meshtastic.tests.test_main'
+26086 INFO: Analyzing hidden import 'meshtastic.tests.test_mesh_interface'
+26116 INFO: Analyzing hidden import 'meshtastic.tests.test_mesh_interface_traffic_management'
+26118 INFO: Analyzing hidden import 'meshtastic.tests.test_node'
+26137 INFO: Analyzing hidden import 'meshtastic.tests.test_ota'
+26154 INFO: Analyzing hidden import 'meshtastic.tests.test_remote_hardware'
+26159 INFO: Analyzing hidden import 'meshtastic.tests.test_serial_interface'
+26163 INFO: Analyzing hidden import 'meshtastic.tests.test_showNodes_favorite'
+26169 INFO: Analyzing hidden import 'meshtastic.tests.test_smoke1'
+26201 INFO: Analyzing hidden import 'meshtastic.tests.test_smoke2'
+26203 INFO: Analyzing hidden import 'meshtastic.tests.test_smoke_wifi'
+26205 INFO: Analyzing hidden import 'meshtastic.tests.test_smokevirt'
+26240 INFO: Analyzing hidden import 'meshtastic.tests.test_stream_interface'
+26243 INFO: Analyzing hidden import 'meshtastic.tests.test_tcp_interface'
+26248 INFO: Analyzing hidden import 'meshtastic.tests.test_tunnel'
+26262 INFO: Analyzing hidden import 'meshtastic.tests.test_util'
+26291 INFO: Analyzing hidden import 'esptool.__main__'
+26293 INFO: Analyzing hidden import 'serial.__main__'
+26341 INFO: Analyzing hidden import 'serial.rfc2217'
+26391 INFO: Analyzing hidden import 'serial.rs485'
+26394 INFO: Analyzing hidden import 'serial.threaded'
+26405 INFO: Analyzing hidden import 'serial.urlhandler'
+26406 INFO: Analyzing hidden import 'serial.urlhandler.protocol_alt'
+26409 INFO: Analyzing hidden import 'serial.urlhandler.protocol_cp2110'
+26418 INFO: Analyzing hidden import 'serial.urlhandler.protocol_hwgrep'
+26422 INFO: Analyzing hidden import 'serial.urlhandler.protocol_loop'
+26434 INFO: Analyzing hidden import 'serial.urlhandler.protocol_rfc2217'
+26435 INFO: Analyzing hidden import 'serial.urlhandler.protocol_socket'
+26447 INFO: Analyzing hidden import 'serial.urlhandler.protocol_spy'
+26460 INFO: Analyzing hidden import 'pubsub.utils'
+26482 INFO: Analyzing hidden import 'pubsub.utils.misc'
+26484 INFO: Analyzing hidden import 'pubsub.utils.xmltopicdefnprovider'
+26582 INFO: Processing standard module hook 'hook-xml.etree.cElementTree.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+26586 INFO: Analyzing hidden import 'google.protobuf.any'
+26590 INFO: Analyzing hidden import 'google.protobuf.api_pb2'
+26597 INFO: Analyzing hidden import 'google.protobuf.compiler'
+26598 INFO: Analyzing hidden import 'google.protobuf.compiler.plugin_pb2'
+26600 INFO: Analyzing hidden import 'google.protobuf.duration'
+26605 INFO: Analyzing hidden import 'google.protobuf.empty_pb2'
+26607 INFO: Analyzing hidden import 'google.protobuf.field_mask_pb2'
+26609 INFO: Analyzing hidden import 'google.protobuf.internal.testing_refleaks'
+26614 INFO: Analyzing hidden import 'google.protobuf.proto'
+26617 INFO: Analyzing hidden import 'google.protobuf.proto_builder'
+26621 INFO: Analyzing hidden import 'google.protobuf.proto_json'
+26623 INFO: Analyzing hidden import 'google.protobuf.proto_text'
+26625 INFO: Analyzing hidden import 'google.protobuf.struct_pb2'
+26628 INFO: Analyzing hidden import 'google.protobuf.testdata'
+26629 INFO: Analyzing hidden import 'google.protobuf.timestamp'
+26634 INFO: Analyzing hidden import 'google.protobuf.util'
+26635 INFO: Analyzing hidden import 'google.protobuf.wrappers_pb2'
+26638 INFO: Processing module hooks (post-graph stage)...
+29611 INFO: Performing binary vs. data reclassification (338 entries)
+30211 INFO: Looking for ctypes DLLs
+30225 WARNING: Ignoring /System/Library/Frameworks/IOKit.framework/IOKit imported from C:\Users\user\Downloads\HermesX-master\HermesX-master\.venv\Lib\site-packages\serial\tools\list_ports_osx.py - only basenames are supported with ctypes imports!
+30226 WARNING: Ignoring /System/Library/Frameworks/CoreFoundation.framework/CoreFoundation imported from C:\Users\user\Downloads\HermesX-master\HermesX-master\.venv\Lib\site-packages\serial\tools\list_ports_osx.py - only basenames are supported with ctypes imports!
+30291 INFO: Analyzing run-time hooks ...
+30298 INFO: Including run-time hook 'pyi_rth_inspect.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+30301 INFO: Including run-time hook 'pyi_rth_pkgutil.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+30304 INFO: Including run-time hook 'pyi_rth_multiprocessing.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+30306 INFO: Including run-time hook 'pyi_rth_setuptools.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+30308 INFO: Including run-time hook 'pyi_rth_cryptography_openssl.py' from 'C:\\Users\\user\\Downloads\\HermesX-master\\HermesX-master\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\rthooks'
+30336 INFO: Creating base_library.zip...
+30362 INFO: Looking for dynamic libraries
+31716 INFO: Extra DLL search directories (AddDllDirectory): []
+31716 INFO: Extra DLL search directories (PATH): []
+32105 INFO: Warnings written to C:\Users\user\Downloads\HermesX-master\HermesX-master\tooling\auto_flash_builder\build\windows\meshtastic_auto_flash\warn-meshtastic_auto_flash.txt
+32217 INFO: Graph cross-reference written to C:\Users\user\Downloads\HermesX-master\HermesX-master\tooling\auto_flash_builder\build\windows\meshtastic_auto_flash\xref-meshtastic_auto_flash.html
+32278 INFO: checking PYZ
+32279 INFO: Building PYZ because PYZ-00.toc is non existent
+32279 INFO: Building PYZ (ZlibArchive) C:\Users\user\Downloads\HermesX-master\HermesX-master\tooling\auto_flash_builder\build\windows\meshtastic_auto_flash\PYZ-00.pyz
+33208 INFO: Building PYZ (ZlibArchive) C:\Users\user\Downloads\HermesX-master\HermesX-master\tooling\auto_flash_builder\build\windows\meshtastic_auto_flash\PYZ-00.pyz completed successfully.
+33240 INFO: checking PKG
+33240 INFO: Building PKG because PKG-00.toc is non existent
+33240 INFO: Building PKG (CArchive) Meshtastic_Auto_Flash.pkg
+33309 INFO: Building PKG (CArchive) Meshtastic_Auto_Flash.pkg completed successfully.
+33311 INFO: Bootloader C:\Users\user\Downloads\HermesX-master\HermesX-master\.venv\Lib\site-packages\PyInstaller\bootloader\Windows-64bit-intel\run.exe
+33311 INFO: checking EXE
+33311 INFO: Building EXE because EXE-00.toc is non existent
+33311 INFO: Building EXE from EXE-00.toc
+33312 INFO: Copying bootloader EXE to C:\Users\user\Downloads\HermesX-master\HermesX-master\tooling\auto_flash_builder\build\windows\meshtastic_auto_flash\Meshtastic_Auto_Flash.exe
+33408 INFO: Copying icon to EXE
+33465 INFO: Copying 0 resources to EXE
+33465 INFO: Embedding manifest in EXE
+33516 INFO: Appending PKG archive to EXE
+33671 INFO: Fixing EXE headers
+34004 INFO: Building EXE from EXE-00.toc completed successfully.
+34009 INFO: checking COLLECT
+34009 INFO: Building COLLECT because COLLECT-00.toc is non existent
+34010 INFO: Removing dir C:\Users\user\Downloads\HermesX-master\HermesX-master\tooling\auto_flash_builder\dist\windows\Meshtastic_Auto_Flash
+34458 INFO: Building COLLECT COLLECT-00.toc
+35061 INFO: Building COLLECT COLLECT-00.toc completed successfully.
+35071 INFO: Build complete! The results are available in: C:\Users\user\Downloads\HermesX-master\HermesX-master\tooling\auto_flash_builder\dist\windows
+Windows bundle ready at: C:\Users\user\Downloads\HermesX-master\HermesX-master\auto_flash_tool\tool_windows
+BUILD_EXIT_CODE=0
+
+[STEP 8] Test built executable help
+--------------------------------------------
+usage: Meshtastic_Auto_Flash.exe [-h]
+                                 [--firmware-path FIRMWARE_PATH]
+                                 [--firmware-file-name FIRMWARE_FILE_NAME]
+                                 [--config-path CONFIG_PATH]
+                                 [--config-file-name CONFIG_FILE_NAME]
+                                 [--cli-config-path CLI_CONFIG_PATH]
+                                 [--cli-config-file-name CLI_CONFIG_FILE_NAME]
+                                 [--export-config-yaml EXPORT_CONFIG_YAML]
+                                 [--post-flash-wait-seconds POST_FLASH_WAIT_SECONDS]
+                                 [--reboot-batch-size REBOOT_BATCH_SIZE]
+                                 [--reboot-wait-seconds REBOOT_WAIT_SECONDS]
+                                 [--reapply-max-passes REAPPLY_MAX_PASSES]
+                                 [--port-detect-timeout-seconds PORT_DETECT_TIMEOUT_SECONDS]
+                                 [--port-detect-interval-seconds PORT_DETECT_INTERVAL_SECONDS]
+                                 [--ready-timeout-seconds READY_TIMEOUT_SECONDS]
+                                 [--ready-poll-seconds READY_POLL_SECONDS]
+                                 [--ready-command-timeout-seconds READY_COMMAND_TIMEOUT_SECONDS]
+                                 [--ready-retry-count READY_RETRY_COUNT]
+                                 [--meshtastic-timeout-seconds MESHTASTIC_TIMEOUT_SECONDS]
+                                 [--meshtastic-retry-count MESHTASTIC_RETRY_COUNT]
+                                 [--meshtastic-retry-delay-seconds MESHTASTIC_RETRY_DELAY_SECONDS]
+                                 [--log-path LOG_PATH]
+                                 [--reboot-after-config]
+                                 [--no-reboot-after-config]
+                                 [--post-config-reboot-wait-seconds POST_CONFIG_REBOOT_WAIT_SECONDS]
+                                 [--use-transaction]
+
+Meshtastic 自動刷寫和設定工具
+
+options:
+  -h, --help            show this help message
+                        and exit
+  --firmware-path FIRMWARE_PATH
+                        韌體檔案路徑
+  --firmware-file-name FIRMWARE_FILE_NAME
+                        韌體檔案名稱
+  --config-path CONFIG_PATH
+                        設定檔路徑，支援 YAML 或舊版
+                        CLI.md
+  --config-file-name CONFIG_FILE_NAME
+                        設定檔檔名
+  --cli-config-path CLI_CONFIG_PATH
+                        舊版 CLI 設定檔路徑
+  --cli-config-file-name CLI_CONFIG_FILE_NAME
+                        舊版 CLI 設定檔檔名
+  --export-config-yaml EXPORT_CONFIG_YAML
+                        將現有 CLI.md 轉成 YAML
+                        並輸出到指定路徑後結束
+  --post-flash-wait-seconds POST_FLASH_WAIT_SECONDS
+                        刷寫後等待秒數
+  --reboot-batch-size REBOOT_BATCH_SIZE
+                        重啟批次大小
+  --reboot-wait-seconds REBOOT_WAIT_SECONDS
+                        重啟等待秒數
+  --reapply-max-passes REAPPLY_MAX_PASSES
+                        重新套用最大輪數
+  --port-detect-timeout-seconds PORT_DETECT_TIMEOUT_SECONDS
+                        序列埠檢測逾時秒數
+  --port-detect-interval-seconds PORT_DETECT_INTERVAL_SECONDS
+                        序列埠檢測間隔秒數
+  --ready-timeout-seconds READY_TIMEOUT_SECONDS
+                        裝置就緒逾時秒數
+  --ready-poll-seconds READY_POLL_SECONDS
+                        裝置就緒輪詢秒數
+  --ready-command-timeout-seconds READY_COMMAND_TIMEOUT_SECONDS
+                        就緒檢查命令逾時秒數
+  --ready-retry-count READY_RETRY_COUNT
+                        就緒檢查重試次數
+  --meshtastic-timeout-seconds MESHTASTIC_TIMEOUT_SECONDS
+                        meshtastic CLI 逾時秒數
+  --meshtastic-retry-count MESHTASTIC_RETRY_COUNT
+                        meshtastic CLI 重試次數
+  --meshtastic-retry-delay-seconds MESHTASTIC_RETRY_DELAY_SECONDS
+                        meshtastic CLI 重試延遲秒數
+  --log-path LOG_PATH   日誌檔路徑
+  --reboot-after-config
+                        設定後重啟
+  --no-reboot-after-config
+                        設定後不重啟
+  --post-config-reboot-wait-seconds POST_CONFIG_REBOOT_WAIT_SECONDS
+                        設定後重啟等待秒數
+  --use-transaction     使用 begin/commit edit
+EXE_HELP_EXIT_CODE=0
+
+============================================
+Copy everything in this window and send it back.
+Press any key to close.
