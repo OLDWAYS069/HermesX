@@ -1,0 +1,56 @@
+********************************************************************************
+Obsolete PIO Core v6.1.18 is used (previous was 6.1.19)
+Please remove multiple PIO Cores from a system:
+https://docs.platformio.org/en/latest/core/installation/troubleshooting.html
+********************************************************************************
+--- Terminal on /dev/cu.usbmodem4827E2E5B99C1 | 115200 8-N-1
+--- Available filters and text transformations: colorize, debug, default, direct, esp32_c3_exception_decoder, esp32_exception_decoder, hexlify, log2file, nocontrol, printable, send_on_enter, time
+--- More details at https://bit.ly/pio-monitor-filters
+--- Quit: Ctrl+C | Menu: Ctrl+T | Help: Ctrl+T followed by Ctrl+H
+[34mDEBUG [0m| ??:??:?? 14 [Screen] [34m[DirectHome] DirectHome entering glyphCaches=0 glyphTile=33x37 clockRegion=152x37 buildCount=0
+[0m[34mDEBUG [0m| ??:??:?? 14 [Screen] [34m[Heap] DirectHome entering free=46208 min=45924 largest=36852 psram=0
+[0m[34mDEBUG [0m| ??:??:?? 14 [Screen] [34m[DirectHome] redraw time='--:--:--' force=1 repaintClockBackground=0 lastTimeValid=0
+[0m[34mDEBUG [0m| ??:??:?? 14 [Screen] [34m[DirectHome] renderDirectNeonClock geometryChanged=1 forceFullRedraw=1 timeChanged=1 region=152x37
+[0m[34mDEBUG [0m| ??:??:?? 14 [Screen] [34m[DirectHome] build glyph cache ch='-' index=11 coreW=17 tile=29x37 bytes=1221
+[0m[34mDEBUG [0m| ??:??:?? 14 [Screen] [34m[DirectHome] DirectHome glyph cache built glyphCaches=1 glyphTile=33x37 clockRegion=152x37 buildCount=1
+[0m[34mDEBUG [0m| ??:??:?? 14 [Screen] [34m[Heap] DirectHome glyph cache built free=46208 min=45900 largest=36852 psram=0
+[0m[34mDEBUG [0m| ??:??:?? 14 [Screen] [34m[DirectHome] build glyph cache ch=':' index=10 coreW=7 tile=19x37 bytes=1221
+[0m[34mDEBUG [0m| ??:??:?? 14 [Screen] [34m[DirectHome] DirectHome glyph cache built glyphCaches=2 glyphTile=33x37 clockRegion=152x37 buildCount=2
+[0m[34mDEBUG [0m| ??:??:?? 14 [Screen] [34m[Heap] DirectHome glyph cache built free=46208 min=45900 largest=36852 psram=0
+[0m[34mDEBUG [0m| ??:??:?? 14 [Screen] [34m[DirectHome] DirectHome after redraw glyphCaches=2 glyphTile=33x37 clockRegion=152x37 buildCount=2
+[0m[34mDEBUG [0m| ??:??:?? 15 [Screen] [34m[Heap] DirectHome after redraw free=46060 min=45900 largest=36852 psram=0
+[0m[34mDEBUG [0m| ??:??:?? 15 [NimbleBluetooth] [34mNimbleBluetooth: handling ToRadio packet, fromPhoneQueueSize=2
+[0m[34mDEBUG [0m| ??:??:?? 15 [NimbleBluetooth] [34mGot client heartbeat
+[0m[34mDEBUG [0m| ??:??:?? 15 [NimbleBluetooth] [34mNimbleBluetooth: handling ToRadio packet, fromPhoneQueueSize=1
+[0m[32mINFO  [0m| ??:??:?? 15 [NimbleBluetooth] [32mClient wants config, nonce=69420
+[0m[32mINFO  [0m| ??:??:?? 15 [NimbleBluetooth] [32mBLE onConfigStart
+[0m[33mWARN  [0m| ??:??:?? 15 [NimbleBluetooth] [33mBLE config conn param upgrade disabled for isolation
+[0m[32mINFO  [0m| ??:??:?? 15 [NimbleBluetooth] [32mConfig start hook complete
+[0m[32mINFO  [0m| ??:??:?? 15 [NimbleBluetooth] [32mStart file manifest rebuild
+[0m[32mINFO  [0m| ??:??:?? 15 [NimbleBluetooth] [32mAcquiring SPI lock for file manifest
+[0m[32mINFO  [0m| ??:??:?? 15 [NimbleBluetooth] [32mSPI lock acquired for file manifest
+[0m[32mINFO  [0m| ??:??:?? 15 [NimbleBluetooth] [32mSPI lock released for file manifest
+[0m[34mDEBUG [0m| ??:??:?? 15 [NimbleBluetooth] [34mGot 10 files in manifest
+[0m[32mINFO  [0m| ??:??:?? 15 [NimbleBluetooth] [32mStart API client config
+[0m[34mDEBUG [0m| ??:??:?? 15 [NimbleBluetooth] [34mFromRadio=STATE_SEND_MY_INFO
+[0m[32mINFO  [0m| ??:??:?? 15 [NimbleBluetooth] [32mPhoneAPI getFromRadio encoded variant=3 state=1 bytes=58
+[0m[32mINFO  [0m| ??:??:?? 15 [NimbleBluetooth] [32mgetFromRadio=STATE_SEND_UIDATA
+[0m[32mINFO  [0m| ??:??:?? 15 [NimbleBluetooth] [32mPhoneAPI getFromRadio encoded variant=17 state=3 bytes=8
+[0m[34mDEBUG [0m| ??:??:?? 15 [NimbleBluetooth] [34mSend My NodeInfo
+[0m[32mINFO  [0m| ??:??:?? 15 [NimbleBluetooth] [32mPhoneAPI getFromRadio encoded variant=4 state=4 bytes=137
+[0m[34mDEBUG [0m| ??:??:?? 15 [NimbleBluetooth] [34mSend device metadata
+[0m[32mINFO  [0m| ??:??:?? 15 [NimbleBluetooth] [32mPhoneAPI getFromRadio encoded variant=13 state=5 bytes=37
+[0m[32mINFO  [0m| ??:??:?? 15 [NimbleBluetooth] [32mPhoneAPI getFromRadio encoded variant=10 state=5 bytes=61
+[0m[32mINFO  [0m| ??:??:?? 15 [NimbleBluetooth] [32mPhoneAPI getFromRadio encoded variant=10 state=5 bytes=60
+[0m[32mINFO  [0m| ??:??:?? 15 [NimbleBluetooth] [32mPhoneAPI getFromRadio encoded variant=10 state=5 bytes=60
+[0m[32mINFO  [0m| ??:??:?? 15 [NimbleBluetooth] [32mPhoneAPI getFromRadio encoded variant=10 state=5 bytes=17
+[0m[34mDEBUG [0m| ??:??:?? 17 [NimbleBluetooth] [34mNimbleBluetooth: handling ToRadio packet, fromPhoneQueueSize=1
+[0m[34mDEBUG [0m| ??:??:?? 17 [NimbleBluetooth] [34mGot MqttClientProxy message
+[0m[33mWARN  [0m| ??:??:?? 17 [NimbleBluetooth] [33mMqttClientProxy received but proxy is not enabled, no channels have up/downlink, or map reporting not enabled
+[0m[34mDEBUG [0m| ??:??:?? 17 [NimbleBluetooth] [34mNimbleBluetooth: handling ToRadio packet, fromPhoneQueueSize=1
+[0m[34mDEBUG [0m| ??:??:?? 17 [NimbleBluetooth] [34mGot MqttClientProxy message
+[0m[33mWARN  [0m| ??:??:?? 17 [NimbleBluetooth] [33mMqttClientProxy received but proxy is not enabled, no channels have up/downlink, or map reporting not enabled
+[0m[34mDEBUG [0m| ??:??:?? 18 [NimbleBluetooth] [34mNimbleBluetooth: handling ToRadio packet, fromPhoneQueueSize=1
+[0m[34mDEBUG [0m| ??:??:?? 18 [NimbleBluetooth] [34mGot MqttClientProxy message
+[0m[33mWARN  [0m| ??:??:?? 18 [NimbleBluetooth] [33mMqttClientProxy received but proxy is not enabled, no channels have up/downlink, or map reporting not enabled
+[0m

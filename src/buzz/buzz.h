@@ -9,3 +9,4 @@ void playStartMelody();
 void playShutdownMelody();
 void playGPSEnableBeep();
 void playGPSDisableBeep();
+void playLowMemoryAlert();

@@ -412,8 +412,8 @@ int CannedMessageModule::handleInputEvent(const InputEvent *event)
     const char effectiveCcw = (configuredCcw == eventNone) ? eventUp : configuredCcw;
     const char effectivePress = (configuredPress == eventNone) ? eventSelect : configuredPress;
     const bool isRotaryEnc1 = (event->source && strcmp(event->source, "rotEnc1") == 0);
-    const bool isRotaryCwInput = isRotaryEnc1 ? (event->inputEvent == eventDown) : (event->inputEvent == effectiveCw);
-    const bool isRotaryCcwInput = isRotaryEnc1 ? (event->inputEvent == eventUp) : (event->inputEvent == effectiveCcw);
+    const bool isRotaryCwInput = event->inputEvent == effectiveCw;
+    const bool isRotaryCcwInput = event->inputEvent == effectiveCcw;
 
     // ACK/NACK popup is transient feedback only. Swallow confirm/cancel presses so they
     // don't get reinterpreted as a fresh "select" action (which can run ACTION_SELECT
@@ -433,7 +433,6 @@ int CannedMessageModule::handleInputEvent(const InputEvent *event)
     const bool isUpInput = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
     const bool isDownInput = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
 
-    // For rotEnc1, only support cw/ccw/press mapping and map it to Down/Up/Select.
     int8_t rotaryNavDir = 0;
     if (isRotaryEnc1) {
         if (isRotaryCcwInput) {
@@ -467,7 +466,7 @@ int CannedMessageModule::handleInputEvent(const InputEvent *event)
         }
     }
     const bool isSelectInput = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
-    const bool isPressInput = isRotaryEnc1 ? (event->inputEvent == eventSelect) : (event->inputEvent == effectivePress);
+    const bool isPressInput = event->inputEvent == effectivePress;
     const bool wantsSelect = isRotaryEnc1 ? isPressInput : (isSelectInput || isPressInput);
     if (wantsSelect) {
 

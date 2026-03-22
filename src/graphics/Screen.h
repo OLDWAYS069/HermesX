@@ -692,6 +692,8 @@ class Screen : public concurrency::OSThread
     static void drawHermesXActionFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     void drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     bool handleHermesXActionInput(const InputEvent *event);
+    static void drawLowMemoryReminderOverlay(OLEDDisplay *display, OLEDDisplayUiState *state);
+    bool handleLowMemoryReminderInput(const InputEvent *event);
     static void drawHermesXShareChannelFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     void drawHermesXShareChannel(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     bool handleRecentTextMessageListInput(const InputEvent *event);
@@ -750,7 +752,10 @@ class Screen : public concurrency::OSThread
         UiMenu,
         UiBrightnessSelect,
         UiScreenSleepSelect,
+        UiRotarySwapSelect,
         NodeMenu,
+        NodeDatabaseMenu,
+        NodeDatabaseResetSelect,
         MqttMenu,
         MqttMapReportMenu,
         MqttMapPrecisionSelect,
@@ -786,6 +791,12 @@ class Screen : public concurrency::OSThread
     bool hermesActionStealthConfirmVisible = false;
     uint8_t hermesActionStealthConfirmSelected = 0; // 0=No, 1=Yes
     uint32_t hermesActionStealthConfirmShownAtMs = 0;
+    bool lowMemoryReminderVisible = false;
+    uint8_t lowMemoryReminderSelected = 1; // 0=later, 1=go clean
+    uint32_t lowMemoryReminderSuppressUntilMs = 0;
+    uint32_t lowMemoryReminderTriggerFree = 0;
+    uint32_t lowMemoryReminderTriggerLargest = 0;
+    uint32_t hermesSetupNodeCleanupAgeSeconds = 12U * 60U * 60U;
     bool hasUnreadTextMessage = false;
     uint8_t notifyingTextMessageFrame = UINT8_MAX;
     uint8_t hermesSetupKeyRow = 0;

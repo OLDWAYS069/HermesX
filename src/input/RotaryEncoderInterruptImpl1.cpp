@@ -25,11 +25,20 @@ bool RotaryEncoderInterruptImpl1::init()
     uint8_t pinA = moduleConfig.canned_message.inputbroker_pin_a;
     uint8_t pinB = moduleConfig.canned_message.inputbroker_pin_b;
     uint8_t pinPress = moduleConfig.canned_message.inputbroker_pin_press;
-    // HermesX: rotEnc1 is always interpreted as CW/CCW/Press -> Down/Up/Select.
-    // Ignore configurable event remap here to avoid accidental Cancel/Back behavior.
-    const char eventCw = static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
-    const char eventCcw = static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
-    const char eventPressed = static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
+    const char configuredCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
+    const char configuredCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
+    const char configuredPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
+    const char eventNone = static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_NONE);
+    const char eventCw =
+        (configuredCw == eventNone) ? static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN)
+                                    : configuredCw;
+    const char eventCcw =
+        (configuredCcw == eventNone) ? static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP)
+                                     : configuredCcw;
+    const char eventPressed =
+        (configuredPress == eventNone)
+            ? static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT)
+            : configuredPress;
 
     // moduleConfig.canned_message.ext_notification_module_output
     RotaryEncoderInterruptBase::init(pinA, pinB, pinPress, eventCw, eventCcw, eventPressed,

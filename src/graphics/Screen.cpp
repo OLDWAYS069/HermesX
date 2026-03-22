@@ -4894,6 +4894,89 @@ static void drawHermesGpsFallbackCornerMapOutline(OLEDDisplay *display, int16_t 
     display->drawCircle(earthCx - earthR / 2, earthCy + earthR / 3, landR3);
 }
 
+void Screen::drawLowMemoryReminderOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
+{
+    (void)state;
+    if (!display || !screen || !screen->lowMemoryReminderVisible) {
+        return;
+    }
+
+    const int16_t width = display->getWidth();
+    const int16_t height = display->getHeight();
+    const int16_t boxX = 4;
+    const int16_t boxY = 4;
+    const int16_t boxW = width - 8;
+    const int16_t boxH = height - 8;
+    const int16_t titleBarH = 12;
+    const int16_t bodyX = boxX + 5;
+    const int16_t bodyW = boxW - 10;
+    const int16_t bodyY = boxY + titleBarH + 3;
+    const int16_t optionH = 10;
+    const int16_t optionY = boxY + boxH - optionH - 2;
+    const int16_t optionW = (boxW - 13) / 2;
+    const int16_t leftX = boxX + 4;
+    const int16_t rightX = leftX + optionW + 5;
+
+#if defined(USE_EINK)
+    const auto dialogBg = EINK_WHITE;
+    const auto dialogFg = EINK_BLACK;
+#else
+    const auto dialogBg = OLEDDISPLAY_COLOR::WHITE;
+    const auto dialogFg = OLEDDISPLAY_COLOR::BLACK;
+#endif
+
+    display->setColor(dialogBg);
+    display->fillRect(boxX, boxY, boxW, boxH);
+    display->setColor(dialogFg);
+    display->drawRect(boxX, boxY, boxW, boxH);
+    display->fillRect(boxX + 1, boxY + 1, boxW - 2, titleBarH);
+    display->setColor(dialogBg);
+    const char *title = u8"記憶體警告";
+    const int titleW = graphics::HermesX_zh::stringAdvance(title, graphics::HermesX_zh::GLYPH_WIDTH, display);
+    int16_t titleX = boxX + (boxW - titleW) / 2;
+    if (titleX < boxX + 2) {
+        titleX = boxX + 2;
+    }
+    graphics::HermesX_zh::drawMixedBounded(*display, titleX, boxY + 1, boxW - 4, title, graphics::HermesX_zh::GLYPH_WIDTH,
+                                           FONT_HEIGHT_SMALL, nullptr);
+    display->setColor(dialogFg);
+
+    const int advance = graphics::HermesX_zh::GLYPH_WIDTH - 1;
+    const int16_t lineHeight = 11;
+    graphics::HermesX_zh::drawMixedBounded(*display, bodyX, bodyY, bodyW, u8"記憶體偏低，可能導致藍牙或收發異常。", advance,
+                                           lineHeight, nullptr);
+    graphics::HermesX_zh::drawMixedBounded(*display, bodyX, bodyY + lineHeight, bodyW, u8"請前往 裝置管理 > 節點資料庫 清理。",
+                                           advance, lineHeight, nullptr);
+
+    char heapBuf[64];
+    snprintf(heapBuf, sizeof(heapBuf), "Heap %lu/%lu", static_cast<unsigned long>(screen->lowMemoryReminderTriggerFree),
+             static_cast<unsigned long>(screen->lowMemoryReminderTriggerLargest));
+    graphics::HermesX_zh::drawMixedBounded(*display, bodyX, bodyY + lineHeight * 2, bodyW, heapBuf, advance, lineHeight,
+                                           nullptr);
+
+    auto drawOption = [&](int16_t optionX, const char *label, bool selected) {
+        if (selected) {
+            display->setColor(dialogFg);
+            display->fillRect(optionX, optionY, optionW, optionH);
+            display->setColor(dialogBg);
+        } else {
+            display->setColor(dialogFg);
+            display->drawRect(optionX, optionY, optionW, optionH);
+        }
+        const int textW = graphics::HermesX_zh::stringAdvance(label, graphics::HermesX_zh::GLYPH_WIDTH, display);
+        int16_t textX = optionX + (optionW - textW) / 2;
+        if (textX < optionX + 1) {
+            textX = optionX + 1;
+        }
+        graphics::HermesX_zh::drawMixedBounded(*display, textX, optionY + 1, optionW - 2, label,
+                                               graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
+        display->setColor(dialogFg);
+    };
+
+    drawOption(leftX, u8"稍後", screen->lowMemoryReminderSelected == 0);
+    drawOption(rightX, u8"前往清理", screen->lowMemoryReminderSelected != 0);
+}
+
 static void drawHermesGpsNeonAsciiText(OLEDDisplay *display,
                                        int16_t drawX,
                                        int16_t drawY,
@@ -6255,20 +6338,24 @@ constexpr uint8_t kMainActionVisibleSlots = 3;
 constexpr uint8_t kMainActionCount = 9;
 constexpr uint32_t kStealthConfirmArmMs = 3000;
 constexpr uint32_t kStealthWakeMs = 1000;
-
+constexpr uint32_t kLowMemoryReminderFreeThreshold = 6 * 1024;
+constexpr uint32_t kLowMemoryReminderLargestThreshold = 4 * 1024;
+constexpr uint32_t kLowMemoryReminderSuppressMs = 5 * 60 * 1000;
 #if HERMESX_CIV_DISABLE_EMAC
-static const char *kSetupRootItems[] = {u8"返回", u8"UI設定", u8"裝置設定", u8"罐頭訊息", u8"儲存並重新開機"};
+static const char *kSetupRootItems[] = {u8"返回", u8"UI設定", u8"裝置管理", u8"罐頭訊息", u8"儲存並重新開機"};
 #else
-static const char *kSetupRootItems[] = {u8"返回", u8"EMAC設定", u8"UI設定", u8"裝置設定", u8"罐頭訊息",
+static const char *kSetupRootItems[] = {u8"返回", u8"EMAC設定", u8"UI設定", u8"裝置管理", u8"罐頭訊息",
                                         u8"儲存並重新開機"};
 #endif
 static const uint8_t kSetupRootCount = sizeof(kSetupRootItems) / sizeof(kSetupRootItems[0]);
 static const char *kSetupEmacItems[] = {u8"返回", u8"設定密碼A", u8"設定密碼B", u8"顯示密碼", u8"EMAC解除"};
 static const uint8_t kSetupEmacCount = sizeof(kSetupEmacItems) / sizeof(kSetupEmacItems[0]);
-static const uint8_t kSetupNodeMenuCount = 7;
+static const uint8_t kSetupNodeMenuCount = 8;
 static const uint8_t kSetupPowerMenuCount = 3;
-static const uint8_t kSetupUiMenuCount = 5;
+static const uint8_t kSetupUiMenuCount = 6;
 static const uint8_t kSetupMqttMenuCount = 4;
+static const uint8_t kSetupNodeDatabaseMenuCount = 2;
+static const uint8_t kSetupNodeDatabaseResetCount = 4;
 static const uint8_t kSetupMqttMapReportMenuCount = 4;
 static const uint8_t kSetupChannelDetailMenuCount = 5;
 static const uint8_t kSetupLoraMenuCount = 8;
@@ -7097,6 +7184,9 @@ static bool enableStealthMode()
         gStealthRuntimeState.sirenEnabled = hermesXEmUiModule->isSirenEnabled();
     }
     gStealthRuntimeState.ledHeartbeatDisabled = config.device.led_heartbeat_disabled;
+
+    playLowMemoryAlert();
+
     changed = applyStealthModeSettings() || changed;
     syncRetainedStealthState();
     persistStealthStateToFile();
@@ -9161,7 +9251,12 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
         String brightnessLine = String(u8"狀態燈亮度: ") + getSetupBrightnessLabel(ledBrightness);
         String ambientLine = String(u8"狀態燈設定: ") + (ambientEnabled ? u8"開" : u8"關");
         String screenSleepLine = String(u8"螢幕休眠: ") + getSetupScreenSleepLabel(getSetupCurrentScreenSleepSeconds());
-        const char *items[] = {u8"返回", label.c_str(), brightnessLine.c_str(), ambientLine.c_str(), screenSleepLine.c_str()};
+        const bool rotarySwapped =
+            moduleConfig.canned_message.inputbroker_event_cw ==
+            meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP;
+        String rotarySwapLine = String(u8"旋鈕對調: ") + (rotarySwapped ? u8"開" : u8"關");
+        const char *items[] = {u8"返回", label.c_str(), brightnessLine.c_str(), ambientLine.c_str(), screenSleepLine.c_str(),
+                               rotarySwapLine.c_str()};
         drawSetupList(display, width, height, u8"UI設定", items, kSetupUiMenuCount, hermesSetupSelected, hermesSetupOffset);
         drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
         return;
@@ -9191,6 +9286,14 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
         return;
     }
 
+    if (hermesSetupPage == HermesFastSetupPage::UiRotarySwapSelect) {
+        applyPaletteList(3);
+        const char *items[] = {u8"返回", u8"關閉", u8"開啟"};
+        drawSetupList(display, width, height, u8"旋鈕對調", items, 3, hermesSetupSelected, hermesSetupOffset);
+        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        return;
+    }
+
     if (hermesSetupPage == HermesFastSetupPage::EmacMenu) {
         applyPaletteList(kSetupEmacCount);
         drawSetupList(display, width, height, u8"EMAC設定", kSetupEmacItems, kSetupEmacCount, hermesSetupSelected,
@@ -9204,8 +9307,27 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
         const bool mqttEnabled = moduleConfig.mqtt.enabled;
         String btLine = String(u8"藍牙: ") + (config.bluetooth.enabled ? u8"開" : u8"關");
         String mqttLine = String("MQTT: ") + (mqttEnabled ? u8"開" : u8"關");
-        const char *items[] = {u8"返回", "LoRa", u8"GPS", mqttLine.c_str(), u8"頻道設定", btLine.c_str(), u8"電源管理"};
-        drawSetupList(display, width, height, u8"裝置設定", items, kSetupNodeMenuCount, hermesSetupSelected, hermesSetupOffset);
+        const char *items[] = {u8"返回", "LoRa", u8"GPS", mqttLine.c_str(), u8"頻道設定", btLine.c_str(), u8"電源管理",
+                               u8"節點資料庫"};
+        drawSetupList(display, width, height, u8"裝置管理", items, kSetupNodeMenuCount, hermesSetupSelected, hermesSetupOffset);
+        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        return;
+    }
+
+    if (hermesSetupPage == HermesFastSetupPage::NodeDatabaseMenu) {
+        applyPaletteList(kSetupNodeDatabaseMenuCount);
+        const char *items[] = {u8"返回", u8"重設資料庫"};
+        drawSetupList(display, width, height, u8"節點資料庫", items, kSetupNodeDatabaseMenuCount, hermesSetupSelected,
+                      hermesSetupOffset);
+        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        return;
+    }
+
+    if (hermesSetupPage == HermesFastSetupPage::NodeDatabaseResetSelect) {
+        applyPaletteList(kSetupNodeDatabaseResetCount);
+        const char *items[] = {u8"返回", u8"清除12hr未更新", u8"清除24hr未更新", u8"清除48hr未更新"};
+        drawSetupList(display, width, height, u8"重設資料庫", items, kSetupNodeDatabaseResetCount, hermesSetupSelected,
+                      hermesSetupOffset);
         drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
         return;
     }
@@ -10446,6 +10568,20 @@ int32_t Screen::runOnce()
         setFastFramerate();
     }
 
+    if (!lowMemoryReminderVisible && showingNormalScreen && screenOn && millis() >= lowMemoryReminderSuppressUntilMs) {
+        const uint32_t freeHeap = memGet.getFreeHeap();
+        const uint32_t largest = memGet.getLargestFreeBlock();
+        if (freeHeap < kLowMemoryReminderFreeThreshold || largest < kLowMemoryReminderLargestThreshold) {
+            lowMemoryReminderVisible = true;
+            lowMemoryReminderSelected = 1;
+            lowMemoryReminderTriggerFree = freeHeap;
+            lowMemoryReminderTriggerLargest = largest;
+            playLowMemoryAlert();
+            LOG_WARN("[LowMemory] reminder trigger free=%u largest=%u", freeHeap, largest);
+            setFastFramerate();
+        }
+    }
+
     if (!screenOn) { // If we didn't just wake and the screen is still off, then
                      // stop updating until it is on again
         enabled = false;
@@ -11229,6 +11365,7 @@ void Screen::setFrames(FrameFocus focus)
         drawFunctionOverlay,
         drawIncomingTextPopupOverlay,
         drawIncomingNodePopupOverlay,
+        drawLowMemoryReminderOverlay,
     };
     static const int functionOverlayCount = sizeof(functionOverlay) / sizeof(functionOverlay[0]);
     ui->setOverlays(functionOverlay, functionOverlayCount);
@@ -12249,6 +12386,70 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
     return true;
 }
 
+bool Screen::handleLowMemoryReminderInput(const InputEvent *event)
+{
+    if (!event || !lowMemoryReminderVisible) {
+        return false;
+    }
+
+    const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
+    const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
+    const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
+    const bool isLeft =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
+    const bool isRight =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
+    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
+    const bool isDown =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
+    const bool isSelect =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
+    const bool isCancel =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
+    const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
+    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
+    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
+
+    if (isLeft || isUp || isCcw) {
+        lowMemoryReminderSelected = 0;
+        setFastFramerate();
+        return true;
+    }
+    if (isRight || isDown || isCw) {
+        lowMemoryReminderSelected = 1;
+        setFastFramerate();
+        return true;
+    }
+    if (isCancel) {
+        lowMemoryReminderVisible = false;
+        lowMemoryReminderSuppressUntilMs = millis() + kLowMemoryReminderSuppressMs;
+        setFastFramerate();
+        return true;
+    }
+    if (!(isSelect || isPress)) {
+        return true;
+    }
+
+    lowMemoryReminderVisible = false;
+    if (lowMemoryReminderSelected == 0) {
+        lowMemoryReminderSuppressUntilMs = millis() + kLowMemoryReminderSuppressMs;
+        setFastFramerate();
+        return true;
+    }
+
+    hermesSetupPage = HermesFastSetupPage::NodeDatabaseMenu;
+    hermesSetupSelected = 1;
+    hermesSetupOffset = 0;
+    hermesSetupLastNavAtMs = 0;
+    hermesSetupLastNavDir = 0;
+    if (ui && framesetInfo.positions.setup < framesetInfo.frameCount) {
+        ui->switchToFrame(framesetInfo.positions.setup);
+    }
+    setFastFramerate();
+    return true;
+}
+
 bool Screen::handleHermesFastSetupInput(const InputEvent *event)
 {
     if (!event) {
@@ -12655,6 +12856,8 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                 itemName = "Bluetooth";
             } else if (hermesSetupSelected == 6) {
                 itemName = "Power";
+            } else if (hermesSetupSelected == 7) {
+                itemName = "NodeDB";
             }
             LOG_INFO("[HermesFastSetup] select=%d item=%s", hermesSetupSelected, itemName);
             setFastFramerate();
@@ -12687,12 +12890,74 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                 }
             } else if (hermesSetupSelected == 6) {
                 resetMenu(HermesFastSetupPage::PowerMenu);
+            } else if (hermesSetupSelected == 7) {
+                resetMenu(HermesFastSetupPage::NodeDatabaseMenu);
             }
             setFastFramerate();
             return true;
         }
         if (isCancel) {
             resetMenu(HermesFastSetupPage::Root);
+            setFastFramerate();
+            return true;
+        }
+        return false;
+    }
+
+    if (hermesSetupPage == HermesFastSetupPage::NodeDatabaseMenu) {
+        if (handleMenuNav(kSetupNodeDatabaseMenuCount)) {
+            setFastFramerate();
+            return true;
+        }
+        if (isSelect || isPress) {
+            if (hermesSetupSelected == 0) {
+                resetMenu(HermesFastSetupPage::NodeMenu);
+            } else if (hermesSetupSelected == 1) {
+                resetMenu(HermesFastSetupPage::NodeDatabaseResetSelect);
+            }
+            setFastFramerate();
+            return true;
+        }
+        if (isCancel) {
+            resetMenu(HermesFastSetupPage::NodeMenu);
+            setFastFramerate();
+            return true;
+        }
+        return false;
+    }
+
+    if (hermesSetupPage == HermesFastSetupPage::NodeDatabaseResetSelect) {
+        if (handleMenuNav(kSetupNodeDatabaseResetCount)) {
+            setFastFramerate();
+            return true;
+        }
+        if (isSelect || isPress) {
+            if (hermesSetupSelected == 0) {
+                resetMenu(HermesFastSetupPage::NodeDatabaseMenu);
+            } else {
+                uint32_t ageSeconds = 0;
+                if (hermesSetupSelected == 1) {
+                    ageSeconds = 12U * 60U * 60U;
+                } else if (hermesSetupSelected == 2) {
+                    ageSeconds = 24U * 60U * 60U;
+                } else if (hermesSetupSelected == 3) {
+                    ageSeconds = 48U * 60U * 60U;
+                }
+                if (ageSeconds > 0 && nodeDB) {
+                    hermesSetupNodeCleanupAgeSeconds = ageSeconds;
+                    const int removed = nodeDB->cleanupNodesOlderThan(ageSeconds, true);
+                    char toastBuf[48];
+                    snprintf(toastBuf, sizeof(toastBuf), u8"已清除 %d 筆節點", removed);
+                    hermesSetupToast = toastBuf;
+                    hermesSetupToastUntilMs = millis() + 1800;
+                }
+                resetMenu(HermesFastSetupPage::NodeDatabaseMenu);
+            }
+            setFastFramerate();
+            return true;
+        }
+        if (isCancel) {
+            resetMenu(HermesFastSetupPage::NodeDatabaseMenu);
             setFastFramerate();
             return true;
         }
@@ -13083,6 +13348,8 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                 itemName = "狀態燈設定";
             } else if (hermesSetupSelected == 4) {
                 itemName = "螢幕休眠時間";
+            } else if (hermesSetupSelected == 5) {
+                itemName = "旋鈕對調";
             }
             LOG_INFO("[HermesFastSetup] select=%d item=%s", hermesSetupSelected, itemName);
             setFastFramerate();
@@ -13124,6 +13391,11 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
             } else if (hermesSetupSelected == 4) {
                 const uint8_t selected = getSetupScreenSleepSelection(getSetupCurrentScreenSleepSeconds());
                 enterMenu(HermesFastSetupPage::UiScreenSleepSelect, kSetupScreenSleepCount + 1, selected);
+            } else if (hermesSetupSelected == 5) {
+                const bool rotarySwapped =
+                    moduleConfig.canned_message.inputbroker_event_cw ==
+                    meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP;
+                enterMenu(HermesFastSetupPage::UiRotarySwapSelect, 3, rotarySwapped ? 2 : 1);
             } else if (hermesSetupSelected == 0) {
                 resetMenu(HermesFastSetupPage::Root);
             }
@@ -13132,6 +13404,38 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         }
         if (isCancel) {
             resetMenu(HermesFastSetupPage::Root);
+            setFastFramerate();
+            return true;
+        }
+        return false;
+    }
+
+    if (hermesSetupPage == HermesFastSetupPage::UiRotarySwapSelect) {
+        if (handleMenuNav(3)) {
+            setFastFramerate();
+            return true;
+        }
+        if (isSelect || isPress) {
+            if (hermesSetupSelected == 0) {
+                resetMenu(HermesFastSetupPage::UiMenu);
+            } else {
+                const bool swapEnabled = (hermesSetupSelected == 2);
+                moduleConfig.canned_message.inputbroker_event_cw =
+                    swapEnabled ? meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP
+                                : meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN;
+                moduleConfig.canned_message.inputbroker_event_ccw =
+                    swapEnabled ? meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN
+                                : meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP;
+                saveSetupSegments(SEGMENT_MODULECONFIG);
+                hermesSetupToast = swapEnabled ? u8"旋鈕對調已啟用" : u8"旋鈕對調已關閉";
+                hermesSetupToastUntilMs = millis() + 1500;
+                resetMenu(HermesFastSetupPage::UiMenu);
+            }
+            setFastFramerate();
+            return true;
+        }
+        if (isCancel) {
+            resetMenu(HermesFastSetupPage::UiMenu);
             setFastFramerate();
             return true;
         }
@@ -13887,6 +14191,10 @@ int Screen::handleInputEvent(const InputEvent *event)
     if (showingNormalScreen) {
         const uint8_t currentFrame = this->ui->getUiState()->currentFrame;
         const bool hasMenuFooter = shouldShowHermesXMenuFooter(currentFrame);
+
+        if (handleLowMemoryReminderInput(event)) {
+            return 0;
+        }
 
         if (handleIncomingNodePopupInput(event)) {
             return 0;

@@ -1,0 +1,57 @@
+********************************************************************************
+Obsolete PIO Core v6.1.18 is used (previous was 6.1.19)
+Please remove multiple PIO Cores from a system:
+https://docs.platformio.org/en/latest/core/installation/troubleshooting.html
+********************************************************************************
+--- Terminal on /dev/cu.usbmodem4827E2E5B99C1 | 115200 8-N-1
+--- Available filters and text transformations: colorize, debug, default, direct, esp32_c3_exception_decoder, esp32_exception_decoder, hexlify, log2file, nocontrol, printable, send_on_enter, time
+--- More details at https://bit.ly/pio-monitor-filters
+--- Quit: Ctrl+C | Menu: Ctrl+T | Help: Ctrl+T followed by Ctrl+H
+[34mDEBUG [0m| 22:06:40 576 [Screen] [34m[DirectHome] redraw time='22:06:40' force=0 repaintClockBackground=0 lastTimeValid=1
+[0m[34mDEBUG [0m| 22:06:40 576 [Screen] [34m[DirectHome] renderDirectNeonClock geometryChanged=0 forceFullRedraw=0 timeChanged=1 region=152x37
+[0m[34mDEBUG [0m| 22:06:40 576 [Screen] [34m[DirectHome] DirectHome after redraw glyphCaches=11 glyphTile=33x37 clockRegion=152x37 buildCount=11
+[0m[34mDEBUG [0m| 22:06:40 576 [Screen] [34m[Heap] DirectHome after redraw free=31260 min=27156 largest=16372 psram=0
+[0m[34mDEBUG [0m| 22:06:40 576 [NimbleBluetooth] [34mNimbleBluetooth: handling ToRadio packet, fromPhoneQueueSize=1
+[0m[34mDEBUG [0m| 22:06:40 576 [NimbleBluetooth] [34mGot MqttClientProxy message
+[0m[33mWARN  [0m| 22:06:40 576 [NimbleBluetooth] [33mMqttClientProxy received but proxy is not enabled, no channels have up/downlink, or map reporting not enabled
+[0m[34mDEBUG [0m| 22:06:40 577 [NimbleBluetooth] [34mNimbleBluetooth: handling ToRadio packet, fromPhoneQueueSize=1
+[0m[34mDEBUG [0m| 22:06:40 577 [NimbleBluetooth] [34mGot MqttClientProxy message
+[0m[33mWARN  [0m| 22:06:40 577 [NimbleBluetooth] [33mMqttClientProxy received but proxy is not enabled, no channels have up/downlink, or map reporting not enabled
+[0m[34mDEBUG [0m| 22:06:40 577 [NimbleBluetooth] [34mNimbleBluetooth: handling ToRadio packet, fromPhoneQueueSize=1
+[0m[34mDEBUG [0m| 22:06:40 577 [NimbleBluetooth] [34mGot MqttClientProxy message
+[0m[33mWARN  [0m| 22:06:40 577 [NimbleBluetooth] [33mMqttClientProxy received but proxy is not enabled, no channels have up/downlink, or map reporting not enabled
+[0m[34mDEBUG [0m| 22:06:41 577 [Screen] [34m[DirectHome] redraw time='22:06:41' force=0 repaintClockBackground=0 lastTimeValid=1
+[0m[34mDEBUG [0m| 22:06:41 577 [Screen] [34m[DirectHome] renderDirectNeonClock geometryChanged=0 forceFullRedraw=0 timeChanged=1 region=152x37
+[0m[34mDEBUG [0m| 22:06:41 577 [Screen] [34m[DirectHome] DirectHome after redraw glyphCaches=11 glyphTile=33x37 clockRegion=152x37 buildCount=11
+[0m[34mDEBUG [0m| 22:06:41 577 [Screen] [34m[Heap] DirectHome after redraw free=31260 min=27156 largest=16372 psram=0
+[0m[34mDEBUG [0m| 22:06:41 577 [NimbleBluetooth] [34mNimbleBluetooth: handling ToRadio packet, fromPhoneQueueSize=1
+[0m[34mDEBUG [0m| 22:06:41 577 [NimbleBluetooth] [34mGot MqttClientProxy message
+[0m[33mWARN  [0m| 22:06:41 577 [NimbleBluetooth] [33mMqttClientProxy received but proxy is not enabled, no channels have up/downlink, or map reporting not enabled
+[0m[32mINFO  [0m| 22:06:41 578 [CannedMessage] [32m[Screen] UIFrameEvent action=2 before=3
+[0m[34mDEBUG [0m| 22:06:41 578 [CannedMessage] [34mShow standard frames
+[0m[34mDEBUG [0m| 22:06:41 578 [CannedMessage] [34mShow 0 module frames
+[0m[34mDEBUG [0m| 22:06:41 578 [CannedMessage] [34mTotal frame count: 203
+[0m[34mDEBUG [0m| 22:06:41 578 [CannedMessage] [34mAdded modules.  numframes: 0
+[0m[34mDEBUG [0m| 22:06:41 578 [CannedMessage] [34mFinished build frames. numframes: 8
+[0m[32mINFO  [0m| 22:06:41 578 [CannedMessage] [32m[Screen] UIFrameEvent done action=2 after=2
+[0m[32mINFO  [0m| 22:06:41 578 [CannedMessage] [32m[CannedMessage] restoreReturnTarget=0 frame=255
+[0m[32mINFO  [0m| 22:06:41 578 [CannedMessage] [32m[CannedMessage] restoreReturnTarget fallback -> home
+[0m[34mDEBUG [0m| 22:06:41 578 [NimbleBluetooth] [34mNimbleBluetooth: handling ToRadio packet, fromPhoneQueueSize=1
+[0m[34mDEBUG [0m| 22:06:41 578 [NimbleBluetooth] [34mGot MqttClientProxy message
+[0m[33mWARN  [0m| 22:06:41 578 [NimbleBluetooth] [33mMqttClientProxy received but proxy is not enabled, no channels have up/downlink, or map reporting not enabled
+[0m[34mDEBUG [0m| 22:06:42 578 [NimbleBluetooth] [34mNimbleBluetooth: handling ToRadio packet, fromPhoneQueueSize=1
+[0m[34mDEBUG [0m| 22:06:42 578 [NimbleBluetooth] [34mGot MqttClientProxy message
+[0m[33mWARN  [0m| 22:06:42 578 [NimbleBluetooth] [33mMqttClientProxy received but proxy is not enabled, no channels have up/downlink, or map reporting not enabled
+[0m[34mDEBUG [0m| 22:06:42 578 [Screen] [34m[DirectHome] redraw time='22:06:42' force=0 repaintClockBackground=0 lastTimeValid=1
+[0m[34mDEBUG [0m| 22:06:42 578 [Screen] [34m[DirectHome] renderDirectNeonClock geometryChanged=0 forceFullRedraw=0 timeChanged=1 region=152x37
+[0m[34mDEBUG [0m| 22:06:42 578 [Screen] [34m[DirectHome] DirectHome after redraw glyphCaches=11 glyphTile=33x37 clockRegion=152x37 buildCount=11
+[0m[34mDEBUG [0m| 22:06:42 578 [Screen] [34m[Heap] DirectHome after redraw free=31104 min=27156 largest=16372 psram=0
+[0m[34mDEBUG [0m| 22:06:43 579 [Screen] [34m[DirectHome] redraw time='22:06:43' force=0 repaintClockBackground=0 lastTimeValid=1
+[0m[34mDEBUG [0m| 22:06:43 579 [Screen] [34m[DirectHome] renderDirectNeonClock geometryChanged=0 forceFullRedraw=0 timeChanged=1 region=152x37
+[0m[34mDEBUG [0m| 22:06:43 579 [Screen] [34m[DirectHome] DirectHome after redraw glyphCaches=11 glyphTile=33x37 clockRegion=152x37 buildCount=11
+[0m[34mDEBUG [0m| 22:06:43 579 [Screen] [34m[Heap] DirectHome after redraw free=31100 min=27156 largest=16372 psram=0
+[0m[34mDEBUG [0m| 22:06:44 580 [Screen] [34m[DirectHome] redraw time='22:06:44' force=0 repaintClockBackground=0 lastTimeValid=1
+[0m[34mDEBUG [0m| 22:06:44 580 [Screen] [34m[DirectHome] renderDirectNeonClock geometryChanged=0 forceFullRedraw=0 timeChanged=1 region=152x37
+[0m[34mDEBUG [0m| 22:06:44 580 [Screen] [34m[DirectHome] DirectHome after redraw glyphCaches=11 glyphTile=33x37 clockRegion=152x37 buildCount=11
+[0m[34mDEBUG [0m| 22:06:44 580 [Screen] [34m[Heap] DirectHome after redraw free=31280 min=27156 largest=16372 psram=0
+[0m

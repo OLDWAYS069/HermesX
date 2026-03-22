@@ -257,6 +257,9 @@ class NodeDB
     bool restorePreferences(meshtastic_AdminMessage_BackupLocation location,
                             int restoreWhat = SEGMENT_CONFIG | SEGMENT_MODULECONFIG | SEGMENT_DEVICESTATE | SEGMENT_CHANNELS);
 
+    int cleanupNodesOlderThan(uint32_t ageSeconds, bool save = true);
+    int cleanupStaleNodes(bool save = true);
+
   private:
     bool duplicateWarned = false;
     uint32_t lastNodeDbSave = 0;    // when we last saved our db to flash
