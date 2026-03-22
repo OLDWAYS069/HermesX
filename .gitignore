@@ -46,3 +46,4 @@ data/prefs/lighthouse_whitelist.txt
 # local build/debug artifacts
 build.log
 tmp/
+logs/monitor/
