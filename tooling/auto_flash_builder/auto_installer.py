@@ -7,6 +7,7 @@ Meshtastic 自動刷寫與設定工具
 from __future__ import annotations
 
 import argparse
+import ctypes
 import importlib.util
 import json
 import logging
@@ -28,6 +29,17 @@ import serial.tools.list_ports
 LOGGER = logging.getLogger("meshtastic_auto_flash")
 INTERNAL_HELPER_FLAG = "--internal-cli"
 LOG_LINE_DELAY_SECONDS = 0.5
+STARTUP_MUSIC_VOLUME = 0.2
+STARTUP_MUSIC_DUCK_FACTOR = 0.5
+PROMPT_SOUND_VOLUME = 0.8
+SUCCESS_SOUND_FILENAMES = ("success.mp3", "freesound_community-success-fanfare-trumpets-6185.mp3")
+ERROR_SOUND_FILENAMES = ("error.mp3", "universfield-error-010-206498.mp3")
+WARNING_SOUND_FILENAMES = ("warning.mp3", "freesound_community-beep-warning-6387.mp3")
+HERMESX_SUCCESS_TONES = ((587, 100), (784, 120))
+HERMESX_FAILED_TONES = ((659, 80), (554, 100))
+WARNING_TONES = ((988, 120), (0, 80), (988, 120))
+STARTUP_MUSIC_PROCESS = None
+STARTUP_MUSIC_CONTROL_PATH = None
 
 
 def normalize_exit_code(code: object) -> int:
@@ -38,6 +50,19 @@ def normalize_exit_code(code: object) -> int:
     if isinstance(code, int):
         return code
     return 1
+
+
+def set_windows_console_green() -> None:
+    if os.name != "nt":
+        return
+    try:
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-11)
+        if handle in (0, -1):
+            return
+        kernel32.SetConsoleTextAttribute(handle, 0x0A)
+    except Exception:
+        pass
 
 
 def run_meshtastic_entrypoint(args: list[str]) -> int:
@@ -67,6 +92,257 @@ def run_esptool_entrypoint(args: list[str]) -> int:
         sys.argv = original_argv
 
 
+def is_windows_process_running(pid: int) -> bool:
+    if os.name != "nt" or pid <= 0:
+        return False
+    try:
+        kernel32 = ctypes.windll.kernel32
+        process_handle = kernel32.OpenProcess(0x00100000, False, pid)
+        if not process_handle:
+            return False
+        try:
+            wait_result = kernel32.WaitForSingleObject(process_handle, 0)
+            return wait_result == 0x00000102
+        finally:
+            kernel32.CloseHandle(process_handle)
+    except Exception:
+        return False
+
+
+def load_startup_music_state(control_path: Optional[Path]) -> dict:
+    if control_path is None or not control_path.exists():
+        return {}
+    try:
+        data = json.loads(control_path.read_text(encoding="utf-8").lstrip("\ufeff"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def write_startup_music_state(volume: Optional[float] = None, stop: Optional[bool] = None) -> None:
+    global STARTUP_MUSIC_CONTROL_PATH
+    if STARTUP_MUSIC_CONTROL_PATH is None:
+        return
+    state = load_startup_music_state(STARTUP_MUSIC_CONTROL_PATH)
+    if volume is not None:
+        state["volume"] = max(0.0, min(1.0, float(volume)))
+    if stop is not None:
+        state["stop"] = bool(stop)
+    try:
+        STARTUP_MUSIC_CONTROL_PATH.write_text(json.dumps(state), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def set_startup_music_volume(volume: float) -> None:
+    write_startup_music_state(volume=volume, stop=False)
+
+
+def duck_startup_music() -> None:
+    set_startup_music_volume(STARTUP_MUSIC_VOLUME * STARTUP_MUSIC_DUCK_FACTOR)
+
+
+def restore_startup_music_volume() -> None:
+    set_startup_music_volume(STARTUP_MUSIC_VOLUME)
+
+
+def play_audio_file(
+    path_text: str,
+    volume_text: str = "0.2",
+    parent_pid_text: str = "",
+    control_path_text: str = "",
+    loop_text: str = "0",
+) -> int:
+    music_path = Path(path_text).expanduser()
+    if not music_path.exists():
+        return 2
+    parent_pid = int(parent_pid_text) if str(parent_pid_text).strip().isdigit() else 0
+    control_path = Path(control_path_text).expanduser() if str(control_path_text).strip() else None
+    loop_playback = str(loop_text).strip() in {"1", "true", "True", "yes"}
+    try:
+        os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
+        import pygame
+
+        base_volume = max(0.0, min(1.0, float(volume_text)))
+        current_volume = base_volume
+        pygame.mixer.init()
+        pygame.mixer.music.load(str(music_path.resolve()))
+        pygame.mixer.music.set_volume(current_volume)
+        pygame.mixer.music.play(-1 if loop_playback else 0)
+        while True:
+            if parent_pid and not is_windows_process_running(parent_pid):
+                pygame.mixer.music.stop()
+                return 0
+            state = load_startup_music_state(control_path)
+            if state.get("stop"):
+                pygame.mixer.music.stop()
+                return 0
+            desired_volume = max(0.0, min(1.0, float(state.get("volume", base_volume))))
+            if abs(desired_volume - current_volume) > 0.001:
+                pygame.mixer.music.set_volume(desired_volume)
+                current_volume = desired_volume
+            if not loop_playback and not pygame.mixer.music.get_busy():
+                return 0
+            if loop_playback and not pygame.mixer.music.get_busy():
+                pygame.mixer.music.play(-1)
+            time.sleep(0.2)
+    except Exception:
+        return play_audio_file_with_winmm(path_text, volume_text, parent_pid_text, control_path_text, loop_text)
+    finally:
+        try:
+            import pygame
+
+            pygame.mixer.music.stop()
+            pygame.mixer.quit()
+        except Exception:
+            pass
+
+
+def play_audio_file_with_winmm(
+    path_text: str,
+    volume_text: str = "0.2",
+    parent_pid_text: str = "",
+    control_path_text: str = "",
+    loop_text: str = "0",
+) -> int:
+    if os.name != "nt":
+        return 1
+    music_path = Path(path_text).expanduser()
+    if not music_path.exists():
+        return 2
+    parent_pid = int(parent_pid_text) if str(parent_pid_text).strip().isdigit() else 0
+    control_path = Path(control_path_text).expanduser() if str(control_path_text).strip() else None
+    loop_playback = str(loop_text).strip() in {"1", "true", "True", "yes"}
+    alias = f"codex_startup_{os.getpid()}"
+    winmm = ctypes.windll.winmm
+    status_buffer = ctypes.create_unicode_buffer(256)
+    base_volume = max(0.0, min(1.0, float(volume_text)))
+    current_volume = -1.0
+
+    def send_mci(command: str) -> int:
+        return int(winmm.mciSendStringW(command, None, 0, None))
+
+    def get_status(command: str) -> tuple[int, str]:
+        status_buffer.value = ""
+        error = int(winmm.mciSendStringW(command, status_buffer, len(status_buffer), None))
+        return error, status_buffer.value.strip().lower()
+
+    quoted_path = str(music_path.resolve()).replace('"', '""')
+    open_error = send_mci(f'open "{quoted_path}" type mpegvideo alias {alias}')
+    if open_error != 0:
+        return open_error or 1
+    try:
+        play_error = send_mci(f'play {alias}')
+        if play_error != 0:
+            return play_error
+        while True:
+            if parent_pid and not is_windows_process_running(parent_pid):
+                send_mci(f'stop {alias}')
+                return 0
+            state = load_startup_music_state(control_path)
+            if state.get("stop"):
+                send_mci(f'stop {alias}')
+                return 0
+            desired_volume = max(0.0, min(1.0, float(state.get("volume", base_volume))))
+            if abs(desired_volume - current_volume) > 0.001:
+                send_mci(f'setaudio {alias} volume to {int(desired_volume * 1000)}')
+                current_volume = desired_volume
+            status_error, status = get_status(f'status {alias} mode')
+            if status_error != 0:
+                return status_error
+            if status not in {"playing", "seeking"}:
+                if loop_playback:
+                    send_mci(f'play {alias} from 0')
+                else:
+                    return 0
+            time.sleep(0.2)
+    finally:
+        send_mci(f'close {alias}')
+
+
+def resolve_audio_asset_path(file_names: tuple[str, ...]) -> Optional[Path]:
+    candidates: list[Path] = []
+    if getattr(sys, "frozen", False):
+        executable_dir = Path(sys.executable).resolve().parent
+        candidates.extend(executable_dir / "audio" / name for name in file_names)
+        candidates.extend(executable_dir.parent / "audio" / name for name in file_names)
+    source_dir = Path(__file__).resolve().parent
+    repo_root = source_dir.parent.parent
+    candidates.extend(repo_root / "auto_flash_tool" / "audio" / name for name in file_names)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+    return None
+
+
+def play_prompt_audio(file_names: tuple[str, ...], fallback_sequence: tuple[tuple[int, int], ...]) -> None:
+    audio_path = resolve_audio_asset_path(file_names)
+    if audio_path is not None:
+        play_audio_file(str(audio_path), str(PROMPT_SOUND_VOLUME))
+        return
+    play_tone_sequence(fallback_sequence)
+
+
+def play_warning_prompt_audio() -> None:
+    duck_startup_music()
+    try:
+        play_prompt_audio(WARNING_SOUND_FILENAMES, WARNING_TONES)
+    finally:
+        restore_startup_music_volume()
+
+
+def play_tone_sequence(sequence: tuple[tuple[int, int], ...]) -> None:
+    if os.name != "nt":
+        return
+    try:
+        import winsound
+
+        for frequency, duration_ms in sequence:
+            if frequency <= 0:
+                time.sleep(duration_ms / 1000.0)
+            else:
+                winsound.Beep(max(37, min(32767, frequency)), max(10, duration_ms))
+            time.sleep(0.02)
+    except Exception:
+        try:
+            import winsound
+
+            winsound.MessageBeep(winsound.MB_ICONASTERISK)
+        except Exception:
+            pass
+
+
+def play_hermesx_success_sound() -> None:
+    play_prompt_audio(SUCCESS_SOUND_FILENAMES, HERMESX_SUCCESS_TONES)
+
+
+def play_hermesx_failed_sound() -> None:
+    play_prompt_audio(ERROR_SOUND_FILENAMES, HERMESX_FAILED_TONES)
+
+
+def stop_startup_music() -> None:
+    global STARTUP_MUSIC_PROCESS, STARTUP_MUSIC_CONTROL_PATH
+    write_startup_music_state(stop=True)
+    process = STARTUP_MUSIC_PROCESS
+    if process is not None:
+        try:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+        except Exception:
+            pass
+    STARTUP_MUSIC_PROCESS = None
+    if STARTUP_MUSIC_CONTROL_PATH is not None:
+        try:
+            STARTUP_MUSIC_CONTROL_PATH.unlink(missing_ok=True)
+        except Exception:
+            pass
+    STARTUP_MUSIC_CONTROL_PATH = None
+
+
 def try_run_internal_helper(argv: list[str]) -> Optional[int]:
     if not argv or argv[0] != INTERNAL_HELPER_FLAG:
         return None
@@ -81,6 +357,15 @@ def try_run_internal_helper(argv: list[str]) -> Optional[int]:
         return run_meshtastic_entrypoint(tool_args)
     if tool_name == "esptool":
         return run_esptool_entrypoint(tool_args)
+    if tool_name == "play-music":
+        if not tool_args:
+            print("Missing music path.", file=sys.stderr)
+            return 2
+        volume_text = tool_args[1] if len(tool_args) > 1 else str(STARTUP_MUSIC_VOLUME)
+        parent_pid_text = tool_args[2] if len(tool_args) > 2 else ""
+        control_path_text = tool_args[3] if len(tool_args) > 3 else ""
+        loop_text = tool_args[4] if len(tool_args) > 4 else "0"
+        return play_audio_file(tool_args[0], volume_text, parent_pid_text, control_path_text, loop_text)
 
     print(f"Unknown internal tool: {tool_name}", file=sys.stderr)
     return 2
@@ -88,8 +373,6 @@ def try_run_internal_helper(argv: list[str]) -> Optional[int]:
 
 def pause_before_exit(message: str) -> None:
     print(message, flush=True)
-    if not sys.stdin or not sys.stdin.isatty():
-        return
     try:
         if os.name == "nt":
             import msvcrt
@@ -98,15 +381,51 @@ def pause_before_exit(message: str) -> None:
             return
     except Exception:
         pass
+    if not sys.stdin or not sys.stdin.isatty():
+        return
     try:
         input()
     except EOFError:
         pass
 
 
-def notify_user_attention(message: str) -> None:
-    print("\a", end="", flush=True)
+def run_detached_powershell(command: str) -> None:
+    creation_flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    subprocess.Popen(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Sta", "-WindowStyle", "Hidden", "-Command", command],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=creation_flags,
+    )
+
+
+def notify_user_attention(message: str, title: str = "HermesX AutoFlasher", success: bool = False) -> None:
     print(message, flush=True)
+    stop_startup_music()
+    if success:
+        play_hermesx_success_sound()
+    else:
+        play_hermesx_failed_sound()
+    if os.name != "nt":
+        return
+    try:
+        ps_title = escape_powershell_single_quoted(title)
+        ps_message = escape_powershell_single_quoted(message)
+        run_detached_powershell(
+            "Add-Type -AssemblyName PresentationFramework; "
+            f"[System.Windows.MessageBox]::Show('{ps_message}', '{ps_title}', 'OK', 'Error') | Out-Null"
+        )
+    except Exception:
+        pass
+
+
+def escape_powershell_single_quoted(value: str) -> str:
+    return value.replace("'", "''")
+
+
+def escape_powershell_single_quoted(value: str) -> str:
+    return value.replace("'", "''")
 
 
 @dataclass
@@ -136,6 +455,7 @@ class MeshtasticAutoFlash:
         parser.add_argument("--cli-config-path", default="", help="舊版 CLI 設定檔路徑")
         parser.add_argument("--cli-config-file-name", default="CLI.md", help="舊版 CLI 設定檔檔名")
         parser.add_argument("--export-config-yaml", default="", help="將現有 CLI.md 轉成 YAML 並輸出到指定路徑後結束")
+        parser.add_argument("--startup-music-path", default="", help="\u64ad\u653e\u555f\u52d5 MP3 \u8def\u5f91")
         parser.add_argument("--post-flash-wait-seconds", type=int, default=60, help="刷寫後等待秒數")
         parser.add_argument("--reboot-batch-size", type=int, default=2, help="重啟批次大小")
         parser.add_argument("--reboot-wait-seconds", type=int, default=10, help="重啟等待秒數")
@@ -201,11 +521,59 @@ class MeshtasticAutoFlash:
         except Exception as exc:
             self.log(f"讀取開場 ASCII 圖失敗：{exc}", delay_after=False)
 
+
+    def resolve_startup_music_path(self) -> Optional[Path]:
+        candidates: list[Path] = []
+        if self.args.startup_music_path:
+            candidates.append(Path(self.args.startup_music_path).expanduser())
+        candidates.extend(
+            [
+                self.script_dir / "audio" / "startup.mp3",
+                self.script_dir / "audio" / "BIOS - Zorrovian (youtube).mp3",
+                self.repo_root / "auto_flash_tool" / "audio" / "startup.mp3",
+                self.repo_root / "auto_flash_tool" / "audio" / "BIOS - Zorrovian (youtube).mp3",
+            ]
+        )
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate.resolve()
+        return None
+
+    def play_startup_music(self) -> None:
+        global STARTUP_MUSIC_PROCESS, STARTUP_MUSIC_CONTROL_PATH
+        if os.name != "nt":
+            return
+        music_path = self.resolve_startup_music_path()
+        if not music_path:
+            return
+        stop_startup_music()
+        STARTUP_MUSIC_CONTROL_PATH = self.script_dir / "startup_music_state.json"
+        write_startup_music_state(volume=STARTUP_MUSIC_VOLUME, stop=False)
+        creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:
+            STARTUP_MUSIC_PROCESS = subprocess.Popen(
+                self.build_internal_tool_command(
+                    "play-music",
+                    [str(music_path), str(STARTUP_MUSIC_VOLUME), str(os.getpid()), str(STARTUP_MUSIC_CONTROL_PATH), "1"],
+                ),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=creation_flags,
+            )
+            self.log(f"已開始播放啟動音樂：{music_path.name}", delay_after=False)
+        except Exception as exc:
+            STARTUP_MUSIC_PROCESS = None
+            self.log(f"啟動音樂播放失敗：{exc}", delay_after=False)
+
     @staticmethod
     def get_runtime_dir() -> Path:
         if getattr(sys, "frozen", False):
             executable_dir = Path(sys.executable).resolve().parent
-            if executable_dir.name in {"tool_windows", "tool_macos"}:
+            executable_name = executable_dir.name.lower()
+            if executable_name == "tool_windows" or executable_name.startswith("tool_windows"):
+                return executable_dir.parent
+            if executable_name == "tool_macos" or executable_name.startswith("tool_macos"):
                 return executable_dir.parent
             return executable_dir
         source_dir = Path(__file__).resolve().parent
@@ -306,9 +674,53 @@ class MeshtasticAutoFlash:
             f"找不到設定檔，預期檔名為：{self.args.config_file_name} 或 {self.args.cli_config_file_name}"
         )
 
+    def resolve_cli_source_path_from_config(self, config_path: Path, config: dict) -> Optional[Path]:
+        source = config.get("source") or {}
+        source_name = str(source.get("path") or "").strip()
+        candidates: list[Path] = []
+        if source_name:
+            candidates.extend(
+                [
+                    (config_path.parent / source_name).resolve(),
+                    (self.script_dir / source_name).resolve(),
+                    (self.repo_root / source_name).resolve(),
+                ]
+            )
+        candidates.extend(
+            [
+                (config_path.parent / self.args.cli_config_file_name).resolve(),
+                (self.script_dir / self.args.cli_config_file_name).resolve(),
+                (self.repo_root / self.args.cli_config_file_name).resolve(),
+            ]
+        )
+        seen: set[Path] = set()
+        for candidate in candidates:
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            if candidate.exists():
+                return candidate
+        return None
+
     @staticmethod
     def is_yaml_config(path: Path) -> bool:
         return path.suffix.lower() in {".yaml", ".yml"}
+
+    @staticmethod
+    def looks_like_yaml_config_text(text: str) -> bool:
+        normalized_lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if not normalized_lines:
+            return False
+        yaml_markers = (
+            "config_version:",
+            "source:",
+            "firmware:",
+            "flash:",
+            "channel_urls:",
+            "channel_defaults:",
+            "commands:",
+        )
+        return any(line.startswith(yaml_markers) for line in normalized_lines[:40])
 
     @staticmethod
     def quote_yaml_string(value: object) -> str:
@@ -390,6 +802,7 @@ class MeshtasticAutoFlash:
         timeout = self.args.port_detect_timeout_seconds if self.args.port_detect_timeout_seconds > 0 else 60
         poll = self.args.port_detect_interval_seconds if self.args.port_detect_interval_seconds > 0 else 2
         deadline = time.time() + timeout
+        warning_played = False
         while True:
             try:
                 return self.select_serial_port(preferred_port)
@@ -398,6 +811,9 @@ class MeshtasticAutoFlash:
                     raise
                 if time.time() >= deadline:
                     raise RuntimeError(f"等待 {timeout} 秒後仍未偵測到任何序列埠。") from exc
+                if not warning_played:
+                    play_warning_prompt_audio()
+                    warning_played = True
                 self.log(f"尚未偵測到序列埠，{poll} 秒後重試...")
                 time.sleep(poll)
 
@@ -484,7 +900,10 @@ class MeshtasticAutoFlash:
                     self.log(f"裝置尚未就緒，{poll} 秒後重試...")
                     time.sleep(poll)
             if attempt < tries - 1:
+                play_warning_prompt_audio()
                 self.log(f"等待 {timeout} 秒後裝置仍未就緒，重新偵測序列埠...")
+                self.log("請手動重新開機裝置：按一下 RESET；如果沒有 RESET，請重新插拔 USB。")
+                self.log("等裝置重新出現在電腦上後，工具會自動繼續。")
                 current_port = self.wait_for_serial_port(current_port)
                 self.log(f"重新連線後使用序列埠：{current_port}")
         self.log(f"等待 {timeout} 秒後裝置仍未回應，將不再等待並繼續後續流程。")
@@ -512,7 +931,7 @@ class MeshtasticAutoFlash:
             ],
         )
         if code != 0:
-            raise RuntimeError(f"esptool 執行失敗，結束代碼：{code}")
+            raise RuntimeError(f"esptool ??????????{code}")
 
     @staticmethod
     def get_channels_block_from_text(text: str) -> list[str]:
@@ -646,7 +1065,7 @@ class MeshtasticAutoFlash:
                 last_channel_index = index
         if last_channel_index < 0:
             return list(commands) + list(channel_commands)
-            return list(commands[: last_channel_index + 1]) + list(channel_commands) + list(commands[last_channel_index + 1 :])
+        return list(commands[: last_channel_index + 1]) + list(channel_commands) + list(commands[last_channel_index + 1 :])
 
     def build_config_from_cli_text(self, text: str, source_name: str = "CLI.md") -> dict:
         commands = self.get_meshtastic_commands_from_text(text)
@@ -884,9 +1303,27 @@ class MeshtasticAutoFlash:
 
     def load_runtime_config(self, path: Path) -> tuple[list[MeshtasticCommand], Optional[str], list[MeshtasticCommand], dict]:
         text = self.read_text_file_best_encoding(path)
-        if self.is_yaml_config(path):
+        if self.is_yaml_config(path) or self.looks_like_yaml_config_text(text):
             config = self.load_yaml_text(text)
-            commands = [self.command_from_config_entry(entry) for entry in (config.get("commands") or [])]
+            command_entries = config.get("commands") or []
+            commands = [self.command_from_config_entry(entry) for entry in command_entries]
+            if not commands:
+                self.log(f"YAML config loaded but commands is empty: {path}", delay_after=False)
+                cli_source_path = self.resolve_cli_source_path_from_config(path, config)
+                if cli_source_path:
+                    self.log(f"Falling back to CLI source: {cli_source_path}", delay_after=False)
+                    fallback_config = self.build_config_from_cli_text(self.read_text_file_best_encoding(cli_source_path), cli_source_path.name)
+                    fallback_entries = fallback_config.get("commands") or []
+                    commands = [self.command_from_config_entry(entry) for entry in fallback_entries]
+                    if fallback_entries:
+                        config["commands"] = fallback_entries
+                    if not (config.get("channel_urls") or {}):
+                        config["channel_urls"] = fallback_config.get("channel_urls") or {}
+                    if not (config.get("channel_defaults") or {}):
+                        config["channel_defaults"] = fallback_config.get("channel_defaults") or {}
+                    source = config.get("source") or {}
+                    source["fallback_loaded_from"] = str(cli_source_path)
+                    config["source"] = source
             channel_urls = config.get("channel_urls") or {}
             expected_channel_url = self.get_preferred_channel_url(channel_urls)
             channel_default_commands = self.build_channel_default_commands_from_config(config)
@@ -1284,6 +1721,7 @@ class MeshtasticAutoFlash:
         raise RuntimeError("Missing Python packages:\n" + "\n".join(install_commands))
 
     def run(self) -> None:
+        self.play_startup_music()
         self.print_startup_banner()
         self.ensure_dependencies()
 
@@ -1298,7 +1736,7 @@ class MeshtasticAutoFlash:
         commands, expected_channel_url, channel_default_commands, config = self.load_runtime_config(config_path)
         commands = self.insert_channel_commands_after_url(commands, channel_default_commands)
         if not commands:
-            raise RuntimeError(f"在設定檔中找不到任何 meshtastic 設定命令：{config_path}")
+            raise RuntimeError(f"?????????? meshtastic ?????{config_path}")
 
         firmware_name = ((config.get("firmware") or {}).get("preferred_file") or "").strip()
         firmware_path = self.resolve_firmware_path(firmware_name)
@@ -1313,6 +1751,7 @@ class MeshtasticAutoFlash:
         self.log("下一步將開始刷寫韌體，請不要拔掉 USB，也不要關閉其他需要的驅動程式。")
 
         self.invoke_esptool_flash(initial_port, firmware_path)
+        play_warning_prompt_audio()
         self.log(f"韌體刷寫完成，等待 {self.args.post_flash_wait_seconds} 秒讓裝置重新開機...")
         self.log("等待裝置重新掛載期間，若系統有重新抓驅動或序列埠變更，屬於正常現象。")
         time.sleep(max(0, self.args.post_flash_wait_seconds))
@@ -1361,21 +1800,38 @@ class MeshtasticAutoFlash:
 
 
 def main() -> int:
+    set_windows_console_green()
     helper_exit_code = try_run_internal_helper(sys.argv[1:])
     if helper_exit_code is not None:
         return helper_exit_code
+
+    app: Optional[MeshtasticAutoFlash] = None
+    log_path: Optional[Path] = None
     try:
-        MeshtasticAutoFlash().run()
+        app = MeshtasticAutoFlash()
+        log_path = app.log_path
+        app.run()
+        stop_startup_music()
+        play_hermesx_success_sound()
         pause_before_exit("\u8a2d\u5b9a\u5b8c\u7562!\u73fe\u5728\u4f60\u53ef\u4ee5\u958b\u59cb\u4f60\u7684\u65c5\u7a0b\u4e86!\n\u6309\u4efb\u610f\u9375\u96e2\u958b")
         return 0
     except KeyboardInterrupt:
-        LOGGER.info("使用者已中斷流程。")
+        LOGGER.info("\u4f7f\u7528\u8005\u4e2d\u65b7\u57f7\u884c")
+        notify_user_attention("\u57f7\u884c\u5df2\u88ab\u4f7f\u7528\u8005\u4e2d\u65b7")
+        pause_before_exit("\u5df2\u4e2d\u6b62\uff0c\u6309\u4efb\u610f\u9375\u9000\u51fa")
         return 130
     except Exception as exc:
         LOGGER.error(str(exc))
-        pause_before_exit("失敗，請查看log並提交給團隊做確認，按任意鍵退出")
+        notify_user_attention(f"\u57f7\u884c\u5931\u6557\uff1a{exc}")
+        if log_path is None and app is not None:
+            log_path = app.log_path
+        if log_path is not None:
+            pause_before_exit(
+                f"\u5931\u6557\uff0c\u8acb\u67e5\u770b log \u4e26\u63d0\u4ea4\u7d66\u5718\u968a\u505a\u78ba\u8a8d\nlog \u6a94\u4f4d\u7f6e\uff1a{log_path}\n\u6309\u4efb\u610f\u9375\u9000\u51fa"
+            )
+        else:
+            pause_before_exit("\u5931\u6557\uff0c\u8acb\u67e5\u770b log \u4e26\u63d0\u4ea4\u7d66\u5718\u968a\u505a\u78ba\u8a8d\uff0c\u6309\u4efb\u610f\u9375\u9000\u51fa")
         return 1
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

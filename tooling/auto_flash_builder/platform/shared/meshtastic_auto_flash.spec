@@ -13,7 +13,7 @@ datas = []
 binaries = []
 hiddenimports = []
 
-for package_name in ("meshtastic", "esptool", "serial", "pubsub", "yaml", "google.protobuf"):
+for package_name in ("meshtastic", "esptool", "serial", "pubsub", "yaml", "google.protobuf", "pygame"):
     pkg_datas, pkg_binaries, pkg_hiddenimports = collect_all(package_name)
     datas += pkg_datas
     binaries += pkg_binaries

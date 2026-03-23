@@ -1,60 +1,57 @@
----
-title: '自動設定工具'
----
+# HermesX Auto Flasher
 
-:::info
-本工具尚在開發中，如遇到問題，請聯繫團隊粉絲專頁
-目前版本僅支援Windows作業系統，MacOS及Linus的版本將會在後續推出
-:::
+Windows 用自動刷機工具。
 
-# 自動設定工具
-你是否對繁瑣的設定流程感到厭煩？
-裝置不小心設定壞了怎麼辦？？
+## 目錄說明
 
-來使用我們的 ***自動設定工具*** 吧！
-這是一個 一鍵設定的自動化工具，允許使用者將我們的HermesX恢復成 **預先備份**  好的設定
-
-# 教學影片
-<iframe width="560" height="315" src="https://www.youtube.com/embed/xQYpQ_BsUMA?si=3C6SQx8p1HaAa6jq" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
-
+- `tool_windows/`
+  Windows 執行檔與執行所需 runtime。
+- `Target/`
+  韌體 `.bin` 放置位置。
+- `config.yaml`
+  預設刷機與 Meshtastic 設定。
+- `CLI.md`
+  舊版設定來源，需要時可轉成 `config.yaml`。
+- `audio/`
+  啟動音樂與提示音。
 
 ## 使用方式
 
-1. 下載 [自動設定工具](https://github.com/OLDWAYS069/HermesX/tree/master/auto_flash_tool)
-   這是一個zip檔，內含：
+1. 確認裝置已用 USB 連接到電腦。
+2. 確認要刷寫的韌體已放在 `Target/`。
+3. 直接執行 `tool_windows/Meshtastic_Auto_Flash.exe`。
+4. 依畫面提示等待刷機、重開機、重新枚舉完成。
 
-`tool_windows`：設定工具本身所在的資料夾
-點開裡頭有
-`Meshtastic_Auto_Flash.exe`
+## 設定檔
 
-:::info
-ＭacOS版本的正在開發中
-:::
+預設會優先讀取 `config.yaml`。
 
-`flash_and_config.log`：設定工具的LOG，
-預設是不存在的
-當你低一次執行他才會產生
-你如果遇到問題請將這個檔案複製下來並寄送到我們的電子信箱中
+如果要沿用舊格式，可保留 `CLI.md` 供工具轉換使用。
 
-`release`：目前最新版的韌體都會在裡頭
+## 成功與失敗提示
 
-`target`：請將你想要刷寫的韌體丟到這裡面（.bin)
+- 啟動時會播放背景音樂。
+- 等待重新枚舉、需要注意操作時會播放提示音。
+- 成功與失敗都會播放不同提示音。
 
+## 失敗排查
 
-`config.yaml`：正式設定檔，AutoFlasher 會優先讀取這份
+如果畫面顯示失敗，請先查看同目錄下的 `flash_and_config.log`。
 
-`CLI.md`：舊版設定來源，仍可沿用；也可以轉成 `config.yaml`
+常見位置：
 
-`README.md` ：你現在正在看的東西
+- `auto_flash_tool/flash_and_config.log`
+- 或執行檔旁邊的 `tool_windows/flash_and_config.log`
 
-2. 將一根細的Pin針插入裝置正面、螢幕左上角的小洞
-同時使用USB-C電纜連接到你的PC
+如果裝置長時間沒有重新出現，請依畫面提示按一下 `RESET`，或重新插拔 USB。
 
-3. 打開 `命令工具行`
-此時自動設定工具會開始運行，接下來就請盯著序列視窗，他會指導你該怎麼做。
+## 發布時至少要保留
 
-4. 設定完畢後，工具會自動關閉，然後就結束了！
-:::warning
-如果你在過程中遇到問題，請將當次輸出的`flash_and_config.log`傳送到我們的電子信箱
-hermestw05@gmail.com
-:::
+- `tool_windows/`
+- `Target/`
+- `config.yaml`
+
+若需要保留舊版設定相容性與音效，再一併保留：
+
+- `CLI.md`
+- `audio/`
