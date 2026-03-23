@@ -12,6 +12,13 @@
 - HermesX popup 的 `Press` 直開最新訊息 detail 仍有已知時序問題，這輪尚未完全修復。
 - 現場量測顯示 free heap 明顯回升；先前頻繁 panic 高度懷疑與記憶體壓力過高有關。
 
+## 2026-03-23
+- Fast Setup `裝置設定` 改名為 `裝置管理`，新增 `節點資料庫 > 重設資料庫`，可手動清除 `12hr / 24hr / 48hr` 未更新節點。
+- 新增低記憶體提醒 popup：當 `free < 6KB` 或 `largest < 4KB` 時，會提醒使用者前往 `裝置管理 > 節點資料庫` 清理，但不自動刪除資料。
+- 低記憶體提醒改為搭配三連高音蜂鳴；進入 Stealth 時也同步使用較明顯的蜂鳴提示。
+- `UI設定` 新增 `旋鈕對調`，`rotEnc1` 與 `CannedMessage` 已同步改為吃設定，不再硬編碼方向。
+- 新增 `tools/capture_monitor_log.sh`，可將 `platformio device monitor` 輸出同步保存到 `logs/monitor/`，便於長時間追 log 與 crash 前後比對。
+
 ## 2026-03-19
 - 修正 BLE 配對後 HermesX 分支在設定同步/收包時較易異常的問題，`getFiles()` 已同步回官方版實作。
 - `狀態燈亮度 = 0` 現在只關 LED，不再把蜂鳴器一起靜音。

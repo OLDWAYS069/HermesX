@@ -2,6 +2,36 @@
 
 本文件為可對外發布版本的更新紀錄，整理 HermesX 韌體的重要功能更新、體驗調整與修正項目。
 
+## 2026-03-23
+
+### 新增
+
+- 新增低記憶體提醒 popup：當可用記憶體落入危險區時，會跳出警告並提示使用者前往 `裝置管理 > 節點資料庫` 清理過期節點資料，但不會自動執行刪除。
+- 新增手動節點資料庫整理入口：`設定 > 裝置管理 > 節點資料庫 > 重設資料庫`，可選擇清除 `12hr / 24hr / 48hr` 未更新節點。
+- 新增 UI 設定 `旋鈕對調`，支援在裝置上直接切換 rotary 方向，不需重新刷機或改底層設定。
+- 新增 monitor 擷取工具 `tools/capture_monitor_log.sh`，可將 `platformio device monitor` 的終端輸出同步保存到 `logs/monitor/`，便於長時間觀察 heap、MQTT 與 crash 前後事件。
+
+### 改進
+
+- Fast Setup 選單中的 `裝置設定` 改名為 `裝置管理`，讓節點資料庫、裝置整理與維護操作更集中。
+- 低記憶體提醒加入較明顯的三連高音蜂鳴提示，降低只看畫面時容易忽略警告的情況。
+- 進入 Stealth 模式時，也改用同一組較醒目的提示音，讓使用者更容易辨識模式切換。
+- `rotEnc1` 與 `CannedMessage` 的 rotary 行為改為統一讀取設定值，不再固定寫死 `CW/CCW/Press -> Down/Up/Select`。
+
+### 使用方式
+
+- 若要手動整理節點資料庫：
+  - 進入 `設定 > 裝置管理 > 節點資料庫 > 重設資料庫`
+  - 選擇要清理的門檻（`12hr / 24hr / 48hr`）
+- 若要長時間保存 monitor 輸出：
+  - 執行 `zsh tools/capture_monitor_log.sh heltec-wireless-tracker`
+  - monitor 畫面會同步寫入 `logs/monitor/<env>_monitor_時間戳.log`
+  - 適合用來追 `Heap`、`MQTT`、`BLE disconnect`、`PANIC` 等現場問題
+
+### 備註
+
+- `logs/monitor/` 為本機 debug 輸出目錄，已排除於 Git 追蹤之外，不會納入版本控管。
+
 ## 2026-03-20
 
 ### 修正
