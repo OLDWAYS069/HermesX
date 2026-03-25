@@ -1,6 +1,13 @@
 # HermesX Mini Change Log
 （每次只寫極簡亮點，便於快速回顧）
 
+## 2026-03-26
+- Fast Setup `裝置管理 > LoRa` 新增 `Role` 入口，可直接在裝置上切換 `Client / Client Mute / Client Hidden / Tracker / Sensor / TAK / TAK Tracker / Lost&Found`。
+- `Home` / `GPS` 頁改為只在 `Client`、`Client Mute`、`Client Hidden` 存在；`Tracker` 等非 client 類角色保留選單與 Fast Setup，但不再載入這兩頁。
+- Home/GPS direct neon 相關大塊 buffer 改為 role-aware 的 lazy allocation；切到非 client 類角色時會釋放，不再常駐佔用 RAM。
+- 現場驗證顯示：`TAK` 模式 free heap 顯著高於 `Client`，表示這批 UI/neon 記憶體已不再於非 client 類角色常駐。
+- 現場量測參考值：重開後 `TAK` 約 `147872` bytes free heap、`139252` largest block；重開後 `Client` 進 Home 約 `45548` bytes free heap、`36852` largest block。
+
 ## 2026-03-20
 - Home 與 GPS neon 改為共用 scratch buffer，減少 direct-TFT 霓虹快取的重複常駐 RAM。
 - Home 時鐘 region 上限縮為實際 `152x37`，GPS title neon 再少一塊 `coreMask` 常駐陣列。

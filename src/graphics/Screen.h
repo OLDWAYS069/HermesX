@@ -769,6 +769,7 @@ class Screen : public concurrency::OSThread
         FrequencyEdit,
         PassShow,
         LoraMenu,
+        LoraRoleSelect,
         LoraPresetSelect,
         LoraRegionSelect,
         LoraChannelSlotSelect,

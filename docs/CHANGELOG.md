@@ -2,6 +2,24 @@
 
 本文件為可對外發布版本的更新紀錄，整理 HermesX 韌體的重要功能更新、體驗調整與修正項目。
 
+## 2026-03-26
+
+### 新增
+
+- Fast Setup `裝置管理 > LoRa` 新增 `Role` 設定入口，可直接在裝置端切換 `Client`、`Client Mute`、`Client Hidden`、`Tracker`、`Sensor`、`TAK`、`TAK Tracker` 與 `Lost&Found`。
+
+### 改進
+
+- HermesX `Home` 與 `GPS` 頁改為 role-aware：只在 `Client`、`Client Mute`、`Client Hidden` 類角色建立與顯示；`Tracker`、`Sensor`、`TAK` 等非 client 類角色保留操作選單與 Fast Setup，但不再載入這兩頁。
+- 將 Home/GPS direct neon 相關快取改為按需配置（lazy allocation），並在切換到非 client 類角色時主動釋放，避免該批 UI buffer 長期常駐記憶體。
+- `Role` 切換後會立即重建 frames，讓 `Home/GPS` 是否存在的頁面狀態可即時反映，不必等到下次開機才看見差異。
+
+### 驗證結果
+
+- 現場量測顯示，`TAK` 模式 free heap 明顯高於 `Client`，可確認 Home/GPS UI 與 direct neon 緩衝已不再於非 client 類角色常駐。
+- 切回 `Client` 後，Home 頁的 direct glyph cache 會依需求重新建立，符合預期的 client-only 記憶體配置策略。
+- 本輪現場參考值：重開後 `TAK` 模式約為 `147872` bytes free heap、`139252` bytes largest free block；重開後 `Client` 進 Home 後約為 `45548` bytes free heap、`36852` bytes largest free block。
+
 ## 2026-03-23
 
 ### 新增

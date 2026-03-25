@@ -51,6 +51,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // --- HermesX Remove TFT fast-path START
 #include "graphics/fonts/HermesX_zh/HermesX_CN12.h"
 #include "HeapDebug.h"
+#include <cstdlib>
 #include <inttypes.h>
 #include <math.h>
 #include <time.h>
@@ -691,6 +692,8 @@ static bool supportsDirectTftClockRendering(OLEDDisplay *display);
 static int16_t measurePattanakarnClockText(const char *text);
 static bool isStealthModeActive();
 static uint16_t mapDirectGpsWarmLayerColor(uint8_t value);
+static bool shouldShowHermesXHomeFrame();
+static bool shouldShowHermesXGpsFrame();
 
 struct HermesXDirectHomeUiCache {
     bool valid = false;
@@ -796,13 +799,118 @@ struct DirectNeonClockGlyphCache {
     uint8_t layerMap[kDirectNeonClockGlyphTileW * kDirectNeonClockGlyphTileH] = {0};
 };
 
-static DirectNeonClockGlyphCache gDirectNeonClockGlyphCache[PattanakarnClock32::kGlyphCount];
+static DirectNeonClockGlyphCache *gDirectNeonClockGlyphCache = nullptr;
 static uint32_t gDirectNeonClockGlyphCacheBuildCount = 0;
 // Home clock and GPS neon text never render concurrently, so they can share one scratch map.
-static uint8_t gDirectNeonSharedComposedLayerMap[kDirectNeonSharedComposedLayerMapSize];
+static uint8_t *gDirectNeonSharedComposedLayerMap = nullptr;
+static uint8_t *gDirectNeonClockPreviousComposedLayerMap = nullptr;
+static uint8_t *gDirectNeonClockFullMask = nullptr;
+static uint8_t *gDirectNeonClockCoreMask = nullptr;
+static uint8_t *gDirectGpsTitleFullMask = nullptr;
+static uint8_t *gDirectGpsTitleLayerMap = nullptr;
+static uint32_t gDirectNeonBufferGeneration = 0;
+
+static bool shouldKeepDirectNeonBuffers()
+{
+    return shouldShowHermesXHomeFrame() || shouldShowHermesXGpsFrame();
+}
+
+static void freeDirectNeonBuffers()
+{
+    bool freedAny = false;
+    if (gDirectNeonClockGlyphCache) {
+        free(gDirectNeonClockGlyphCache);
+        gDirectNeonClockGlyphCache = nullptr;
+        freedAny = true;
+    }
+    if (gDirectNeonSharedComposedLayerMap) {
+        free(gDirectNeonSharedComposedLayerMap);
+        gDirectNeonSharedComposedLayerMap = nullptr;
+        freedAny = true;
+    }
+    if (gDirectNeonClockPreviousComposedLayerMap) {
+        free(gDirectNeonClockPreviousComposedLayerMap);
+        gDirectNeonClockPreviousComposedLayerMap = nullptr;
+        freedAny = true;
+    }
+    if (gDirectNeonClockFullMask) {
+        free(gDirectNeonClockFullMask);
+        gDirectNeonClockFullMask = nullptr;
+        freedAny = true;
+    }
+    if (gDirectNeonClockCoreMask) {
+        free(gDirectNeonClockCoreMask);
+        gDirectNeonClockCoreMask = nullptr;
+        freedAny = true;
+    }
+    if (gDirectGpsTitleFullMask) {
+        free(gDirectGpsTitleFullMask);
+        gDirectGpsTitleFullMask = nullptr;
+        freedAny = true;
+    }
+    if (gDirectGpsTitleLayerMap) {
+        free(gDirectGpsTitleLayerMap);
+        gDirectGpsTitleLayerMap = nullptr;
+        freedAny = true;
+    }
+    gDirectNeonClockGlyphCacheBuildCount = 0;
+    if (freedAny) {
+        ++gDirectNeonBufferGeneration;
+    }
+}
+
+static bool ensureDirectNeonBuffers()
+{
+    if (!shouldKeepDirectNeonBuffers()) {
+        freeDirectNeonBuffers();
+        return false;
+    }
+
+    const size_t glyphMaskBytes = static_cast<size_t>(kDirectNeonClockGlyphTileW) * static_cast<size_t>(kDirectNeonClockGlyphTileH);
+
+    if (!gDirectNeonClockGlyphCache) {
+        gDirectNeonClockGlyphCache = static_cast<DirectNeonClockGlyphCache *>(calloc(PattanakarnClock32::kGlyphCount,
+                                                                                      sizeof(DirectNeonClockGlyphCache)));
+    }
+    if (!gDirectNeonSharedComposedLayerMap) {
+        gDirectNeonSharedComposedLayerMap = static_cast<uint8_t *>(malloc(kDirectNeonSharedComposedLayerMapSize));
+    }
+    if (!gDirectNeonClockPreviousComposedLayerMap) {
+        gDirectNeonClockPreviousComposedLayerMap = static_cast<uint8_t *>(malloc(kDirectNeonSharedComposedLayerMapSize));
+    }
+    if (!gDirectNeonClockFullMask) {
+        gDirectNeonClockFullMask = static_cast<uint8_t *>(malloc(glyphMaskBytes));
+    }
+    if (!gDirectNeonClockCoreMask) {
+        gDirectNeonClockCoreMask = static_cast<uint8_t *>(malloc(glyphMaskBytes));
+    }
+    if (!gDirectGpsTitleFullMask) {
+        gDirectGpsTitleFullMask = static_cast<uint8_t *>(malloc(static_cast<size_t>(96 * 48)));
+    }
+    if (!gDirectGpsTitleLayerMap) {
+        gDirectGpsTitleLayerMap = static_cast<uint8_t *>(malloc(static_cast<size_t>(96 * 48)));
+    }
+
+    if (!gDirectNeonClockGlyphCache || !gDirectNeonSharedComposedLayerMap || !gDirectNeonClockPreviousComposedLayerMap ||
+        !gDirectNeonClockFullMask || !gDirectNeonClockCoreMask || !gDirectGpsTitleFullMask || !gDirectGpsTitleLayerMap) {
+        LOG_WARN("[DirectHome] direct neon buffer alloc failed glyph=%u shared=%u prev=%u mask=%u gpsTitle=%u",
+                 gDirectNeonClockGlyphCache ? 1 : 0, gDirectNeonSharedComposedLayerMap ? 1 : 0,
+                 gDirectNeonClockPreviousComposedLayerMap ? 1 : 0, (gDirectNeonClockFullMask && gDirectNeonClockCoreMask) ? 1 : 0,
+                 (gDirectGpsTitleFullMask && gDirectGpsTitleLayerMap) ? 1 : 0);
+        freeDirectNeonBuffers();
+        return false;
+    }
+    return true;
+}
 
 static void logDirectHomeNeonSummary(const char *label)
 {
+    if (!gDirectNeonClockGlyphCache) {
+        LOG_DEBUG("[DirectHome] %s glyphCaches=0 buffers=unallocated buildCount=%lu", label,
+                  (unsigned long)gDirectNeonClockGlyphCacheBuildCount);
+        logHeapSnapshot(label);
+        return;
+    }
     uint32_t validGlyphCaches = 0;
     for (size_t i = 0; i < PattanakarnClock32::kGlyphCount; ++i) {
         if (gDirectNeonClockGlyphCache[i].valid) {
@@ -1293,16 +1401,22 @@ static DirectNeonClockGlyphCache *getDirectNeonClockGlyphCache(char ch)
     if (glyphIndex >= PattanakarnClock32::kGlyphCount) {
         return nullptr;
     }
+    if (!ensureDirectNeonBuffers()) {
+        return nullptr;
+    }
 
     auto &cache = gDirectNeonClockGlyphCache[glyphIndex];
     if (cache.valid) {
         return &cache;
     }
 
-    static uint8_t fullMask[kDirectNeonClockGlyphTileW * kDirectNeonClockGlyphTileH];
-    static uint8_t coreMask[kDirectNeonClockGlyphTileW * kDirectNeonClockGlyphTileH];
-    memset(fullMask, 0, sizeof(fullMask));
-    memset(coreMask, 0, sizeof(coreMask));
+    uint8_t *fullMask = gDirectNeonClockFullMask;
+    uint8_t *coreMask = gDirectNeonClockCoreMask;
+    if (!fullMask || !coreMask) {
+        return nullptr;
+    }
+    memset(fullMask, 0, static_cast<size_t>(kDirectNeonClockGlyphTileW) * static_cast<size_t>(kDirectNeonClockGlyphTileH));
+    memset(coreMask, 0, static_cast<size_t>(kDirectNeonClockGlyphTileW) * static_cast<size_t>(kDirectNeonClockGlyphTileH));
     memset(cache.layerMap, 0, sizeof(cache.layerMap));
 
     const char glyphText[2] = {ch, '\0'};
@@ -1495,6 +1609,9 @@ static void renderDirectNeonClock(TFTDisplay *tft,
     if (!getDirectNeonClockRegionRect(width, originY, regionX, regionY, regionW, regionH, frameX)) {
         return;
     }
+    if (!ensureDirectNeonBuffers() || !gDirectNeonSharedComposedLayerMap || !gDirectNeonClockPreviousComposedLayerMap) {
+        return;
+    }
     const uint16_t black = TFTDisplay::rgb565(0x00, 0x00, 0x00);
 
     static char previousTimeBuf[16] = {0};
@@ -1503,7 +1620,13 @@ static void renderDirectNeonClock(TFTDisplay *tft,
     static int16_t previousRegionY = 0;
     static int16_t previousRegionW = 0;
     static int16_t previousRegionH = 0;
-    static uint8_t previousComposedLayerMap[kDirectNeonClockMaxRegionW * kDirectNeonClockMaxRegionH];
+    static uint32_t previousBufferGeneration = 0;
+    uint8_t *previousComposedLayerMap = gDirectNeonClockPreviousComposedLayerMap;
+
+    if (previousBufferGeneration != gDirectNeonBufferGeneration) {
+        previousValid = false;
+        previousBufferGeneration = gDirectNeonBufferGeneration;
+    }
 
     const bool geometryChanged = !previousValid || previousRegionX != regionX || previousRegionY != regionY ||
                                  previousRegionW != regionW || previousRegionH != regionH;
@@ -1673,6 +1796,9 @@ static bool renderDirectNeonPattanakarnText(TFTDisplay *tft,
     }
     if (!layerColorFn) {
         layerColorFn = mapDirectNeonClockLayerColor;
+    }
+    if (!ensureDirectNeonBuffers() || !gDirectNeonSharedComposedLayerMap) {
+        return false;
     }
 
     const int16_t coreW = measurePattanakarnClockTextTracked(text, halfScale, tracking);
@@ -2883,8 +3009,11 @@ static void renderDirectGpsPosterTitleWord(TFTDisplay *tft,
     // budget and avoid ~47KB of always-on static BSS.
     static constexpr int16_t kMaxW = 96;
     static constexpr int16_t kMaxH = 48;
-    static uint8_t fullMask[kMaxW * kMaxH];
-    static uint8_t layerMap[kMaxW * kMaxH];
+    if (!ensureDirectNeonBuffers() || !gDirectGpsTitleFullMask || !gDirectGpsTitleLayerMap) {
+        return;
+    }
+    uint8_t *fullMask = gDirectGpsTitleFullMask;
+    uint8_t *layerMap = gDirectGpsTitleLayerMap;
 
     const int16_t spacing = std::max<int16_t>(1, scale / 2);
     const int16_t coreW = measureDirectGpsTitleText(text, scale, spacing);
@@ -6358,12 +6487,17 @@ static const uint8_t kSetupNodeDatabaseMenuCount = 2;
 static const uint8_t kSetupNodeDatabaseResetCount = 4;
 static const uint8_t kSetupMqttMapReportMenuCount = 4;
 static const uint8_t kSetupChannelDetailMenuCount = 5;
-static const uint8_t kSetupLoraMenuCount = 8;
+static const uint8_t kSetupLoraMenuCount = 9;
 static const uint8_t kSetupGpsMenuCount = 6;
 static const uint8_t kSetupMaxRegionOptions = 24;
 
 struct SetupLoraPresetOption {
     meshtastic_Config_LoRaConfig_ModemPreset preset;
+    const char *label;
+};
+
+struct SetupRoleOption {
+    meshtastic_Config_DeviceConfig_Role role;
     const char *label;
 };
 
@@ -6378,6 +6512,18 @@ static const SetupLoraPresetOption kSetupLoraPresetOptions[] = {
     {meshtastic_Config_LoRaConfig_ModemPreset_SHORT_TURBO, "ShortTurbo"},
 };
 static const uint8_t kSetupLoraPresetOptionCount = sizeof(kSetupLoraPresetOptions) / sizeof(kSetupLoraPresetOptions[0]);
+
+static const SetupRoleOption kSetupRoleOptions[] = {
+    {meshtastic_Config_DeviceConfig_Role_CLIENT, "Client"},
+    {meshtastic_Config_DeviceConfig_Role_CLIENT_MUTE, "Client Mute"},
+    {meshtastic_Config_DeviceConfig_Role_CLIENT_HIDDEN, "Client Hidden"},
+    {meshtastic_Config_DeviceConfig_Role_TRACKER, "Tracker"},
+    {meshtastic_Config_DeviceConfig_Role_SENSOR, "Sensor"},
+    {meshtastic_Config_DeviceConfig_Role_TAK, "TAK"},
+    {meshtastic_Config_DeviceConfig_Role_TAK_TRACKER, "TAK Tracker"},
+    {meshtastic_Config_DeviceConfig_Role_LOST_AND_FOUND, "Lost&Found"},
+};
+static const uint8_t kSetupRoleOptionCount = sizeof(kSetupRoleOptions) / sizeof(kSetupRoleOptions[0]);
 
 static const uint32_t kSetupGpsUpdateOptions[] = {30, 60, 120, 300, 600, 1800};
 static const uint8_t kSetupGpsUpdateCount = sizeof(kSetupGpsUpdateOptions) / sizeof(kSetupGpsUpdateOptions[0]);
@@ -6535,6 +6681,30 @@ static const char *getSetupRoleLabel(meshtastic_Config_DeviceConfig_Role role)
     default:
         return u8"未知";
     }
+}
+
+static const char *getSetupRoleOptionLabel(meshtastic_Config_DeviceConfig_Role role)
+{
+    for (uint8_t i = 0; i < kSetupRoleOptionCount; ++i) {
+        if (kSetupRoleOptions[i].role == role) {
+            return kSetupRoleOptions[i].label;
+        }
+    }
+    return getSetupRoleLabel(role);
+}
+
+static bool shouldShowHermesXHomeFrame()
+{
+    return config.device.role == meshtastic_Config_DeviceConfig_Role_CLIENT ||
+           config.device.role == meshtastic_Config_DeviceConfig_Role_CLIENT_MUTE ||
+           config.device.role == meshtastic_Config_DeviceConfig_Role_CLIENT_HIDDEN;
+}
+
+static bool shouldShowHermesXGpsFrame()
+{
+    return config.device.role == meshtastic_Config_DeviceConfig_Role_CLIENT ||
+           config.device.role == meshtastic_Config_DeviceConfig_Role_CLIENT_MUTE ||
+           config.device.role == meshtastic_Config_DeviceConfig_Role_CLIENT_HIDDEN;
 }
 
 static const char *getSetupBrightnessLabel(uint8_t value)
@@ -9460,6 +9630,7 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
 
     if (hermesSetupPage == HermesFastSetupPage::LoraMenu) {
         applyPaletteList(kSetupLoraMenuCount);
+        String roleLine = String("Role: ") + getSetupRoleOptionLabel(config.device.role);
         const char *presetLabel = config.lora.use_preset ? getSetupLoraPresetLabel(config.lora.modem_preset) : "Custom";
         String presetLine = String("Preset: ") + presetLabel;
         String regionLine = String(u8"地區: ") + getSetupRegionLabel(config.lora.region);
@@ -9471,9 +9642,23 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
         if (fabsf(config.lora.override_frequency) >= 0.0001f) {
             freqLine += "MHz";
         }
-        const char *items[] = {u8"返回",         presetLine.c_str(),  regionLine.c_str(),    ignoreMqttLine.c_str(),
-                               allowMqttLine.c_str(), txLine.c_str(), slotLine.c_str(),      freqLine.c_str()};
+        const char *items[] = {u8"返回",         roleLine.c_str(),    presetLine.c_str(),     regionLine.c_str(),
+                               ignoreMqttLine.c_str(), allowMqttLine.c_str(), txLine.c_str(), slotLine.c_str(),
+                               freqLine.c_str()};
         drawSetupList(display, width, height, "LoRa", items, kSetupLoraMenuCount, hermesSetupSelected, hermesSetupOffset);
+        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        return;
+    }
+
+    if (hermesSetupPage == HermesFastSetupPage::LoraRoleSelect) {
+        const int itemCount = kSetupRoleOptionCount + 1;
+        applyPaletteList(itemCount);
+        const char *items[kSetupRoleOptionCount + 1];
+        items[0] = u8"返回";
+        for (uint8_t i = 0; i < kSetupRoleOptionCount; ++i) {
+            items[i + 1] = kSetupRoleOptions[i].label;
+        }
+        drawSetupList(display, width, height, "Role", items, itemCount, hermesSetupSelected, hermesSetupOffset);
         drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
         return;
     }
@@ -10599,6 +10784,7 @@ int32_t Screen::runOnce()
 
 #if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
     defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
+    const bool directNeonBuffersReady = ensureDirectNeonBuffers();
     bool renderDirectHomeClock = false;
     bool forceDirectHomeClockRedraw = false;
     char directHomeTimeBuf[16];
@@ -10644,8 +10830,8 @@ int32_t Screen::runOnce()
     const bool incomingTextPopupActive = gIncomingTextPopupState.pending || gIncomingTextPopupState.visible;
     const bool incomingNodePopupActive = isIncomingNodePopupActive();
     const bool incomingNodePopupVisible = isIncomingNodePopupVisible();
-    const bool directGpsPosterVisible =
-        directGpsPosterNeonEnabled && onFixedGpsFrame && supportsDirectTftClockRendering(dispdev) && !incomingNodePopupActive;
+    const bool directGpsPosterVisible = directNeonBuffersReady && directGpsPosterNeonEnabled && onFixedGpsFrame &&
+                                        supportsDirectTftClockRendering(dispdev) && !incomingNodePopupActive;
     bool incomingNodePopupDirty = false;
     if (incomingNodePopupVisible && supportsDirectTftClockRendering(dispdev)) {
         incomingNodePopupDirty = !gDirectIncomingNodePopupRenderCache.valid ||
@@ -10658,7 +10844,8 @@ int32_t Screen::runOnce()
     } else if (!incomingNodePopupVisible) {
         gDirectIncomingNodePopupRenderCache.valid = false;
     }
-    if (onFixedMainFrame && canUseDirectHermesXHomeClock(dispdev) && !incomingTextPopupActive && !incomingNodePopupActive) {
+    if (directNeonBuffersReady && onFixedMainFrame && canUseDirectHermesXHomeClock(dispdev) && !incomingTextPopupActive &&
+        !incomingNodePopupActive) {
         renderDirectHomeClock = true;
         const bool enteringDirectHomeClock = !gDirectHomeClockWasVisible;
 
@@ -11314,9 +11501,11 @@ void Screen::setFrames(FrameFocus focus)
     }
 
 #if !defined(HERMESX_TEST_DISABLE_HERMES_PAGES)
-    // Main screen (HermesX logo)
-    fsi.positions.main = numframes;
-    normalFrames[numframes++] = &Screen::drawHermesXMainFrame;
+    if (shouldShowHermesXHomeFrame()) {
+        // Main screen (HermesX logo / Home)
+        fsi.positions.main = numframes;
+        normalFrames[numframes++] = &Screen::drawHermesXMainFrame;
+    }
 
     // Main action menu (standalone page)
     fsi.positions.mainAction = numframes;
@@ -11338,9 +11527,11 @@ void Screen::setFrames(FrameFocus focus)
     fsi.positions.log = numframes;
     normalFrames[numframes++] = &Screen::drawDebugInfoTrampoline;
 
-    // call a method on debugInfoScreen object (for more details)
-    fsi.positions.settings = numframes;
-    normalFrames[numframes++] = &Screen::drawDebugInfoSettingsTrampoline;
+    if (shouldShowHermesXGpsFrame()) {
+        // GPS hero/settings frame
+        fsi.positions.settings = numframes;
+        normalFrames[numframes++] = &Screen::drawDebugInfoSettingsTrampoline;
+    }
 
     fsi.positions.wifi = numframes;
 #if HAS_WIFI && !defined(ARCH_PORTDUINO)
@@ -11379,6 +11570,8 @@ void Screen::setFrames(FrameFocus focus)
     case FOCUS_DEFAULT:
         if (fsi.positions.main < fsi.frameCount) {
             ui->switchToFrame(fsi.positions.main);
+        } else if (fsi.positions.mainAction < fsi.frameCount) {
+            ui->switchToFrame(fsi.positions.mainAction);
         } else {
             ui->switchToFrame(0); // First frame
         }
@@ -12215,6 +12408,8 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
     auto openHermesMainFrame = [&]() {
         if (ui && framesetInfo.positions.main < framesetInfo.frameCount) {
             ui->switchToFrame(framesetInfo.positions.main);
+        } else if (screen) {
+            screen->print("Home page unavailable\n");
         }
     };
     auto openHermesShareFrame = [&]() {
@@ -13511,6 +13706,15 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                 resetMenu(HermesFastSetupPage::NodeMenu);
             } else if (hermesSetupSelected == 1) {
                 int selected = 1;
+                for (uint8_t i = 0; i < kSetupRoleOptionCount; ++i) {
+                    if (kSetupRoleOptions[i].role == config.device.role) {
+                        selected = i + 1;
+                        break;
+                    }
+                }
+                enterMenu(HermesFastSetupPage::LoraRoleSelect, kSetupRoleOptionCount + 1, selected);
+            } else if (hermesSetupSelected == 2) {
+                int selected = 1;
                 for (uint8_t i = 0; i < kSetupLoraPresetOptionCount; ++i) {
                     if (kSetupLoraPresetOptions[i].preset == config.lora.modem_preset) {
                         selected = i + 1;
@@ -13518,7 +13722,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                     }
                 }
                 enterMenu(HermesFastSetupPage::LoraPresetSelect, kSetupLoraPresetOptionCount + 1, selected);
-            } else if (hermesSetupSelected == 2) {
+            } else if (hermesSetupSelected == 3) {
                 int selected = 1;
                 const uint8_t regionCount = getSetupRegionOptionCount();
                 for (uint8_t i = 0; i < regionCount; ++i) {
@@ -13528,25 +13732,25 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                     }
                 }
                 enterMenu(HermesFastSetupPage::LoraRegionSelect, regionCount + 1, selected);
-            } else if (hermesSetupSelected == 3) {
+            } else if (hermesSetupSelected == 4) {
                 config.lora.ignore_mqtt = !config.lora.ignore_mqtt;
                 saveSetupSegments(SEGMENT_CONFIG);
                 hermesSetupToast = config.lora.ignore_mqtt ? u8"已改為忽視 MQTT" : u8"已接收 MQTT";
                 hermesSetupToastUntilMs = millis() + 1500;
-            } else if (hermesSetupSelected == 4) {
+            } else if (hermesSetupSelected == 5) {
                 config.lora.config_ok_to_mqtt = !config.lora.config_ok_to_mqtt;
                 saveSetupSegments(SEGMENT_CONFIG);
                 hermesSetupToast = config.lora.config_ok_to_mqtt ? u8"允許轉發至 MQTT" : u8"禁止轉發至 MQTT";
                 hermesSetupToastUntilMs = millis() + 1500;
-            } else if (hermesSetupSelected == 5) {
+            } else if (hermesSetupSelected == 6) {
                 config.lora.tx_enabled = !config.lora.tx_enabled;
                 saveSetupSegments(SEGMENT_CONFIG);
                 hermesSetupToast = config.lora.tx_enabled ? u8"LoRa 已啟用" : u8"LoRa 已停用";
                 hermesSetupToastUntilMs = millis() + 1500;
-            } else if (hermesSetupSelected == 6) {
+            } else if (hermesSetupSelected == 7) {
                 const int selected = config.lora.channel_num ? (config.lora.channel_num + 1) : 1;
                 enterMenu(HermesFastSetupPage::LoraChannelSlotSelect, getSetupLoraChannelSlotCount() + 2, selected);
-            } else if (hermesSetupSelected == 7) {
+            } else if (hermesSetupSelected == 8) {
                 hermesSetupFrequencyDraft =
                     (fabsf(config.lora.override_frequency) < 0.0001f) ? String("") : formatSetupFrequencyLabel(config.lora.override_frequency);
                 hermesSetupKeyRow = 0;
@@ -13558,6 +13762,43 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         }
         if (isCancel) {
             resetMenu(HermesFastSetupPage::NodeMenu);
+            setFastFramerate();
+            return true;
+        }
+        return false;
+    }
+
+    if (hermesSetupPage == HermesFastSetupPage::LoraRoleSelect) {
+        const int count = kSetupRoleOptionCount + 1;
+        if (handleMenuNav(count)) {
+            setFastFramerate();
+            return true;
+        }
+        if (isSelect || isPress) {
+            if (hermesSetupSelected == 0) {
+                resetMenu(HermesFastSetupPage::LoraMenu);
+            } else {
+                const uint8_t index = hermesSetupSelected - 1;
+                if (index < kSetupRoleOptionCount) {
+                    const auto nextRole = kSetupRoleOptions[index].role;
+                    if (config.device.role != nextRole) {
+                        config.device.role = nextRole;
+                        if (nodeDB) {
+                            nodeDB->installRoleDefaults(nextRole);
+                        }
+                        saveSetupSegments(SEGMENT_CONFIG | SEGMENT_NODEDATABASE | SEGMENT_DEVICESTATE);
+                        setFrames(FOCUS_DEFAULT);
+                        hermesSetupToast = String("Role: ") + kSetupRoleOptions[index].label + u8" (重開生效)";
+                        hermesSetupToastUntilMs = millis() + 1800;
+                    }
+                }
+                resetMenu(HermesFastSetupPage::LoraMenu);
+            }
+            setFastFramerate();
+            return true;
+        }
+        if (isCancel) {
+            resetMenu(HermesFastSetupPage::LoraMenu);
             setFastFramerate();
             return true;
         }
