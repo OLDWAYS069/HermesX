@@ -420,6 +420,52 @@ def notify_user_attention(message: str, title: str = "HermesX AutoFlasher", succ
         pass
 
 
+def requires_attention_for_subprocess_output(output: str) -> bool:
+    if not output:
+        return False
+    patterns = (
+        r"(?im)^traceback \(most recent call last\):",
+        r"(?im)^\s*\[PYI-\d+:ERROR\]",
+        r"(?i)\bfailed to execute script\b",
+        r"(?i)\bmeshinterfaceerror\b",
+        r"(?im)^\s*(?:FAIL|FAILED)\s*$",
+    )
+    return any(re.search(pattern, output) for pattern in patterns)
+
+
+def summarize_subprocess_output(output: str) -> str:
+    lines = [line.strip() for line in (output or "").splitlines() if line.strip()]
+    if not lines:
+        return ""
+    for line in reversed(lines):
+        if not re.match(r"(?i)^traceback \(most recent call last\):$", line):
+            return line
+    return lines[-1]
+
+
+def pause_for_enter(message: str = "請按 Enter 繼續...") -> None:
+    print(message, flush=True)
+    while True:
+        try:
+            input()
+            return
+        except EOFError:
+            time.sleep(0.5)
+
+
+def notify_and_pause_on_subprocess_failure(raw: str, output: str) -> None:
+    summary = summarize_subprocess_output(output)
+    message_lines = [
+        "偵測到子程序 FAIL/Traceback，流程已暫停。",
+        f"命令：{raw}",
+    ]
+    if summary:
+        message_lines.append(f"摘要：{summary}")
+    message_lines.append("請確認裝置狀態後按 Enter 繼續。")
+    notify_user_attention("\n".join(message_lines))
+    pause_for_enter()
+
+
 def escape_powershell_single_quoted(value: str) -> str:
     return value.replace("'", "''")
 
@@ -468,7 +514,7 @@ class MeshtasticAutoFlash:
         parser.add_argument("--ready-retry-count", type=int, default=2, help="就緒檢查重試次數")
         parser.add_argument("--meshtastic-timeout-seconds", type=int, default=120, help="meshtastic CLI 逾時秒數")
         parser.add_argument("--meshtastic-retry-count", type=int, default=3, help="meshtastic CLI 重試次數")
-        parser.add_argument("--meshtastic-retry-delay-seconds", type=int, default=0, help="meshtastic CLI 重試延遲秒數")
+        parser.add_argument("--meshtastic-retry-delay-seconds", type=int, default=2, help="meshtastic CLI ??????")
         parser.add_argument("--log-path", default="", help="日誌檔路徑")
         parser.add_argument("--reboot-after-config", action="store_true", default=True, help="設定後重啟")
         parser.add_argument("--no-reboot-after-config", action="store_false", dest="reboot_after_config", help="設定後不重啟")
@@ -891,11 +937,21 @@ class MeshtasticAutoFlash:
                         ["--port", current_port, "--timeout", str(cmd_timeout), "--info"],
                         timeout=cmd_timeout,
                     )
+                    if code != 0 and requires_attention_for_subprocess_output(output):
+                        notify_and_pause_on_subprocess_failure(
+                            f"meshtastic --port {current_port} --timeout {cmd_timeout} --info",
+                            output,
+                        )
                     if code == 0 and re.search(r"connected to radio", output, re.I):
                         self.log("裝置已就緒。")
                         return current_port
-                except Exception:
-                    pass
+                except Exception as exc:
+                    output = str(exc)
+                    if requires_attention_for_subprocess_output(output):
+                        notify_and_pause_on_subprocess_failure(
+                            f"meshtastic --port {current_port} --timeout {cmd_timeout} --info",
+                            output,
+                        )
                 if time.time() < deadline:
                     self.log(f"裝置尚未就緒，{poll} 秒後重試...")
                     time.sleep(poll)
@@ -1419,11 +1475,17 @@ class MeshtasticAutoFlash:
                 )
             except Exception as exc:
                 code, output = 1, str(exc)
+            if code != 0 and requires_attention_for_subprocess_output(output):
+                notify_and_pause_on_subprocess_failure(raw, output)
             if code == 0:
                 return output
             if attempt < self.args.meshtastic_retry_count:
-                self.log(f"meshtastic 指令失敗（第 {attempt}/{self.args.meshtastic_retry_count} 次），{self.args.meshtastic_retry_delay_seconds} 秒後重試...")
-                time.sleep(max(0, self.args.meshtastic_retry_delay_seconds))
+                delay = max(0, self.args.meshtastic_retry_delay_seconds)
+                if delay > 0:
+                    self.log(f"meshtastic ?????? {attempt}/{self.args.meshtastic_retry_count} ???{delay} ????...")
+                    time.sleep(delay)
+                else:
+                    self.log(f"meshtastic ?????? {attempt}/{self.args.meshtastic_retry_count} ???????...")
                 continue
             raise RuntimeError(f"meshtastic 指令失敗：{raw}\n{output}")
         raise RuntimeError(f"meshtastic 指令失敗：{raw}")
@@ -1451,6 +1513,8 @@ class MeshtasticAutoFlash:
                     code, output = 1, str(exc)
 
                 last_output = output
+                if code != 0 and requires_attention_for_subprocess_output(output):
+                    notify_and_pause_on_subprocess_failure(raw, output)
                 success = code == 0
                 if success and require_ack:
                     success, missing = self.test_output_for_commands(output, expected_commands or [])

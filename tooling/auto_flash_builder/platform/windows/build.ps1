@@ -18,6 +18,54 @@ $configSourcePath = Join-Path $runtimeRoot "config.yaml"
 $cliSourcePath = Join-Path $runtimeRoot "CLI.md"
 $targetSourceRoot = Join-Path $runtimeRoot "Target"
 
+function Copy-PublishPayload {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationRoot
+    )
+
+    if (Test-Path $DestinationRoot) {
+        Remove-Item -Recurse -Force $DestinationRoot -ErrorAction Stop
+    }
+
+    New-Item -ItemType Directory -Force -Path $DestinationRoot | Out-Null
+    Copy-Item (Join-Path $bundleRoot "Meshtastic_Auto_Flash.exe") (Join-Path $DestinationRoot "Meshtastic_Auto_Flash.exe") -Force
+    Copy-Item -Recurse -Force (Join-Path $bundleRoot "_internal") (Join-Path $DestinationRoot "_internal")
+
+    if (Test-Path $audioSourceRoot) {
+        Copy-Item -Recurse -Force $audioSourceRoot (Join-Path $DestinationRoot "audio")
+    }
+    if (Test-Path $configSourcePath) {
+        Copy-Item -Force $configSourcePath (Join-Path $DestinationRoot "config.yaml")
+    }
+    if (Test-Path $cliSourcePath) {
+        Copy-Item -Force $cliSourcePath (Join-Path $DestinationRoot "CLI.md")
+    }
+    if (Test-Path $targetSourceRoot) {
+        Copy-Item -Recurse -Force $targetSourceRoot (Join-Path $DestinationRoot "Target")
+    }
+}
+
+function Test-PublishPayload {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationRoot
+    )
+
+    $requiredPaths = @(
+        (Join-Path $DestinationRoot "Meshtastic_Auto_Flash.exe"),
+        (Join-Path $DestinationRoot "_internal\meshtastic\util.py"),
+        (Join-Path $DestinationRoot "_internal\requests\adapters.py"),
+        (Join-Path $DestinationRoot "_internal\certifi\cacert.pem")
+    )
+
+    foreach ($requiredPath in $requiredPaths) {
+        if (-not (Test-Path $requiredPath)) {
+            throw "Publish validation failed. Missing required file: $requiredPath"
+        }
+    }
+}
+
 if (-not $PythonExe) {
     $venvPython = Join-Path $repoRoot ".venv\Scripts\python.exe"
     if (Test-Path $venvPython) {
@@ -35,36 +83,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller build failed with exit code $LASTEXITCODE"
 }
 
-$publishTargets = @($publishRoot)
-$fallbackPublishRoot = Join-Path $runtimeRoot "tool_windows_fresh"
-if ($fallbackPublishRoot -ne $publishRoot) {
-    $publishTargets += $fallbackPublishRoot
-}
-$activePublishRoot = $publishRoot
-try {
-    if (Test-Path $publishRoot) {
-        Remove-Item -Recurse -Force $publishRoot -ErrorAction Stop
-    }
-} catch {
-    Write-Warning "Primary publish directory is locked: $publishRoot"
-    $activePublishRoot = $fallbackPublishRoot
-}
-if (Test-Path $activePublishRoot) {
-    Remove-Item -Recurse -Force $activePublishRoot
-}
-New-Item -ItemType Directory -Force -Path $activePublishRoot | Out-Null
-Copy-Item (Join-Path $bundleRoot "Meshtastic_Auto_Flash.exe") (Join-Path $activePublishRoot "Meshtastic_Auto_Flash.exe") -Force
-Copy-Item -Recurse -Force (Join-Path $bundleRoot "_internal") (Join-Path $activePublishRoot "_internal")
-if (Test-Path $audioSourceRoot) {
-    Copy-Item -Recurse -Force $audioSourceRoot (Join-Path $activePublishRoot "audio")
-}
-if (Test-Path $configSourcePath) {
-    Copy-Item -Force $configSourcePath (Join-Path $activePublishRoot "config.yaml")
-}
-if (Test-Path $cliSourcePath) {
-    Copy-Item -Force $cliSourcePath (Join-Path $activePublishRoot "CLI.md")
-}
-if (Test-Path $targetSourceRoot) {
-    Copy-Item -Recurse -Force $targetSourceRoot (Join-Path $activePublishRoot "Target")
-}
-Write-Host "Windows bundle ready at: $activePublishRoot"
+Copy-PublishPayload -DestinationRoot $publishRoot
+Test-PublishPayload -DestinationRoot $publishRoot
+
+Write-Host "Windows bundle ready at: $publishRoot"
