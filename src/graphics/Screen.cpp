@@ -6480,7 +6480,7 @@ static const uint8_t kSetupRootCount = sizeof(kSetupRootItems) / sizeof(kSetupRo
 static const char *kSetupEmacItems[] = {u8"返回", u8"設定密碼A", u8"設定密碼B", u8"顯示密碼", u8"EMAC解除"};
 static const uint8_t kSetupEmacCount = sizeof(kSetupEmacItems) / sizeof(kSetupEmacItems[0]);
 static const uint8_t kSetupNodeMenuCount = 8;
-static const uint8_t kSetupPowerMenuCount = 3;
+static const uint8_t kSetupPowerMenuCount = 4;
 static const uint8_t kSetupUiMenuCount = 6;
 static const uint8_t kSetupMqttMenuCount = 4;
 static const uint8_t kSetupNodeDatabaseMenuCount = 2;
@@ -6809,6 +6809,20 @@ static String formatSetupFrequencyLabel(float value)
 static String formatSetupVoltageMvLabel(uint16_t millivolts)
 {
     return String(millivolts / 1000U) + "." + String((millivolts % 1000U) / 100U) + "V";
+}
+
+static String getSetupCurrentVoltageLabel()
+{
+    if (!powerStatus) {
+        return u8"未知";
+    }
+
+    const int batteryVoltageMv = powerStatus->getBatteryVoltageMv();
+    if (batteryVoltageMv <= 0) {
+        return u8"未知";
+    }
+
+    return formatSetupVoltageMvLabel(static_cast<uint16_t>(batteryVoltageMv));
 }
 
 static const RegionInfo *findSetupRegionInfo(meshtastic_Config_LoRaConfig_RegionCode code)
@@ -9606,10 +9620,11 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
 
     if (hermesSetupPage == HermesFastSetupPage::PowerMenu) {
         applyPaletteList(kSetupPowerMenuCount);
+        String currentVoltageLine = String(u8"當前電壓: ") + getSetupCurrentVoltageLabel();
         String guardLine = String(u8"過放保護: ") + (HermesXBatteryProtection::isEnabled() ? u8"開" : u8"關");
         String thresholdLine =
             String(u8"過放門檻: ") + formatSetupVoltageMvLabel(HermesXBatteryProtection::getThresholdMv());
-        const char *items[] = {u8"返回", guardLine.c_str(), thresholdLine.c_str()};
+        const char *items[] = {u8"返回", currentVoltageLine.c_str(), guardLine.c_str(), thresholdLine.c_str()};
         drawSetupList(display, width, height, u8"電源管理", items, kSetupPowerMenuCount, hermesSetupSelected, hermesSetupOffset);
         drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
         return;
@@ -11916,6 +11931,12 @@ void Screen::setFastFramerate()
     fastUntilMs = millis() + 1200;
 
     ui->setTargetFPS(targetFramerate);
+    // OLEDDisplayUi::update() enforces its own frame budget using lastUpdate.
+    // For fixed-frame menu interactions, forcing the next tick avoids the
+    // visual lag where selection state advances but the redraw is deferred.
+    if (ui && ui->getUiState() && ui->getUiState()->frameState == FIXED) {
+        ui->getUiState()->lastUpdate = 0;
+    }
     setInterval(0); // redraw ASAP
     runASAP = true;
 }
@@ -13427,8 +13448,10 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
             if (hermesSetupSelected == 0) {
                 itemName = "返回";
             } else if (hermesSetupSelected == 1) {
-                itemName = "過放保護";
+                itemName = "當前電壓";
             } else if (hermesSetupSelected == 2) {
+                itemName = "過放保護";
+            } else if (hermesSetupSelected == 3) {
                 itemName = "過放門檻";
             }
             LOG_INFO("[HermesFastSetup] select=%d item=%s", hermesSetupSelected, itemName);
@@ -13439,11 +13462,13 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
             if (hermesSetupSelected == 0) {
                 resetMenu(HermesFastSetupPage::NodeMenu);
             } else if (hermesSetupSelected == 1) {
+                // Read-only live metric.
+            } else if (hermesSetupSelected == 2) {
                 const bool next = !HermesXBatteryProtection::isEnabled();
                 HermesXBatteryProtection::setEnabled(next);
                 hermesSetupToast = next ? u8"過放保護已開啟" : u8"過放保護已關閉";
                 hermesSetupToastUntilMs = millis() + 1500;
-            } else if (hermesSetupSelected == 2) {
+            } else if (hermesSetupSelected == 3) {
                 const uint8_t selected =
                     getSetupPowerGuardThresholdSelection(HermesXBatteryProtection::getThresholdMv());
                 enterMenu(HermesFastSetupPage::PowerGuardVoltageSelect, kSetupPowerGuardThresholdCount + 1, selected);

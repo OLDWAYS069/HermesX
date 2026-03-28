@@ -1,6 +1,12 @@
 # HermesX Mini Change Log
 （每次只寫極簡亮點，便於快速回顧）
 
+## 2026-03-27
+- 修正 HermesX 多個滾動式選單的 redraw 不同步問題：內部選取索引變更後，畫面現在會即時跟上，不再出現「log/狀態已切換，但顯示停在前一項」。
+- 修正 `CannedMessage` 選單移動時 `UIFrameEvent` 未穩定帶 action 的問題，避免某些上下移動路徑沒有正確要求 redraw。
+- 調整 `Screen::setFastFramerate()`：固定畫面互動時會強制下一次 UI tick 立即生效，不再被 `OLEDDisplayUi` 的 FPS budget 延後一幀。
+- Fast Setup `裝置管理 > 電源管理` 新增唯讀 `當前電壓` 顯示，可直接查看目前電池電壓。
+
 ## 2026-03-26
 - Fast Setup `裝置管理 > LoRa` 新增 `Role` 入口，可直接在裝置上切換 `Client / Client Mute / Client Hidden / Tracker / Sensor / TAK / TAK Tracker / Lost&Found`。
 - `Home` / `GPS` 頁改為只在 `Client`、`Client Mute`、`Client Hidden` 存在；`Tracker` 等非 client 類角色保留選單與 Fast Setup，但不再載入這兩頁。

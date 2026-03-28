@@ -831,6 +831,7 @@ int32_t CannedMessageModule::runOnce()
     }
     // LOG_DEBUG("Check status");
     UIFrameEvent e;
+    e.action = UIFrameEvent::Action::REDRAW_ONLY;
     if ((this->runState == CANNED_MESSAGE_RUN_STATE_SENDING_ACTIVE) ||
         (this->runState == CANNED_MESSAGE_RUN_STATE_ACK_NACK_RECEIVED) || (this->runState == CANNED_MESSAGE_RUN_STATE_MESSAGE)) {
         // TODO: might have some feedback of sending state
