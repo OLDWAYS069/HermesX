@@ -694,6 +694,39 @@ static bool isStealthModeActive();
 static uint16_t mapDirectGpsWarmLayerColor(uint8_t value);
 static bool shouldShowHermesXHomeFrame();
 static bool shouldShowHermesXGpsFrame();
+struct DirectDrawClipRect {
+    bool enabled = false;
+    int16_t minX = 0;
+    int16_t maxX = -1;
+    int16_t minY = 0;
+    int16_t maxY = -1;
+};
+static bool makeDirectDrawClipRect(int16_t x,
+                                   int16_t y,
+                                   int16_t w,
+                                   int16_t h,
+                                   int16_t displayW,
+                                   int16_t displayH,
+                                   DirectDrawClipRect &outClip);
+static void directFillRect565Clipped(TFTDisplay *tft,
+                                     int16_t displayW,
+                                     int16_t displayH,
+                                     int16_t x,
+                                     int16_t y,
+                                     int16_t w,
+                                     int16_t h,
+                                     uint16_t color,
+                                     const DirectDrawClipRect *clip);
+static void directDrawThickLine565Clipped(TFTDisplay *tft,
+                                          int16_t displayW,
+                                          int16_t displayH,
+                                          int16_t x0,
+                                          int16_t y0,
+                                          int16_t x1,
+                                          int16_t y1,
+                                          int16_t thickness,
+                                          uint16_t color,
+                                          const DirectDrawClipRect *clip);
 
 struct HermesXDirectHomeUiCache {
     bool valid = false;
@@ -705,9 +738,19 @@ struct HermesXDirectHomeUiCache {
     char date[24] = {0};
     bool lastTimeValid = false;
     char lastTime[16] = {0};
+    bool lastDogValid = false;
+    uint16_t lastDogFrame = 0xFFFF;
+    uint8_t lastDogPose = 0xFF;
+    int16_t lastDogX = -1;
+    int16_t lastDogY = -1;
+    int16_t lastDogW = 0;
+    int16_t lastDogH = 0;
 };
 static HermesXDirectHomeUiCache gHermesXDirectHomeUiCache;
 static bool gDirectHomeClockWasVisible = false;
+static bool gDirectHomeDogWasVisible = false;
+static uint8_t gDirectHomeDogPose = 0;
+static uint8_t gDirectHomeDogEntryCount = 0;
 static bool gDirectGpsPosterWasVisible = false;
 static bool gIncomingNodePopupWasVisible = false;
 struct DirectIncomingNodePopupRenderCache {
@@ -756,7 +799,17 @@ static void invalidateDirectTftWakeCaches()
 {
     gHermesXDirectHomeUiCache.valid = false;
     gHermesXDirectHomeUiCache.lastTimeValid = false;
+    gHermesXDirectHomeUiCache.lastDogValid = false;
+    gHermesXDirectHomeUiCache.lastDogFrame = 0xFFFF;
+    gHermesXDirectHomeUiCache.lastDogPose = 0xFF;
+    gHermesXDirectHomeUiCache.lastDogX = -1;
+    gHermesXDirectHomeUiCache.lastDogY = -1;
+    gHermesXDirectHomeUiCache.lastDogW = 0;
+    gHermesXDirectHomeUiCache.lastDogH = 0;
     gDirectHomeClockWasVisible = false;
+    gDirectHomeDogWasVisible = false;
+    gDirectHomeDogPose = 0;
+    gDirectHomeDogEntryCount = 0;
     gDirectGpsPosterWasVisible = false;
     gIncomingNodePopupWasVisible = false;
     gDirectIncomingNodePopupRenderCache.valid = false;
@@ -958,7 +1011,7 @@ static void getHermesXHomeBatteryState(bool &hasBattery, int &batteryVoltageMv, 
     }
 }
 
-static void formatHermesXHomeTimeDate(char *timeBuf, size_t timeBufSize, char *dateBuf, size_t dateBufSize)
+static bool formatHermesXHomeTimeDate(char *timeBuf, size_t timeBufSize, char *dateBuf, size_t dateBufSize)
 {
     const uint32_t rtcSec = getValidTime(RTCQuality::RTCQualityDevice, true);
     if (rtcSec > 0) {
@@ -971,12 +1024,105 @@ static void formatHermesXHomeTimeDate(char *timeBuf, size_t timeBufSize, char *d
                 (localTm->tm_wday >= 0 && localTm->tm_wday <= 6) ? kWeekdays[localTm->tm_wday] : "---";
             snprintf(dateBuf, dateBufSize, "%04d/%02d/%02d %s", localTm->tm_year + 1900, localTm->tm_mon + 1,
                      localTm->tm_mday, weekday);
-            return;
+            return true;
         }
     }
 
     snprintf(timeBuf, timeBufSize, "--:--:--");
-    snprintf(dateBuf, dateBufSize, "----/--/-- ---");
+    snprintf(dateBuf, dateBufSize, "等待授時");
+    return false;
+}
+
+static void drawHermesXHomeDog(OLEDDisplay *display, int16_t width, int16_t timeY, bool compactLayout)
+{
+    if (!display) {
+        return;
+    }
+
+    const int16_t areaX = 10;
+    const int16_t areaW = width - 20;
+    if (areaW <= 24) {
+        return;
+    }
+
+    const uint32_t phase = (millis() / 150U);
+    const int16_t dogW = compactLayout ? 36 : 46;
+    const int16_t maxTravel = std::max<int16_t>(0, areaW - dogW);
+    int16_t stride = 0;
+    bool facingRight = true;
+    if (maxTravel > 0) {
+        const int16_t cycle = maxTravel * 2;
+        const int16_t offset = static_cast<int16_t>(phase % static_cast<uint32_t>(cycle > 0 ? cycle : 1));
+        if (offset >= maxTravel) {
+            stride = cycle - offset;
+            facingRight = false;
+        } else {
+            stride = offset;
+        }
+    }
+
+    const int16_t dogX = areaX + stride;
+    const int16_t dogY = timeY + (compactLayout ? 7 : 7);
+    const int16_t bodyW = compactLayout ? 16 : 22;
+    const int16_t bodyH = compactLayout ? 6 : 8;
+    const int16_t neckW = compactLayout ? 4 : 6;
+    const int16_t headW = compactLayout ? 10 : 12;
+    const int16_t headH = compactLayout ? 7 : 9;
+    const int16_t legH = compactLayout ? 7 : 9;
+    const int16_t bodyY = dogY + 4;
+    const int16_t bodyX = facingRight ? dogX + 8 : dogX + 12;
+    const int16_t chestX = facingRight ? bodyX + bodyW - 1 : bodyX - neckW + 1;
+    const int16_t chestY = bodyY + 1;
+    const int16_t headX = facingRight ? bodyX + bodyW + neckW - 1 : dogX;
+    const int16_t headY = dogY;
+    const uint8_t gaitFrame = static_cast<uint8_t>(phase % 4U);
+    const bool altStep = (gaitFrame == 0U || gaitFrame == 2U);
+
+    for (int16_t gx = areaX; gx < (areaX + areaW); gx += 4) {
+        display->setPixel(gx, bodyY + bodyH + legH + 1);
+    }
+
+    display->fillRect(bodyX, bodyY, bodyW, bodyH);
+    if (facingRight) {
+        display->drawLine(bodyX, bodyY + 1, bodyX - 3, bodyY);
+        display->drawLine(bodyX - 3, bodyY, bodyX - 6, bodyY - 2);
+        display->drawLine(bodyX - 6, bodyY - 2, bodyX - 7, bodyY - 5);
+    } else {
+        const int16_t tailX = bodyX + bodyW - 1;
+        display->drawLine(tailX, bodyY + 1, tailX + 3, bodyY);
+        display->drawLine(tailX + 3, bodyY, tailX + 6, bodyY - 2);
+        display->drawLine(tailX + 6, bodyY - 2, tailX + 7, bodyY - 5);
+    }
+
+    display->drawLine(bodyX + bodyW - 1, bodyY, chestX, chestY);
+    display->drawLine(bodyX + bodyW - 1, bodyY + bodyH - 1, chestX, chestY + bodyH);
+    display->fillRect(facingRight ? bodyX + bodyW - 1 : bodyX - neckW + 1, chestY, neckW, bodyH);
+    display->fillRect(headX, headY, headW, headH);
+
+    if (facingRight) {
+        display->drawLine(headX + 2, headY, headX + 2, headY - 3);
+        display->drawLine(headX + 5, headY, headX + 6, headY - 4);
+        display->drawLine(headX + headW - 1, headY + 3, headX + headW + 3, headY + 4);
+        display->setPixel(headX + 5, headY + 3);
+    } else {
+        display->drawLine(headX + headW - 3, headY, headX + headW - 3, headY - 3);
+        display->drawLine(headX + headW - 6, headY, headX + headW - 7, headY - 4);
+        display->drawLine(headX, headY + 3, headX - 4, headY + 4);
+        display->setPixel(headX + 2, headY + 3);
+    }
+
+    const int16_t legY1 = bodyY + bodyH;
+    const int16_t frontLegX = facingRight ? (bodyX + bodyW + 1) : (bodyX - 1);
+    const int16_t frontLeg2X = facingRight ? (bodyX + bodyW - 2) : (bodyX + 2);
+    const int16_t rearLegX = bodyX + 2;
+    const int16_t rearLeg2X = bodyX + bodyW - 2;
+    display->drawLine(frontLegX, legY1, frontLegX, legY1 + legH - (altStep ? 0 : 1));
+    display->drawLine(frontLeg2X, legY1, frontLeg2X, legY1 + legH - (altStep ? 1 : 0));
+    display->drawLine(rearLegX, legY1, rearLegX, legY1 + legH - (altStep ? 1 : 0));
+    display->drawLine(rearLeg2X, legY1, rearLeg2X, legY1 + legH - (altStep ? 0 : 1));
+
+    display->setPixel(frontLegX + (facingRight ? 1 : -1), legY1 + legH - (altStep ? 0 : 1));
+    display->setPixel(rearLeg2X + 1, legY1 + legH - (altStep ? 0 : 1));
 }
 
 static bool canUseDirectHermesXHomeClock(OLEDDisplay *display)
@@ -1588,6 +1734,225 @@ static bool getDirectNeonClockRegionRect(int16_t displayW,
         return false;
     }
     return true;
+}
+
+static void renderDirectHomeDog(TFTDisplay *tft,
+                                int16_t displayW,
+                                int16_t displayH,
+                                int16_t originY,
+                                uint16_t dogFrame,
+                                uint8_t dogPose)
+{
+    if (!tft) {
+        return;
+    }
+
+    int16_t clockRegionX = 0;
+    int16_t clockRegionY = 0;
+    int16_t clockRegionW = 0;
+    int16_t clockRegionH = 0;
+    int16_t frameX = 0;
+    if (!getDirectNeonClockRegionRect(displayW, originY, clockRegionX, clockRegionY, clockRegionW, clockRegionH, frameX)) {
+        return;
+    }
+
+    static constexpr int16_t kDogSpriteW = 24;
+    static constexpr int16_t kDogSpriteH = 24;
+    static constexpr int16_t kDogScale = 2;
+    static constexpr int16_t kDogDrawW = kDogSpriteW * kDogScale;
+    static constexpr int16_t kDogDrawH = kDogSpriteH * kDogScale;
+    const int16_t regionW = std::min<int16_t>(displayW - 4, 120);
+    const int16_t regionH = std::min<int16_t>(displayH - clockRegionY, kDogDrawH + 4);
+    const int16_t regionX = 2;
+    const int16_t regionY = clockRegionY;
+    if (regionW <= 0 || regionH <= 0) {
+        return;
+    }
+
+    DirectDrawClipRect clip{};
+    if (!makeDirectDrawClipRect(regionX, regionY, regionW, regionH, displayW, displayH, clip)) {
+        return;
+    }
+
+    static constexpr const char *kDogLyingFrames[2][kDogSpriteH] = {
+        {
+            "...............O....O...",
+            "..............OTO..OHO..",
+            "..............OLO..OHO..",
+            "..............OLO..OHO..",
+            "..............OHT..HLO..",
+            "..............OHTOOHLO..",
+            ".............OOLTHHHHO..",
+            ".............OOLHHTHHO..",
+            ".............OSLHHOHHO..",
+            ".............SSHHHOHHS..",
+            ".............SOHHHHHHHO.",
+            "...........OSOHHHHHHSOO",
+            "......SOOOOOOSSHHHOOOSOO",
+            ".T....SSSSOOSSSOHHOOSSSO",
+            "......OSSSSSSSSSOHHHOOOO.",
+            ".....SSHHSSSLOSOHHHHHO..",
+            "OO..OOHHHLTHLHHOHHHHHO..",
+            "OS..OSHHHTOHLHHHH..LSO..",
+            "OLO.OHHHHTOTTHHHHHHLLO..",
+            ".HSOOHHHHTSTTHHHHHLLOOO.",
+            ".OTLOHHHOOTTTHHHOOOOHHHS",
+            "..TLOHHHTLSTSHHHHHHHOHLO",
+            "..WWOHHHHHLOOHHHHHHHTHLO",
+            ".....OOOOOOO.OOOOOOOOO..",
+        },
+        {
+            "...............OO...O...",
+            "...............TO..OHO..",
+            "...............TS..OHO..",
+            "..............OLLO.OHO..",
+            "..............OSLO.LTO..",
+            "..............OTLOOLTO..",
+            "..............OHLHHHHO..",
+            "..............OHHHHHHS..",
+            "..............OLHHOHHOO.",
+            ".............OOHHHOHHOO.",
+            ".............OOHHHHHHHO.",
+            "...........OSOHHHHHHOSO",
+            "......OSSSOOOSSHHHOOSSSO",
+            "......SSSSSSSSSHHHOOSSSO",
+            ".....OSSSSSSOSSOHHHSSSS.",
+            ".....SSHHSSSTTSOHHHLTO..",
+            "....OSHHHHTHLHHSTHHHHO..",
+            "....OSHHHHOTTHHHT..LHO..",
+            "....OHHHHHOTLHHHH..LHO..",
+            "...SOTHHHHSHLHHHHHLLHO..",
+            "..OOOTHHOOHHSHHOOOOTHHO.",
+            "OLTTOTHHHTLOSHHHHHHOHTH.",
+            "OHHTOSHHHHLOOHHHHHTSHTL.",
+            ".OOO.OOOOOOO.OOOOOOOOO..",
+        },
+    };
+    static constexpr const char *kDogSittingFrames[2][kDogSpriteH] = {
+        {
+            "..............OO...OO...",
+            "..............TS...HT...",
+            "..............LTO.OHTO..",
+            "..............LTOOOTTO..",
+            ".............OTLHHHHHO..",
+            ".............OTLHOOHHT..",
+            ".............OTTHOOHHOOO",
+            ".............OHHHHHHSSOO",
+            ".............OHHHOOOSSSO",
+            "............OOHHHOOSTL..",
+            "............OOOHHHOHHT..",
+            "............OSOHHHHOOO..",
+            "...........OOOSLHHHHHO..",
+            "..........OSSSSLLSHHHO..",
+            "..........OSSSSTLS.HHO..",
+            ".........OOOSHHHHS..H...",
+            ".........OSSSHHHHH.HHG..",
+            "........OSSSSTTHHTHTTG..",
+            "........OSHHOSHHHTHTHG..",
+            "..TSO..SOLHHHOOHHSSHHG..",
+            "..OHLSOOHHHHHOOHHTSHHG..",
+            "...OSTLSHHHHOOOHHOOHHG..",
+            ".....OOOHHHHHHOHHHOHHHO.",
+            ".........OOOOOOOOOOOOOO.",
+        },
+        {
+            "..............OO........",
+            "..............TSO..OTO..",
+            "..............THO.OHLO..",
+            "..............TTOOOHLO..",
+            ".............OHLHHHHHO..",
+            ".............OHLHSOHHO..",
+            ".............OLLHSOHHOOO",
+            ".............OHHHHHHTSOO",
+            ".............OHHHOOOOSSO",
+            "............OOHHHOOTTT..",
+            "............OOOHHHOHHH..",
+            "............OSOHHHHOOO..",
+            "...........OOOSTHHHHHO..",
+            "..........OOSSSLLSHHHO..",
+            "..........OSSSOLTS.HHO..",
+            ".........OOOSHHHHS..HG..",
+            "........OOSSSHHHHH.THG..",
+            "........OSSSSLHHHLHTTG..",
+            "........SSHHOLHHHSHTHG..",
+            ".......OSHHHHOLHHSSHHG..",
+            ".......OTHHHHOSHHSSHHG..",
+            "...OOSSOHHHHOOSHHOOHHG..",
+            "OOTTTTTOHHHHHTOHHHOHHTO.",
+            ".OOOO...OOOOOOOOO.OOOO..",
+        },
+    };
+
+    const uint16_t outline = TFTDisplay::rgb565(0x18, 0x18, 0x1C);
+    const uint16_t saddle = TFTDisplay::rgb565(0x4A, 0x49, 0x46);
+    const uint16_t tan = TFTDisplay::rgb565(0xA7, 0x74, 0x55);
+    const uint16_t tanHi = TFTDisplay::rgb565(0xD4, 0xA5, 0x80);
+    const uint16_t chest = TFTDisplay::rgb565(0xF8, 0xF7, 0xF8);
+    const uint16_t tongue = TFTDisplay::rgb565(0xBC, 0x55, 0x51);
+    const uint16_t ground = TFTDisplay::rgb565(0xC6, 0xB8, 0xBB);
+    const uint16_t bg = TFTDisplay::rgb565(0x00, 0x00, 0x00);
+
+    const int16_t dogX = regionX;
+    const int16_t dogY = regionY + std::max<int16_t>(0, (regionH - kDogDrawH) / 2);
+
+    directFillRect565Clipped(tft, displayW, displayH, regionX, regionY, regionW, regionH, bg, &clip);
+    const uint8_t gaitFrame = static_cast<uint8_t>(dogFrame & 0x1U);
+    const char *const *sprite = (dogPose == 0) ? kDogLyingFrames[gaitFrame] : kDogSittingFrames[gaitFrame];
+    auto colorFor = [&](char token) -> uint16_t {
+        switch (token) {
+        case 'O':
+            return outline;
+        case 'H':
+            return tanHi;
+        case 'S':
+            return saddle;
+        case 'T':
+            return tan;
+        case 'L':
+            return tongue;
+        case 'W':
+            return chest;
+        case 'G':
+            return ground;
+        default:
+            return bg;
+        }
+    };
+
+    for (int16_t sy = 0; sy < kDogSpriteH; ++sy) {
+        const char *row = sprite[sy];
+        for (int16_t sx = 0; sx < kDogSpriteW; ++sx) {
+            const char token = row[sx];
+            if (token == '.') {
+                continue;
+            }
+            directFillRect565Clipped(tft,
+                                     displayW,
+                                     displayH,
+                                     dogX + (sx * kDogScale),
+                                     dogY + (sy * kDogScale),
+                                     kDogScale,
+                                     kDogScale,
+                                     colorFor(token),
+                                     &clip);
+        }
+    }
+
+    tft->setColor(OLEDDISPLAY_COLOR::WHITE);
+    tft->setTextAlignment(TEXT_ALIGN_LEFT);
+    tft->setFont(FONT_SMALL);
+    const int16_t textX = dogX + kDogDrawW + 6;
+    const int16_t textY = regionY + std::max<int16_t>(0, (regionH - FONT_HEIGHT_SMALL) / 2);
+    const int16_t textW = std::max<int16_t>(0, regionW - kDogDrawW - 8);
+    HermesX_zh::drawMixedBounded(*tft, textX, textY, textW, u8"請連接手機", HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
+    if (textW > 0) {
+        tft->overlayBufferForegroundRect565(textX, textY, textW, FONT_HEIGHT_SMALL + 2);
+    }
+
+    gHermesXDirectHomeUiCache.lastDogX = regionX;
+    gHermesXDirectHomeUiCache.lastDogY = regionY;
+    gHermesXDirectHomeUiCache.lastDogW = regionW;
+    gHermesXDirectHomeUiCache.lastDogH = regionH;
 }
 
 static void renderDirectNeonClock(TFTDisplay *tft,
@@ -2248,14 +2613,6 @@ static void directDrawNeonLine565(TFTDisplay *tft,
     }
 }
 
-struct DirectDrawClipRect {
-    bool enabled = false;
-    int16_t minX = 0;
-    int16_t maxX = 0;
-    int16_t minY = 0;
-    int16_t maxY = 0;
-};
-
 static bool makeDirectDrawClipRect(int16_t x,
                                    int16_t y,
                                    int16_t w,
@@ -2360,6 +2717,40 @@ static void directFillCircle565Clipped(TFTDisplay *tft,
             tft->fillRect565(x0, py, runW, 1, color);
         }
     }
+}
+
+static void directFillRect565Clipped(TFTDisplay *tft,
+                                     int16_t displayW,
+                                     int16_t displayH,
+                                     int16_t x,
+                                     int16_t y,
+                                     int16_t w,
+                                     int16_t h,
+                                     uint16_t color,
+                                     const DirectDrawClipRect *clip)
+{
+    if (!tft || displayW <= 0 || displayH <= 0 || w <= 0 || h <= 0) {
+        return;
+    }
+
+    int16_t x0 = x;
+    int16_t y0 = y;
+    int16_t x1 = x + w - 1;
+    int16_t y1 = y + h - 1;
+    if (clip && clip->enabled) {
+        x0 = std::max<int16_t>(x0, clip->minX);
+        y0 = std::max<int16_t>(y0, clip->minY);
+        x1 = std::min<int16_t>(x1, clip->maxX);
+        y1 = std::min<int16_t>(y1, clip->maxY);
+    }
+    x0 = std::max<int16_t>(0, x0);
+    y0 = std::max<int16_t>(0, y0);
+    x1 = std::min<int16_t>(static_cast<int16_t>(displayW - 1), x1);
+    y1 = std::min<int16_t>(static_cast<int16_t>(displayH - 1), y1);
+    if (x0 > x1 || y0 > y1) {
+        return;
+    }
+    tft->fillRect565(x0, y0, x1 - x0 + 1, y1 - y0 + 1, color);
 }
 
 static void directDrawLine565Clipped(TFTDisplay *tft,
@@ -6481,7 +6872,7 @@ static const char *kSetupEmacItems[] = {u8"返回", u8"設定密碼A", u8"設定
 static const uint8_t kSetupEmacCount = sizeof(kSetupEmacItems) / sizeof(kSetupEmacItems[0]);
 static const uint8_t kSetupNodeMenuCount = 8;
 static const uint8_t kSetupPowerMenuCount = 4;
-static const uint8_t kSetupUiMenuCount = 6;
+static const uint8_t kSetupUiMenuCount = 7;
 static const uint8_t kSetupMqttMenuCount = 4;
 static const uint8_t kSetupNodeDatabaseMenuCount = 2;
 static const uint8_t kSetupNodeDatabaseResetCount = 4;
@@ -6620,6 +7011,42 @@ static const SetupScreenSleepOption kSetupScreenSleepOptions[] = {
     {900, u8"15分鐘"},
 };
 static const uint8_t kSetupScreenSleepCount = sizeof(kSetupScreenSleepOptions) / sizeof(kSetupScreenSleepOptions[0]);
+
+struct SetupTimezoneOption {
+    const char *tz;
+    const char *label;
+};
+
+static const SetupTimezoneOption kSetupTimezoneOptions[] = {
+    {"GMT0", "UTC"},
+    {"GMT+12", "GMT-12"},
+    {"GMT+11", "GMT-11"},
+    {"GMT+10", "GMT-10"},
+    {"GMT+9", "GMT-9"},
+    {"GMT+8", "GMT-8"},
+    {"GMT+7", "GMT-7"},
+    {"GMT+6", "GMT-6"},
+    {"GMT+5", "GMT-5"},
+    {"GMT+4", "GMT-4"},
+    {"GMT+3", "GMT-3"},
+    {"GMT+2", "GMT-2"},
+    {"GMT+1", "GMT-1"},
+    {"GMT-1", "GMT+1"},
+    {"GMT-2", "GMT+2"},
+    {"GMT-3", "GMT+3"},
+    {"GMT-4", "GMT+4"},
+    {"GMT-5", "GMT+5"},
+    {"GMT-6", "GMT+6"},
+    {"GMT-7", "GMT+7"},
+    {"GMT-8", "GMT+8"},
+    {"GMT-9", "GMT+9"},
+    {"GMT-10", "GMT+10"},
+    {"GMT-11", "GMT+11"},
+    {"GMT-12", "GMT+12"},
+    {"GMT-13", "GMT+13"},
+    {"GMT-14", "GMT+14"},
+};
+static const uint8_t kSetupTimezoneCount = sizeof(kSetupTimezoneOptions) / sizeof(kSetupTimezoneOptions[0]);
 
 static const char *kSetupKeyRows[][10] = {
     {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"},
@@ -7024,6 +7451,40 @@ static float getSetupCurrentLoraBandwidthKhz()
         bw = 1625.0f;
     }
     return bw > 0.0f ? bw : 250.0f;
+}
+
+static const char *getSetupTimezoneLabel(const char *tz)
+{
+    if (!tz || !*tz) {
+        return "UTC";
+    }
+    for (uint8_t i = 0; i < kSetupTimezoneCount; ++i) {
+        if (strcmp(kSetupTimezoneOptions[i].tz, tz) == 0) {
+            return kSetupTimezoneOptions[i].label;
+        }
+    }
+    return tz;
+}
+
+static uint8_t getSetupTimezoneSelection(const char *tz)
+{
+    if (!tz || !*tz) {
+        return 1;
+    }
+    for (uint8_t i = 0; i < kSetupTimezoneCount; ++i) {
+        if (strcmp(kSetupTimezoneOptions[i].tz, tz) == 0) {
+            return i + 1;
+        }
+    }
+    return 1;
+}
+
+static void applySetupTimezone(const char *tz)
+{
+    const char *resolved = (tz && *tz) ? tz : "GMT0";
+    strlcpy(config.device.tzdef, resolved, sizeof(config.device.tzdef));
+    setenv("TZ", resolved, 1);
+    tzset();
 }
 
 static uint16_t getSetupLoraChannelSlotCount()
@@ -8336,7 +8797,7 @@ void Screen::drawHermesXMain(OLEDDisplay *display, OLEDDisplayUiState * /*state*
 
     char timeBuf[16];
     char dateBuf[24];
-    formatHermesXHomeTimeDate(timeBuf, sizeof(timeBuf), dateBuf, sizeof(dateBuf));
+    const bool hasValidTime = formatHermesXHomeTimeDate(timeBuf, sizeof(timeBuf), dateBuf, sizeof(dateBuf));
 
     const char *roleLabel = getSetupRoleLabel(config.device.role);
     char roleUpper[24];
@@ -8359,7 +8820,9 @@ void Screen::drawHermesXMain(OLEDDisplay *display, OLEDDisplayUiState * /*state*
     const uint16_t neonGlowOuterFg = TFTDisplay::rgb565(0x1A, 0x3F, 0xD6);
     const uint16_t neonGlowInnerFg = TFTDisplay::rgb565(0x4C, 0xD9, 0xFF);
     const uint16_t neonCoreFg = TFTDisplay::rgb565(0xFE, 0xFF, 0xFF);
-    if (useDirectTftClock) {
+    if (!hasValidTime && !useDirectTftClock) {
+        drawHermesXHomeDog(display, width, timeY, compactLayout);
+    } else if (useDirectTftClock) {
         // TFT home clock is rendered after ui->update() via direct color drawing.
     } else if (useCustomTimeFont) {
         const int16_t currentTimeW = measurePattanakarnClockText(timeBuf);
@@ -9432,15 +9895,16 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
         const uint8_t ledBrightness =
             HermesXInterfaceModule::instance ? HermesXInterfaceModule::instance->getUiLedBrightness() : 60;
         const bool ambientEnabled = moduleConfig.has_ambient_lighting && moduleConfig.ambient_lighting.led_state;
-        String brightnessLine = String(u8"狀態燈亮度: ") + getSetupBrightnessLabel(ledBrightness);
-        String ambientLine = String(u8"狀態燈設定: ") + (ambientEnabled ? u8"開" : u8"關");
+        String brightnessLine = String(u8"Hermes狀態條: ") + getSetupBrightnessLabel(ledBrightness);
+        String ambientLine = String(u8"板載RGB燈: ") + (ambientEnabled ? u8"開" : u8"關");
         String screenSleepLine = String(u8"螢幕休眠: ") + getSetupScreenSleepLabel(getSetupCurrentScreenSleepSeconds());
+        String timezoneLine = String(u8"時區: ") + getSetupTimezoneLabel(config.device.tzdef);
         const bool rotarySwapped =
             moduleConfig.canned_message.inputbroker_event_cw ==
             meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP;
         String rotarySwapLine = String(u8"旋鈕對調: ") + (rotarySwapped ? u8"開" : u8"關");
         const char *items[] = {u8"返回", label.c_str(), brightnessLine.c_str(), ambientLine.c_str(), screenSleepLine.c_str(),
-                               rotarySwapLine.c_str()};
+                               timezoneLine.c_str(), rotarySwapLine.c_str()};
         drawSetupList(display, width, height, u8"UI設定", items, kSetupUiMenuCount, hermesSetupSelected, hermesSetupOffset);
         drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
         return;
@@ -9452,7 +9916,7 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
         for (uint8_t i = 0; i < kSetupBrightnessCount; ++i) {
             items[i + 1] = kSetupBrightnessOptions[i].label;
         }
-        drawSetupList(display, width, height, u8"狀態燈亮度調整", items, kSetupBrightnessCount + 1, hermesSetupSelected,
+        drawSetupList(display, width, height, u8"Hermes狀態條亮度", items, kSetupBrightnessCount + 1, hermesSetupSelected,
                       hermesSetupOffset);
         drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
         return;
@@ -9465,6 +9929,18 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
             items[i + 1] = kSetupScreenSleepOptions[i].label;
         }
         drawSetupList(display, width, height, u8"螢幕休眠時間", items, kSetupScreenSleepCount + 1, hermesSetupSelected,
+                      hermesSetupOffset);
+        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        return;
+    }
+
+    if (hermesSetupPage == HermesFastSetupPage::UiTimezoneSelect) {
+        applyPaletteList(kSetupTimezoneCount + 1);
+        const char *items[kSetupTimezoneCount + 1] = {u8"返回"};
+        for (uint8_t i = 0; i < kSetupTimezoneCount; ++i) {
+            items[i + 1] = kSetupTimezoneOptions[i].label;
+        }
+        drawSetupList(display, width, height, u8"時區設定", items, kSetupTimezoneCount + 1, hermesSetupSelected,
                       hermesSetupOffset);
         drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
         return;
@@ -10801,7 +11277,9 @@ int32_t Screen::runOnce()
     defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
     const bool directNeonBuffersReady = ensureDirectNeonBuffers();
     bool renderDirectHomeClock = false;
+    bool renderDirectHomeDogOverlay = false;
     bool forceDirectHomeClockRedraw = false;
+    uint16_t directHomeDogFrame = 0xFFFF;
     char directHomeTimeBuf[16];
     directHomeTimeBuf[0] = '\0';
     const uint64_t uiLastUpdateBefore = ui->getUiState()->lastUpdate;
@@ -10861,12 +11339,15 @@ int32_t Screen::runOnce()
     }
     if (directNeonBuffersReady && onFixedMainFrame && canUseDirectHermesXHomeClock(dispdev) && !incomingTextPopupActive &&
         !incomingNodePopupActive) {
-        renderDirectHomeClock = true;
-        const bool enteringDirectHomeClock = !gDirectHomeClockWasVisible;
+        const bool enteringDirectHomeOverlay = !gDirectHomeClockWasVisible && !gDirectHomeDogWasVisible;
 
         char homeDateBuf[24];
         homeDateBuf[0] = '\0';
-        formatHermesXHomeTimeDate(directHomeTimeBuf, sizeof(directHomeTimeBuf), homeDateBuf, sizeof(homeDateBuf));
+        const bool directHomeHasValidTime =
+            formatHermesXHomeTimeDate(directHomeTimeBuf, sizeof(directHomeTimeBuf), homeDateBuf, sizeof(homeDateBuf));
+        renderDirectHomeClock = directHomeHasValidTime;
+        renderDirectHomeDogOverlay = !directHomeHasValidTime;
+        directHomeDogFrame = static_cast<uint16_t>(millis() / 110U);
 
         bool hasBattery = false;
         int batteryVoltageMv = 0;
@@ -10887,14 +11368,14 @@ int32_t Screen::runOnce()
         const bool telemetryRefreshDue =
             (gDirectHomeLastBaseRefreshMs == 0) || (nowMs - gDirectHomeLastBaseRefreshMs >= kDirectHomeBaseRefreshMinMs);
         const bool telemetryDirty = telemetryChanged && (!gDirectHomeBasePainted || telemetryRefreshDue);
-        const bool baseDirty = enteringDirectHomeClock || !gHermesXDirectHomeUiCache.valid ||
+        const bool baseDirty = enteringDirectHomeOverlay || !gHermesXDirectHomeUiCache.valid ||
                                gHermesXDirectHomeUiCache.stealth != stealth ||
                                gHermesXDirectHomeUiCache.role != config.device.role ||
                                strcmp(gHermesXDirectHomeUiCache.date, homeDateBuf) != 0 || telemetryDirty;
-        if (enteringDirectHomeClock || telemetryDirty || baseDirty) {
+        if (enteringDirectHomeOverlay || telemetryDirty || baseDirty) {
             LOG_DEBUG("[DirectHome] state enter=%d telemetryChanged=%d telemetryRefreshDue=%d telemetryDirty=%d baseDirty=%d "
                       "basePainted=%d meshPainted=%d skipUi=%d",
-                      enteringDirectHomeClock ? 1 : 0, telemetryChanged ? 1 : 0, telemetryRefreshDue ? 1 : 0,
+                      enteringDirectHomeOverlay ? 1 : 0, telemetryChanged ? 1 : 0, telemetryRefreshDue ? 1 : 0,
                       telemetryDirty ? 1 : 0, baseDirty ? 1 : 0, gDirectHomeBasePainted ? 1 : 0,
                       gDirectHomeMeshPainted ? 1 : 0, skipUiUpdate ? 1 : 0);
             logDirectHomeNeonSummary("DirectHome state update");
@@ -10905,16 +11386,27 @@ int32_t Screen::runOnce()
             ui->setTargetFPS(targetFramerate);
         }
 
-        if (enteringDirectHomeClock) {
+        if (enteringDirectHomeOverlay) {
             // First frame when returning to Home must force a full UI-backed repaint, otherwise direct TFT clock can
             // sit on top of stale pixels from previous frame buffers.
             gHermesXDirectHomeUiCache.valid = false;
             gHermesXDirectHomeUiCache.lastTimeValid = false;
+            gHermesXDirectHomeUiCache.lastDogValid = false;
+            gHermesXDirectHomeUiCache.lastDogFrame = 0xFFFF;
+            gHermesXDirectHomeUiCache.lastDogPose = 0xFF;
+            gHermesXDirectHomeUiCache.lastDogX = -1;
+            gHermesXDirectHomeUiCache.lastDogY = -1;
+            gHermesXDirectHomeUiCache.lastDogW = 0;
+            gHermesXDirectHomeUiCache.lastDogH = 0;
             gDirectHomeBasePainted = false;
             gDirectHomeMeshPainted = false;
             gDirectHomeOrbLastPulsePercent = 0xFF;
             gDirectHomeOrbLastDrawMs = 0;
             forceDirectHomeClockRedraw = true;
+            if (renderDirectHomeDogOverlay) {
+                gDirectHomeDogPose = static_cast<uint8_t>(gDirectHomeDogEntryCount % 2U);
+                ++gDirectHomeDogEntryCount;
+            }
             skipUiUpdate = false;
             ui->init();
             tft->markColorPaletteDirty();
@@ -10938,6 +11430,13 @@ int32_t Screen::runOnce()
     } else {
         gHermesXDirectHomeUiCache.valid = false;
         gHermesXDirectHomeUiCache.lastTimeValid = false;
+        gHermesXDirectHomeUiCache.lastDogValid = false;
+        gHermesXDirectHomeUiCache.lastDogFrame = 0xFFFF;
+        gHermesXDirectHomeUiCache.lastDogPose = 0xFF;
+        gHermesXDirectHomeUiCache.lastDogX = -1;
+        gHermesXDirectHomeUiCache.lastDogY = -1;
+        gHermesXDirectHomeUiCache.lastDogW = 0;
+        gHermesXDirectHomeUiCache.lastDogH = 0;
         gDirectHomeBasePainted = false;
         gDirectHomeMeshPainted = false;
         gDirectHomeOrbLastPulsePercent = 0xFF;
@@ -10945,12 +11444,20 @@ int32_t Screen::runOnce()
         gDirectHomeLastBaseRefreshMs = 0;
     }
 
-    const bool leftDirectHomeClock = gDirectHomeClockWasVisible && !renderDirectHomeClock;
-    if (leftDirectHomeClock) {
+    const bool leftDirectHomeOverlay =
+        (gDirectHomeClockWasVisible && !renderDirectHomeClock) || (gDirectHomeDogWasVisible && !renderDirectHomeDogOverlay);
+    if (leftDirectHomeOverlay) {
         skipUiUpdate = false;
         clearDirectNeonClockRegion(tft, dispdev->getWidth(), 0);
         gDirectHomeBasePainted = false;
         gDirectHomeMeshPainted = false;
+        gHermesXDirectHomeUiCache.lastDogValid = false;
+        gHermesXDirectHomeUiCache.lastDogFrame = 0xFFFF;
+        gHermesXDirectHomeUiCache.lastDogPose = 0xFF;
+        gHermesXDirectHomeUiCache.lastDogX = -1;
+        gHermesXDirectHomeUiCache.lastDogY = -1;
+        gHermesXDirectHomeUiCache.lastDogW = 0;
+        gHermesXDirectHomeUiCache.lastDogH = 0;
         gDirectHomeOrbLastPulsePercent = 0xFF;
         gDirectHomeOrbLastDrawMs = 0;
         gDirectHomeLastBaseRefreshMs = 0;
@@ -11136,6 +11643,20 @@ int32_t Screen::runOnce()
             gHermesXDirectHomeUiCache.lastTimeValid = true;
             logDirectHomeNeonSummary("DirectHome after redraw");
         }
+    } else if (renderDirectHomeDogOverlay) {
+        if (forceDirectHomeClockRedraw || !gHermesXDirectHomeUiCache.lastDogValid ||
+            gHermesXDirectHomeUiCache.lastDogFrame != directHomeDogFrame ||
+            gHermesXDirectHomeUiCache.lastDogPose != gDirectHomeDogPose) {
+            const bool repaintDogBackground = repaintDirectHomeClockMeshRegion(tft, dispdev->getWidth(), dispdev->getHeight(), 0);
+            renderDirectHomeDog(tft, dispdev->getWidth(), dispdev->getHeight(), 0, directHomeDogFrame, gDirectHomeDogPose);
+            gHermesXDirectHomeUiCache.lastDogValid = true;
+            gHermesXDirectHomeUiCache.lastDogFrame = directHomeDogFrame;
+            gHermesXDirectHomeUiCache.lastDogPose = gDirectHomeDogPose;
+            gHermesXDirectHomeUiCache.lastTimeValid = false;
+            if (repaintDogBackground) {
+                logDirectHomeNeonSummary("DirectHome dog redraw");
+            }
+        }
     }
     if (directGpsPosterVisible) {
         const int16_t renderW = dispdev->getWidth();
@@ -11210,6 +11731,7 @@ int32_t Screen::runOnce()
         gDirectIncomingNodePopupRenderCache.height = dispdev->getHeight();
     }
     gDirectHomeClockWasVisible = renderDirectHomeClock;
+    gDirectHomeDogWasVisible = renderDirectHomeDogOverlay;
     gDirectGpsPosterWasVisible = directGpsPosterVisible;
     gIncomingNodePopupWasVisible = incomingNodePopupVisible;
     gDirectLastFrameIndex = currentFrameIndex;
@@ -12819,6 +13341,14 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         }
         enterMenu(HermesFastSetupPage::ChannelMenu, channelCount + 1, selected);
     };
+    auto exitFastSetupToActionPage = [&]() {
+        resetMenu(HermesFastSetupPage::Entry);
+        if (!showHermesXActionPage()) {
+            showNextFrame();
+        } else {
+            setFastFramerate();
+        }
+    };
 
     if (hermesSetupPage == HermesFastSetupPage::Entry) {
         if (navDir != 0 && allowNav(navDir)) {
@@ -13005,9 +13535,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
 
     if (hermesSetupPage == HermesFastSetupPage::Root) {
         if (isCancel) {
-            // Treat cancel as "next page" at top-level.
-            resetMenu(HermesFastSetupPage::Entry);
-            showNextFrame();
+            exitFastSetupToActionPage();
             return true;
         }
         if (handleMenuNav(kSetupRootCount)) {
@@ -13017,8 +13545,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         }
         if (isSelect || isPress) {
             if (hermesSetupSelected == 0) {
-                resetMenu(HermesFastSetupPage::Entry);
-                showNextFrame();
+                exitFastSetupToActionPage();
             }
 #if HERMESX_CIV_DISABLE_EMAC
             else if (hermesSetupSelected == 1) {
@@ -13563,12 +14090,14 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
             } else if (hermesSetupSelected == 1) {
                 itemName = "全域蜂鳴器";
             } else if (hermesSetupSelected == 2) {
-                itemName = "狀態燈亮度調整";
+                itemName = "Hermes狀態條";
             } else if (hermesSetupSelected == 3) {
-                itemName = "狀態燈設定";
+                itemName = "板載RGB燈";
             } else if (hermesSetupSelected == 4) {
                 itemName = "螢幕休眠時間";
             } else if (hermesSetupSelected == 5) {
+                itemName = "時區設定";
+            } else if (hermesSetupSelected == 6) {
                 itemName = "旋鈕對調";
             }
             LOG_INFO("[HermesFastSetup] select=%d item=%s", hermesSetupSelected, itemName);
@@ -13612,6 +14141,9 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                 const uint8_t selected = getSetupScreenSleepSelection(getSetupCurrentScreenSleepSeconds());
                 enterMenu(HermesFastSetupPage::UiScreenSleepSelect, kSetupScreenSleepCount + 1, selected);
             } else if (hermesSetupSelected == 5) {
+                const uint8_t selected = getSetupTimezoneSelection(config.device.tzdef);
+                enterMenu(HermesFastSetupPage::UiTimezoneSelect, kSetupTimezoneCount + 1, selected);
+            } else if (hermesSetupSelected == 6) {
                 const bool rotarySwapped =
                     moduleConfig.canned_message.inputbroker_event_cw ==
                     meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP;
@@ -13676,7 +14208,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                     if (HermesXInterfaceModule::instance) {
                         HermesXInterfaceModule::instance->setUiLedBrightnessPreference(kSetupBrightnessOptions[idx].value);
                     }
-                    hermesSetupToast = String(u8"狀態燈亮度: ") + kSetupBrightnessOptions[idx].label;
+                    hermesSetupToast = String(u8"Hermes狀態條: ") + kSetupBrightnessOptions[idx].label;
                     hermesSetupToastUntilMs = millis() + 1500;
                 }
                 resetMenu(HermesFastSetupPage::UiMenu);
@@ -13707,6 +14239,35 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                     nodeDB->saveToDisk(SEGMENT_CONFIG);
                     hermesSetupToast = String(u8"休眠: ") + kSetupScreenSleepOptions[idx].label + u8" (重開生效)";
                     hermesSetupToastUntilMs = millis() + 1800;
+                }
+                resetMenu(HermesFastSetupPage::UiMenu);
+            }
+            setFastFramerate();
+            return true;
+        }
+        if (isCancel) {
+            resetMenu(HermesFastSetupPage::UiMenu);
+            setFastFramerate();
+            return true;
+        }
+        return false;
+    }
+
+    if (hermesSetupPage == HermesFastSetupPage::UiTimezoneSelect) {
+        if (handleMenuNav(kSetupTimezoneCount + 1)) {
+            setFastFramerate();
+            return true;
+        }
+        if (isSelect || isPress) {
+            if (hermesSetupSelected == 0) {
+                resetMenu(HermesFastSetupPage::UiMenu);
+            } else {
+                const uint8_t idx = static_cast<uint8_t>(hermesSetupSelected - 1);
+                if (idx < kSetupTimezoneCount) {
+                    applySetupTimezone(kSetupTimezoneOptions[idx].tz);
+                    saveSetupSegments(SEGMENT_CONFIG);
+                    hermesSetupToast = String(u8"時區: ") + kSetupTimezoneOptions[idx].label;
+                    hermesSetupToastUntilMs = millis() + 1500;
                 }
                 resetMenu(HermesFastSetupPage::UiMenu);
             }

@@ -848,10 +848,8 @@ int32_t CannedMessageModule::runOnce()
 #endif
 
         this->notifyObservers(&e);
-        // After a send/ack popup, always return to Home.
-        // This avoids FOCUS_PRESERVE mapping frame 0 to Recent Send when module frame is removed.
-        returnTarget = CANNED_MESSAGE_RETURN_TARGET_NONE;
-        returnFrameIndex = 0xFF;
+        // Restore whichever page was active before the transient popup.
+        // This keeps FastSetup / UI pages stable while ACK/NACK feedback comes and goes.
         restoreReturnTarget();
     } else if (((this->runState == CANNED_MESSAGE_RUN_STATE_ACTIVE) || (this->runState == CANNED_MESSAGE_RUN_STATE_FREETEXT)) &&
                !Throttle::isWithinTimespanMs(this->lastTouchMillis, INACTIVATE_AFTER_MS)) {

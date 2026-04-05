@@ -752,6 +752,7 @@ class Screen : public concurrency::OSThread
         UiMenu,
         UiBrightnessSelect,
         UiScreenSleepSelect,
+        UiTimezoneSelect,
         UiRotarySwapSelect,
         NodeMenu,
         NodeDatabaseMenu,
