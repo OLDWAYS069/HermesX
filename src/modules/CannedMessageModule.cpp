@@ -358,10 +358,33 @@ int CannedMessageModule::splitConfiguredMessages()
 
 int CannedMessageModule::handleInputEvent(const InputEvent *event)
 {
+    const bool wasInactiveAtEntry =
+        (this->runState == CANNED_MESSAGE_RUN_STATE_INACTIVE) || (this->runState == CANNED_MESSAGE_RUN_STATE_DISABLED);
+
     if (hermesXEmUiModule && hermesXEmUiModule->isActive()) {
         return 0;
     }
     if (screen && (screen->isHermesFastSetupActive() || screen->isHermesXActionPageActive())) {
+        return 0;
+    }
+    if (screen && (screen->isRecentTextMessagesPageActive() || screen->isRecentTextMessageDetailPageActive())) {
+        // Guard only blocks opening canned input while user is actively browsing Recent pages.
+        // If canned is already active, do NOT force-exit here; that caused unexpected home jumps
+        // on rotary navigation (CCW/CW) when frame context briefly matched Recent.
+        if (this->runState == CANNED_MESSAGE_RUN_STATE_DISABLED || this->runState == CANNED_MESSAGE_RUN_STATE_INACTIVE) {
+            return 0;
+        }
+        const uint16_t cur = screen->getCurrentFrameIndexForDebug();
+        const uint16_t list = screen->getRecentListFrameIndexForDebug();
+        const uint16_t detail = screen->getRecentDetailFrameIndexForDebug();
+        LOG_INFO("[CannedMessage] recent-page-guard bypass state=%d cur=%u list=%u detail=%u fcount=%u",
+                 static_cast<int>(this->runState), cur, list, detail, screen->getFrameCountForDebug());
+    }
+    if (screen && screen->isStealthModeConstrained()) {
+        if (this->runState != CANNED_MESSAGE_RUN_STATE_DISABLED && this->runState != CANNED_MESSAGE_RUN_STATE_INACTIVE) {
+            LOG_INFO("[CannedMessage] exit reason=stealth-guard state=%d", static_cast<int>(this->runState));
+            exitMenu();
+        }
         return 0;
     }
 
@@ -378,12 +401,25 @@ int CannedMessageModule::handleInputEvent(const InputEvent *event)
         return 0; // Ignore input while sending
     }
 
+    const char configuredPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
+    const char configuredCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
+    const char configuredCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
+    const char eventNone = static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_NONE);
+    const char eventUp = static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
+    const char eventDown = static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
+    const char eventSelect = static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
+    const char effectiveCw = (configuredCw == eventNone) ? eventDown : configuredCw;
+    const char effectiveCcw = (configuredCcw == eventNone) ? eventUp : configuredCcw;
+    const char effectivePress = (configuredPress == eventNone) ? eventSelect : configuredPress;
+    const bool isRotaryEnc1 = (event->source && strcmp(event->source, "rotEnc1") == 0);
+    const bool isRotaryCwInput = event->inputEvent == effectiveCw;
+    const bool isRotaryCcwInput = event->inputEvent == effectiveCcw;
+
     // ACK/NACK popup is transient feedback only. Swallow confirm/cancel presses so they
     // don't get reinterpreted as a fresh "select" action (which can run ACTION_SELECT
     // with currentMessageIndex == -1).
     if ((this->runState == CANNED_MESSAGE_RUN_STATE_ACK_NACK_RECEIVED) ||
         (this->runState == CANNED_MESSAGE_RUN_STATE_MESSAGE)) {
-        const char configuredPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
         const char input = event->inputEvent;
         if (input == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT) ||
             input == configuredPress ||
@@ -394,19 +430,45 @@ int CannedMessageModule::handleInputEvent(const InputEvent *event)
     }
 
     bool validEvent = false;
-    if (event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP)) {
+    const bool isUpInput = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
+    const bool isDownInput = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
+
+    int8_t rotaryNavDir = 0;
+    if (isRotaryEnc1) {
+        if (isRotaryCcwInput) {
+            rotaryNavDir = -1;
+        } else if (isRotaryCwInput) {
+            rotaryNavDir = 1;
+        }
+    }
+    if (rotaryNavDir < 0) {
         if (this->messagesCount > 0) {
             this->runState = CANNED_MESSAGE_RUN_STATE_ACTION_UP;
             validEvent = true;
         }
-    }
-    if (event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN)) {
+    } else if (rotaryNavDir > 0) {
         if (this->messagesCount > 0) {
             this->runState = CANNED_MESSAGE_RUN_STATE_ACTION_DOWN;
             validEvent = true;
         }
     }
-    if (event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT)) {
+
+    if (!validEvent && !isRotaryEnc1 && isUpInput) {
+        if (this->messagesCount > 0) {
+            this->runState = CANNED_MESSAGE_RUN_STATE_ACTION_UP;
+            validEvent = true;
+        }
+    }
+    if (!validEvent && !isRotaryEnc1 && isDownInput) {
+        if (this->messagesCount > 0) {
+            this->runState = CANNED_MESSAGE_RUN_STATE_ACTION_DOWN;
+            validEvent = true;
+        }
+    }
+    const bool isSelectInput = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
+    const bool isPressInput = event->inputEvent == effectivePress;
+    const bool wantsSelect = isRotaryEnc1 ? isPressInput : (isSelectInput || isPressInput);
+    if (wantsSelect) {
 
 #if defined(USE_VIRTUAL_KEYBOARD)
         if (this->currentMessageIndex == 0) {
@@ -425,28 +487,27 @@ int CannedMessageModule::handleInputEvent(const InputEvent *event)
         if ((this->runState == CANNED_MESSAGE_RUN_STATE_INACTIVE) || (this->runState == CANNED_MESSAGE_RUN_STATE_DISABLED)) {
             powerFSM.trigger(EVENT_PRESS);
         } else {
+            if ((this->currentMessageIndex >= 0) && (this->messagesCount > this->currentMessageIndex) &&
+                (strcmp(this->messages[this->currentMessageIndex], "~") == 0)) {
+                LOG_INFO("[CannedMessage] built-in Cancel selected -> exitMenu()");
+                exitMenu();
+                return 1;
+            }
             this->payload = this->runState;
             this->runState = CANNED_MESSAGE_RUN_STATE_ACTION_SELECT;
             validEvent = true;
         }
     }
-    if (event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL)) {
-        UIFrameEvent e;
-        e.action = UIFrameEvent::Action::REGENERATE_FRAMESET; // We want to change the list of frames shown on-screen
-        this->currentMessageIndex = -1;
-
-#if !defined(T_WATCH_S3) && !defined(RAK14014) && !defined(USE_VIRTUAL_KEYBOARD)
-        this->freetext = ""; // clear freetext
-        this->cursor = 0;
-        this->destSelect = CANNED_MESSAGE_DESTINATION_TYPE_NONE;
-#endif
-
-        this->runState = CANNED_MESSAGE_RUN_STATE_INACTIVE;
-        this->notifyObservers(&e);
+    if (!validEvent && !isRotaryEnc1 &&
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL)) {
+        LOG_INFO("[CannedMessage] CANCEL input -> exitMenu()");
+        exitMenu();
+        return 1;
     }
-    if ((event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK)) ||
-        (event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT)) ||
-        (event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT))) {
+    if (!validEvent && !isRotaryEnc1 &&
+        ((event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK)) ||
+         (event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT)) ||
+         (event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT)))) {
 
 #if defined(USE_VIRTUAL_KEYBOARD)
         if (event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT)) {
@@ -470,6 +531,11 @@ int CannedMessageModule::handleInputEvent(const InputEvent *event)
 
         this->lastTouchMillis = millis();
         validEvent = true;
+    }
+    // When canned menu is active on rotEnc1, do not let unmatched rotary events leak to Screen frame navigation.
+    if (!validEvent && isRotaryEnc1 && this->runState != CANNED_MESSAGE_RUN_STATE_DISABLED &&
+        this->runState != CANNED_MESSAGE_RUN_STATE_INACTIVE) {
+        return 1;
     }
     if (event->inputEvent == static_cast<char>(ANYKEY)) {
         // when inactive, this will switch to the freetext mode
@@ -646,6 +712,9 @@ int CannedMessageModule::handleInputEvent(const InputEvent *event)
     }
 
     if (validEvent) {
+        if (wasInactiveAtEntry) {
+            captureReturnTarget();
+        }
         requestFocus(); // Tell Screen::setFrames to move to our module's frame, next time it runs
 
         // Let runOnce to be called immediately.
@@ -654,9 +723,77 @@ int CannedMessageModule::handleInputEvent(const InputEvent *event)
         } else {
             runOnce();
         }
+        // Consume handled input so Screen/frame navigation doesn't also process the same
+        // rotary event and unexpectedly change pages (which can force exitMenu on next turn).
+        return 1;
     }
 
     return 0;
+}
+
+void CannedMessageModule::captureReturnTarget()
+{
+    returnTarget = CANNED_MESSAGE_RETURN_TARGET_NONE;
+    returnFrameIndex = 0xFF;
+    if (!screen) {
+        return;
+    }
+
+    const uint8_t currentFrame = screen->getCurrentFrameIndexForDebug();
+    const uint8_t frameCount = screen->getFrameCountForDebug();
+    if (currentFrame != 0xFF && currentFrame < frameCount) {
+        returnFrameIndex = currentFrame;
+    }
+
+    if (screen->isRecentTextMessageDetailPageActive()) {
+        returnTarget = CANNED_MESSAGE_RETURN_TARGET_RECENT_DETAIL;
+    } else if (screen->isRecentTextMessagesPageActive()) {
+        returnTarget = CANNED_MESSAGE_RETURN_TARGET_RECENT_LIST;
+    } else if (screen->isHermesXActionPageActive()) {
+        returnTarget = CANNED_MESSAGE_RETURN_TARGET_ACTION;
+    }
+    LOG_INFO("[CannedMessage] captureReturnTarget=%d frame=%u", static_cast<int>(returnTarget),
+             static_cast<unsigned>(returnFrameIndex));
+}
+
+void CannedMessageModule::restoreReturnTarget()
+{
+    if (!screen) {
+        returnTarget = CANNED_MESSAGE_RETURN_TARGET_NONE;
+        returnFrameIndex = 0xFF;
+        return;
+    }
+
+    LOG_INFO("[CannedMessage] restoreReturnTarget=%d frame=%u", static_cast<int>(returnTarget),
+             static_cast<unsigned>(returnFrameIndex));
+    bool restored = false;
+    switch (returnTarget) {
+    case CANNED_MESSAGE_RETURN_TARGET_RECENT_DETAIL:
+        restored = screen->showTextMessageDetailPage();
+        break;
+    case CANNED_MESSAGE_RETURN_TARGET_RECENT_LIST:
+        restored = screen->showRecentTextMessageListPage();
+        break;
+    case CANNED_MESSAGE_RETURN_TARGET_ACTION:
+        restored = screen->showHermesXActionPage();
+        break;
+    default:
+        break;
+    }
+
+    if (!restored && returnFrameIndex != 0xFF) {
+        restored = screen->showFrameByIndex(returnFrameIndex);
+    }
+
+    if (!restored) {
+        // If no target can be restored, prefer Home instead of relying on
+        // FOCUS_PRESERVE fallback (which can land on Recent Send when module frame is removed).
+        LOG_INFO("[CannedMessage] restoreReturnTarget fallback -> home");
+        screen->showHermesXMainPage();
+    }
+
+    returnTarget = CANNED_MESSAGE_RETURN_TARGET_NONE;
+    returnFrameIndex = 0xFF;
 }
 
 void CannedMessageModule::sendText(NodeNum dest, ChannelIndex channel, const char *message, bool wantReplies)
@@ -694,6 +831,7 @@ int32_t CannedMessageModule::runOnce()
     }
     // LOG_DEBUG("Check status");
     UIFrameEvent e;
+    e.action = UIFrameEvent::Action::REDRAW_ONLY;
     if ((this->runState == CANNED_MESSAGE_RUN_STATE_SENDING_ACTIVE) ||
         (this->runState == CANNED_MESSAGE_RUN_STATE_ACK_NACK_RECEIVED) || (this->runState == CANNED_MESSAGE_RUN_STATE_MESSAGE)) {
         // TODO: might have some feedback of sending state
@@ -710,6 +848,9 @@ int32_t CannedMessageModule::runOnce()
 #endif
 
         this->notifyObservers(&e);
+        // Restore whichever page was active before the transient popup.
+        // This keeps FastSetup / UI pages stable while ACK/NACK feedback comes and goes.
+        restoreReturnTarget();
     } else if (((this->runState == CANNED_MESSAGE_RUN_STATE_ACTIVE) || (this->runState == CANNED_MESSAGE_RUN_STATE_FREETEXT)) &&
                !Throttle::isWithinTimespanMs(this->lastTouchMillis, INACTIVATE_AFTER_MS)) {
         // Reset module
@@ -724,6 +865,10 @@ int32_t CannedMessageModule::runOnce()
 
         this->runState = CANNED_MESSAGE_RUN_STATE_INACTIVE;
         this->notifyObservers(&e);
+        // Inactivity timeout should also exit to Home for deterministic behavior.
+        returnTarget = CANNED_MESSAGE_RETURN_TARGET_NONE;
+        returnFrameIndex = 0xFF;
+        restoreReturnTarget();
     } else if (this->runState == CANNED_MESSAGE_RUN_STATE_ACTION_SELECT) {
         if (this->payload == CANNED_MESSAGE_RUN_STATE_FREETEXT) {
             if (this->freetext.length() > 0) {
@@ -767,6 +912,10 @@ int32_t CannedMessageModule::runOnce()
     } else if ((this->runState != CANNED_MESSAGE_RUN_STATE_FREETEXT) && (this->currentMessageIndex == -1)) {
         ensureCancelOption();
         this->currentMessageIndex = 0;
+        // Keep built-in "~" (Cancel) available but don't land on it on first touch.
+        if ((this->messagesCount > 1) && this->messages[0] && (strcmp(this->messages[0], "~") == 0)) {
+            this->currentMessageIndex = 1;
+        }
         LOG_DEBUG("First touch (%d):%s", this->currentMessageIndex, this->getCurrentMessage());
         e.action = UIFrameEvent::Action::REGENERATE_FRAMESET; // We want to change the list of frames shown on-screen
         this->runState = CANNED_MESSAGE_RUN_STATE_ACTIVE;
@@ -962,7 +1111,7 @@ static const char *displayLabel(const char *msg)
     return (msg && strcmp(msg, "~") == 0) ? "Cancel" : msg;
 }
 
-const char *CannedMessageModule::getNodeName(NodeNum node)
+const char *CannedMessageModule::getNodeName(NodeNum node) const
 {
     if (node == NODENUM_BROADCAST) {
         return "Broadcast";
@@ -974,6 +1123,21 @@ const char *CannedMessageModule::getNodeName(NodeNum node)
             return "Unknown";
         }
     }
+}
+
+String CannedMessageModule::getDestinationDisplayName(NodeNum node) const
+{
+    if (node != NODENUM_BROADCAST) {
+        return String(getNodeName(node));
+    }
+
+    const ChannelIndex channelIndex = (channel < numChannels) ? indexChannels[channel] : getPreferredChannel();
+    const char *channelName = channels.getName(channelIndex);
+    if (channelName && channelName[0] != '\0') {
+        return String(channelName);
+    }
+
+    return String("Broadcast");
 }
 
 bool CannedMessageModule::shouldDraw()
@@ -1017,7 +1181,8 @@ void CannedMessageModule::ensureCancelOption()
 void CannedMessageModule::exitMenu()
 {
     UIFrameEvent e;
-    e.action = UIFrameEvent::Action::REGENERATE_FRAMESET;
+    e.action = UIFrameEvent::Action::REGENERATE_FRAMESET_BACKGROUND;
+    LOG_INFO("[CannedMessage] exitMenu() -> inactive + regenerate frameset background");
     this->runState = CANNED_MESSAGE_RUN_STATE_INACTIVE;
     this->currentMessageIndex = -1;
     this->freetext = "";
@@ -1027,6 +1192,7 @@ void CannedMessageModule::exitMenu()
     this->destSelect = CANNED_MESSAGE_DESTINATION_TYPE_NONE;
 #endif
     this->notifyObservers(&e);
+    restoreReturnTarget();
     setIntervalFromNow(INT32_MAX);
 }
 
@@ -1265,6 +1431,10 @@ void CannedMessageModule::drawEnterIcon(OLEDDisplay *display, int x, int y, floa
 // This prevents the left & right keys being used for nav. between screen frames during text entry.
 bool CannedMessageModule::interceptingKeyboardInput()
 {
+    if (screen && (screen->isRecentTextMessagesPageActive() || screen->isRecentTextMessageDetailPageActive())) {
+        return false;
+    }
+
     switch (runState) {
     case CANNED_MESSAGE_RUN_STATE_DISABLED:
     case CANNED_MESSAGE_RUN_STATE_INACTIVE:
@@ -1375,29 +1545,30 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
         display->setTextAlignment(TEXT_ALIGN_LEFT);
         display->setFont(FONT_SMALL);
         const int smallLineHeight = FONT_HEIGHT_SMALL;
+        const String destinationDisplayName = cannedMessageModule->getDestinationDisplayName(this->dest);
         if (this->destSelect != CANNED_MESSAGE_DESTINATION_TYPE_NONE) {
             display->fillRect(0 + x, 0 + y, x + display->getWidth(), y + FONT_HEIGHT_SMALL);
             display->setColor(BLACK);
         }
         switch (this->destSelect) {
         case CANNED_MESSAGE_DESTINATION_TYPE_NODE:
-            snprintf(buffer, sizeof(buffer), "To: >%s<@%s", cannedMessageModule->getNodeName(this->dest),
+            snprintf(buffer, sizeof(buffer), "To: >%s<@%s", destinationDisplayName.c_str(),
                      channels.getName(indexChannels[this->channel]));
             drawMixedText(*display, 1 + x, y, buffer, smallLineHeight);
             drawMixedText(*display, 0 + x, y, buffer, smallLineHeight);
             break;
         case CANNED_MESSAGE_DESTINATION_TYPE_CHANNEL:
-            snprintf(buffer, sizeof(buffer), "To: %s@>%s<", cannedMessageModule->getNodeName(this->dest),
+            snprintf(buffer, sizeof(buffer), "To: %s@>%s<", destinationDisplayName.c_str(),
                      channels.getName(indexChannels[this->channel]));
             drawMixedText(*display, 1 + x, y, buffer, smallLineHeight);
             drawMixedText(*display, 0 + x, y, buffer, smallLineHeight);
             break;
         default:
             if (display->getWidth() > 128) {
-                snprintf(buffer, sizeof(buffer), "To: %s@%s", cannedMessageModule->getNodeName(this->dest),
+                snprintf(buffer, sizeof(buffer), "To: %s@%s", destinationDisplayName.c_str(),
                          channels.getName(indexChannels[this->channel]));
             } else {
-                snprintf(buffer, sizeof(buffer), "To: %.5s@%.5s", cannedMessageModule->getNodeName(this->dest),
+                snprintf(buffer, sizeof(buffer), "To: %.5s@%.5s", destinationDisplayName.c_str(),
                          channels.getName(indexChannels[this->channel]));
             }
             drawMixedText(*display, 0 + x, y, buffer, smallLineHeight);
@@ -1420,7 +1591,8 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
             display->setTextAlignment(TEXT_ALIGN_LEFT);
             display->setFont(FONT_SMALL);
             const int smallLineHeight = FONT_HEIGHT_SMALL;
-            snprintf(buffer, sizeof(buffer), "To: %s", cannedMessageModule->getNodeName(this->dest));
+            const String destinationDisplayName = cannedMessageModule->getDestinationDisplayName(this->dest);
+            snprintf(buffer, sizeof(buffer), "To: %s", destinationDisplayName.c_str());
             drawMixedText(*display, 0 + x, 0 + y, buffer, smallLineHeight);
             int lines = (display->getHeight() / FONT_HEIGHT_SMALL) - 1;
             if (lines == 3) {

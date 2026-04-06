@@ -4,11 +4,23 @@
 #include "NimbleBluetooth.h"
 #include "PowerFSM.h"
 
+#include "concurrency/OSThread.h"
 #include "main.h"
 #include "mesh/PhoneAPI.h"
 #include "mesh/mesh-pb-constants.h"
+#include "platform/esp32/HermesCrashBreadcrumb.h"
 #include "sleep.h"
 #include <NimBLEDevice.h>
+#include <array>
+#include <atomic>
+#include <mutex>
+
+#define NIMBLE_BLUETOOTH_TO_PHONE_QUEUE_SIZE 8
+#define NIMBLE_BLUETOOTH_FROM_PHONE_QUEUE_SIZE 4
+
+// Isolation switch: if config still panics, keep BLE config traffic on default connection params
+// so we can separate "conn param update" from "manifest scan" failures.
+static constexpr bool kEnableBleConfigConnParamUpgrade = false;
 
 NimBLECharacteristic *fromNumCharacteristic;
 NimBLECharacteristic *BatteryCharacteristic;
@@ -16,17 +28,190 @@ NimBLECharacteristic *logRadioCharacteristic;
 NimBLEServer *bleServer;
 
 static bool passkeyShowing;
+static std::atomic<uint16_t> nimbleBluetoothConnHandle{BLE_HS_CONN_HANDLE_NONE};
 
-class BluetoothPhoneAPI : public PhoneAPI
+class BluetoothPhoneAPI : public PhoneAPI, public concurrency::OSThread
 {
-    /**
-     * Subclasses can use this as a hook to provide custom notifications for their transport (i.e. bluetooth notifies)
-     */
-    virtual void onNowHasData(uint32_t fromRadioNum)
+  public:
+    BluetoothPhoneAPI() : concurrency::OSThread("NimbleBluetooth") { api_type = TYPE_BLE; }
+
+    std::mutex fromPhoneMutex;
+    std::atomic<size_t> fromPhoneQueueSize{0};
+    std::array<NimBLEAttValue, NIMBLE_BLUETOOTH_FROM_PHONE_QUEUE_SIZE> fromPhoneQueue{};
+
+    std::mutex toPhoneMutex;
+    std::atomic<size_t> toPhoneQueueSize{0};
+    std::array<std::array<uint8_t, meshtastic_FromRadio_size>, NIMBLE_BLUETOOTH_TO_PHONE_QUEUE_SIZE> toPhoneQueue{};
+    std::array<size_t, NIMBLE_BLUETOOTH_TO_PHONE_QUEUE_SIZE> toPhoneQueueByteSizes{};
+    size_t toPhoneQueueHead{0};
+    std::array<uint8_t, meshtastic_FromRadio_size> toPhoneReadScratch{};
+    std::atomic<bool> onReadCallbackIsWaitingForData{false};
+
+    std::atomic<int32_t> readCount{0};
+    std::atomic<int32_t> notifyCount{0};
+    std::atomic<int32_t> writeCount{0};
+
+    bool enqueueToPhoneQueue(const uint8_t *data, size_t numBytes)
+    {
+        std::lock_guard<std::mutex> guard(toPhoneMutex);
+        const size_t queueSize = toPhoneQueueSize.load();
+        if (queueSize >= NIMBLE_BLUETOOTH_TO_PHONE_QUEUE_SIZE) {
+            return false;
+        }
+
+        const size_t storeAtIndex = (toPhoneQueueHead + queueSize) % NIMBLE_BLUETOOTH_TO_PHONE_QUEUE_SIZE;
+        memcpy(toPhoneQueue[storeAtIndex].data(), data, numBytes);
+        toPhoneQueueByteSizes[storeAtIndex] = numBytes;
+        toPhoneQueueSize = queueSize + 1;
+        return true;
+    }
+
+    size_t dequeueToPhoneQueue()
+    {
+        std::lock_guard<std::mutex> guard(toPhoneMutex);
+        const size_t queueSize = toPhoneQueueSize.load();
+        if (queueSize == 0) {
+            return 0;
+        }
+
+        const size_t readIndex = toPhoneQueueHead;
+        const size_t numBytes = toPhoneQueueByteSizes[readIndex];
+        memcpy(toPhoneReadScratch.data(), toPhoneQueue[readIndex].data(), numBytes);
+        toPhoneQueueHead = (toPhoneQueueHead + 1) % NIMBLE_BLUETOOTH_TO_PHONE_QUEUE_SIZE;
+        toPhoneQueueSize = queueSize - 1;
+        return numBytes;
+    }
+
+    void clearToPhoneQueue()
+    {
+        std::lock_guard<std::mutex> guard(toPhoneMutex);
+        toPhoneQueueHead = 0;
+        toPhoneQueueSize = 0;
+    }
+
+  protected:
+    virtual size_t getNodePrefetchDepth() const override { return 12; }
+
+    virtual int32_t runOnce() override
+    {
+        while (runOnceHasWorkToDo()) {
+            // Process writes before reads so app write-then-read sequences stay synchronized.
+            runOnceHandleFromPhoneQueue();
+            runOnceHandleToPhoneQueue();
+        }
+
+        return INT32_MAX;
+    }
+
+    virtual void onConfigStart() override
+    {
+        LOG_INFO("BLE onConfigStart");
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::BleConfigStart);
+
+        if (!kEnableBleConfigConnParamUpgrade) {
+            LOG_WARN("BLE config conn param upgrade disabled for isolation");
+            return;
+        }
+
+        if (bleServer && isConnected()) {
+            uint16_t conn_handle = nimbleBluetoothConnHandle.load();
+            if (conn_handle != BLE_HS_CONN_HANDLE_NONE) {
+                LOG_INFO("BLE request high-throughput config params");
+                requestHighThroughputConnection(conn_handle);
+                LOG_INFO("BLE high-throughput config params requested");
+            }
+        }
+    }
+
+    virtual void onConfigComplete() override
+    {
+        LOG_INFO("BLE onConfigComplete");
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::BleConfigComplete);
+
+        if (!kEnableBleConfigConnParamUpgrade) {
+            return;
+        }
+
+        if (bleServer && isConnected()) {
+            uint16_t conn_handle = nimbleBluetoothConnHandle.load();
+            if (conn_handle != BLE_HS_CONN_HANDLE_NONE) {
+                requestLowerPowerConnection(conn_handle);
+            }
+        }
+    }
+
+    bool runOnceHasWorkToDo() { return runOnceHasWorkToPhone() || runOnceHasWorkFromPhone(); }
+
+    bool runOnceHasWorkToPhone() { return onReadCallbackIsWaitingForData || runOnceToPhoneCanPreloadNextPacket(); }
+
+    bool runOnceToPhoneCanPreloadNextPacket()
+    {
+        if (!isConnected()) {
+            return false;
+        } else if (isSendingPackets()) {
+            return false;
+        } else {
+            return toPhoneQueueSize < NIMBLE_BLUETOOTH_TO_PHONE_QUEUE_SIZE;
+        }
+    }
+
+    void runOnceHandleToPhoneQueue()
+    {
+        uint8_t fromRadioBytes[meshtastic_FromRadio_size] = {0};
+        size_t numBytes = 0;
+        const bool wasWaitingForData = onReadCallbackIsWaitingForData;
+        const bool queueWasEmpty = toPhoneQueueSize == 0;
+
+        if (onReadCallbackIsWaitingForData || runOnceToPhoneCanPreloadNextPacket()) {
+            numBytes = getFromRadio(fromRadioBytes);
+
+            if (numBytes != 0) {
+                if (!enqueueToPhoneQueue(fromRadioBytes, numBytes)) {
+                    hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::BleToPhoneQueueFull, numBytes & 0xffffU);
+                    LOG_ERROR("Shouldn't happen! Drop FromRadio packet, toPhoneQueue full (%u bytes)", numBytes);
+                } else if (wasWaitingForData || queueWasEmpty) {
+                    hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::BleToPhoneEnqueue, numBytes & 0xffffU);
+                }
+            }
+
+            onReadCallbackIsWaitingForData = false;
+        }
+    }
+
+    bool runOnceHasWorkFromPhone() { return fromPhoneQueueSize > 0; }
+
+    void runOnceHandleFromPhoneQueue()
+    {
+        if (fromPhoneQueueSize > 0) {
+            LOG_DEBUG("NimbleBluetooth: handling ToRadio packet, fromPhoneQueueSize=%u", fromPhoneQueueSize.load());
+
+            NimBLEAttValue val;
+            {
+                std::lock_guard<std::mutex> guard(fromPhoneMutex);
+                val = fromPhoneQueue[0];
+
+                for (uint8_t i = 1; i < fromPhoneQueueSize; i++) {
+                    fromPhoneQueue[i - 1] = fromPhoneQueue[i];
+                }
+
+                if (fromPhoneQueueSize > 0)
+                    fromPhoneQueueSize--;
+            }
+
+            handleToRadio(val.data(), val.length());
+        }
+    }
+
+    virtual void onNowHasData(uint32_t fromRadioNum) override
     {
         PhoneAPI::onNowHasData(fromRadioNum);
 
-        LOG_DEBUG("BLE notify fromNum");
+        if (!fromNumCharacteristic || !bleServer || bleServer->getConnectedCount() == 0) {
+            LOG_DEBUG("Skip BLE fromNum notify, no active connection");
+            return;
+        }
+
+        notifyCount.fetch_add(1);
 
         uint8_t val[4];
         put_le32(val, fromRadioNum);
@@ -35,8 +220,19 @@ class BluetoothPhoneAPI : public PhoneAPI
         fromNumCharacteristic->notify();
     }
 
-    /// Check the current underlying physical link to see if the client is currently connected
-    virtual bool checkIsConnected() { return bleServer && bleServer->getConnectedCount() > 0; }
+    virtual bool checkIsConnected() override { return bleServer && bleServer->getConnectedCount() > 0; }
+
+    void requestHighThroughputConnection(uint16_t conn_handle)
+    {
+        LOG_INFO("BLE requestHighThroughputConnection");
+        bleServer->updateConnParams(conn_handle, 6, 12, 0, 600);
+    }
+
+    void requestLowerPowerConnection(uint16_t conn_handle)
+    {
+        LOG_INFO("BLE requestLowerPowerConnection");
+        bleServer->updateConnParams(conn_handle, 24, 40, 2, 600);
+    }
 };
 
 static BluetoothPhoneAPI *bluetoothPhoneAPI;
@@ -46,18 +242,37 @@ static BluetoothPhoneAPI *bluetoothPhoneAPI;
 
 // Last ToRadio value received from the phone
 static uint8_t lastToRadio[MAX_TO_FROM_RADIO_SIZE];
+static size_t lastToRadioLen = 0;
 
 class NimbleBluetoothToRadioCallback : public NimBLECharacteristicCallbacks
 {
     virtual void onWrite(NimBLECharacteristic *pCharacteristic)
     {
-        LOG_DEBUG("To Radio onwrite");
+        bluetoothPhoneAPI->writeCount.fetch_add(1);
         auto val = pCharacteristic->getValue();
+        const size_t len = val.length();
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::BleFromPhoneWrite, len & 0xffffU);
 
-        if (memcmp(lastToRadio, val.data(), val.length()) != 0) {
-            LOG_DEBUG("New ToRadio packet");
-            memcpy(lastToRadio, val.data(), val.length());
-            bluetoothPhoneAPI->handleToRadio(val.data(), val.length());
+        if (lastToRadioLen != len || memcmp(lastToRadio, val.data(), len) != 0) {
+            if (bluetoothPhoneAPI->fromPhoneQueueSize < NIMBLE_BLUETOOTH_FROM_PHONE_QUEUE_SIZE) {
+                if (len <= sizeof(lastToRadio)) {
+                    memcpy(lastToRadio, val.data(), len);
+                    lastToRadioLen = len;
+                } else {
+                    lastToRadioLen = 0;
+                }
+
+                {
+                    std::lock_guard<std::mutex> guard(bluetoothPhoneAPI->fromPhoneMutex);
+                    bluetoothPhoneAPI->fromPhoneQueue.at(bluetoothPhoneAPI->fromPhoneQueueSize) = val;
+                    bluetoothPhoneAPI->fromPhoneQueueSize++;
+                }
+
+                bluetoothPhoneAPI->setIntervalFromNow(0);
+                concurrency::mainDelay.interrupt();
+            } else {
+                LOG_WARN("Drop ToRadio packet, fromPhoneQueue full (%u bytes)", len);
+            }
         } else {
             LOG_DEBUG("Drop dup ToRadio packet we just saw");
         }
@@ -68,12 +283,36 @@ class NimbleBluetoothFromRadioCallback : public NimBLECharacteristicCallbacks
 {
     virtual void onRead(NimBLECharacteristic *pCharacteristic)
     {
-        uint8_t fromRadioBytes[meshtastic_FromRadio_size];
-        size_t numBytes = bluetoothPhoneAPI->getFromRadio(fromRadioBytes);
+        bluetoothPhoneAPI->readCount.fetch_add(1);
+        int tries = 0;
 
-        std::string fromRadioByteString(fromRadioBytes, fromRadioBytes + numBytes);
+        if (bluetoothPhoneAPI->toPhoneQueueSize == 0) {
+            hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::BleReadWait);
+            bluetoothPhoneAPI->onReadCallbackIsWaitingForData = true;
+            while (bluetoothPhoneAPI->onReadCallbackIsWaitingForData && tries < 4000) {
+                bluetoothPhoneAPI->setIntervalFromNow(0);
+                concurrency::mainDelay.interrupt();
 
-        pCharacteristic->setValue(fromRadioByteString);
+                if (!bluetoothPhoneAPI->onReadCallbackIsWaitingForData) {
+                    break;
+                }
+
+                delay(tries < 20 ? 1 : 5);
+                tries++;
+            }
+        }
+
+        const size_t numBytes = bluetoothPhoneAPI->dequeueToPhoneQueue();
+        if (numBytes == 0 && tries > 0) {
+            hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::BleReadWait, tries & 0xffffU);
+        }
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::BleReadDequeue, numBytes & 0xffffU);
+        pCharacteristic->setValue(bluetoothPhoneAPI->toPhoneReadScratch.data(), numBytes);
+
+        if (numBytes != 0) {
+            bluetoothPhoneAPI->setIntervalFromNow(0);
+            concurrency::mainDelay.interrupt();
+        }
     }
 };
 
@@ -134,20 +373,40 @@ class NimbleBluetoothServerCallback : public NimBLEServerCallbacks
         // Todo: migrate this display code back into Screen class, and observe bluetoothStatus
         if (passkeyShowing) {
             passkeyShowing = false;
-            screen->endAlert();
+            if (screen)
+                screen->endAlert();
         }
+
+        nimbleBluetoothConnHandle = desc->conn_handle;
     }
 
     virtual void onDisconnect(NimBLEServer *pServer, ble_gap_conn_desc *desc)
     {
         LOG_INFO("BLE disconnect");
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::BleDisconnect);
+        memset(lastToRadio, 0, sizeof(lastToRadio));
+        lastToRadioLen = 0;
 
         bluetoothStatus->updateStatus(
             new meshtastic::BluetoothStatus(meshtastic::BluetoothStatus::ConnectionState::DISCONNECTED));
 
         if (bluetoothPhoneAPI) {
             bluetoothPhoneAPI->close();
+
+            {
+                std::lock_guard<std::mutex> guard(bluetoothPhoneAPI->fromPhoneMutex);
+                bluetoothPhoneAPI->fromPhoneQueueSize = 0;
+            }
+
+            bluetoothPhoneAPI->onReadCallbackIsWaitingForData = false;
+            bluetoothPhoneAPI->clearToPhoneQueue();
+
+            bluetoothPhoneAPI->readCount = 0;
+            bluetoothPhoneAPI->notifyCount = 0;
+            bluetoothPhoneAPI->writeCount = 0;
         }
+
+        nimbleBluetoothConnHandle = BLE_HS_CONN_HANDLE_NONE;
     }
 };
 

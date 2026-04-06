@@ -24,6 +24,13 @@ enum cannedMessageDestinationType {
 
 enum CannedMessageModuleIconType { shift, backspace, space, enter };
 
+enum cannedMessageReturnTarget {
+    CANNED_MESSAGE_RETURN_TARGET_NONE,
+    CANNED_MESSAGE_RETURN_TARGET_ACTION,
+    CANNED_MESSAGE_RETURN_TARGET_RECENT_LIST,
+    CANNED_MESSAGE_RETURN_TARGET_RECENT_DETAIL,
+};
+
 struct Letter {
     String character;
     float width;
@@ -54,7 +61,8 @@ class CannedMessageModule : public SinglePortModule, public Observable<const UIF
     const char *getPrevMessage();
     const char *getNextMessage();
     const char *getMessageByIndex(int index);
-    const char *getNodeName(NodeNum node);
+    const char *getNodeName(NodeNum node) const;
+    String getDestinationDisplayName(NodeNum node) const;
     bool shouldDraw();
     bool hasMessages();
     void exitMenu(); // 自訂：退出 canned message 選單
@@ -113,6 +121,8 @@ class CannedMessageModule : public SinglePortModule, public Observable<const UIF
     int splitConfiguredMessages();
     int getNextIndex();
     int getPrevIndex();
+    void captureReturnTarget();
+    void restoreReturnTarget();
 
 #if defined(USE_VIRTUAL_KEYBOARD)
     void drawKeyboard(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
@@ -176,6 +186,8 @@ class CannedMessageModule : public SinglePortModule, public Observable<const UIF
     int messagesCount = 0;
     unsigned long lastTouchMillis = 0;
     String temporaryMessage;
+    cannedMessageReturnTarget returnTarget = CANNED_MESSAGE_RETURN_TARGET_NONE;
+    uint8_t returnFrameIndex = 0xFF;
 
 #if defined(USE_VIRTUAL_KEYBOARD)
     Letter keyboard[2][4][10] = {{{{"Q", 20, 0, 0, 0, 0},

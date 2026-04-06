@@ -18,6 +18,7 @@ class Screen
     void onPress() {}
     void setup() {}
     void setOn(bool) {}
+    bool isOn() const { return false; }
     void print(const char *) {}
     void doDeepSleep() {}
     void forceDisplay(bool forceUiUpdate = false) {}
@@ -26,10 +27,15 @@ class Screen
     void decreaseBrightness() {}
     uint8_t getBrightnessLevel() const { return 150; }
     void setBrightnessLevel(uint8_t) {}
+    void maybeArmIncomingTextPopup(const meshtastic_MeshPacket &) {}
     void setFunctionSymbol(std::string) {}
     void removeFunctionSymbol(std::string) {}
     void startAlert(const char *) {}
     void endAlert() {}
+    bool isStealthModeConstrained() const { return false; }
+    void armStealthWakeWindow() {}
+    bool showFrameByIndex(uint8_t) { return false; }
+    bool showRecentTextMessageListPage() { return false; }
 };
 } // namespace graphics
 #else
@@ -209,6 +215,8 @@ class Screen : public concurrency::OSThread
         else
             enqueueCmd(ScreenCmd{.cmd = Cmd::SET_ON});
     }
+    bool isOn() const { return screenOn; }
+    void maybeArmIncomingTextPopup(const meshtastic_MeshPacket &packet);
 
     /**
      * Prepare the display for the unit going to the lowest power mode possible.  Most screens will just
@@ -258,8 +266,23 @@ class Screen : public concurrency::OSThread
     }
 
     void startHermesXAlert(const char *text);
+    bool isHermesXMainPageActive() const;
     bool isHermesFastSetupActive() const;
     bool isHermesXActionPageActive() const;
+    bool isRecentTextMessagesPageActive() const;
+    bool isRecentTextMessageDetailPageActive() const;
+    uint8_t getCurrentFrameIndexForDebug() const;
+    uint8_t getRecentListFrameIndexForDebug() const;
+    uint8_t getRecentDetailFrameIndexForDebug() const;
+    uint8_t getFrameCountForDebug() const;
+    bool isStealthModeConstrained() const;
+    void armStealthWakeWindow();
+    bool shouldShowHermesXMenuFooter(uint8_t frameIndex) const;
+    bool showFrameByIndex(uint8_t frameIndex);
+    bool showHermesXActionPage();
+    bool showHermesXMainPage();
+    bool showRecentTextMessageListPage();
+    bool showTextMessageDetailPage();
 
     void endAlert()
     {
@@ -619,6 +642,7 @@ class Screen : public concurrency::OSThread
     struct FramesetInfo {
         struct FramePositions {
             uint8_t fault = 0;
+            uint8_t textMessageList = 0;
             uint8_t textMessage = 0;
             uint8_t waypoint = 0;
             uint8_t focusedModule = 0;
@@ -668,8 +692,14 @@ class Screen : public concurrency::OSThread
     static void drawHermesXActionFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     void drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     bool handleHermesXActionInput(const InputEvent *event);
+    static void drawLowMemoryReminderOverlay(OLEDDisplay *display, OLEDDisplayUiState *state);
+    bool handleLowMemoryReminderInput(const InputEvent *event);
     static void drawHermesXShareChannelFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     void drawHermesXShareChannel(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
+    bool handleRecentTextMessageListInput(const InputEvent *event);
+    bool handleRecentTextMessageDetailInput(const InputEvent *event);
+    bool handleIncomingNodePopupInput(const InputEvent *event);
+    bool handleTextMessagePopupInput(const InputEvent *event);
     void syncTextMessageNotification();
 
 #if defined(DISPLAY_CLOCK_FRAME)
@@ -702,10 +732,13 @@ class Screen : public concurrency::OSThread
     bool useDisplay = false;
     /// Whether the display is currently powered
     bool screenOn = false;
+    uint32_t wakeInputGuardUntilMs = 0;
     // Whether we are showing the regular screen (as opposed to booth screen or
     // Bluetooth PIN screen)
     bool showingNormalScreen = false;
     bool moduleObserversAttached = false;
+    uint32_t stealthScreenWakeUntilMs = 0;
+    bool stealthRestoreChecked = false;
 
     // Implementation to Adjust Brightness
     uint8_t brightness = BRIGHTNESS_DEFAULT; // H = 254, MH = 192, ML = 130 L = 103
@@ -719,21 +752,39 @@ class Screen : public concurrency::OSThread
         UiMenu,
         UiBrightnessSelect,
         UiScreenSleepSelect,
+        UiTimezoneSelect,
+        UiRotarySwapSelect,
         NodeMenu,
+        NodeDatabaseMenu,
+        NodeDatabaseResetSelect,
+        MqttMenu,
+        MqttMapReportMenu,
+        MqttMapPrecisionSelect,
+        MqttMapPublishSelect,
+        ChannelMenu,
+        ChannelDetailMenu,
+        ChannelPrecisionSelect,
+        PowerMenu,
+        PowerGuardVoltageSelect,
         PassEdit,
+        FrequencyEdit,
         PassShow,
-        RoleMenu,
-        RoleSelect,
-        HopSelect,
+        LoraMenu,
+        LoraRoleSelect,
+        LoraPresetSelect,
+        LoraRegionSelect,
+        LoraChannelSlotSelect,
         CannedMenu,
         CannedChannelSelect,
         GpsMenu,
         GpsUpdateSelect,
         GpsBroadcastSelect,
+        GpsSmartDistanceSelect,
+        GpsSmartIntervalSelect,
     };
     HermesFastSetupPage hermesSetupPage = HermesFastSetupPage::Entry;
-    int8_t hermesSetupSelected = 0;
-    int8_t hermesSetupOffset = 0;
+    int16_t hermesSetupSelected = 0;
+    int16_t hermesSetupOffset = 0;
     uint32_t hermesSetupLastNavAtMs = 0;
     int8_t hermesSetupLastNavDir = 0;
     int8_t hermesActionSelected = 0;
@@ -742,12 +793,20 @@ class Screen : public concurrency::OSThread
     bool hermesActionStealthConfirmVisible = false;
     uint8_t hermesActionStealthConfirmSelected = 0; // 0=No, 1=Yes
     uint32_t hermesActionStealthConfirmShownAtMs = 0;
+    bool lowMemoryReminderVisible = false;
+    uint8_t lowMemoryReminderSelected = 1; // 0=later, 1=go clean
+    uint32_t lowMemoryReminderSuppressUntilMs = 0;
+    uint32_t lowMemoryReminderTriggerFree = 0;
+    uint32_t lowMemoryReminderTriggerLargest = 0;
+    uint32_t hermesSetupNodeCleanupAgeSeconds = 12U * 60U * 60U;
     bool hasUnreadTextMessage = false;
     uint8_t notifyingTextMessageFrame = UINT8_MAX;
     uint8_t hermesSetupKeyRow = 0;
     uint8_t hermesSetupKeyCol = 0;
     uint8_t hermesSetupEditingSlot = 0;
+    uint8_t hermesSetupChannelIndex = 0;
     String hermesSetupPassDraft;
+    String hermesSetupFrequencyDraft;
     String hermesSetupToast;
     uint32_t hermesSetupToastUntilMs = 0;
     float compassHeading;

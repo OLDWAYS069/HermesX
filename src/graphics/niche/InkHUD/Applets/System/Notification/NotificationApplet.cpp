@@ -144,7 +144,8 @@ void InkHUD::NotificationApplet::onBackground()
 void InkHUD::NotificationApplet::onButtonShortPress()
 {
     dismiss();
-    inkhud->forceUpdate(EInk::UpdateTypes::FULL);
+    if (!inkhud->showApplet("All Messages"))
+        inkhud->forceUpdate(EInk::UpdateTypes::FULL);
 }
 
 void InkHUD::NotificationApplet::onButtonLongPress()

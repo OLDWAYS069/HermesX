@@ -9,6 +9,8 @@ class MemGet
   public:
     uint32_t getFreeHeap();
     uint32_t getHeapSize();
+    uint32_t getMinFreeHeap();
+    uint32_t getLargestFreeBlock();
     uint32_t getFreePsram();
     uint32_t getPsramSize();
 };

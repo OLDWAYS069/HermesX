@@ -1,5 +1,6 @@
 #include "FloodingRouter.h"
 
+#include "HeapDebug.h"
 #include "configuration.h"
 #include "mesh-pb-constants.h"
 
@@ -68,6 +69,7 @@ void FloodingRouter::perhapsRebroadcast(const meshtastic_MeshPacket *p)
     if (!isToUs(p) && (p->hop_limit > 0) && !isFromUs(p)) {
         if (p->id != 0) {
             if (isRebroadcaster()) {
+                logHeapSnapshot("FloodingRouter before rebroadcast allocCopy");
                 meshtastic_MeshPacket *tosend = packetPool.allocCopy(*p); // keep a copy because we will be sending it
 
                 tosend->hop_limit--; // bump down the hop count

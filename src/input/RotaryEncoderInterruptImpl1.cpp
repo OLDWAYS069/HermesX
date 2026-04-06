@@ -25,9 +25,20 @@ bool RotaryEncoderInterruptImpl1::init()
     uint8_t pinA = moduleConfig.canned_message.inputbroker_pin_a;
     uint8_t pinB = moduleConfig.canned_message.inputbroker_pin_b;
     uint8_t pinPress = moduleConfig.canned_message.inputbroker_pin_press;
-    char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
-    char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
-    char eventPressed = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
+    const char configuredCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
+    const char configuredCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
+    const char configuredPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
+    const char eventNone = static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_NONE);
+    const char eventCw =
+        (configuredCw == eventNone) ? static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN)
+                                    : configuredCw;
+    const char eventCcw =
+        (configuredCcw == eventNone) ? static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP)
+                                     : configuredCcw;
+    const char eventPressed =
+        (configuredPress == eventNone)
+            ? static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT)
+            : configuredPress;
 
     // moduleConfig.canned_message.ext_notification_module_output
     RotaryEncoderInterruptBase::init(pinA, pinB, pinPress, eventCw, eventCcw, eventPressed,

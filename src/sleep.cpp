@@ -13,6 +13,7 @@
 #include "detect/LoRaRadioType.h"
 #include "error.h"
 #include "main.h"
+#include "platform/esp32/HermesCrashBreadcrumb.h"
 #include "sleep.h"
 #include "target_specific.h"
 
@@ -20,6 +21,7 @@
 // "esp_pm_config_esp32_t is deprecated, please include esp_pm.h and use esp_pm_config_t instead"
 #include "esp32/pm.h"
 #include "esp_pm.h"
+#include "esp_system.h"
 #if HAS_WIFI
 #include "mesh/wifi/WiFiAPClient.h"
 #endif
@@ -114,6 +116,8 @@ void initDeepSleep()
 #ifdef ARCH_ESP32
     bootCount++;
     const char *reason;
+    const char *espReason = "unknown";
+    const esp_reset_reason_t resetReason = esp_reset_reason();
     wakeCause = esp_sleep_get_wakeup_cause();
 
     switch (wakeCause) {
@@ -157,8 +161,75 @@ void initDeepSleep()
     if (hwReason == TG1WDT_SYS_RESET)
         reason = "intWatchdog";
 
-    LOG_INFO("Booted, wake cause %d (boot count %d), reset_reason=%s", wakeCause, bootCount, reason);
+    switch (resetReason) {
+    case ESP_RST_UNKNOWN:
+        espReason = "UNKNOWN";
+        break;
+    case ESP_RST_POWERON:
+        espReason = "POWERON";
+        break;
+    case ESP_RST_EXT:
+        espReason = "EXT";
+        break;
+    case ESP_RST_SW:
+        espReason = "SW";
+        break;
+    case ESP_RST_PANIC:
+        espReason = "PANIC";
+        break;
+    case ESP_RST_INT_WDT:
+        espReason = "INT_WDT";
+        break;
+    case ESP_RST_TASK_WDT:
+        espReason = "TASK_WDT";
+        break;
+    case ESP_RST_WDT:
+        espReason = "WDT";
+        break;
+    case ESP_RST_DEEPSLEEP:
+        espReason = "DEEPSLEEP";
+        break;
+    case ESP_RST_BROWNOUT:
+        espReason = "BROWNOUT";
+        break;
+    case ESP_RST_SDIO:
+        espReason = "SDIO";
+        break;
+#if defined(ESP_RST_USB)
+    case ESP_RST_USB:
+        espReason = "USB";
+        break;
 #endif
+#if defined(ESP_RST_JTAG)
+    case ESP_RST_JTAG:
+        espReason = "JTAG";
+        break;
+#endif
+#if defined(ESP_RST_EFUSE)
+    case ESP_RST_EFUSE:
+        espReason = "EFUSE";
+        break;
+#endif
+#if defined(ESP_RST_PWR_GLITCH)
+    case ESP_RST_PWR_GLITCH:
+        espReason = "PWR_GLITCH";
+        break;
+#endif
+#if defined(ESP_RST_CPU_LOCKUP)
+    case ESP_RST_CPU_LOCKUP:
+        espReason = "CPU_LOCKUP";
+        break;
+#endif
+    default:
+        espReason = "OTHER";
+        break;
+    }
+
+    LOG_INFO("Booted, wake cause %d (boot count %d), reset_reason=%s(%d), esp_reset_reason=%s(%d)", wakeCause, bootCount, reason,
+             (int)hwReason, espReason, (int)resetReason);
+#endif
+
+    hermesCrashBreadcrumbReportBoot(resetReason);
 
 #if SOC_RTCIO_HOLD_SUPPORTED
     // If waking from sleep, release any and all RTC GPIOs

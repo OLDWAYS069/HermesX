@@ -10,6 +10,10 @@
 #include "memGet.h"
 #include "configuration.h"
 
+#ifdef ARCH_ESP32
+#include <esp_heap_caps.h>
+#endif
+
 MemGet memGet;
 
 /**
@@ -44,6 +48,28 @@ uint32_t MemGet::getHeapSize()
     return rp2040.getTotalHeap();
 #else
     // this platform does not have heap management function implemented
+    return UINT32_MAX;
+#endif
+}
+
+uint32_t MemGet::getMinFreeHeap()
+{
+#ifdef ARCH_ESP32
+    return ESP.getMinFreeHeap();
+#elif defined(ARCH_NRF52) || defined(ARCH_RP2040)
+    return getFreeHeap();
+#else
+    return UINT32_MAX;
+#endif
+}
+
+uint32_t MemGet::getLargestFreeBlock()
+{
+#ifdef ARCH_ESP32
+    return heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+#elif defined(ARCH_NRF52) || defined(ARCH_RP2040)
+    return getFreeHeap();
+#else
     return UINT32_MAX;
 #endif
 }

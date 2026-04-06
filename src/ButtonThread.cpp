@@ -228,12 +228,16 @@ ButtonThread::ButtonThread() : OSThread("Button")
 
 void ButtonThread::switchPage()
 {
+    const bool allowStealthWake = (screen && screen->isStealthModeConstrained());
 #ifdef BUTTON_PIN
 #if !defined(USERPREFS_BUTTON_PIN)
     if (((config.device.button_gpio ? config.device.button_gpio : BUTTON_PIN) !=
          moduleConfig.canned_message.inputbroker_pin_press) ||
         !(moduleConfig.canned_message.updown1_enabled || moduleConfig.canned_message.rotary1_enabled) ||
-        !moduleConfig.canned_message.enabled) {
+        !moduleConfig.canned_message.enabled || allowStealthWake) {
+        if (screen) {
+            screen->armStealthWakeWindow();
+        }
         powerFSM.trigger(EVENT_PRESS);
     }
 #endif
@@ -241,7 +245,10 @@ void ButtonThread::switchPage()
     if (((config.device.button_gpio ? config.device.button_gpio : USERPREFS_BUTTON_PIN) !=
          moduleConfig.canned_message.inputbroker_pin_press) ||
         !(moduleConfig.canned_message.updown1_enabled || moduleConfig.canned_message.rotary1_enabled) ||
-        !moduleConfig.canned_message.enabled) {
+        !moduleConfig.canned_message.enabled || allowStealthWake) {
+        if (screen) {
+            screen->armStealthWakeWindow();
+        }
         powerFSM.trigger(EVENT_PRESS);
     }
 #endif
@@ -250,7 +257,10 @@ void ButtonThread::switchPage()
 #if defined(ARCH_PORTDUINO)
     if ((settingsMap.count(user) != 0 && settingsMap[user] != RADIOLIB_NC) &&
             (settingsMap[user] != moduleConfig.canned_message.inputbroker_pin_press) ||
-        !moduleConfig.canned_message.enabled) {
+        !moduleConfig.canned_message.enabled || allowStealthWake) {
+        if (screen) {
+            screen->armStealthWakeWindow();
+        }
         powerFSM.trigger(EVENT_PRESS);
     }
 #endif
@@ -346,29 +356,11 @@ int32_t ButtonThread::runOnce()
 #endif
 #if !MESHTASTIC_EXCLUDE_HERMESX && (defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) ||          \
                                     defined(BUTTON_PIN_ALT) || defined(BUTTON_PIN_TOUCH))
-            // 改為先進入喚醒閘門，按住達 kWakeHoldMs 才真正觸發開機
-            wakeHoldActive = true;
-            wakeTriggered = false;
-            wakeHoldStart = millis();
-
-            // 在集中式 LED 管理下，按下當下就啟動逐格進度（短放則在 stop 時重置）
-#if !MESHTASTIC_EXCLUDE_HERMESX
-            if (HermesXInterfaceModule::instance) {
-                buttonThread->holdAnimationMode = buttonThread->resolveHoldMode();
-                buttonThread->holdAnimationActive = true;
-                buttonThread->holdAnimationLastMs = 0;
-                buttonThread->holdAnimationBaseMs = 0;
-                s_holdPressStartMs = millis();
-                HermesXInterfaceModule::instance->beginPowerHoldProgress();
+            // Dark 狀態的長按喚醒由 processWakeHoldGate() 在實體按住期間處理；
+            // 系統已開機時，短按要維持原本的 EVENT_PRESS 行為（Stealth 會靠這條路徑喚醒螢幕）。
+            if (powerFSM.getState() != &stateDARK) {
+                switchPage();
             }
-#endif
-            // 罐頭訊息選單：記錄按下起點，後續長按 1 秒退出
-#if !MESHTASTIC_EXCLUDE_HERMESX
-            if (cannedMessageModule && cannedMessageModule->getRunState() != CANNED_MESSAGE_RUN_STATE_INACTIVE) {
-                s_exitCannedHold = true;
-                s_exitCannedStartMs = millis();
-            }
-#endif
 #else
             switchPage();
 #endif
@@ -386,7 +378,10 @@ int32_t ButtonThread::runOnce()
             switchPage();
             break;
 #endif
-            // Rotary short-press is handled by InputBroker (e.g. canned messages); no additional side-effects here.
+            // In Stealth, allow rotary/ALT short-press to wake the screen via the normal EVENT_PRESS path.
+            if (screen && screen->isStealthModeConstrained() && powerFSM.getState() != &stateDARK) {
+                switchPage();
+            }
             break;
         }
 
@@ -467,6 +462,9 @@ int32_t ButtonThread::runOnce()
             }
 #endif
             LOG_BUTTON("Long press!");
+            if (screen) {
+                screen->armStealthWakeWindow();
+            }
             powerFSM.trigger(EVENT_PRESS);
 #if !MESHTASTIC_EXCLUDE_HERMESX
             // HermesX: 延後 Shutdown UI/動畫到 PowerHold 完成（逐格轉紅後）
@@ -577,8 +575,12 @@ int32_t ButtonThread::runOnce()
 #endif
 
             // Wake if asleep
-            if (powerFSM.getState() == &stateDARK)
+            if (powerFSM.getState() == &stateDARK) {
+                if (screen) {
+                    screen->armStealthWakeWindow();
+                }
                 powerFSM.trigger(EVENT_PRESS);
+            }
 
             // Update display (legacy behaviour)
             screen->forceDisplay();
@@ -864,6 +866,9 @@ void ButtonThread::processWakeHoldGate()
         // 只有在 Dark 狀態才觸發開機，避免已開機狀態下按住又切回關機
         auto *currentState = powerFSM.getState();
         if (currentState == &stateDARK) {
+            if (screen) {
+                screen->armStealthWakeWindow();
+            }
             powerFSM.trigger(EVENT_PRESS);
         }
 #if !MESHTASTIC_EXCLUDE_HERMESX

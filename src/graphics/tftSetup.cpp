@@ -1,5 +1,6 @@
 #if HAS_TFT
 
+#include "HeapDebug.h"
 #include "SPILock.h"
 #include "sleep.h"
 
@@ -36,10 +37,14 @@ void tft_task_handler(void *param = nullptr)
 
 void tftSetup(void)
 {
+    logHeapSnapshot("tftSetup entry");
 #ifndef ARCH_PORTDUINO
     deviceScreen = &DeviceScreen::create();
+    logHeapSnapshot("tftSetup after DeviceScreen::create");
     PacketAPI::create(PacketServer::init());
+    logHeapSnapshot("tftSetup after PacketAPI::create");
     deviceScreen->init(new PacketClient);
+    logHeapSnapshot("tftSetup after deviceScreen->init");
 #else
     if (settingsMap[displayPanel] != no_screen) {
         DisplayDriverConfig displayConfig;
@@ -116,8 +121,11 @@ void tftSetup(void)
             }
         }
         deviceScreen = &DeviceScreen::create(&displayConfig);
+        logHeapSnapshot("tftSetup after DeviceScreen::create");
         PacketAPI::create(PacketServer::init());
+        logHeapSnapshot("tftSetup after PacketAPI::create");
         deviceScreen->init(new PacketClient);
+        logHeapSnapshot("tftSetup after deviceScreen->init");
     } else {
         LOG_INFO("Running without TFT display!");
     }
@@ -127,7 +135,9 @@ void tftSetup(void)
 #ifdef ARCH_ESP32
         tftSleepObserver.observe(&notifyLightSleep);
         endSleepObserver.observe(&notifyLightSleepEnd);
+        logHeapSnapshot("tftSetup before xTaskCreatePinnedToCore");
         xTaskCreatePinnedToCore(tft_task_handler, "tft", 10240, NULL, 1, NULL, 0);
+        logHeapSnapshot("tftSetup after xTaskCreatePinnedToCore");
 #elif defined(ARCH_PORTDUINO)
         std::thread *tft_task = new std::thread([] { tft_task_handler(); });
 #endif

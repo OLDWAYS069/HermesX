@@ -101,6 +101,7 @@ public:
     void playSendSuccessFeedback();
     void playNodeInfoFeedback();
     void setUiLedBrightness(uint8_t brightness);
+    void setUiLedBrightnessPreference(uint8_t brightness);
     uint8_t getUiLedBrightness() const;
     void setEmergencyLampEnabled(bool enabled);
     bool isEmergencyLampEnabled() const;
@@ -137,6 +138,7 @@ public:
 
     void playStartupLEDAnimation(uint32_t color);
     void playShutdownEffect(uint32_t durationMs);   // << ?��???
+    void playBlockingShutdownEffect(uint32_t durationMs);
 
     void renderLEDs();
     void updateLED();  // << ?��???
@@ -186,6 +188,7 @@ private:
     bool isRotaryPressHeld() const;
 #endif
     void applyUserLedBrightness();
+    void restoreUiLedBrightnessPreference();
     void setUserLedBrightness(uint8_t brightness);
     bool audioAllowed() const;
 
@@ -213,8 +216,6 @@ private:
 #endif
     static constexpr uint8_t kLedBrightnessDefault = 60;
     static constexpr uint8_t kLedBrightnessStep = 5;
-    static constexpr uint32_t kRotaryLedToggleHoldMs = 1000;
-    static constexpr uint32_t kRotaryShutdownDelayMs = 1000;
     static constexpr uint32_t kRotaryLongPressGraceMs = 1000;
     uint8_t ledUserBrightness = kLedBrightnessDefault;
     uint8_t appliedLedBrightness = 0;
@@ -225,8 +226,6 @@ private:
     bool rotaryLedAdjustActive = false;
     bool rotaryPressConsume = false;
     bool rotaryPressHeld = false;
-    bool rotaryHadRotation = false;
-    uint32_t rotaryPressStartMs = 0;
 
     void sendText(NodeNum dest, ChannelIndex channel, const char *message, bool wantAck);
     void sendCannedMessage(const char* msg);

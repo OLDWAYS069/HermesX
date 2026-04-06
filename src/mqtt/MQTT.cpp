@@ -24,6 +24,7 @@
 #define ETH ETH2
 #endif // HAS_ETHERNET
 #include "Default.h"
+#include "HeapDebug.h"
 #if !defined(ARCH_NRF52) || NRF52_USE_JSON
 #include "serialization/JSON.h"
 #include "serialization/MeshPacketSerializer.h"
@@ -53,8 +54,10 @@ static bool isMqttServerAddressPrivate = false;
 
 inline void onReceiveProto(char *topic, byte *payload, size_t length)
 {
+    logHeapSnapshot("MQTT onReceiveProto before ServiceEnvelope decode");
     const DecodedServiceEnvelope e(payload, length);
     if (!e.validDecode || e.channel_id == NULL || e.gateway_id == NULL || e.packet == NULL) {
+        logHeapSnapshot("MQTT onReceiveProto invalid ServiceEnvelope");
         LOG_ERROR("Invalid MQTT service envelope, topic %s, len %u!", topic, length);
         return;
     }
@@ -336,6 +339,7 @@ void MQTT::mqttCallback(char *topic, byte *payload, unsigned int length)
 
 void MQTT::onClientProxyReceive(meshtastic_MqttClientProxyMessage msg)
 {
+    logHeapSnapshot("MQTT onClientProxyReceive entry");
     onReceive(msg.topic, msg.payload_variant.data.bytes, msg.payload_variant.data.size);
 }
 
@@ -443,9 +447,26 @@ bool MQTT::publish(const char *topic, const char *payload, bool retained)
 {
     if (moduleConfig.mqtt.proxy_to_client_enabled) {
         meshtastic_MqttClientProxyMessage *msg = mqttClientProxyMessagePool.allocZeroed();
+        if (!msg) {
+            LOG_ERROR("MQTT client proxy alloc failed for text publish");
+            return false;
+        }
         msg->which_payload_variant = meshtastic_MqttClientProxyMessage_text_tag;
-        strcpy(msg->topic, topic);
-        strcpy(msg->payload_variant.text, payload);
+        const size_t topicLen = strlen(topic);
+        const size_t payloadLen = strlen(payload);
+        if (topicLen >= sizeof(msg->topic)) {
+            LOG_ERROR("MQTT client proxy topic too long: %u >= %u", (unsigned)topicLen, (unsigned)sizeof(msg->topic));
+            mqttClientProxyMessagePool.release(msg);
+            return false;
+        }
+        if (payloadLen >= sizeof(msg->payload_variant.text)) {
+            LOG_ERROR("MQTT client proxy text payload too long: %u >= %u", (unsigned)payloadLen,
+                      (unsigned)sizeof(msg->payload_variant.text));
+            mqttClientProxyMessagePool.release(msg);
+            return false;
+        }
+        memcpy(msg->topic, topic, topicLen + 1);
+        memcpy(msg->payload_variant.text, payload, payloadLen + 1);
         msg->retained = retained;
         service->sendMqttMessageToClientProxy(msg);
         return true;
@@ -461,13 +482,35 @@ bool MQTT::publish(const char *topic, const char *payload, bool retained)
 bool MQTT::publish(const char *topic, const uint8_t *payload, size_t length, bool retained)
 {
     if (moduleConfig.mqtt.proxy_to_client_enabled) {
+        logHeapSnapshot("MQTT proxy binary publish before alloc");
         meshtastic_MqttClientProxyMessage *msg = mqttClientProxyMessagePool.allocZeroed();
+        if (!msg) {
+            LOG_ERROR("MQTT client proxy alloc failed for binary publish");
+            return false;
+        }
+        logHeapSnapshot("MQTT proxy binary publish after alloc");
         msg->which_payload_variant = meshtastic_MqttClientProxyMessage_data_tag;
-        strcpy(msg->topic, topic);
+        const size_t topicLen = strlen(topic);
+        const size_t maxDataLen = sizeof(msg->payload_variant.data.bytes);
+        if (topicLen >= sizeof(msg->topic)) {
+            LOG_ERROR("MQTT client proxy topic too long: %u >= %u", (unsigned)topicLen, (unsigned)sizeof(msg->topic));
+            mqttClientProxyMessagePool.release(msg);
+            return false;
+        }
+        if (length > maxDataLen) {
+            LOG_ERROR("MQTT client proxy binary payload too long: %u > %u", (unsigned)length, (unsigned)maxDataLen);
+            mqttClientProxyMessagePool.release(msg);
+            return false;
+        }
+        LOG_DEBUG("MQTT proxy binary publish copy topicLen=%u payloadLen=%u", (unsigned)topicLen, (unsigned)length);
+        memcpy(msg->topic, topic, topicLen + 1);
         msg->payload_variant.data.size = length;
         memcpy(msg->payload_variant.data.bytes, payload, length);
+        logHeapSnapshot("MQTT proxy binary publish after copy");
         msg->retained = retained;
+        LOG_DEBUG("MQTT proxy binary publish before enqueue");
         service->sendMqttMessageToClientProxy(msg);
+        LOG_DEBUG("MQTT proxy binary publish after enqueue");
         return true;
     }
 #if HAS_NETWORKING

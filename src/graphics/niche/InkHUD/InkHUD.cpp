@@ -88,6 +88,11 @@ void InkHUD::InkHUD::nextApplet()
     windowManager->nextApplet();
 }
 
+bool InkHUD::InkHUD::showApplet(const char *name)
+{
+    return windowManager->showApplet(name);
+}
+
 // Show the menu (on the the focused tile)
 // The applet previously displayed there will be restored once the menu closes
 void InkHUD::InkHUD::openMenu()

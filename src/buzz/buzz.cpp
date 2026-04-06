@@ -29,6 +29,8 @@ struct ToneDuration {
 #define NOTE_AS3 233
 #define NOTE_B3 247
 #define NOTE_CS4 277
+#define NOTE_E4 330
+#define NOTE_G4 392
 
 const int DURATION_1_8 = 125;  // 1/8 note
 const int DURATION_1_4 = 250;  // 1/4 note
@@ -110,5 +112,15 @@ void playStartMelody()
 void playShutdownMelody()
 {
     ToneDuration melody[] = {{NOTE_CS4, DURATION_1_8}, {NOTE_AS3, DURATION_1_8}, {NOTE_FS3, DURATION_1_4}};
+    playTones(melody, sizeof(melody) / sizeof(ToneDuration));
+}
+
+void playLowMemoryAlert()
+{
+    ToneDuration melody[] = {
+        {NOTE_E4, 120},
+        {NOTE_G4, 120},
+        {NOTE_E4, 160},
+    };
     playTones(melody, sizeof(melody) / sizeof(ToneDuration));
 }

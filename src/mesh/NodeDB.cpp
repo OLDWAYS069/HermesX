@@ -58,6 +58,8 @@
 
 NodeDB *nodeDB = nullptr;
 
+static constexpr uint32_t NODEDB_STALE_PURGE_SECS = 12 * 60 * 60;
+
 // we have plenty of ram so statically alloc this tempbuf (for now)
 EXT_RAM_BSS_ATTR meshtastic_DeviceState devicestate;
 meshtastic_MyNodeInfo &myNodeInfo = devicestate.my_node;
@@ -969,7 +971,10 @@ void NodeDB::cleanupMeshDB()
 {
     int newPos = 0, removed = 0;
     for (int i = 0; i < numMeshNodes; i++) {
-        if (meshNodes->at(i).has_user) {
+        const bool isLocalNode = (i == 0) || (meshNodes->at(i).num == getNodeNum());
+        const bool staleUser = meshNodes->at(i).has_user && meshNodes->at(i).last_heard &&
+                               (sinceLastSeen(&meshNodes->at(i)) > NODEDB_STALE_PURGE_SECS);
+        if (meshNodes->at(i).has_user && (!staleUser || isLocalNode)) {
             if (meshNodes->at(i).user.public_key.size > 0) {
                 if (memfll(meshNodes->at(i).user.public_key.bytes, 0, meshNodes->at(i).user.public_key.size)) {
                     meshNodes->at(i).user.public_key.size = 0;
@@ -977,6 +982,10 @@ void NodeDB::cleanupMeshDB()
             }
             meshNodes->at(newPos++) = meshNodes->at(i);
         } else {
+            if (staleUser && !isLocalNode) {
+                LOG_INFO("cleanupMeshDB stale purge node=0x%x last_heard=%u age=%u", meshNodes->at(i).num,
+                         meshNodes->at(i).last_heard, sinceLastSeen(&meshNodes->at(i)));
+            }
             removed++;
         }
     }
@@ -984,6 +993,46 @@ void NodeDB::cleanupMeshDB()
     std::fill(nodeDatabase.nodes.begin() + numMeshNodes, nodeDatabase.nodes.begin() + numMeshNodes + removed,
               meshtastic_NodeInfoLite());
     LOG_DEBUG("cleanupMeshDB purged %d entries", removed);
+}
+
+int NodeDB::cleanupNodesOlderThan(uint32_t ageSeconds, bool save)
+{
+    if (ageSeconds == 0) {
+        return 0;
+    }
+
+    int newPos = 0;
+    int removed = 0;
+    for (int i = 0; i < numMeshNodes; i++) {
+        const bool isLocalNode = (i == 0) || (meshNodes->at(i).num == getNodeNum());
+        const bool hasUser = meshNodes->at(i).has_user;
+        const bool shouldPurge = hasUser && !isLocalNode && meshNodes->at(i).last_heard &&
+                                 (sinceLastSeen(&meshNodes->at(i)) > ageSeconds);
+        if (!shouldPurge) {
+            meshNodes->at(newPos++) = meshNodes->at(i);
+        } else {
+            LOG_INFO("cleanupNodesOlderThan purge node=0x%x last_heard=%u age=%u", meshNodes->at(i).num,
+                     meshNodes->at(i).last_heard, sinceLastSeen(&meshNodes->at(i)));
+            removed++;
+        }
+    }
+    numMeshNodes -= removed;
+    if (removed > 0) {
+        std::fill(nodeDatabase.nodes.begin() + numMeshNodes, nodeDatabase.nodes.begin() + numMeshNodes + removed,
+                  meshtastic_NodeInfoLite());
+    }
+    if (removed > 0 && save) {
+        saveNodeDatabaseToDisk();
+    }
+    if (removed > 0) {
+        notifyObservers(true);
+    }
+    return removed;
+}
+
+int NodeDB::cleanupStaleNodes(bool save)
+{
+    return cleanupNodesOlderThan(NODEDB_STALE_PURGE_SECS, save);
 }
 
 void NodeDB::installDefaultDeviceState()
@@ -1740,14 +1789,29 @@ meshtastic_NodeInfoLite *NodeDB::getOrCreateMeshNode(NodeNum n)
 
     if (!lite) {
         if (isFull()) {
+            const pb_size_t beforeCleanupCount = numMeshNodes;
+            cleanupMeshDB();
+            if (numMeshNodes < beforeCleanupCount) {
+                LOG_INFO("NodeDB cleanup freed %d stale/empty nodes before eviction", beforeCleanupCount - numMeshNodes);
+            }
+        }
+
+        if (!lite && isFull()) {
             LOG_INFO("Node database full with %i nodes and %u bytes free. Erasing oldest entry", numMeshNodes,
                      memGet.getFreeHeap());
             // look for oldest node and erase it
             uint32_t oldest = UINT32_MAX;
+            uint32_t oldestStale = UINT32_MAX;
             uint32_t oldestBoring = UINT32_MAX;
             int oldestIndex = -1;
+            int oldestStaleIndex = -1;
             int oldestBoringIndex = -1;
             for (int i = 1; i < numMeshNodes; i++) {
+                if (meshNodes->at(i).last_heard && sinceLastSeen(&meshNodes->at(i)) > NODEDB_STALE_PURGE_SECS &&
+                    meshNodes->at(i).last_heard < oldestStale) {
+                    oldestStale = meshNodes->at(i).last_heard;
+                    oldestStaleIndex = i;
+                }
                 // Simply the oldest non-favorite, non-ignored, non-verified node
                 if (!meshNodes->at(i).is_favorite && !meshNodes->at(i).is_ignored &&
                     !(meshNodes->at(i).bitfield & NODEINFO_BITFIELD_IS_KEY_MANUALLY_VERIFIED_MASK) &&
@@ -1762,8 +1826,12 @@ meshtastic_NodeInfoLite *NodeDB::getOrCreateMeshNode(NodeNum n)
                     oldestBoringIndex = i;
                 }
             }
+            // if we found a stale node, evict it first
+            if (oldestStaleIndex != -1) {
+                oldestIndex = oldestStaleIndex;
+            }
             // if we found a "boring" node, evict it
-            if (oldestBoringIndex != -1) {
+            if (oldestIndex == -1 && oldestBoringIndex != -1) {
                 oldestIndex = oldestBoringIndex;
             }
 

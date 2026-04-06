@@ -63,6 +63,7 @@ class InkHUD
     void nextApplet();
     void openMenu();
     void nextTile();
+    bool showApplet(const char *name);
     void rotate();
     void toggleBatteryIcon();
 

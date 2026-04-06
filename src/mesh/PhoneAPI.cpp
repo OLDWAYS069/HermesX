@@ -6,6 +6,7 @@
 #include "Channels.h"
 #include "Default.h"
 #include "FSCommon.h"
+#include "HeapDebug.h"
 #include "MeshService.h"
 #include "NodeDB.h"
 #include "PacketHistory.h"
@@ -15,7 +16,9 @@
 #include "Router.h"
 #include "SPILock.h"
 #include "TypeConversions.h"
+#include "concurrency/LockGuard.h"
 #include "main.h"
+#include "platform/esp32/HermesCrashBreadcrumb.h"
 #include "xmodem.h"
 
 #if FromRadio_size > MAX_TO_FROM_RADIO_SIZE
@@ -44,6 +47,9 @@ PhoneAPI::~PhoneAPI()
 
 void PhoneAPI::handleStartConfig()
 {
+    hermesCrashBreadcrumbClear();
+    hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhoneConfigStart, config_nonce & 0xffffU);
+
     // Must be before setting state (because state is how we know !connected)
     if (!isConnected()) {
         onConnectionChanged(true);
@@ -52,6 +58,10 @@ void PhoneAPI::handleStartConfig()
         observe(&xModem.packetReady);
 #endif
     }
+
+    // Allow transports to prepare for the bursty config handshake.
+    onConfigStart();
+    LOG_INFO("Config start hook complete");
 
     // even if we were already connected - restart our state machine
     if (config_nonce == SPECIAL_NONCE_ONLY_NODES) {
@@ -62,13 +72,21 @@ void PhoneAPI::handleStartConfig()
         state = STATE_SEND_MY_INFO;
     }
     pauseBluetoothLogging = true;
+    LOG_INFO("Start file manifest rebuild");
+    LOG_INFO("Acquiring SPI lock for file manifest");
     spiLock->lock();
+    LOG_INFO("SPI lock acquired for file manifest");
     filesManifest = getFiles("/", 10);
     spiLock->unlock();
+    LOG_INFO("SPI lock released for file manifest");
     LOG_DEBUG("Got %d files in manifest", filesManifest.size());
 
     LOG_INFO("Start API client config");
-    nodeInfoForPhone.num = 0; // Don't keep returning old nodeinfos
+    {
+        concurrency::LockGuard guard(&nodeInfoMutex);
+        nodeInfoForPhone = {};
+        nodeInfoQueue.clear();
+    }
     resetReadIndex();
 }
 
@@ -77,6 +95,7 @@ void PhoneAPI::close()
     LOG_DEBUG("PhoneAPI::close()");
 
     if (state != STATE_SEND_NOTHING) {
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhoneClose);
         state = STATE_SEND_NOTHING;
         resetReadIndex();
         unobserve(&service->fromNumChanged);
@@ -90,13 +109,20 @@ void PhoneAPI::close()
         onConnectionChanged(false);
         fromRadioScratch = {};
         toRadioScratch = {};
-        nodeInfoForPhone = {};
+        {
+            concurrency::LockGuard guard(&nodeInfoMutex);
+            nodeInfoForPhone = {};
+            nodeInfoQueue.clear();
+        }
         packetForPhone = NULL;
         filesManifest.clear();
         fromRadioNum = 0;
         config_nonce = 0;
         config_state = 0;
         pauseBluetoothLogging = false;
+        hermesCrashBreadcrumbClear();
+    } else {
+        hermesCrashBreadcrumbClear();
     }
 }
 
@@ -146,6 +172,7 @@ bool PhoneAPI::handleToRadio(const uint8_t *buf, size_t bufLength)
             LOG_DEBUG("Got MqttClientProxy message");
             if (mqtt && moduleConfig.mqtt.proxy_to_client_enabled && moduleConfig.mqtt.enabled &&
                 (channels.anyMqttEnabled() || moduleConfig.mqtt.map_reporting_enabled)) {
+                logHeapSnapshot("PhoneAPI mqtt proxy before onClientProxyReceive");
                 mqtt->onClientProxyReceive(toRadioScratch.mqttClientProxyMessage);
             } else {
                 LOG_WARN("MqttClientProxy received but proxy is not enabled, no channels have up/downlink, or map reporting "
@@ -201,6 +228,7 @@ size_t PhoneAPI::getFromRadio(uint8_t *buf)
         break;
     case STATE_SEND_MY_INFO:
         LOG_DEBUG("FromRadio=STATE_SEND_MY_INFO");
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhoneStateMyInfo);
         // If the user has specified they don't want our node to share its location, make sure to tell the phone
         // app not to send locations on our behalf.
         fromRadioScratch.which_payload_variant = meshtastic_FromRadio_my_info_tag;
@@ -213,6 +241,7 @@ size_t PhoneAPI::getFromRadio(uint8_t *buf)
 
     case STATE_SEND_UIDATA:
         LOG_INFO("getFromRadio=STATE_SEND_UIDATA");
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhoneStateUiData);
         fromRadioScratch.which_payload_variant = meshtastic_FromRadio_deviceuiConfig_tag;
         fromRadioScratch.deviceuiConfig = uiconfig;
         state = STATE_SEND_OWN_NODEINFO;
@@ -220,19 +249,28 @@ size_t PhoneAPI::getFromRadio(uint8_t *buf)
 
     case STATE_SEND_OWN_NODEINFO: {
         LOG_DEBUG("Send My NodeInfo");
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhoneStateOwnNodeInfo, readIndex & 0xffffU);
         auto us = nodeDB->readNextMeshNode(readIndex);
         if (us) {
-            nodeInfoForPhone = TypeConversions::ConvertToNodeInfo(us);
-            nodeInfoForPhone.has_hops_away = false;
-            nodeInfoForPhone.is_favorite = true;
+            auto info = TypeConversions::ConvertToNodeInfo(us);
+            info.has_hops_away = false;
+            info.is_favorite = true;
+            {
+                concurrency::LockGuard guard(&nodeInfoMutex);
+                nodeInfoForPhone = info;
+            }
             fromRadioScratch.which_payload_variant = meshtastic_FromRadio_node_info_tag;
-            fromRadioScratch.node_info = nodeInfoForPhone;
+            fromRadioScratch.node_info = info;
             // Should allow us to resume sending NodeInfo in STATE_SEND_OTHER_NODEINFOS
-            nodeInfoForPhone.num = 0;
+            {
+                concurrency::LockGuard guard(&nodeInfoMutex);
+                nodeInfoForPhone.num = 0;
+            }
         }
         if (config_nonce == SPECIAL_NONCE_ONLY_NODES) {
             // If client only wants node info, jump directly to sending nodes
             state = STATE_SEND_OTHER_NODEINFOS;
+            onNowHasData(0);
         } else {
             state = STATE_SEND_METADATA;
         }
@@ -241,12 +279,14 @@ size_t PhoneAPI::getFromRadio(uint8_t *buf)
 
     case STATE_SEND_METADATA:
         LOG_DEBUG("Send device metadata");
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhoneStateMetadata);
         fromRadioScratch.which_payload_variant = meshtastic_FromRadio_metadata_tag;
         fromRadioScratch.metadata = getDeviceMetadata();
         state = STATE_SEND_CHANNELS;
         break;
 
     case STATE_SEND_CHANNELS:
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhoneStateChannels, config_state);
         fromRadioScratch.which_payload_variant = meshtastic_FromRadio_channel_tag;
         fromRadioScratch.channel = channels.getByIndex(config_state);
         config_state++;
@@ -259,6 +299,7 @@ size_t PhoneAPI::getFromRadio(uint8_t *buf)
         break;
 
     case STATE_SEND_CONFIG:
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhoneStateConfig, config_state);
         fromRadioScratch.which_payload_variant = meshtastic_FromRadio_config_tag;
         switch (config_state) {
         case meshtastic_Config_device_tag:
@@ -325,6 +366,7 @@ size_t PhoneAPI::getFromRadio(uint8_t *buf)
         break;
 
     case STATE_SEND_MODULECONFIG:
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhoneStateModuleConfig, config_state);
         fromRadioScratch.which_payload_variant = meshtastic_FromRadio_moduleConfig_tag;
         switch (config_state) {
         case meshtastic_ModuleConfig_mqtt_tag:
@@ -412,16 +454,29 @@ size_t PhoneAPI::getFromRadio(uint8_t *buf)
         break;
 
     case STATE_SEND_OTHER_NODEINFOS: {
-        LOG_DEBUG("Send known nodes");
-        if (nodeInfoForPhone.num != 0) {
-            LOG_INFO("nodeinfo: num=0x%x, lastseen=%u, id=%s, name=%s", nodeInfoForPhone.num, nodeInfoForPhone.last_heard,
-                     nodeInfoForPhone.user.id, nodeInfoForPhone.user.long_name);
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhoneStateOtherNodeInfos, readIndex & 0xffffU);
+        meshtastic_NodeInfo infoToSend = {};
+        {
+            concurrency::LockGuard guard(&nodeInfoMutex);
+            if (nodeInfoForPhone.num == 0 && !nodeInfoQueue.empty()) {
+                nodeInfoForPhone = nodeInfoQueue.front();
+                nodeInfoQueue.pop_front();
+            }
+            infoToSend = nodeInfoForPhone;
+            if (infoToSend.num != 0)
+                nodeInfoForPhone = {};
+        }
+
+        if (infoToSend.num != 0) {
             fromRadioScratch.which_payload_variant = meshtastic_FromRadio_node_info_tag;
-            fromRadioScratch.node_info = nodeInfoForPhone;
-            // Stay in current state until done sending nodeinfos
-            nodeInfoForPhone.num = 0; // We just consumed a nodeinfo, will need a new one next time
+            fromRadioScratch.node_info = infoToSend;
+            prefetchNodeInfos();
         } else {
             LOG_DEBUG("Done sending nodeinfo");
+            {
+                concurrency::LockGuard guard(&nodeInfoMutex);
+                nodeInfoQueue.clear();
+            }
             state = STATE_SEND_FILEMANIFEST;
             // Go ahead and send that ID right now
             return getFromRadio(buf);
@@ -431,9 +486,9 @@ size_t PhoneAPI::getFromRadio(uint8_t *buf)
 
     case STATE_SEND_FILEMANIFEST: {
         LOG_DEBUG("FromRadio=STATE_SEND_FILEMANIFEST");
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhoneStateFileManifest, config_state);
         // last element
-        if (config_state == filesManifest.size() ||
-            config_nonce == SPECIAL_NONCE_ONLY_NODES) { // also handles an empty filesManifest
+        if (config_state == filesManifest.size() || config_nonce == SPECIAL_NONCE_ONLY_NODES) { // also handles an empty filesManifest
             config_state = 0;
             filesManifest.clear();
             // Skip to complete packet
@@ -489,6 +544,8 @@ size_t PhoneAPI::getFromRadio(uint8_t *buf)
     if (fromRadioScratch.which_payload_variant != 0) {
         // Encapsulate as a FromRadio packet
         size_t numbytes = pb_encode_to_bytes(buf, meshtastic_FromRadio_size, &meshtastic_FromRadio_msg, &fromRadioScratch);
+        LOG_INFO("PhoneAPI getFromRadio encoded variant=%u state=%d bytes=%u", fromRadioScratch.which_payload_variant, (int)state,
+                 (unsigned)numbytes);
 
         // VERY IMPORTANT to not print debug messages while writing to fromRadioScratch - because we use that same buffer
         // for logging (when we are encapsulating with protobufs)
@@ -502,10 +559,12 @@ size_t PhoneAPI::getFromRadio(uint8_t *buf)
 void PhoneAPI::sendConfigComplete()
 {
     LOG_INFO("Config Send Complete");
+    hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhoneStateConfigComplete, config_nonce & 0xffffU);
     fromRadioScratch.which_payload_variant = meshtastic_FromRadio_config_complete_id_tag;
     fromRadioScratch.config_complete_id = config_nonce;
     config_nonce = 0;
     state = STATE_SEND_PACKETS;
+    onConfigComplete();
     pauseBluetoothLogging = false;
 }
 
@@ -522,6 +581,35 @@ void PhoneAPI::releaseQueueStatusPhonePacket()
     if (queueStatusPacketForPhone) {
         service->releaseQueueStatusToPool(queueStatusPacketForPhone);
         queueStatusPacketForPhone = NULL;
+    }
+}
+
+void PhoneAPI::prefetchNodeInfos()
+{
+    bool added = false;
+    const size_t prefetchDepth = getNodePrefetchDepth();
+    {
+        concurrency::LockGuard guard(&nodeInfoMutex);
+        while (nodeInfoQueue.size() < prefetchDepth) {
+            auto nextNode = nodeDB->readNextMeshNode(readIndex);
+            if (!nextNode)
+                break;
+
+            auto info = TypeConversions::ConvertToNodeInfo(nextNode);
+            bool isUs = info.num == nodeDB->getNodeNum();
+            info.hops_away = isUs ? 0 : info.hops_away;
+            info.last_heard = isUs ? getValidTime(RTCQualityFromNet) : info.last_heard;
+            info.snr = isUs ? 0 : info.snr;
+            info.via_mqtt = isUs ? false : info.via_mqtt;
+            info.is_favorite = info.is_favorite || isUs; // Our node is always a favorite
+            nodeInfoQueue.push_back(info);
+            added = true;
+        }
+    }
+
+    if (added) {
+        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhonePrefetch, readIndex & 0xffffU);
+        onNowHasData(0);
     }
 }
 
@@ -560,20 +648,16 @@ bool PhoneAPI::available()
     case STATE_SEND_COMPLETE_ID:
         return true;
 
-    case STATE_SEND_OTHER_NODEINFOS:
-        if (nodeInfoForPhone.num == 0) {
-            auto nextNode = nodeDB->readNextMeshNode(readIndex);
-            if (nextNode) {
-                nodeInfoForPhone = TypeConversions::ConvertToNodeInfo(nextNode);
-                bool isUs = nodeInfoForPhone.num == nodeDB->getNodeNum();
-                nodeInfoForPhone.hops_away = isUs ? 0 : nodeInfoForPhone.hops_away;
-                nodeInfoForPhone.last_heard = isUs ? getValidTime(RTCQualityFromNet) : nodeInfoForPhone.last_heard;
-                nodeInfoForPhone.snr = isUs ? 0 : nodeInfoForPhone.snr;
-                nodeInfoForPhone.via_mqtt = isUs ? false : nodeInfoForPhone.via_mqtt;
-                nodeInfoForPhone.is_favorite = nodeInfoForPhone.is_favorite || isUs; // Our node is always a favorite
-            }
+    case STATE_SEND_OTHER_NODEINFOS: {
+        concurrency::LockGuard guard(&nodeInfoMutex);
+        if (nodeInfoQueue.empty()) {
+            goto PREFETCH_NODEINFO;
         }
         return true; // Always say we have something, because we might need to advance our state machine
+    }
+    PREFETCH_NODEINFO:
+        prefetchNodeInfos();
+        return true;
     case STATE_SEND_PACKETS: {
         if (!queueStatusPacketForPhone)
             queueStatusPacketForPhone = service->getQueueStatusForPhone();

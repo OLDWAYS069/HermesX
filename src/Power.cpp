@@ -18,6 +18,7 @@
 #include "configuration.h"
 #include "main.h"
 #include "meshUtils.h"
+#include "modules/HermesXBatteryProtection.h"
 #include "sleep.h"
 
 // Working USB detection for powered/charging states on the RAK platform
@@ -792,10 +793,44 @@ void Power::readPowerStatus()
 
 #endif
 
+    // Over-discharge protection (HermesX):
+    // - Trigger deep sleep when battery voltage stays below the configured threshold.
+    // - Ignore this protection when USB power is present.
+    // - Protection can be toggled from Hermes FastSetup.
+#if !MESHTASTIC_EXCLUDE_HERMESX
+    static constexpr uint8_t kOverdischargeTripCount = 3;
+    // HermesX policy: if USB is connected (or charging is detected), never enter low-voltage guard.
+    const bool usbPresentForGuard = powerStatus2.getHasUSB() || powerStatus2.getIsCharging();
+    const uint16_t overdischargeThresholdMv = HermesXBatteryProtection::getThresholdMv();
+    const bool shouldCheckOverdischarge =
+        batteryLevel && powerStatus2.getHasBattery() && !usbPresentForGuard && HermesXBatteryProtection::isEnabled();
+
+    if (shouldCheckOverdischarge) {
+        const int batteryVoltageMvNow = powerStatus2.getBatteryVoltageMv();
+        if (batteryVoltageMvNow > 0 && batteryVoltageMvNow < overdischargeThresholdMv) {
+            if (low_voltage_counter < UINT8_MAX) {
+                low_voltage_counter++;
+            }
+            LOG_WARN("Over-discharge guard: %dmV < %umV (%u/%u)", batteryVoltageMvNow, overdischargeThresholdMv,
+                     low_voltage_counter, kOverdischargeTripCount);
+            if (low_voltage_counter >= kOverdischargeTripCount) {
+#ifdef ARCH_NRF52
+                // We can't trigger deep sleep on NRF52, it's freezing the board
+                LOG_DEBUG("Low voltage detected, but not trigger deep sleep");
+#else
+                LOG_INFO("Over-discharge guard triggered, enter deep sleep");
+                powerFSM.trigger(EVENT_LOW_BATTERY);
+#endif
+            }
+        } else {
+            low_voltage_counter = 0;
+        }
+    } else {
+        low_voltage_counter = 0;
+    }
+#else
     // If we have a battery at all and it is less than 0%, force deep sleep if we have more than 10 low readings in
     // a row. NOTE: min LiIon/LiPo voltage is 2.0 to 2.5V, current OCV min is set to 3100 that is large enough.
-    //
-
     if (batteryLevel && powerStatus2.getHasBattery() && !powerStatus2.getHasUSB()) {
         if (batteryLevel->getBattVoltage() < OCV[NUM_OCV_POINTS - 1]) {
             low_voltage_counter++;
@@ -813,6 +848,7 @@ void Power::readPowerStatus()
             low_voltage_counter = 0;
         }
     }
+#endif
 }
 
 int32_t Power::runOnce()

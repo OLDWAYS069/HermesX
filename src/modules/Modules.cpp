@@ -1,4 +1,5 @@
 #include "configuration.h"
+#include "HermesXTestFlags.h"
 #if !MESHTASTIC_EXCLUDE_INPUTBROKER
 #include "input/ExpressLRSFiveWay.h"
 #include "input/InputBroker.h"
@@ -26,8 +27,13 @@
 #endif
 #if !MESHTASTIC_EXCLUDE_HERMESX
 #include "HermesXLog.h"
+#ifndef HERMESX_CIV_DISABLE_EMAC
+#define HERMESX_CIV_DISABLE_EMAC 0
+#endif
 #if HAS_SCREEN
+#if !HERMESX_CIV_DISABLE_EMAC
 #include "modules/HermesEmUiModule.h"
+#endif
 #endif
 #include "modules/HermesXInterfaceModule.h"
 #include "modules/HermesXPowerGuard.h"
@@ -164,12 +170,13 @@ void setupModules()
         new PowerStressModule();
 #endif
 #if !MESHTASTIC_EXCLUDE_HERMESX
+#if !defined(HERMESX_TEST_DISABLE_HERMES_MODULES)
 #if defined(HERMESX_GUARD_POWER_ANIMATIONS)
         if (!globalHermes && HermesXPowerGuard::guardEnabled() && HermesXPowerGuard::bootHoldPending()) {
             HermesXInterfaceModule::deferStartupVisuals();
         }
 #endif
-#if HAS_SCREEN
+#if HAS_SCREEN && !HERMESX_CIV_DISABLE_EMAC
         if (!hermesXEmUiModule) {
             hermesXEmUiModule = new HermesXEmUiModule();
         }
@@ -180,6 +187,9 @@ void setupModules()
         } else {
             HERMESX_LOG_INFO("HermesInterface already created");
         }
+#else
+        HERMESX_LOG_INFO("HermesX modules disabled for test build");
+#endif
 #endif
         // Example: Put your module here
         // new ReplyModule();
