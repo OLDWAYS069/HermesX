@@ -35,6 +35,7 @@
 #include "FSCommon.h"
 #include "configuration.h"
 #include "mesh/generated/meshtastic/xmodem.pb.h"
+#include <functional>
 
 #define MAXRETRANS 25
 
@@ -43,6 +44,8 @@
 class XModemAdapter
 {
   public:
+    using DiagnosticHook = std::function<void(const char *message)>;
+
     // Called when we put a fragment in the outgoing memory
     Observable<uint32_t> packetReady;
 
@@ -51,6 +54,7 @@ class XModemAdapter
     void handlePacket(meshtastic_XModem xmodemPacket);
     meshtastic_XModem getForPhone();
     void resetForPhone();
+    void setDiagnosticHook(DiagnosticHook hook);
 
   private:
     bool isReceiving = false;
@@ -60,6 +64,10 @@ class XModemAdapter
     int retrans = MAXRETRANS;
 
     uint16_t packetno = 0;
+    size_t expectedBytes = 0;
+    size_t receivedBytes = 0;
+    bool isUpdateFirmwareReceive = false;
+    bool isUpdateFirmwareStream = false;
 
 #if defined(ARCH_NRF52) || defined(ARCH_STM32WL)
     File file = File(FSCom);
@@ -71,9 +79,11 @@ class XModemAdapter
 
   protected:
     meshtastic_XModem xmodemStore = meshtastic_XModem_init_zero;
+    DiagnosticHook diagnosticHook;
     unsigned short crc16_ccitt(const pb_byte_t *buffer, int length);
     int check(const pb_byte_t *buf, int sz, unsigned short tcrc);
     void sendControl(meshtastic_XModem_Control c);
+    void emitDiagnostic(const char *message);
 };
 
 extern XModemAdapter xModem;

@@ -86,4 +86,9 @@ class StreamAPI : public PhoneAPI
 
     /// Low level function to emit a protobuf encapsulated log record
     void emitLogRecord(meshtastic_LogRecord_Level level, const char *src, const char *format, va_list arg);
+
+    /// Helper for callers that already have a formatted string
+    void emitLogRecordText(meshtastic_LogRecord_Level level, const char *src, const char *message);
+
+    virtual void emitDiagnosticLog(const char *src, const char *message) override;
 };

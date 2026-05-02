@@ -367,6 +367,11 @@ int CannedMessageModule::handleInputEvent(const InputEvent *event)
     if (screen && (screen->isHermesFastSetupActive() || screen->isHermesXActionPageActive())) {
         return 0;
     }
+    if (screen && (screen->isOnlineNodeListPageActive() || screen->isOnlineNodeDetailPageActive())) {
+        if (this->runState == CANNED_MESSAGE_RUN_STATE_DISABLED || this->runState == CANNED_MESSAGE_RUN_STATE_INACTIVE) {
+            return 0;
+        }
+    }
     if (screen && (screen->isRecentTextMessagesPageActive() || screen->isRecentTextMessageDetailPageActive())) {
         // Guard only blocks opening canned input while user is actively browsing Recent pages.
         // If canned is already active, do NOT force-exit here; that caused unexpected home jumps
@@ -749,6 +754,10 @@ void CannedMessageModule::captureReturnTarget()
         returnTarget = CANNED_MESSAGE_RETURN_TARGET_RECENT_DETAIL;
     } else if (screen->isRecentTextMessagesPageActive()) {
         returnTarget = CANNED_MESSAGE_RETURN_TARGET_RECENT_LIST;
+    } else if (screen->isOnlineNodeDetailPageActive()) {
+        returnTarget = CANNED_MESSAGE_RETURN_TARGET_ONLINE_DETAIL;
+    } else if (screen->isOnlineNodeListPageActive()) {
+        returnTarget = CANNED_MESSAGE_RETURN_TARGET_ONLINE_LIST;
     } else if (screen->isHermesXActionPageActive()) {
         returnTarget = CANNED_MESSAGE_RETURN_TARGET_ACTION;
     }
@@ -773,6 +782,12 @@ void CannedMessageModule::restoreReturnTarget()
         break;
     case CANNED_MESSAGE_RETURN_TARGET_RECENT_LIST:
         restored = screen->showRecentTextMessageListPage();
+        break;
+    case CANNED_MESSAGE_RETURN_TARGET_ONLINE_DETAIL:
+        restored = screen->showOnlineNodeDetailPage();
+        break;
+    case CANNED_MESSAGE_RETURN_TARGET_ONLINE_LIST:
+        restored = screen->showOnlineNodeListPage();
         break;
     case CANNED_MESSAGE_RETURN_TARGET_ACTION:
         restored = screen->showHermesXActionPage();
@@ -1146,6 +1161,10 @@ bool CannedMessageModule::shouldDraw()
         return false;
     }
 
+    if (screen && (screen->isOnlineNodeListPageActive() || screen->isOnlineNodeDetailPageActive())) {
+        return false;
+    }
+
     // If using "scan and select" input, don't draw the module frame just to say "disabled"
     // The scanAndSelectInput class will draw its own temporary alert for user, when the input button is pressed
     else if (scanAndSelectInput != nullptr && !hasMessages())
@@ -1224,6 +1243,57 @@ void CannedMessageModule::showTemporaryMessage(const String &message)
     runState = CANNED_MESSAGE_RUN_STATE_MESSAGE;
     // run this loop again in 2 seconds, next iteration will clear the display
     setIntervalFromNow(2000);
+}
+
+void CannedMessageModule::openDirectMessageComposer(NodeNum destNode)
+{
+    if (destNode == 0 || destNode == NODENUM_BROADCAST) {
+        return;
+    }
+
+    captureReturnTarget();
+    dest = destNode;
+    freetext = "";
+    cursor = 0;
+    highlight = 0x00;
+    waitingForAck = false;
+    currentMessageIndex = 0;
+    runState = CANNED_MESSAGE_RUN_STATE_FREETEXT;
+#if !defined(T_WATCH_S3) && !defined(RAK14014) && !defined(USE_VIRTUAL_KEYBOARD)
+    destSelect = CANNED_MESSAGE_DESTINATION_TYPE_NONE;
+#endif
+    lastTouchMillis = millis();
+
+    requestFocus();
+    UIFrameEvent e;
+    e.action = UIFrameEvent::Action::REGENERATE_FRAMESET;
+    notifyObservers(&e);
+    setIntervalFromNow(INACTIVATE_AFTER_MS);
+}
+
+bool CannedMessageModule::openMenu()
+{
+    if ((!moduleConfig.canned_message.enabled && !CANNED_MESSAGE_MODULE_ENABLE) || this->messagesCount <= 0) {
+        return false;
+    }
+
+    captureReturnTarget();
+    dest = NODENUM_BROADCAST;
+    freetext = "";
+    cursor = 0;
+    highlight = 0x00;
+    waitingForAck = false;
+    currentMessageIndex = -1;
+    runState = CANNED_MESSAGE_RUN_STATE_ACTIVE;
+#if !defined(T_WATCH_S3) && !defined(RAK14014) && !defined(USE_VIRTUAL_KEYBOARD)
+    destSelect = CANNED_MESSAGE_DESTINATION_TYPE_NONE;
+#endif
+    lastTouchMillis = millis();
+
+    requestFocus();
+    runOnce();
+    setIntervalFromNow(INACTIVATE_AFTER_MS);
+    return true;
 }
 
 #if defined(USE_VIRTUAL_KEYBOARD)

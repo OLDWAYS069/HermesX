@@ -52,9 +52,33 @@ using namespace httpsserver;
 static SSLCert *cert;
 static HTTPSServer *secureServer;
 static HTTPServer *insecureServer;
+static ResourceNode *miniUpdateUploadNode;
+static ResourceNode *miniUpdateUploadInfoNode;
+static ResourceNode *miniUpdateUploadRawNode;
+static bool miniUpdateUploadMode;
 
 volatile bool isWebServerReady;
 volatile bool isCertReady;
+
+namespace
+{
+class MiniUpdateUploadServerThread : public concurrency::OSThread
+{
+  public:
+    MiniUpdateUploadServerThread() : concurrency::OSThread("MiniUploadWeb") {}
+
+  protected:
+    int32_t runOnce() override
+    {
+        if (miniUpdateUploadMode && isWifiAvailable() && isWebServerReady && insecureServer) {
+            insecureServer->loop();
+        }
+        return 5;
+    }
+};
+
+MiniUpdateUploadServerThread *miniUpdateUploadServerThread = nullptr;
+} // namespace
 
 static void handleWebResponse()
 {
@@ -176,6 +200,12 @@ WebServerThread::WebServerThread() : concurrency::OSThread("WebServer")
     }
 }
 
+void WebServerThread::resume()
+{
+    enabled = true;
+    setIntervalFromNow(0);
+}
+
 int32_t WebServerThread::runOnce()
 {
     if (!config.network.wifi_enabled && !config.network.eth_enabled) {
@@ -196,8 +226,10 @@ void initWebServer()
 {
     LOG_DEBUG("Init Web Server");
 
-    // We can now use the new certificate to setup our server as usual.
-    secureServer = new HTTPSServer(cert);
+    // HermesX update-mode path currently relies on plain HTTP only.
+    // HTTPS startup has been unstable on-device, so keep the secure server
+    // disabled until that path is debugged separately.
+    secureServer = nullptr;
     insecureServer = new HTTPServer();
 
     registerHandlers(insecureServer, secureServer);
@@ -205,6 +237,8 @@ void initWebServer()
     if (secureServer) {
         LOG_INFO("Start Secure Web Server");
         secureServer->start();
+    } else {
+        LOG_INFO("Secure Web Server disabled");
     }
     LOG_INFO("Start Insecure Web Server");
     insecureServer->start();
@@ -214,5 +248,61 @@ void initWebServer()
     } else {
         LOG_ERROR("Web Servers Failed! ;-( ");
     }
+}
+
+void startMiniUpdateUploadServer()
+{
+    if (!isWifiAvailable()) {
+        LOG_WARN("Mini update upload server start skipped: WiFi unavailable");
+        return;
+    }
+
+    if (miniUpdateUploadMode && insecureServer && isWebServerReady) {
+        return;
+    }
+
+    LOG_INFO("Start mini update upload server");
+    miniUpdateUploadMode = true;
+
+    if (!insecureServer) {
+        insecureServer = new HTTPServer();
+    }
+    if (!miniUpdateUploadNode) {
+        miniUpdateUploadNode = new ResourceNode("/upload-update", "POST", &handleUpdateUpload);
+        insecureServer->registerNode(miniUpdateUploadNode);
+    }
+    if (!miniUpdateUploadInfoNode) {
+        miniUpdateUploadInfoNode = new ResourceNode("/update-info", "GET", &handleUpdateInfo);
+        insecureServer->registerNode(miniUpdateUploadInfoNode);
+    }
+    if (!miniUpdateUploadRawNode) {
+        miniUpdateUploadRawNode = new ResourceNode("/upload-update-bin", "PUT", &handleUpdateUploadRaw);
+        insecureServer->registerNode(miniUpdateUploadRawNode);
+    }
+
+    insecureServer->start();
+    isWebServerReady = insecureServer->isRunning();
+    if (isWebServerReady) {
+        LOG_INFO("Mini update upload server ready");
+    } else {
+        LOG_ERROR("Mini update upload server failed to start");
+    }
+
+    if (!miniUpdateUploadServerThread) {
+        miniUpdateUploadServerThread = new MiniUpdateUploadServerThread();
+    }
+    miniUpdateUploadServerThread->setIntervalFromNow(0);
+}
+
+void stopMiniUpdateUploadServer()
+{
+    miniUpdateUploadMode = false;
+    isWebServerReady = false;
+    LOG_INFO("Mini update upload server stopped");
+}
+
+bool isMiniUpdateUploadServerRunning()
+{
+    return miniUpdateUploadMode && isWebServerReady && insecureServer;
 }
 #endif

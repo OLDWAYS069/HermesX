@@ -17,6 +17,10 @@ class NodeInfoModule : public ProtobufModule<meshtastic_User>, private concurren
      */
     NodeInfoModule();
 
+    void pauseForUpdateMode();
+
+    void resumeFromUpdateMode();
+
     /**
      * Send our NodeInfo into the mesh
      */

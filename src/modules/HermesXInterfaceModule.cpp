@@ -534,7 +534,7 @@ void HermesXInterfaceModule::tickLEDAnimation(uint32_t now)
         renderPowerHoldLatchedRed();
         break;
     case LEDAnimation::EmergencyLampRed:
-        renderEmergencyLampRed();
+        renderEmergencyLampRed(now);
         break;
     case LEDAnimation::AckFlash:
         renderAckFlash(now);
@@ -620,9 +620,12 @@ void HermesXInterfaceModule::renderPowerHoldLatchedRed()
     rgb.show();
 }
 
-void HermesXInterfaceModule::renderEmergencyLampRed()
+void HermesXInterfaceModule::renderEmergencyLampRed(uint32_t now)
 {
-    rgb.fill(kPowerHoldRedColor);
+    constexpr uint32_t kEmergencyLampBeatMs = 1000;
+    constexpr uint32_t kEmergencyLampOnMs = 500;
+    const bool lampOn = (now % kEmergencyLampBeatMs) < kEmergencyLampOnMs;
+    rgb.fill(lampOn ? kPowerHoldRedColor : 0);
     rgb.show();
 }
 
@@ -1049,6 +1052,9 @@ void HermesXInterfaceModule::registerRawButtonPress(HermesButtonSource /*source*
     if (screen && screen->isHermesFastSetupActive()) {
         return;
     }
+    if (hermesXEmUiModule != nullptr && hermesXEmUiModule->isActive()) {
+        return;
+    }
     const uint32_t now = millis();
 
     // Expire the SAFE double-press window if the timeout has elapsed.
@@ -1336,7 +1342,7 @@ void HermesXInterfaceModule::updateLED() {
         return;
     }
     if (outputsDisabled && emergencyLampEnabled) {
-        renderEmergencyLampRed();
+        renderEmergencyLampRed(millis());
         return;
     }
 
@@ -1545,7 +1551,7 @@ void HermesXInterfaceModule::playTone(float freq, uint32_t duration_ms) {
         return;
 
     if (freq > 0) {
-        ledcWriteTone(0, freq);
+        music.playTone(freq, duration_ms);
         toneStopTime = millis() + duration_ms;
     }
 }
@@ -1717,10 +1723,36 @@ int32_t HermesXInterfaceModule::runOnce() {
         music.playSendSound();
     }
 
+    const bool finderRadarVisible = screen && screen->isFinderPulseSendingVisible();
+    if (!finderRadarVisible || !audioAllowed()) {
+        if (finderSonarActive) {
+            finderSonarActive = false;
+            finderSonarStage = 0;
+            finderSonarNextAtMs = 0;
+            if (toneStopTime != 0) {
+                stopTone();
+                toneStopTime = 0;
+            }
+        }
+    } else if (!finderSonarActive) {
+        finderSonarActive = true;
+        finderSonarStage = 0;
+        finderSonarNextAtMs = now + 120;
+    }
+
     // === ?�止 tone ?�放 ===
     if (toneStopTime && now >= toneStopTime) {
         stopTone();
         toneStopTime = 0;
+        if (finderSonarActive) {
+            if (finderSonarStage == 1) {
+                finderSonarStage = 2;
+                finderSonarNextAtMs = now + 80;
+            } else if (finderSonarStage == 3) {
+                finderSonarStage = 0;
+                finderSonarNextAtMs = now + 1150;
+            }
+        }
     }
     if (emergencyToneStopTime && now >= emergencyToneStopTime) {
         const int pin = resolveEmergencyBuzzerPin();
@@ -1728,6 +1760,16 @@ int32_t HermesXInterfaceModule::runOnce() {
             noTone(pin);
         }
         emergencyToneStopTime = 0;
+    }
+
+    if (finderSonarActive && toneStopTime == 0 && now >= finderSonarNextAtMs) {
+        if (finderSonarStage == 0) {
+            playTone(1560.0f, 42);
+            finderSonarStage = 1;
+        } else if (finderSonarStage == 2) {
+            playTone(980.0f, 34);
+            finderSonarStage = 3;
+        }
     }
 
     // === Timeout: 等�? ACK 超�? 3 秒�?視為失�? ===
@@ -1760,7 +1802,7 @@ int32_t HermesXInterfaceModule::runOnce() {
 }
 
 void HermesXInterfaceModule::stopTone() {
-    ledcWriteTone(0, 0);
+    music.stopTone();
 }
 
 
@@ -1862,7 +1904,7 @@ void HermesXInterfaceModule::onDoubleClickWithin3s()
 
 void HermesXInterfaceModule::onEmergencyModeChanged(bool active)
 {
-    ///will comeback on beta_0.3.0
+    setEmergencyLampEnabled(active);
 }
 
 

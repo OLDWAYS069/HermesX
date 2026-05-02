@@ -22,6 +22,11 @@ enum class HermesCrashBreadcrumbId : uint16_t {
     PhoneStateFileManifest,
     PhoneStateConfigComplete,
     PhonePrefetch,
+    XmodemPacketRx,
+    XmodemStartMeta,
+    XmodemOpenWrite,
+    XmodemOpenWriteOk,
+    XmodemOpenWriteFail,
     BleConfigStart,
     BleConfigComplete,
     BleToPhoneEnqueue,
@@ -38,7 +43,12 @@ void hermesCrashBreadcrumbClear();
 
 #ifdef ARCH_ESP32
 void hermesCrashBreadcrumbReportBoot(esp_reset_reason_t resetReason);
+size_t hermesCrashBreadcrumbPendingBootReportCount();
+bool hermesCrashBreadcrumbFormatPendingBootReportLine(size_t index, char *buf, size_t len);
+void hermesCrashBreadcrumbClearPendingBootReport();
 #else
 inline void hermesCrashBreadcrumbReportBoot(int) {}
+inline size_t hermesCrashBreadcrumbPendingBootReportCount() { return 0; }
+inline bool hermesCrashBreadcrumbFormatPendingBootReportLine(size_t, char *, size_t) { return false; }
+inline void hermesCrashBreadcrumbClearPendingBootReport() {}
 #endif
-

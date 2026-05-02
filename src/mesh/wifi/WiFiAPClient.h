@@ -24,6 +24,12 @@ void deinitWifi();
 
 bool isWifiAvailable();
 
+bool requestWifiForUpdateMode();
+
+void releaseWifiForUpdateMode();
+
+bool isWifiRequestedForUpdateMode();
+
 uint8_t getWifiDisconnectReason();
 
 #ifdef USE_WS5500

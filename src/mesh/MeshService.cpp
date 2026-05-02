@@ -50,9 +50,6 @@ MeshService *service;
 namespace {
 bool isEmergencyTxLockAllowedText(const meshtastic_MeshPacket *p, RxSource src)
 {
-    if (src != RX_SRC_USER) {
-        return false;
-    }
     if (p->decoded.portnum != meshtastic_PortNum_TEXT_MESSAGE_APP) {
         return false;
     }

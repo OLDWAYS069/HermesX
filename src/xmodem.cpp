@@ -50,12 +50,19 @@
 
 #include "xmodem.h"
 #include "SPILock.h"
+#include "modules/HermesXUpdateManager.h"
+#include "platform/esp32/HermesCrashBreadcrumb.h"
 
 #ifdef FSCom
 
 XModemAdapter xModem;
 
 XModemAdapter::XModemAdapter() {}
+
+namespace
+{
+constexpr const char *kHermesXUpdateFilePath = "/update/firmware.bin";
+}
 
 /**
  * Calculates the CRC-16 CCITT checksum of the given buffer.
@@ -112,34 +119,110 @@ void XModemAdapter::resetForPhone()
     xmodemStore = meshtastic_XModem_init_zero;
 }
 
+void XModemAdapter::setDiagnosticHook(DiagnosticHook hook)
+{
+    diagnosticHook = std::move(hook);
+}
+
+void XModemAdapter::emitDiagnostic(const char *message)
+{
+    if (diagnosticHook) {
+        diagnosticHook(message);
+    }
+}
+
 void XModemAdapter::handlePacket(meshtastic_XModem xmodemPacket)
 {
+    hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::XmodemPacketRx, xmodemPacket.control);
     switch (xmodemPacket.control) {
     case meshtastic_XModem_Control_SOH:
     case meshtastic_XModem_Control_STX:
         if ((xmodemPacket.seq == 0) && !isReceiving && !isTransmitting) {
+            emitDiagnostic("Xmodem start packet seq0");
             // NULL packet has the destination filename
-            memcpy(filename, &xmodemPacket.buffer.bytes, xmodemPacket.buffer.size);
+            memset(filename, 0, sizeof(filename));
+            size_t filenameLen = xmodemPacket.buffer.size;
+            if (filenameLen > sizeof(filename) - 1) {
+                filenameLen = sizeof(filename) - 1;
+            }
+            memcpy(filename, &xmodemPacket.buffer.bytes, filenameLen);
+
+            expectedBytes = 0;
+            receivedBytes = 0;
+            isUpdateFirmwareReceive = false;
+            isUpdateFirmwareStream = false;
+            String versionFromFilename;
+
+            char *separator = strchr(filename, '|');
+            if (separator) {
+                *separator = '\0';
+                char *filenameHint = strchr(separator + 1, '|');
+                if (filenameHint) {
+                    *filenameHint = '\0';
+                    ++filenameHint;
+                    String displayFromFilename;
+                    HermesXUpdateManager::parseHermesVersionFromFilename(String(filenameHint), versionFromFilename,
+                                                                        &displayFromFilename);
+                }
+                expectedBytes = strtoul(separator + 1, nullptr, 10);
+            }
+            isUpdateFirmwareReceive = strcmp(filename, kHermesXUpdateFilePath) == 0;
+            hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::XmodemStartMeta,
+                                        isUpdateFirmwareReceive ? 1U : 0U);
+            emitDiagnostic(isUpdateFirmwareReceive ? "Xmodem target update file" : "Xmodem target other file");
 
             if (xmodemPacket.control == meshtastic_XModem_Control_SOH) { // Receive this file and put to Flash
+                hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::XmodemOpenWrite,
+                                            static_cast<uint16_t>(expectedBytes & 0xFFFFu));
+                emitDiagnostic("Xmodem about to open write");
+                if (isUpdateFirmwareReceive) {
+                    const String streamVersion = versionFromFilename.length() > 0 ? versionFromFilename : String("USB");
+                    if (HermesXUpdateManager::instance().beginStreamUpdate(expectedBytes, streamVersion, "HermesX")) {
+                        hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::XmodemOpenWriteOk,
+                                                    static_cast<uint16_t>(expectedBytes & 0xFFFFu));
+                        emitDiagnostic("Xmodem ota stream begin ok");
+                        isUpdateFirmwareStream = true;
+                        sendControl(meshtastic_XModem_Control_ACK);
+                        emitDiagnostic("Xmodem sent start ACK");
+                        isReceiving = true;
+                        packetno = 1;
+                        break;
+                    }
+                    hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::XmodemOpenWriteFail,
+                                                static_cast<uint16_t>(expectedBytes & 0xFFFFu));
+                    emitDiagnostic("Xmodem ota stream begin fail");
+                    sendControl(meshtastic_XModem_Control_NAK);
+                    isReceiving = false;
+                    break;
+                }
+
                 spiLock->lock();
                 file = FSCom.open(filename, FILE_O_WRITE);
                 spiLock->unlock();
                 if (file) {
+                    hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::XmodemOpenWriteOk,
+                                                static_cast<uint16_t>(expectedBytes & 0xFFFFu));
+                    emitDiagnostic("Xmodem open write ok");
                     sendControl(meshtastic_XModem_Control_ACK);
+                    emitDiagnostic("Xmodem sent start ACK");
                     isReceiving = true;
                     packetno = 1;
                     break;
                 }
+                hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::XmodemOpenWriteFail,
+                                            static_cast<uint16_t>(expectedBytes & 0xFFFFu));
+                emitDiagnostic("Xmodem open write fail");
                 sendControl(meshtastic_XModem_Control_NAK);
                 isReceiving = false;
                 break;
             } else { // Transmit this file from Flash
+                emitDiagnostic("Xmodem transmit path");
                 LOG_INFO("XModem: Transmit file %s", filename);
                 spiLock->lock();
                 file = FSCom.open(filename, FILE_O_READ);
                 spiLock->unlock();
                 if (file) {
+                    emitDiagnostic("Xmodem open read ok");
                     packetno = 1;
                     isTransmitting = true;
                     xmodemStore = meshtastic_XModem_init_zero;
@@ -157,6 +240,7 @@ void XModemAdapter::handlePacket(meshtastic_XModem xmodemPacket)
                     packetReady.notifyObservers(packetno);
                     break;
                 }
+                emitDiagnostic("Xmodem open read fail");
                 sendControl(meshtastic_XModem_Control_NAK);
                 isTransmitting = false;
                 break;
@@ -167,18 +251,33 @@ void XModemAdapter::handlePacket(meshtastic_XModem xmodemPacket)
                 if ((xmodemPacket.seq == packetno) &&
                     check(xmodemPacket.buffer.bytes, xmodemPacket.buffer.size, xmodemPacket.crc16)) {
                     // valid packet
-                    spiLock->lock();
-                    file.write(xmodemPacket.buffer.bytes, xmodemPacket.buffer.size);
-                    spiLock->unlock();
+                    if (isUpdateFirmwareStream) {
+                        if (!HermesXUpdateManager::instance().writeStreamChunk(xmodemPacket.buffer.bytes,
+                                                                               xmodemPacket.buffer.size)) {
+                            sendControl(meshtastic_XModem_Control_CAN);
+                            isReceiving = false;
+                            break;
+                        }
+                    } else {
+                        spiLock->lock();
+                        file.write(xmodemPacket.buffer.bytes, xmodemPacket.buffer.size);
+                        spiLock->unlock();
+                    }
+                    receivedBytes += xmodemPacket.buffer.size;
+                    if (isUpdateFirmwareReceive && !isUpdateFirmwareStream) {
+                        HermesXUpdateManager::instance().setIncomingTransferProgress(receivedBytes, expectedBytes);
+                    }
                     sendControl(meshtastic_XModem_Control_ACK);
                     packetno++;
                     break;
                 }
                 // invalid packet
                 sendControl(meshtastic_XModem_Control_NAK);
+                emitDiagnostic("Xmodem data NAK");
                 break;
             } else if (isTransmitting) {
                 // just received something weird.
+                emitDiagnostic("Xmodem unexpected packet while transmitting");
                 sendControl(meshtastic_XModem_Control_CAN);
                 isTransmitting = false;
                 break;
@@ -187,23 +286,45 @@ void XModemAdapter::handlePacket(meshtastic_XModem xmodemPacket)
         break;
     case meshtastic_XModem_Control_EOT:
         // End of transmission
+        emitDiagnostic("Xmodem EOT");
         sendControl(meshtastic_XModem_Control_ACK);
-        spiLock->lock();
-        file.flush();
-        file.close();
-        spiLock->unlock();
+        if (isUpdateFirmwareStream) {
+            HermesXUpdateManager::instance().finishStreamUpdate();
+        } else {
+            spiLock->lock();
+            file.flush();
+            file.close();
+            spiLock->unlock();
+        }
         isReceiving = false;
+        if (isUpdateFirmwareReceive && !isUpdateFirmwareStream) {
+            auto &updateManager = HermesXUpdateManager::instance();
+            if (updateManager.refreshImage()) {
+                if (!updateManager.startUpdate()) {
+                    LOG_WARN("XModem: update file received but OTA start failed: %s", updateManager.getLastError().c_str());
+                }
+            } else {
+                LOG_WARN("XModem: update file received but refresh failed: %s", updateManager.getLastError().c_str());
+            }
+        }
         break;
     case meshtastic_XModem_Control_CAN:
         // Cancel transmission and remove file
+        emitDiagnostic("Xmodem CAN");
         sendControl(meshtastic_XModem_Control_ACK);
-        spiLock->lock();
-        file.flush();
-        file.close();
-
-        FSCom.remove(filename);
-        spiLock->unlock();
+        if (isUpdateFirmwareStream) {
+            HermesXUpdateManager::instance().failStreamUpdate(u8"USB 更新已取消", false);
+        } else {
+            spiLock->lock();
+            file.flush();
+            file.close();
+            FSCom.remove(filename);
+            spiLock->unlock();
+        }
         isReceiving = false;
+        if (isUpdateFirmwareReceive && !isUpdateFirmwareStream) {
+            HermesXUpdateManager::instance().failStreamUpdate(u8"USB 更新已取消", false);
+        }
         break;
     case meshtastic_XModem_Control_ACK:
         // Acknowledge Send the next packet
@@ -272,6 +393,7 @@ void XModemAdapter::handlePacket(meshtastic_XModem xmodemPacket)
         break;
     default:
         // Unknown control character
+        emitDiagnostic("Xmodem default handler");
         break;
     }
 }

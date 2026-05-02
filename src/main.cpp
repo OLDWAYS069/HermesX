@@ -30,6 +30,8 @@
 #include "detect/einkScan.h"
 #include "graphics/RAKled.h"
 #include "graphics/Screen.h"
+#include "input/InputBroker.h"
+#include "input/RotaryEncoderInterruptImpl1.h"
 #include "main.h"
 #include "mesh/generated/meshtastic/config.pb.h"
 #include "meshUtils.h"
@@ -203,6 +205,46 @@ uint32_t serialSinceMsec;
 bool pauseBluetoothLogging = false;
 
 bool pmu_found;
+static bool gEarlyDedicatedUpdateBoot = false;
+
+static constexpr const char *kUpdateBootFlagPathMain = "/prefs/hermesx_update_boot.bin";
+static constexpr uint32_t kUpdateBootFlagMagicMain = 0x48585542UL;
+
+static bool loadEarlyDedicatedUpdateBootFlag()
+{
+    auto f = FSCom.open(kUpdateBootFlagPathMain, FILE_O_READ);
+    if (!f) {
+        return false;
+    }
+
+    uint32_t magic = 0;
+    const bool ok = f.read(reinterpret_cast<uint8_t *>(&magic), sizeof(magic)) == sizeof(magic);
+    f.close();
+    return ok && magic == kUpdateBootFlagMagicMain;
+}
+
+static void setupDedicatedUpdateInputRuntime()
+{
+#if (HAS_BUTTON || defined(ARCH_PORTDUINO)) && !MESHTASTIC_EXCLUDE_INPUTBROKER
+    if (!inputBroker) {
+        inputBroker = new InputBroker();
+    }
+
+    if (!rotaryEncoderInterruptImpl1) {
+        rotaryEncoderInterruptImpl1 = new RotaryEncoderInterruptImpl1();
+        if (!rotaryEncoderInterruptImpl1->init()) {
+            delete rotaryEncoderInterruptImpl1;
+            rotaryEncoderInterruptImpl1 = nullptr;
+        }
+    }
+#endif
+
+#if HAS_SCREEN
+    if (screen) {
+        screen->attachModuleObservers();
+    }
+#endif
+}
 
 #if !MESHTASTIC_EXCLUDE_I2C
 // Array map of sensor types with i2c address and wire as we'll find in the i2c scan
@@ -627,6 +669,10 @@ void setup()
 #endif
 
     fsInit();
+    gEarlyDedicatedUpdateBoot = loadEarlyDedicatedUpdateBootFlag();
+    if (gEarlyDedicatedUpdateBoot) {
+        LOG_INFO("[UpdateBootEarly] dedicated update boot flag detected");
+    }
 
 #if !MESHTASTIC_EXCLUDE_I2C
 #if defined(I2C_SDA1) && defined(ARCH_RP2040)
@@ -1084,6 +1130,17 @@ void setup()
 
     readFromRTC(); // read the main CPU RTC at first (in case we can't get GPS time)
 
+    if (gEarlyDedicatedUpdateBoot) {
+        LOG_INFO("[UpdateBootEarly] skip normal mesh init free=%u largest=%u",
+#ifdef ARDUINO_ARCH_ESP32
+                 ESP.getFreeHeap(), ESP.getMaxAllocHeap()
+#else
+                 0U, 0U
+#endif
+        );
+        setupDedicatedUpdateInputRuntime();
+    } else {
+
 #if !MESHTASTIC_EXCLUDE_GPS
     // If we're taking on the repeater role, ignore GPS
 #ifdef SENSOR_GPS_CONFLICT
@@ -1506,6 +1563,7 @@ void setup()
     LOG_DEBUG("Free heap  : %7d bytes", ESP.getFreeHeap());
     LOG_DEBUG("Free PSRAM : %7d bytes", ESP.getFreePsram());
 #endif
+    }
 }
 
 #endif
@@ -1621,7 +1679,9 @@ void loop()
     }
 #endif
 
-    service->loop();
+    if (service) {
+        service->loop();
+    }
 
     long delayMsec = mainController.runOrDelay();
 

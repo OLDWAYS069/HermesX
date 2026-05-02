@@ -47,8 +47,11 @@ uint8_t wifiDisconnectReason = 0;
 char ourHost[16];
 
 bool APStartupComplete = 0;
+bool updateModeWifiRequested = false;
 
 unsigned long lastrun_ntp = 0;
+unsigned long wifiReconnectAfterMs = 0;
+constexpr unsigned long kWifiReconnectBackoffMs = 5000;
 
 bool needReconnect = true;   // If we create our reconnector, run it once at the beginning
 bool isReconnecting = false; // If we are currently reconnecting
@@ -65,9 +68,6 @@ bool initEthernet()
     if ((config.network.eth_enabled) && (ETH.begin(ETH_PHY_W5500, 1, ETH_CS_PIN, ETH_INT_PIN, ETH_RST_PIN, SPI3_HOST,
                                                    ETH_SCLK_PIN, ETH_MISO_PIN, ETH_MOSI_PIN))) {
         WiFi.onEvent(WiFiEvent);
-#if !MESHTASTIC_EXCLUDE_WEBSERVER
-        createSSLCert(); // For WebServer
-#endif
         return true;
     }
 
@@ -78,57 +78,7 @@ bool initEthernet()
 static void onNetworkConnected()
 {
     if (!APStartupComplete) {
-        // Start web server
-        LOG_INFO("Start network services");
-
-        // start mdns
-        if (!MDNS.begin("Meshtastic")) {
-            LOG_ERROR("Error setting up MDNS responder!");
-        } else {
-            LOG_INFO("mDNS Host: Meshtastic.local");
-            MDNS.addService("meshtastic", "tcp", SERVER_API_DEFAULT_PORT);
-#ifdef ARCH_ESP32
-            MDNS.addService("http", "tcp", 80);
-            MDNS.addService("https", "tcp", 443);
-            // ESP32 prints obtained IP address in WiFiEvent
-#elif defined(ARCH_RP2040)
-            // ARCH_RP2040 does not support HTTPS
-            LOG_INFO("Obtained IP address: %s", WiFi.localIP().toString().c_str());
-#endif
-        }
-
-#ifndef DISABLE_NTP
-        LOG_INFO("Start NTP time client");
-        timeClient.begin();
-        timeClient.setUpdateInterval(60 * 60); // Update once an hour
-#endif
-
-        if (config.network.rsyslog_server[0]) {
-            LOG_INFO("Start Syslog client");
-            // Defaults
-            int serverPort = 514;
-            const char *serverAddr = config.network.rsyslog_server;
-            String server = String(serverAddr);
-            int delimIndex = server.indexOf(':');
-            if (delimIndex > 0) {
-                String port = server.substring(delimIndex + 1, server.length());
-                server[delimIndex] = 0;
-                serverPort = port.toInt();
-                serverAddr = server.c_str();
-            }
-            syslog.server(serverAddr, serverPort);
-            syslog.deviceHostname(getDeviceName());
-            syslog.appName("Meshtastic");
-            syslog.defaultPriority(LOGLEVEL_USER);
-            syslog.enable();
-        }
-
-#if defined(ARCH_ESP32) && !MESHTASTIC_EXCLUDE_WEBSERVER
-        initWebServer();
-#endif
-#if !MESHTASTIC_EXCLUDE_SOCKETAPI
-        initApiServer();
-#endif
+        LOG_INFO("Network services paused for WiFi crash isolation");
         APStartupComplete = true;
     }
 
@@ -143,8 +93,12 @@ static int32_t reconnectWiFi()
 {
     const char *wifiName = config.network.wifi_ssid;
     const char *wifiPsw = config.network.wifi_psk;
+    const unsigned long now = millis();
 
     if (config.network.wifi_enabled && needReconnect) {
+        if (wifiReconnectAfterMs != 0 && static_cast<long>(wifiReconnectAfterMs - now) > 0) {
+            return 100;
+        }
 
         if (!*wifiPsw) // Treat empty password as no password
             wifiPsw = NULL;
@@ -160,8 +114,6 @@ static int32_t reconnectWiFi()
 #endif
         LOG_INFO("Reconnecting to WiFi access point %s", wifiName);
 
-        delay(5000);
-
         if (!WiFi.isConnected()) {
 #ifdef CONFIG_IDF_TARGET_ESP32C3
             WiFi.mode(WIFI_MODE_NULL);
@@ -171,6 +123,7 @@ static int32_t reconnectWiFi()
             WiFi.begin(wifiName, wifiPsw);
         }
         isReconnecting = false;
+        wifiReconnectAfterMs = 0;
     }
 
 #ifndef DISABLE_NTP
@@ -208,8 +161,8 @@ static int32_t reconnectWiFi()
 
 bool isWifiAvailable()
 {
-
-    if (config.network.wifi_enabled && (config.network.wifi_ssid[0])) {
+    const bool wifiAllowed = updateModeWifiRequested && config.network.wifi_enabled;
+    if (wifiAllowed && (config.network.wifi_ssid[0])) {
         return true;
 #ifdef USE_WS5500
     } else if (config.network.eth_enabled) {
@@ -224,8 +177,21 @@ bool isWifiAvailable()
 void deinitWifi()
 {
     LOG_INFO("WiFi deinit");
+    APStartupComplete = false;
+    needReconnect = false;
+    wifiReconnectAfterMs = 0;
+    if (wifiReconnect) {
+        wifiReconnect->enabled = false;
+    }
 
-    if (isWifiAvailable()) {
+    bool wifiWasRunning = false;
+#ifdef ARCH_ESP32
+    wifiWasRunning = (WiFi.getMode() != WIFI_OFF);
+#else
+    wifiWasRunning = isWifiAvailable();
+#endif
+
+    if (wifiWasRunning) {
 #ifdef ARCH_ESP32
         WiFi.disconnect(true, false);
 #elif defined(ARCH_RP2040)
@@ -240,15 +206,12 @@ void deinitWifi()
 // Startup WiFi
 bool initWifi()
 {
-    if (config.network.wifi_enabled && config.network.wifi_ssid[0]) {
+    if (updateModeWifiRequested && config.network.wifi_enabled && config.network.wifi_ssid[0]) {
 
         const char *wifiName = config.network.wifi_ssid;
         const char *wifiPsw = config.network.wifi_psk;
 
 #ifndef ARCH_RP2040
-#if !MESHTASTIC_EXCLUDE_WEBSERVER
-        createSSLCert(); // For WebServer
-#endif
         WiFi.persistent(false); // Disable flash storage for WiFi credentials
 #endif
         if (!*wifiPsw) // Treat empty password as no password
@@ -261,17 +224,6 @@ bool initWifi()
 
             WiFi.mode(WIFI_STA);
             WiFi.setHostname(ourHost);
-
-            if (config.network.address_mode == meshtastic_Config_NetworkConfig_AddressMode_STATIC &&
-                config.network.ipv4_config.ip != 0) {
-#ifdef ARCH_ESP32
-                WiFi.config(config.network.ipv4_config.ip, config.network.ipv4_config.gateway, config.network.ipv4_config.subnet,
-                            config.network.ipv4_config.dns);
-#elif defined(ARCH_RP2040)
-                WiFi.config(config.network.ipv4_config.ip, config.network.ipv4_config.dns, config.network.ipv4_config.gateway,
-                            config.network.ipv4_config.subnet);
-#endif
-            }
 #ifdef ARCH_ESP32
             WiFi.onEvent(WiFiEvent);
             WiFi.setAutoReconnect(true);
@@ -295,14 +247,45 @@ bool initWifi()
                 },
                 WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
 #endif
-            LOG_DEBUG("JOINING WIFI soon: ssid=%s", wifiName);
-            wifiReconnect = new Periodic("WifiConnect", reconnectWiFi);
+            LOG_INFO("[UpdateNet] JOINING WIFI soon: ssid=%s requested=%d free=%u largest=%u", wifiName,
+                     updateModeWifiRequested ? 1 : 0, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+            if (!wifiReconnect) {
+                wifiReconnect = new Periodic("WifiConnect", reconnectWiFi);
+            } else {
+                wifiReconnect->enabled = true;
+                wifiReconnect->setIntervalFromNow(0);
+            }
         }
         return true;
     } else {
         LOG_INFO("Not using WIFI");
         return false;
     }
+}
+
+bool requestWifiForUpdateMode()
+{
+    updateModeWifiRequested = true;
+    APStartupComplete = false;
+    needReconnect = true;
+    wifiReconnectAfterMs = 0;
+    if (wifiReconnect) {
+        wifiReconnect->enabled = true;
+        wifiReconnect->setIntervalFromNow(0);
+        return true;
+    }
+    return initWifi();
+}
+
+void releaseWifiForUpdateMode()
+{
+    deinitWifi();
+    updateModeWifiRequested = false;
+}
+
+bool isWifiRequestedForUpdateMode()
+{
+    return updateModeWifiRequested;
 }
 
 #ifdef ARCH_ESP32
@@ -340,6 +323,7 @@ static void WiFiEvent(WiFiEvent_t event)
             WiFi.disconnect(false, true);
             syslog.disable();
             needReconnect = true;
+            wifiReconnectAfterMs = millis() + kWifiReconnectBackoffMs;
             wifiReconnect->setIntervalFromNow(1000);
         }
         break;
@@ -364,6 +348,7 @@ static void WiFiEvent(WiFiEvent_t event)
             WiFi.disconnect(false, true);
             syslog.disable();
             needReconnect = true;
+            wifiReconnectAfterMs = millis() + kWifiReconnectBackoffMs;
             wifiReconnect->setIntervalFromNow(1000);
         }
         break;

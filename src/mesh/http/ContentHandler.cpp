@@ -6,6 +6,7 @@
 #include "main.h"
 #include "mesh/http/ContentHelper.h"
 #include "mesh/http/WebServer.h"
+#include "modules/HermesXUpdateManager.h"
 #if HAS_WIFI
 #include "mesh/wifi/WiFiAPClient.h"
 #endif
@@ -19,6 +20,7 @@
 #include <HTTPURLEncodedBodyParser.hpp>
 
 #ifdef ARCH_ESP32
+#include <esp_app_format.h>
 #include "esp_task_wdt.h"
 #endif
 
@@ -67,6 +69,49 @@ char contentTypes[][2][32] = {{".txt", "text/plain"},     {".html", "text/html"}
 // Our API to handle messages to and from the radio.
 HttpAPI webAPI;
 
+namespace
+{
+constexpr const char *kUpdateUploadPath = "/upload-update";
+constexpr const char *kUpdateUploadRawPath = "/upload-update-bin";
+constexpr const char *kUpdateInfoPath = "/update-info";
+constexpr const char *kUpdateFirmwarePath = "/update/firmware.bin";
+constexpr const char *kUpdateFilenamePath = "/update/firmware.name";
+
+bool ensureUploadDirectory(const char *dirname)
+{
+#ifdef FSCom
+    if (FSCom.exists(dirname)) {
+        return true;
+    }
+    return FSCom.mkdir(dirname);
+#else
+    (void)dirname;
+    return false;
+#endif
+}
+
+bool writeUpdateFilenameSidecar(const String &filename)
+{
+#ifdef FSCom
+    if (filename.isEmpty()) {
+        FSCom.remove(kUpdateFilenamePath);
+        return true;
+    }
+    File meta = FSCom.open(kUpdateFilenamePath, FILE_O_WRITE);
+    if (!meta) {
+        return false;
+    }
+    meta.print(filename);
+    meta.print('\n');
+    meta.close();
+    return true;
+#else
+    (void)filename;
+    return false;
+#endif
+}
+} // namespace
+
 void registerHandlers(HTTPServer *insecureServer, HTTPSServer *secureServer)
 {
 
@@ -90,6 +135,9 @@ void registerHandlers(HTTPServer *insecureServer, HTTPSServer *secureServer)
 
     ResourceNode *nodeRestart = new ResourceNode("/restart", "POST", &handleRestart);
     ResourceNode *nodeFormUpload = new ResourceNode("/upload", "POST", &handleFormUpload);
+    ResourceNode *nodeUpdateUpload = new ResourceNode(kUpdateUploadPath, "POST", &handleUpdateUpload);
+    ResourceNode *nodeUpdateInfo = new ResourceNode(kUpdateInfoPath, "GET", &handleUpdateInfo);
+    ResourceNode *nodeUpdateUploadRaw = new ResourceNode(kUpdateUploadRawPath, "PUT", &handleUpdateUploadRaw);
 
     ResourceNode *nodeJsonScanNetworks = new ResourceNode("/json/scanNetworks", "GET", &handleScanNetworks);
     ResourceNode *nodeJsonBlinkLED = new ResourceNode("/json/blink", "POST", &handleBlinkLED);
@@ -100,28 +148,32 @@ void registerHandlers(HTTPServer *insecureServer, HTTPSServer *secureServer)
 
     ResourceNode *nodeRoot = new ResourceNode("/*", "GET", &handleStatic);
 
-    // Secure nodes
-    secureServer->registerNode(nodeAPIv1ToRadioOptions);
-    secureServer->registerNode(nodeAPIv1ToRadio);
-    secureServer->registerNode(nodeAPIv1FromRadioOptions);
-    secureServer->registerNode(nodeAPIv1FromRadio);
-    //    secureServer->registerNode(nodeHotspotApple);
-    //    secureServer->registerNode(nodeHotspotAndroid);
-    secureServer->registerNode(nodeRestart);
-    secureServer->registerNode(nodeFormUpload);
-    secureServer->registerNode(nodeJsonScanNetworks);
-    secureServer->registerNode(nodeJsonBlinkLED);
-    secureServer->registerNode(nodeJsonFsBrowseStatic);
-    secureServer->registerNode(nodeJsonDelete);
-    secureServer->registerNode(nodeJsonReport);
-    secureServer->registerNode(nodeJsonNodes);
-    //    secureServer->registerNode(nodeUpdateFs);
-    //    secureServer->registerNode(nodeDeleteFs);
-    secureServer->registerNode(nodeAdmin);
-    //    secureServer->registerNode(nodeAdminFs);
-    //    secureServer->registerNode(nodeAdminSettings);
-    //    secureServer->registerNode(nodeAdminSettingsApply);
-    secureServer->registerNode(nodeRoot); // This has to be last
+    if (secureServer) {
+        // Secure nodes
+        secureServer->registerNode(nodeAPIv1ToRadioOptions);
+        secureServer->registerNode(nodeAPIv1ToRadio);
+        secureServer->registerNode(nodeAPIv1FromRadioOptions);
+        secureServer->registerNode(nodeAPIv1FromRadio);
+        //    secureServer->registerNode(nodeHotspotApple);
+        //    secureServer->registerNode(nodeHotspotAndroid);
+        secureServer->registerNode(nodeRestart);
+        secureServer->registerNode(nodeFormUpload);
+        secureServer->registerNode(nodeUpdateUpload);
+        secureServer->registerNode(nodeUpdateUploadRaw);
+        secureServer->registerNode(nodeJsonScanNetworks);
+        secureServer->registerNode(nodeJsonBlinkLED);
+        secureServer->registerNode(nodeJsonFsBrowseStatic);
+        secureServer->registerNode(nodeJsonDelete);
+        secureServer->registerNode(nodeJsonReport);
+        secureServer->registerNode(nodeJsonNodes);
+        //    secureServer->registerNode(nodeUpdateFs);
+        //    secureServer->registerNode(nodeDeleteFs);
+        secureServer->registerNode(nodeAdmin);
+        //    secureServer->registerNode(nodeAdminFs);
+        //    secureServer->registerNode(nodeAdminSettings);
+        //    secureServer->registerNode(nodeAdminSettingsApply);
+        secureServer->registerNode(nodeRoot); // This has to be last
+    }
 
     // Insecure nodes
     insecureServer->registerNode(nodeAPIv1ToRadioOptions);
@@ -132,6 +184,9 @@ void registerHandlers(HTTPServer *insecureServer, HTTPSServer *secureServer)
     //    insecureServer->registerNode(nodeHotspotAndroid);
     insecureServer->registerNode(nodeRestart);
     insecureServer->registerNode(nodeFormUpload);
+    insecureServer->registerNode(nodeUpdateUpload);
+    insecureServer->registerNode(nodeUpdateInfo);
+    insecureServer->registerNode(nodeUpdateUploadRaw);
     insecureServer->registerNode(nodeJsonScanNetworks);
     insecureServer->registerNode(nodeJsonBlinkLED);
     insecureServer->registerNode(nodeJsonFsBrowseStatic);
@@ -590,6 +645,305 @@ void handleFormUpload(HTTPRequest *req, HTTPResponse *res)
     }
     res->println("</body></html>");
     delete parser;
+}
+
+void handleUpdateUpload(HTTPRequest *req, HTTPResponse *res)
+{
+    LOG_DEBUG("Update Upload - Disable keep-alive");
+    res->setHeader("Connection", "close");
+    res->setHeader("Content-Type", "text/html; charset=utf-8");
+
+    const std::string contentLengthHeader = req->getHeader("Content-Length");
+    unsigned long expectedRequestBytes = 0;
+    if (!contentLengthHeader.empty()) {
+        expectedRequestBytes = strtoul(contentLengthHeader.c_str(), nullptr, 10);
+    }
+    LOG_INFO("Update Upload - start contentLength=%lu", expectedRequestBytes);
+
+    HTTPBodyParser *parser;
+    std::string contentType = req->getHeader("Content-Type");
+    size_t semicolonPos = contentType.find(";");
+    if (semicolonPos != std::string::npos) {
+        contentType.resize(semicolonPos);
+    }
+
+    if (contentType == "multipart/form-data") {
+        LOG_DEBUG("Update Upload - multipart/form-data");
+        parser = new HTTPMultipartBodyParser(req);
+    } else {
+        LOG_DEBUG("Update Upload - Unknown POST Content-Type: %s", contentType.c_str());
+        res->setStatusCode(400);
+        res->println("<p>Expected multipart/form-data upload.</p>");
+        return;
+    }
+
+    bool didwrite = false;
+    size_t fileLength = 0;
+
+    while (parser->nextField()) {
+        std::string name = parser->getFieldName();
+        std::string filename = parser->getFieldFilename();
+        std::string mimeType = parser->getFieldMimeType();
+        LOG_DEBUG("handleUpdateUpload: field name='%s', filename='%s', mimetype='%s'", name.c_str(), filename.c_str(),
+                  mimeType.c_str());
+
+        if (name != "file") {
+            LOG_DEBUG("Update Upload - Skip unexpected field");
+            continue;
+        }
+
+        if (filename.empty()) {
+            res->setStatusCode(400);
+            res->println("<p>No file found.</p>");
+            delete parser;
+            return;
+        }
+
+        if (!ensureUploadDirectory("/update")) {
+            res->setStatusCode(500);
+            res->println("<p>Failed to prepare /update directory.</p>");
+            delete parser;
+            return;
+        }
+
+        concurrency::LockGuard g(spiLock);
+        if (FSCom.exists(kUpdateFirmwarePath)) {
+            FSCom.remove(kUpdateFirmwarePath);
+        }
+        FSCom.remove(kUpdateFilenamePath);
+
+        File file = FSCom.open(kUpdateFirmwarePath, FILE_O_WRITE);
+        if (!file) {
+            res->setStatusCode(500);
+            res->println("<p>Failed to open /update/firmware.bin for writing.</p>");
+            delete parser;
+            return;
+        }
+
+        didwrite = true;
+        fileLength = 0;
+        uint32_t lastProgressLogMs = millis();
+        uint32_t zeroReadStartMs = 0;
+        size_t nextProgressLogAt = 256 * 1024;
+
+        while (!parser->endOfField()) {
+#ifdef ARCH_ESP32
+            esp_task_wdt_reset();
+#endif
+            byte buf[4096];
+            size_t readLength = parser->read(buf, sizeof(buf));
+
+            if (readLength == 0) {
+                if (zeroReadStartMs == 0) {
+                    zeroReadStartMs = millis();
+                } else if (millis() - zeroReadStartMs > 5000) {
+                    LOG_WARN("Update Upload - timed out waiting for more multipart data at %u bytes", (unsigned)fileLength);
+                    file.close();
+                    FSCom.remove(kUpdateFirmwarePath);
+                    res->setStatusCode(408);
+                    res->println("<p>Upload timed out while receiving file.</p>");
+                    delete parser;
+                    return;
+                }
+                yield();
+                delay(1);
+                continue;
+            }
+            zeroReadStartMs = 0;
+
+            if (FSCom.totalBytes() - FSCom.usedBytes() < 51200) {
+                file.flush();
+                file.close();
+                FSCom.remove(kUpdateFirmwarePath);
+                res->setStatusCode(507);
+                res->println("<p>Write aborted! Reserving 50k on filesystem.</p>");
+                delete parser;
+                return;
+            }
+
+            file.write(buf, readLength);
+            fileLength += readLength;
+
+            if (fileLength >= nextProgressLogAt || millis() - lastProgressLogMs >= 1000) {
+                LOG_INFO("Update Upload - progress %u bytes", (unsigned)fileLength);
+                lastProgressLogMs = millis();
+                while (nextProgressLogAt <= fileLength) {
+                    nextProgressLogAt += 256 * 1024;
+                }
+            }
+
+            yield();
+        }
+
+        LOG_INFO("Update Upload - field complete %u bytes", (unsigned)fileLength);
+        LOG_INFO("Update Upload - flushing file");
+        file.flush();
+        file.close();
+        if (!writeUpdateFilenameSidecar(String(filename.c_str()))) {
+            LOG_WARN("Update Upload - failed to save filename sidecar");
+        }
+        LOG_INFO("Update Upload - file closed");
+        break;
+    }
+
+    delete parser;
+
+    if (!didwrite) {
+        res->setStatusCode(400);
+        res->println("<p>Did not write any file.</p>");
+        return;
+    }
+
+    LOG_INFO("Update Upload - sending success response for %u bytes", (unsigned)fileLength);
+    res->println("<html><head><title>Update Upload</title></head><body><h1>Update Upload</h1>");
+    res->printf("<p>Saved %d bytes to %s</p>", (int)fileLength, kUpdateFirmwarePath);
+    res->println("<p>Next: open HermesX Fast Setup &gt; 裝置管理 &gt; 更新模式 &gt; 檢查更新檔</p>");
+    res->println("</body></html>");
+    LOG_INFO("Update Upload - response complete");
+}
+
+void handleUpdateUploadRaw(HTTPRequest *req, HTTPResponse *res)
+{
+    LOG_DEBUG("Update Upload Raw - Disable keep-alive");
+    res->setHeader("Connection", "close");
+    res->setHeader("Content-Type", "text/html; charset=utf-8");
+
+    const std::string contentLengthHeader = req->getHeader("Content-Length");
+    const size_t expectedBytes = contentLengthHeader.empty() ? 0 : strtoul(contentLengthHeader.c_str(), nullptr, 10);
+    const String hintedFilename = String(req->getHeader("X-Hermes-Filename").c_str());
+    LOG_INFO("Update Upload Raw - start contentLength=%u", (unsigned)expectedBytes);
+
+    if (expectedBytes == 0) {
+        res->setStatusCode(411);
+        res->println("<p>Content-Length required.</p>");
+        return;
+    }
+
+    auto &updateManager = HermesXUpdateManager::instance();
+    size_t fileLength = 0;
+    uint32_t lastProgressLogMs = millis();
+    size_t nextProgressLogAt = 256 * 1024;
+    uint32_t zeroReadStartMs = 0;
+    bool streamStarted = false;
+    static constexpr size_t kHeaderBytesRequired =
+        sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t) + sizeof(esp_app_desc_t);
+    uint8_t headerBuffer[kHeaderBytesRequired] = {0};
+    size_t headerLength = 0;
+    String versionOut;
+    String projectNameOut;
+    String errorOut;
+    String versionFromFilename;
+    String displayFromFilename;
+    const bool hasVersionHint =
+        HermesXUpdateManager::parseHermesVersionFromFilename(hintedFilename, versionFromFilename, &displayFromFilename);
+
+    while (fileLength < expectedBytes) {
+#ifdef ARCH_ESP32
+        esp_task_wdt_reset();
+#endif
+        uint8_t buf[4096];
+        const size_t want = std::min(sizeof(buf), expectedBytes - fileLength);
+        const size_t readLength = req->readBytes(buf, want);
+
+        if (readLength == 0) {
+            if (zeroReadStartMs == 0) {
+                zeroReadStartMs = millis();
+            } else if (millis() - zeroReadStartMs > 5000) {
+                LOG_WARN("Update Upload Raw - timed out at %u/%u bytes", (unsigned)fileLength, (unsigned)expectedBytes);
+                updateManager.failStreamUpdate(u8"上傳逾時", false);
+                res->setStatusCode(408);
+                res->println("<p>Upload timed out while receiving file.</p>");
+                return;
+            }
+            yield();
+            delay(1);
+            continue;
+        }
+        zeroReadStartMs = 0;
+
+        if (headerLength < kHeaderBytesRequired) {
+            const size_t toCopy = std::min(kHeaderBytesRequired - headerLength, readLength);
+            memcpy(headerBuffer + headerLength, buf, toCopy);
+            headerLength += toCopy;
+        }
+
+        if (!streamStarted && headerLength >= kHeaderBytesRequired) {
+            if (!updateManager.inspectImageBytes(headerBuffer, headerLength, expectedBytes, versionOut, projectNameOut, errorOut)) {
+                LOG_WARN("Update Upload Raw - invalid image header: %s", errorOut.c_str());
+                res->setStatusCode(400);
+                res->printf("<p>%s</p>", errorOut.c_str());
+                return;
+            }
+            if (hasVersionHint) {
+                versionOut = versionFromFilename;
+            }
+            if (!updateManager.beginStreamUpdate(expectedBytes, versionOut, projectNameOut)) {
+                const String startError =
+                    updateManager.getLastError().isEmpty() ? String(u8"無法開始 OTA 更新") : updateManager.getLastError();
+                LOG_WARN("Update Upload Raw - begin stream failed: %s", startError.c_str());
+                res->setStatusCode(500);
+                res->printf("<p>%s</p>", startError.c_str());
+                return;
+            }
+            streamStarted = true;
+        }
+
+        if (streamStarted && !updateManager.writeStreamChunk(buf, readLength)) {
+            const String writeError =
+                updateManager.getLastError().isEmpty() ? String(u8"寫入 OTA 失敗") : updateManager.getLastError();
+            LOG_WARN("Update Upload Raw - stream write failed: %s", writeError.c_str());
+            res->setStatusCode(500);
+            res->printf("<p>%s</p>", writeError.c_str());
+            return;
+        }
+
+        fileLength += readLength;
+
+        if (fileLength >= nextProgressLogAt || millis() - lastProgressLogMs >= 1000) {
+            LOG_INFO("Update Upload Raw - progress %u/%u bytes", (unsigned)fileLength, (unsigned)expectedBytes);
+            lastProgressLogMs = millis();
+            while (nextProgressLogAt <= fileLength) {
+                nextProgressLogAt += 256 * 1024;
+            }
+        }
+        yield();
+    }
+
+    if (!streamStarted) {
+        res->setStatusCode(400);
+        res->println("<p>Update image header was incomplete.</p>");
+        return;
+    }
+    if (!updateManager.finishStreamUpdate()) {
+        const String finishError =
+            updateManager.getLastError().isEmpty() ? String(u8"OTA 收尾失敗") : updateManager.getLastError();
+        LOG_WARN("Update Upload Raw - finish stream failed: %s", finishError.c_str());
+        res->setStatusCode(500);
+        res->printf("<p>%s</p>", finishError.c_str());
+        return;
+    }
+    LOG_INFO("Update Upload Raw - ota stream complete at %u bytes", (unsigned)fileLength);
+
+    res->println("<html><head><title>Update Upload</title></head><body><h1>Update Upload</h1>");
+    res->printf("<p>Streamed %d bytes to OTA partition.</p>", (int)fileLength);
+    res->println("<p>Next: open HermesX 更新模式 &gt; 套用更新</p>");
+    res->println("</body></html>");
+    LOG_INFO("Update Upload Raw - response complete");
+}
+
+void handleUpdateInfo(HTTPRequest *req, HTTPResponse *res)
+{
+    (void)req;
+    res->setHeader("Content-Type", "application/json");
+    res->setHeader("Access-Control-Allow-Origin", "*");
+    res->setHeader("Cache-Control", "no-store");
+
+    const String ip = WiFi.localIP().toString();
+    const char *ssid = config.network.wifi_ssid[0] ? config.network.wifi_ssid : "";
+
+    res->printf(
+        "{\"hermesx_update\":true,\"device\":\"HermesX\",\"version\":\"%s\",\"ip\":\"%s\",\"ssid\":\"%s\",\"uploadPath\":\"%s\"}\n",
+        optstr(APP_VERSION), ip.c_str(), ssid, kUpdateUploadRawPath);
 }
 
 void handleReport(HTTPRequest *req, HTTPResponse *res)

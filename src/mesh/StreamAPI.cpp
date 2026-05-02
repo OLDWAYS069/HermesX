@@ -138,6 +138,24 @@ void StreamAPI::emitLogRecord(meshtastic_LogRecord_Level level, const char *src,
     emitTxBuffer(pb_encode_to_bytes(txBuf + HEADER_LEN, meshtastic_FromRadio_size, &meshtastic_FromRadio_msg, &fromRadioScratch));
 }
 
+void StreamAPI::emitLogRecordText(meshtastic_LogRecord_Level level, const char *src, const char *message)
+{
+    memset(&fromRadioScratch, 0, sizeof(fromRadioScratch));
+    fromRadioScratch.which_payload_variant = meshtastic_FromRadio_log_record_tag;
+    fromRadioScratch.log_record.level = level;
+
+    uint32_t rtc_sec = getValidTime(RTCQuality::RTCQualityDevice, true);
+    fromRadioScratch.log_record.time = rtc_sec;
+    strncpy(fromRadioScratch.log_record.source, src, sizeof(fromRadioScratch.log_record.source) - 1);
+    strncpy(fromRadioScratch.log_record.message, message ? message : "", sizeof(fromRadioScratch.log_record.message) - 1);
+    emitTxBuffer(pb_encode_to_bytes(txBuf + HEADER_LEN, meshtastic_FromRadio_size, &meshtastic_FromRadio_msg, &fromRadioScratch));
+}
+
+void StreamAPI::emitDiagnosticLog(const char *src, const char *message)
+{
+    emitLogRecordText(meshtastic_LogRecord_Level_WARNING, src, message);
+}
+
 /// Hookable to find out when connection changes
 void StreamAPI::onConnectionChanged(bool connected)
 {

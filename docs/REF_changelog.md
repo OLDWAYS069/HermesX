@@ -1,5 +1,36 @@
 # HermesX 變更紀錄 (REF_changelog.md)
 
+> 註：本檔包含 `CIV` 分支歷史註記；目前工作分支為 `HermesX_0.2.9` 的 `GOV` 整合版，請勿將所有 `CIV` 註記視為現行預設配置。
+
+## 補記（先前已完成但漏記）
+- 項目：Fast Setup `裝置管理 > 更新模式` 與本機 OTA 更新管理
+- 檔案：
+  - src/graphics/Screen.cpp
+  - src/modules/HermesXUpdateManager.h
+  - src/modules/HermesXUpdateManager.cpp
+- 說明：
+  - Fast Setup `裝置管理` 新增 `更新模式` 頁面，可在裝置端直接操作 `檢查更新檔 / 開始更新 / 套用更新 / 取消更新`。
+  - 頁面會顯示 `目前版本 / 待寫入版本 / 來源狀態 / 寫入進度 / 最後錯誤`，降低現場只靠 serial log 才能判斷更新狀態的情況。
+  - 新增 `HermesXUpdateManager` 管理本機 OTA 狀態機，固定從 `/update/firmware.bin` 載入映像，先驗證 image header、app descriptor、版本資訊與 OTA 槽位容量，再分段寫入目標 partition。
+  - 套用更新前會將待套用資訊保存到 `/prefs/hermesx_update_pending.bin`；重開後若目前版本已對上目標版本，則回報更新已成功套用，否則清除殘留待套用狀態。
+- 測試：
+  - 未補記；需以實機放入 `/update/firmware.bin` 驗證完整 OTA 寫入、切槽開機與套用後狀態恢復。
+
+## 範圍
+- 日期：2026-02-22
+- 版本：HermesX_0.2.9_Civ（分支註記）
+- 項目：Civ 版本差異註記
+- 檔案：
+  - docs/REF_changelog.md
+  - docs/CHANGELOG_MINI.md
+  - README.md
+- 說明：
+  - 建立分支 `HermesX_0.2.9_Civ`。
+  - Civ 版已排除 EMAC 功能：FastSetup 隱藏 `EMAC設定`，不建立 `HermesEmUiModule`，三擊 EM 觸發改為忽略。
+  - Lighthouse 改為關閉（`MESHTASTIC_EXCLUDE_LIGHTHOUSE=1`，不建立模組實例）。
+- 測試：
+  - 無（文件註記與分支建立）
+
 ## 範圍
 - 日期：2026-02-21
 - 版本：HXB_0.2.9（Released）

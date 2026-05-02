@@ -1,11 +1,89 @@
 #include "TraceRouteModule.h"
 #include "MeshService.h"
+#include "main.h"
 #include "meshUtils.h"
 
 TraceRouteModule *traceRouteModule;
 
+static String formatTraceRouteNodeLabel(NodeNum nodeNum)
+{
+    meshtastic_NodeInfoLite *node = nodeDB ? nodeDB->getMeshNode(nodeNum) : nullptr;
+    if (node && node->has_user) {
+        if (node->user.short_name[0] != '\0') {
+            return String(node->user.short_name);
+        }
+        if (node->user.long_name[0] != '\0') {
+            return String(node->user.long_name);
+        }
+    }
+
+    char buf[16];
+    snprintf(buf, sizeof(buf), "!%08lx", static_cast<unsigned long>(nodeNum));
+    return String(buf);
+}
+
+static void appendTraceRouteHop(String &out, NodeNum from, NodeNum to, int8_t snrQdb, bool hasSnr)
+{
+    out += formatTraceRouteNodeLabel(from);
+    out += " -> ";
+    out += formatTraceRouteNodeLabel(to);
+    if (hasSnr && snrQdb != INT8_MIN) {
+        char snrBuf[24];
+        snprintf(snrBuf, sizeof(snrBuf), "  SNR %.2f dB", static_cast<float>(snrQdb) / 4.0f);
+        out += snrBuf;
+    } else {
+        out += "  SNR ?";
+    }
+    out += "\n";
+}
+
+static String buildTraceRoutePopupBody(const meshtastic_MeshPacket &mp, const meshtastic_RouteDiscovery &r)
+{
+    String body;
+    char rxBuf[48];
+    snprintf(rxBuf, sizeof(rxBuf), "RX RSSI %d dBm / SNR %.2f dB\n\n", mp.rx_rssi, mp.rx_snr);
+    body += rxBuf;
+    body += u8"去程\n";
+
+    NodeNum previous = mp.to;
+    for (uint8_t i = 0; i < r.route_count; ++i) {
+        const bool hasSnr = i < r.snr_towards_count;
+        appendTraceRouteHop(body, previous, r.route[i], hasSnr ? r.snr_towards[i] : INT8_MIN, hasSnr);
+        previous = r.route[i];
+    }
+    {
+        const bool hasSnr = r.snr_towards_count > 0;
+        const int8_t lastSnr = hasSnr ? r.snr_towards[r.snr_towards_count - 1] : INT8_MIN;
+        appendTraceRouteHop(body, previous, mp.from, lastSnr, hasSnr);
+    }
+
+    if (r.route_back_count > 0) {
+        body += "\n";
+        body += u8"回程\n";
+        previous = mp.from;
+        for (uint8_t i = 0; i < r.route_back_count; ++i) {
+            const bool hasSnr = i < r.snr_back_count;
+            appendTraceRouteHop(body, previous, r.route_back[i], hasSnr ? r.snr_back[i] : INT8_MIN, hasSnr);
+            previous = r.route_back[i];
+        }
+        const bool hasSnr = r.snr_back_count > 0;
+        appendTraceRouteHop(body, previous, mp.to, hasSnr ? r.snr_back[r.snr_back_count - 1] : INT8_MIN, hasSnr);
+    }
+
+    return body;
+}
+
 bool TraceRouteModule::handleReceivedProtobuf(const meshtastic_MeshPacket &mp, meshtastic_RouteDiscovery *r)
 {
+    if (screen && mp.decoded.request_id && r) {
+        LOG_INFO("[TraceRoute] response from=%08lx to=%08lx req=%08lx route=%u back=%u rx_rssi=%d rx_snr=%.2f",
+                 static_cast<unsigned long>(mp.from), static_cast<unsigned long>(mp.to),
+                 static_cast<unsigned long>(mp.decoded.request_id), static_cast<unsigned>(r->route_count),
+                 static_cast<unsigned>(r->route_back_count), mp.rx_rssi, mp.rx_snr);
+        String title = String("TraceRoute ") + formatTraceRouteNodeLabel(mp.from);
+        String body = buildTraceRoutePopupBody(mp, *r);
+        screen->showTraceRouteResultPopup(title.c_str(), body.c_str());
+    }
     // We only alter the packet in alterReceivedProtobuf()
     return false; // let it be handled by RoutingModule
 }

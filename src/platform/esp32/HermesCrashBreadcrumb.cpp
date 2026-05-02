@@ -1,5 +1,6 @@
 #include "HermesCrashBreadcrumb.h"
 
+#include <cstdio>
 #include <cstring>
 
 #ifdef ARCH_ESP32
@@ -27,6 +28,9 @@ struct HermesCrashBreadcrumbState {
 
 RTC_DATA_ATTR static HermesCrashBreadcrumbState gHermesCrashBreadcrumbState = {};
 static portMUX_TYPE gHermesCrashBreadcrumbMux = portMUX_INITIALIZER_UNLOCKED;
+static HermesCrashBreadcrumbState gPendingBootReport = {};
+static bool gPendingBootReportValid = false;
+static int gPendingBootResetReason = 0;
 
 void clearUnlocked()
 {
@@ -95,6 +99,16 @@ const char *hermesCrashBreadcrumbName(HermesCrashBreadcrumbId id)
         return "PhoneStateConfigComplete";
     case HermesCrashBreadcrumbId::PhonePrefetch:
         return "PhonePrefetch";
+    case HermesCrashBreadcrumbId::XmodemPacketRx:
+        return "XmodemPacketRx";
+    case HermesCrashBreadcrumbId::XmodemStartMeta:
+        return "XmodemStartMeta";
+    case HermesCrashBreadcrumbId::XmodemOpenWrite:
+        return "XmodemOpenWrite";
+    case HermesCrashBreadcrumbId::XmodemOpenWriteOk:
+        return "XmodemOpenWriteOk";
+    case HermesCrashBreadcrumbId::XmodemOpenWriteFail:
+        return "XmodemOpenWriteFail";
     case HermesCrashBreadcrumbId::BleConfigStart:
         return "BleConfigStart";
     case HermesCrashBreadcrumbId::BleConfigComplete:
@@ -176,6 +190,10 @@ void hermesCrashBreadcrumbReportBoot(esp_reset_reason_t resetReason)
     clearUnlocked();
     portEXIT_CRITICAL(&gHermesCrashBreadcrumbMux);
 
+    gPendingBootReport = snapshot;
+    gPendingBootReportValid = true;
+    gPendingBootResetReason = (int)resetReason;
+
     LOG_WARN("Recovered %u crash breadcrumbs after reset reason %d", snapshot.count, (int)resetReason);
     for (uint16_t i = 0; i < snapshot.count; ++i) {
         const size_t entryIndex = (snapshot.head + i) % kHermesCrashBreadcrumbCapacity;
@@ -183,6 +201,44 @@ void hermesCrashBreadcrumbReportBoot(esp_reset_reason_t resetReason)
         LOG_WARN("Crash breadcrumb %u/%u: #%lu %s arg=%u", i + 1, snapshot.count, (unsigned long)entry.seq,
                  hermesCrashBreadcrumbName(static_cast<HermesCrashBreadcrumbId>(entry.id)), entry.arg);
     }
+}
+
+size_t hermesCrashBreadcrumbPendingBootReportCount()
+{
+    if (!gPendingBootReportValid) {
+        return 0;
+    }
+    return (size_t)gPendingBootReport.count + 1U;
+}
+
+bool hermesCrashBreadcrumbFormatPendingBootReportLine(size_t index, char *buf, size_t len)
+{
+    if (!buf || len == 0 || !gPendingBootReportValid) {
+        return false;
+    }
+
+    if (index == 0) {
+        snprintf(buf, len, "Recovered %u crash breadcrumbs after reset reason %d", gPendingBootReport.count,
+                 gPendingBootResetReason);
+        return true;
+    }
+
+    if (index > gPendingBootReport.count) {
+        return false;
+    }
+
+    const size_t entryIndex = (gPendingBootReport.head + index - 1U) % kHermesCrashBreadcrumbCapacity;
+    const HermesCrashBreadcrumbEntry &entry = gPendingBootReport.entries[entryIndex];
+    snprintf(buf, len, "Crash breadcrumb %u/%u: #%lu %s arg=%u", (unsigned)index, gPendingBootReport.count,
+             (unsigned long)entry.seq, hermesCrashBreadcrumbName(static_cast<HermesCrashBreadcrumbId>(entry.id)), entry.arg);
+    return true;
+}
+
+void hermesCrashBreadcrumbClearPendingBootReport()
+{
+    gPendingBootReport = {};
+    gPendingBootReportValid = false;
+    gPendingBootResetReason = 0;
 }
 #else
 void hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId, uint16_t) {}

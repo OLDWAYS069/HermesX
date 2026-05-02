@@ -4,7 +4,12 @@
 #include "PowerFSM.h"
 #include "Throttle.h"
 #include "configuration.h"
+#include "platform/esp32/HermesCrashBreadcrumb.h"
 #include "time.h"
+
+#if defined(ARCH_ESP32)
+#include <esp_system.h>
+#endif
 
 #ifdef RP2040_SLOW_CLOCK
 #define Port Serial2
@@ -19,6 +24,60 @@
 #define SERIAL_CONNECTION_TIMEOUT (15 * 60) * 1000UL
 
 SerialConsole *console;
+
+namespace {
+#if defined(ARCH_ESP32)
+const char *usbResetReasonLabel(esp_reset_reason_t reason)
+{
+    switch (reason) {
+    case ESP_RST_UNKNOWN:
+        return "UNKNOWN";
+    case ESP_RST_POWERON:
+        return "POWERON";
+    case ESP_RST_EXT:
+        return "EXT";
+    case ESP_RST_SW:
+        return "SW";
+    case ESP_RST_PANIC:
+        return "PANIC";
+    case ESP_RST_INT_WDT:
+        return "INT_WDT";
+    case ESP_RST_TASK_WDT:
+        return "TASK_WDT";
+    case ESP_RST_WDT:
+        return "WDT";
+    case ESP_RST_DEEPSLEEP:
+        return "DEEPSLEEP";
+    case ESP_RST_BROWNOUT:
+        return "BROWNOUT";
+    case ESP_RST_SDIO:
+        return "SDIO";
+#if defined(ESP_RST_USB)
+    case ESP_RST_USB:
+        return "USB";
+#endif
+#if defined(ESP_RST_JTAG)
+    case ESP_RST_JTAG:
+        return "JTAG";
+#endif
+#if defined(ESP_RST_EFUSE)
+    case ESP_RST_EFUSE:
+        return "EFUSE";
+#endif
+#if defined(ESP_RST_PWR_GLITCH)
+    case ESP_RST_PWR_GLITCH:
+        return "PWR_GLITCH";
+#endif
+#if defined(ESP_RST_CPU_LOCKUP)
+    case ESP_RST_CPU_LOCKUP:
+        return "CPU_LOCKUP";
+#endif
+    default:
+        return "OTHER";
+    }
+}
+#endif
+} // namespace
 
 void consoleInit()
 {
@@ -59,6 +118,23 @@ SerialConsole::SerialConsole() : StreamAPI(&Port), RedirectablePrint(&Port), con
 #endif
 #if !ARCH_PORTDUINO
     emitRebooted();
+    emitLogRecordText(meshtastic_LogRecord_Level_WARNING, "USBUpdate", "USB update console alive");
+#if defined(ARCH_ESP32)
+    char resetReasonBuf[64];
+    snprintf(resetReasonBuf, sizeof(resetReasonBuf), "reset reason=%s(%d)", usbResetReasonLabel(esp_reset_reason()),
+             (int)esp_reset_reason());
+    emitLogRecordText(meshtastic_LogRecord_Level_WARNING, "USBUpdate", resetReasonBuf);
+#endif
+    const size_t breadcrumbLines = hermesCrashBreadcrumbPendingBootReportCount();
+    char breadcrumbLine[160];
+    for (size_t i = 0; i < breadcrumbLines; ++i) {
+        if (hermesCrashBreadcrumbFormatPendingBootReportLine(i, breadcrumbLine, sizeof(breadcrumbLine))) {
+            emitLogRecordText(meshtastic_LogRecord_Level_WARNING, "CrashBreadcrumb", breadcrumbLine);
+        }
+    }
+    if (breadcrumbLines > 0) {
+        hermesCrashBreadcrumbClearPendingBootReport();
+    }
 #endif
 }
 
@@ -84,8 +160,9 @@ bool SerialConsole::checkIsConnected()
  */
 bool SerialConsole::handleToRadio(const uint8_t *buf, size_t len)
 {
-    // only talk to the API once the configuration has been loaded and we're sure the serial port is not disabled.
-    if (config.has_lora && config.security.serial_enabled) {
+    // In dedicated update boot we intentionally skip normal mesh init, which can leave has_lora false.
+    // For USB OTA we still need the serial API handshake to work as long as serial is allowed.
+    if (config.security.serial_enabled) {
         // Switch to protobufs for log messages
         usingProtobufs = true;
         canWrite = true;

@@ -29,6 +29,8 @@ enum cannedMessageReturnTarget {
     CANNED_MESSAGE_RETURN_TARGET_ACTION,
     CANNED_MESSAGE_RETURN_TARGET_RECENT_LIST,
     CANNED_MESSAGE_RETURN_TARGET_RECENT_DETAIL,
+    CANNED_MESSAGE_RETURN_TARGET_ONLINE_LIST,
+    CANNED_MESSAGE_RETURN_TARGET_ONLINE_DETAIL,
 };
 
 struct Letter {
@@ -75,6 +77,8 @@ class CannedMessageModule : public SinglePortModule, public Observable<const UIF
     void handleSetCannedMessageModuleMessages(const char *from_msg);
 
     void showTemporaryMessage(const String &message);
+    void openDirectMessageComposer(NodeNum destNode);
+    bool openMenu();
 
     String drawWithCursor(String text, int cursor);
 

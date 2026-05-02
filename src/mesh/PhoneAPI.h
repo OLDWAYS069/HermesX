@@ -159,6 +159,9 @@ class PhoneAPI
      */
     virtual void onNowHasData(uint32_t fromRadioNum) {}
 
+    /// Forced transport-level diagnostics that should reach the host even when normal debug logging is off.
+    virtual void emitDiagnosticLog(const char *src, const char *message) {}
+
     /// Subclasses can use these lifecycle hooks for transport-specific behavior around config/steady-state.
     virtual void onConfigStart() {}
     virtual void onConfigComplete() {}
@@ -166,6 +169,7 @@ class PhoneAPI
 
     /// begin a new connection
     void handleStartConfig();
+    void handleStartPacketMode();
 
     enum APIType {
         TYPE_NONE, // Initial state, don't send anything until the client starts asking for config

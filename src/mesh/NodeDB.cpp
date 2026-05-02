@@ -872,8 +872,11 @@ void NodeDB::installRoleDefaults(meshtastic_Config_DeviceConfig_Role role)
         config.position.position_broadcast_secs = 300; // Every 5 minutes
     } else if (role == meshtastic_Config_DeviceConfig_Role_TAK) {
         config.device.node_info_broadcast_secs = ONE_DAY;
-        config.position.position_broadcast_smart_enabled = false;
-        config.position.position_broadcast_secs = ONE_DAY;
+        config.position.gps_update_interval = 5;
+        config.position.position_broadcast_smart_enabled = true;
+        config.position.position_broadcast_secs = 20;
+        config.position.broadcast_smart_minimum_distance = 10;
+        config.position.broadcast_smart_minimum_interval_secs = 15;
         // Remove Altitude MSL from flags since CoTs use HAE (height above ellipsoid)
         config.position.position_flags =
             (meshtastic_Config_PositionConfig_PositionFlags_ALTITUDE | meshtastic_Config_PositionConfig_PositionFlags_SPEED |

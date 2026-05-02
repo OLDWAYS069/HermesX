@@ -90,6 +90,25 @@ void PhoneAPI::handleStartConfig()
     resetReadIndex();
 }
 
+void PhoneAPI::handleStartPacketMode()
+{
+    hermesCrashBreadcrumbClear();
+    hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhoneConfigStart, 0x584DU);
+    emitDiagnosticLog("USBUpdate", "PhoneAPI packet mode begin");
+
+    if (!isConnected()) {
+        onConnectionChanged(true);
+#ifdef FSCom
+        observe(&xModem.packetReady);
+#endif
+    }
+
+    state = STATE_SEND_PACKETS;
+    pauseBluetoothLogging = false;
+    emitDiagnosticLog("USBUpdate", "PhoneAPI packet mode ready");
+    LOG_INFO("Start packet-only API mode");
+}
+
 void PhoneAPI::close()
 {
     LOG_DEBUG("PhoneAPI::close()");
@@ -98,7 +117,9 @@ void PhoneAPI::close()
         hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::PhoneClose);
         state = STATE_SEND_NOTHING;
         resetReadIndex();
-        unobserve(&service->fromNumChanged);
+        if (service) {
+            unobserve(&service->fromNumChanged);
+        }
 #ifdef FSCom
         unobserve(&xModem.packetReady);
 #endif
@@ -164,7 +185,16 @@ bool PhoneAPI::handleToRadio(const uint8_t *buf, size_t bufLength)
         case meshtastic_ToRadio_xmodemPacket_tag:
             LOG_INFO("Got xmodem packet");
 #ifdef FSCom
+            if (!isConnected()) {
+                emitDiagnosticLog("USBUpdate", "Got xmodem packet");
+                emitDiagnosticLog("USBUpdate", "Auto-open packet mode");
+                LOG_INFO("Auto-open packet-only mode for xmodem");
+                handleStartPacketMode();
+                emitDiagnosticLog("USBUpdate", "Dispatch xmodem packet");
+            }
+            xModem.setDiagnosticHook([this](const char *message) { emitDiagnosticLog("USBXmodem", message); });
             xModem.handlePacket(toRadioScratch.xmodemPacket);
+            xModem.setDiagnosticHook(nullptr);
 #endif
             break;
 #if !MESHTASTIC_EXCLUDE_MQTT
@@ -659,12 +689,14 @@ bool PhoneAPI::available()
         prefetchNodeInfos();
         return true;
     case STATE_SEND_PACKETS: {
-        if (!queueStatusPacketForPhone)
-            queueStatusPacketForPhone = service->getQueueStatusForPhone();
-        if (!mqttClientProxyMessageForPhone)
-            mqttClientProxyMessageForPhone = service->getMqttClientProxyMessageForPhone();
-        if (!clientNotification)
-            clientNotification = service->getClientNotificationForPhone();
+        if (service) {
+            if (!queueStatusPacketForPhone)
+                queueStatusPacketForPhone = service->getQueueStatusForPhone();
+            if (!mqttClientProxyMessageForPhone)
+                mqttClientProxyMessageForPhone = service->getMqttClientProxyMessageForPhone();
+            if (!clientNotification)
+                clientNotification = service->getClientNotificationForPhone();
+        }
         bool hasPacket = !!queueStatusPacketForPhone || !!mqttClientProxyMessageForPhone || !!clientNotification;
         if (hasPacket)
             return true;
@@ -686,7 +718,7 @@ bool PhoneAPI::available()
 #endif
 #endif
 
-        if (!packetForPhone)
+        if (!packetForPhone && service)
             packetForPhone = service->getForPhone();
         hasPacket = !!packetForPhone;
         return hasPacket;

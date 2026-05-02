@@ -36,6 +36,43 @@
 - 啟用時只允許 port 300 的 Emergency 封包。
 - 允許手機文字指令：`@EmergencyActive`, `@ResetLighthouse`, `@GoToSleep`, `@HiHermes`, `@Status`。
 
+## EMINFO / 各裝置狀態
+- `EMINFO` 為 HermesX 擴充機制，用於同步各節點目前的 EM 狀態。
+- `各裝置狀態` 頁面只列出有送出 `EMINFO` 的裝置。
+- `EMINFO` 不等於主回報封包：
+  - 主回報封包用於 `受困 / 醫療 / 物資 / 安全`
+  - `EMINFO` 用於狀態同步與狀態頁面更新
+- `EMINFO` 目前資料至少包含：
+  - 狀態代碼
+  - 電量百分比
+  - 裝置短名
+
+## EM Heartbeat（規劃）
+- `EM Heartbeat` 預計作為 HermesX 擴充，用於：
+  - 確認對方是否仍在線
+  - 提供最後活動時間
+  - 作為 `各裝置狀態` 的在線判定基礎
+- 建議預設週期為 `5 秒`
+- 建議超過 `15 秒` 未收到則視為離線或失聯
+
+## EMAC 設定中的相關參數
+- `EMAC設定` 應可調整以下參數：
+  - `EMINFO廣播`
+  - `EMINFO週期`
+  - `Heartbeat週期`
+  - `離線判定門檻`
+  - `是否附帶電量`
+
+## 相關實作位置
+- `src/modules/HermesEmUiModule.cpp`
+  - `setEmInfoBroadcastEnabled(...)`
+  - `sendEmInfoNow()`
+  - `getEmInfoIntervalMs()`
+  - `recordEmInfoPayload(...)`
+  - `runOnce()`
+- `src/modules/HermesEmUiModule.h`
+- `src/mesh/MeshService.cpp`
+
 ## 相關檔案
 - `src/modules/HermesEmUiModule.cpp`
 - `src/modules/LighthouseModule.cpp`

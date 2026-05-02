@@ -19,6 +19,7 @@
 #include "modules/HermesXInterfaceModule.h"
 #include "modules/HermesXPowerGuard.h"
 #include "modules/CannedMessageModule.h"
+#include "modules/HermesEmUiModule.h"
 #endif
 
 #include <inttypes.h>
@@ -51,58 +52,110 @@ static uint32_t s_longStartMillis = 0;
 static uint32_t s_holdPressStartMs = 0;
 static bool isLongPressSuppressedNow();
 
-static bool s_shutdownAnimArmed = false;
-static uint32_t s_shutdownDeadlineMs = 0;
-static constexpr uint32_t kShutdownAnimDurationMs = BUTTON_LONGPRESS_MS ? BUTTON_LONGPRESS_MS : 1000;
-static constexpr uint32_t kShutdownMessageMinMs = 1500;
-static constexpr uint32_t kShutdownMessageEarlyMs = 4000;
 static constexpr uint32_t kResumeGraceMs = 1200;
 static constexpr uint32_t kReleaseDebounceMs = 80;
 static constexpr uint32_t kRotaryLongPressDelayMs = 1000;
-static constexpr const char *kShutdownMessage = "拜拜～下次見！";
+static constexpr uint32_t kEmergencyPendingMs = 3000;
+static constexpr uint32_t kEmergencyPendingBeepMs = 1000;
 // 罐頭訊息選單：長按約 1 秒退出
 static bool s_exitCannedHold = false;
 static uint32_t s_exitCannedStartMs = 0;
 #if !MESHTASTIC_EXCLUDE_HERMESX
-// 逐格視覺放慢倍率（需等全部轉紅才觸發關機）
+// 逐格視覺放慢倍率（長按達標後切入 EM 快捷觸發）
 static constexpr float kPowerHoldVisualStretch = 1.0f;
 #endif
 #if !MESHTASTIC_EXCLUDE_HERMESX
-static bool s_deferShutdownUi = false;
-static bool s_shutdownSequenceStarted = false;
-static bool s_shutdownMessageShown = false;
+static bool s_emergencyShortcutTriggered = false;
+static bool s_emergencyShortcutPending = false;
+static uint32_t s_emergencyShortcutDeadlineMs = 0;
+static uint32_t s_emergencyShortcutNextBeepMs = 0;
+static int32_t s_emergencyShortcutShownSec = -1;
+static constexpr float kEmergencyPendingToneFreq = 1760.0f;
+static constexpr uint32_t kEmergencyPendingToneMs = 120;
 
-static void startShutdownVisuals(uint32_t holdDurationMs)
+static void updateEmergencyShortcutAlert(int32_t remainingSec)
 {
-    if (s_shutdownSequenceStarted)
+    if (!screen)
+        return;
+    screen->updateEmergencyConfirmPopup(static_cast<uint32_t>(remainingSec));
+}
+
+static bool isEmUiBlockingButtonActions()
+{
+    return hermesXEmUiModule != nullptr && hermesXEmUiModule->isActive();
+}
+
+static void cancelEmergencyShortcutPending()
+{
+    s_emergencyShortcutPending = false;
+    s_emergencyShortcutTriggered = false;
+    s_emergencyShortcutDeadlineMs = 0;
+    s_emergencyShortcutNextBeepMs = 0;
+    s_emergencyShortcutShownSec = -1;
+    if (screen) {
+        screen->hideEmergencyConfirmPopup();
+    }
+}
+
+static void triggerEmergencyShortcutNow()
+{
+    if (s_emergencyShortcutTriggered || s_emergencyShortcutPending)
         return;
 
     auto *interfaceModule = HermesXInterfaceModule::instance;
+    if (!interfaceModule)
+        return;
 
-    // 先讓逐格動畫補滿並關閉，以免阻擋後續 ShutdownEffect
-    if (interfaceModule) {
-        interfaceModule->updatePowerHoldAnimation(holdDurationMs);
-        interfaceModule->forceStopPowerHoldAnimation();
-    }
+    interfaceModule->forceStopPowerHoldAnimation();
     ButtonThread::clearHoldAnimationState();
+    s_emergencyShortcutPending = true;
+    s_emergencyShortcutDeadlineMs = millis() + kEmergencyPendingMs;
+    s_emergencyShortcutNextBeepMs = millis();
+    s_emergencyShortcutShownSec = -1;
+    if (screen) {
+        screen->showEmergencyConfirmPopup((kEmergencyPendingMs + 999) / 1000);
+    }
+}
+
+static void tickEmergencyShortcutPending()
+{
+    if (!s_emergencyShortcutPending)
+        return;
+
+    const uint32_t now = millis();
+    const int32_t remainingMs = static_cast<int32_t>(s_emergencyShortcutDeadlineMs - now);
+    int32_t remainingSec = (remainingMs > 0) ? ((remainingMs + 999) / 1000) : 0;
+    if (remainingSec < 0)
+        remainingSec = 0;
+
+    if (remainingSec != s_emergencyShortcutShownSec) {
+        s_emergencyShortcutShownSec = remainingSec;
+        updateEmergencyShortcutAlert(remainingSec);
+    }
+
+    if (now >= s_emergencyShortcutNextBeepMs) {
+        if (auto *interfaceModule = HermesXInterfaceModule::instance) {
+            interfaceModule->startEmergencySiren(kEmergencyPendingToneFreq, kEmergencyPendingToneMs);
+        }
+        s_emergencyShortcutNextBeepMs = now + kEmergencyPendingBeepMs;
+    }
+
+    if (remainingMs > 0)
+        return;
+
+    s_emergencyShortcutPending = false;
+    s_emergencyShortcutTriggered = true;
+    s_emergencyShortcutDeadlineMs = 0;
+    s_emergencyShortcutNextBeepMs = 0;
+    s_emergencyShortcutShownSec = -1;
 
     if (screen) {
-        screen->startHermesXAlert(kShutdownMessage);
+        screen->hideEmergencyConfirmPopup();
     }
-    playBeep();
-    s_shutdownMessageShown = true;
-
-    s_shutdownAnimArmed = true;
-    s_shutdownDeadlineMs = millis() + kShutdownAnimDurationMs;
-    const uint32_t minDeadline = millis() + kShutdownMessageMinMs;
-    if (s_shutdownDeadlineMs < minDeadline) {
-        s_shutdownDeadlineMs = minDeadline;
-    }
-    if (interfaceModule) {
-        interfaceModule->startLEDAnimation(LEDAnimation::ShutdownEffect);
-    }
-
-    s_shutdownSequenceStarted = true;
+    auto *interfaceModule = HermesXInterfaceModule::instance;
+    if (!interfaceModule)
+        return;
+    interfaceModule->onTripleClick();
 }
 #endif
 #endif
@@ -326,6 +379,10 @@ int32_t ButtonThread::runOnce()
 #endif
 #if !MESHTASTIC_EXCLUDE_HERMESX
     updatePowerHoldAnimation();
+    if (screen && screen->consumeEmergencyConfirmCancelRequest()) {
+        cancelEmergencyShortcutPending();
+    }
+    tickEmergencyShortcutPending();
 #endif
     // 罐頭選單退出：按鍵放開則取消計時
 #if !MESHTASTIC_EXCLUDE_HERMESX
@@ -345,6 +402,15 @@ int32_t ButtonThread::runOnce()
         switch (btnEvent) {
         case BUTTON_EVENT_PRESSED: {
             LOG_BUTTON("press!");
+#if !MESHTASTIC_EXCLUDE_HERMESX
+            if (s_emergencyShortcutPending) {
+                cancelEmergencyShortcutPending();
+                break;
+            }
+            if (isEmUiBlockingButtonActions()) {
+                break;
+            }
+#endif
             // If a nag notification is running, stop it and prevent other actions
             if (moduleConfig.external_notification.enabled && (externalNotificationModule->nagCycleCutoff != UINT32_MAX)) {
                 externalNotificationModule->stopNow();
@@ -369,6 +435,15 @@ int32_t ButtonThread::runOnce()
 
         case BUTTON_EVENT_PRESSED_SCREEN: {
             LOG_BUTTON("AltPress!");
+#if !MESHTASTIC_EXCLUDE_HERMESX
+            if (s_emergencyShortcutPending) {
+                cancelEmergencyShortcutPending();
+                break;
+            }
+            if (isEmUiBlockingButtonActions()) {
+                break;
+            }
+#endif
 #ifdef ELECROW_ThinkNode_M1
             // If a nag notification is running, stop it and prevent other actions
             if (moduleConfig.external_notification.enabled && (externalNotificationModule->nagCycleCutoff != UINT32_MAX)) {
@@ -387,6 +462,15 @@ int32_t ButtonThread::runOnce()
 
         case BUTTON_EVENT_DOUBLE_PRESSED: {
             LOG_BUTTON("Double press!");
+#if !MESHTASTIC_EXCLUDE_HERMESX
+            if (s_emergencyShortcutPending) {
+                cancelEmergencyShortcutPending();
+                break;
+            }
+            if (isEmUiBlockingButtonActions()) {
+                break;
+            }
+#endif
 #ifdef ELECROW_ThinkNode_M1
             digitalWrite(PIN_EINK_EN, digitalRead(PIN_EINK_EN) == LOW);
             break;
@@ -397,6 +481,15 @@ int32_t ButtonThread::runOnce()
 
         case BUTTON_EVENT_MULTI_PRESSED: {
             LOG_BUTTON("Mulitipress! %hux", multipressClickCount);
+#if !MESHTASTIC_EXCLUDE_HERMESX
+            if (s_emergencyShortcutPending) {
+                cancelEmergencyShortcutPending();
+                break;
+            }
+            if (isEmUiBlockingButtonActions()) {
+                break;
+            }
+#endif
             switch (multipressClickCount) {
 #if HAS_GPS && !defined(ELECROW_ThinkNode_M1)
             // 3 clicks: toggle GPS
@@ -447,6 +540,12 @@ int32_t ButtonThread::runOnce()
 
         case BUTTON_EVENT_LONG_PRESSED: {
 #if !MESHTASTIC_EXCLUDE_HERMESX
+            if (s_emergencyShortcutPending) {
+                break;
+            }
+            if (isEmUiBlockingButtonActions()) {
+                break;
+            }
             // 長按約 1 秒可退出罐頭訊息選單，不進入關機流程
             if (cannedMessageModule && cannedMessageModule->getRunState() != CANNED_MESSAGE_RUN_STATE_INACTIVE &&
                 s_exitCannedHold && (millis() - s_exitCannedStartMs >= 1000)) {
@@ -467,25 +566,9 @@ int32_t ButtonThread::runOnce()
             }
             powerFSM.trigger(EVENT_PRESS);
 #if !MESHTASTIC_EXCLUDE_HERMESX
-            // HermesX: 延後 Shutdown UI/動畫到 PowerHold 完成（逐格轉紅後）
-            s_deferShutdownUi = HermesXInterfaceModule::instance;
-            s_shutdownSequenceStarted = false;
-            if (!s_deferShutdownUi)
-#endif
-            if (screen) {
-                screen->startHermesXAlert(kShutdownMessage);
-            }
-#if !MESHTASTIC_EXCLUDE_HERMESX
-            if (!s_deferShutdownUi)
-#endif
-            playBeep();
-#if !MESHTASTIC_EXCLUDE_HERMESX
-            if (!s_shutdownAnimArmed && HermesXInterfaceModule::instance && !s_deferShutdownUi) {
-                // 進入關機流程時終止 powerHold 進度，讓關機動畫接管
-                HermesXInterfaceModule::instance->stopPowerHoldAnimation(false);
-                s_shutdownAnimArmed = true;
-                s_shutdownDeadlineMs = millis() + kShutdownAnimDurationMs;
-                HermesXInterfaceModule::instance->startLEDAnimation(LEDAnimation::ShutdownEffect);
+            if (buttonThread && buttonThread->resolveHoldMode() == HoldAnimationMode::PowerOff) {
+                triggerEmergencyShortcutNow();
+                break;
             }
 #endif
             break;
@@ -497,7 +580,7 @@ int32_t ButtonThread::runOnce()
 #if !MESHTASTIC_EXCLUDE_HERMESX && (defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) ||          \
                                     defined(BUTTON_PIN_ALT) || defined(BUTTON_PIN_TOUCH))
             if (wakeTriggered) {
-                // 這次長按是喚醒流程，不要進入關機
+                // 這次長按是喚醒流程，不要進入 EM 快捷觸發
                 resetWakeHoldGate();
                 break;
             }
@@ -505,57 +588,9 @@ int32_t ButtonThread::runOnce()
             // 取消罐頭退出握持狀態
 #if !MESHTASTIC_EXCLUDE_HERMESX
             s_exitCannedHold = false;
-#endif
-            LOG_INFO("Shutdown from long press");
-#if !MESHTASTIC_EXCLUDE_HERMESX
-            uint32_t shutdownDelayMs = kShutdownAnimDurationMs;
-            auto *interfaceModule = HermesXInterfaceModule::instance;
-            if (s_shutdownSequenceStarted) {
-                // 視覺已啟動：只需等待已排程的 deadline，再做實際關機
-                uint32_t nowMs = millis();
-                if (s_shutdownAnimArmed && s_shutdownDeadlineMs > nowMs) {
-                    delay(s_shutdownDeadlineMs - nowMs);
-                }
-            } else {
-                if (s_deferShutdownUi && interfaceModule) {
-                    // 放開才補啟動：補完進度、開啟關機視覺
-                    const uint32_t holdDurationMs = BUTTON_LONGPRESS_MS ? BUTTON_LONGPRESS_MS : 1;
-                    startShutdownVisuals(holdDurationMs);
-                } else {
-                    if (screen) {
-                        screen->startHermesXAlert(kShutdownMessage);
-                    }
-                    playBeep();
-                    s_shutdownAnimArmed = interfaceModule;
-                    s_shutdownDeadlineMs = millis() + shutdownDelayMs;
-                    if (interfaceModule) {
-                        interfaceModule->startLEDAnimation(LEDAnimation::ShutdownEffect);
-                    }
-                    s_shutdownSequenceStarted = true;
-                }
+            if (!s_emergencyShortcutPending) {
+                s_emergencyShortcutTriggered = false;
             }
-#else
-            if (screen) {
-                screen->startHermesXAlert(kShutdownMessage);
-            }
-            playBeep();
-#endif
-            playShutdownMelody();
-#if !MESHTASTIC_EXCLUDE_HERMESX
-            if (!s_shutdownAnimArmed && HermesXInterfaceModule::instance) {
-                s_shutdownAnimArmed = true;
-                s_shutdownDeadlineMs = millis() + shutdownDelayMs;
-                HermesXInterfaceModule::instance->startLEDAnimation(LEDAnimation::ShutdownEffect);
-            }
-#endif
-            s_shutdownAnimArmed = true;
-            const uint32_t minDeadline = millis() + kShutdownMessageMinMs;
-            if (s_shutdownDeadlineMs < minDeadline) {
-                s_shutdownDeadlineMs = minDeadline;
-            }
-#if !MESHTASTIC_EXCLUDE_HERMESX
-            s_deferShutdownUi = false;
-            s_shutdownSequenceStarted = false;
 #endif
             break;
         }
@@ -593,23 +628,6 @@ int32_t ButtonThread::runOnce()
         }
         btnEvent = BUTTON_EVENT_NONE;
     }
-
-#if !MESHTASTIC_EXCLUDE_HERMESX
-    // 若已經啟動關機動畫，但遲遲沒有收到長按放開事件，逾時後強制收尾並進入關機
-    if (s_shutdownAnimArmed && s_shutdownDeadlineMs > 0) {
-        uint32_t now = millis();
-        if (now >= s_shutdownDeadlineMs) {
-            if (HermesXInterfaceModule::instance) {
-                HermesXInterfaceModule::instance->forceAllLedsOff();
-            }
-            power->shutdown();
-            s_shutdownAnimArmed = false;
-            s_shutdownDeadlineMs = 0;
-            s_shutdownSequenceStarted = false;
-            s_deferShutdownUi = false;
-        }
-    }
-#endif
 
     return 50;
 }
@@ -770,8 +788,7 @@ void ButtonThread::resetLongPressState()
     s_longStartMillis = 0;
     s_holdPressStartMs = 0;
 #if !MESHTASTIC_EXCLUDE_HERMESX
-    s_deferShutdownUi = false;
-    s_shutdownSequenceStarted = false;
+    s_emergencyShortcutTriggered = false;
 #endif
 #if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT) ||                \
     defined(BUTTON_PIN_TOUCH)
@@ -970,16 +987,7 @@ void ButtonThread::updatePowerHoldAnimation()
         return;
     }
 
-    // 已經進入關機序列時，不再繼續進度動畫，避免再次啟動或重跑
-    if (s_shutdownSequenceStarted) {
-        // 進度動畫停掉，但不要重置計時；等待關機
-        if (holdAnimationActive && holdAnimationStarted) {
-            if (auto *interfaceModule = HermesXInterfaceModule::instance) {
-                interfaceModule->stopPowerHoldAnimation(false);
-            }
-            holdAnimationActive = false;
-            holdAnimationStarted = false;
-        }
+    if (s_emergencyShortcutTriggered || s_emergencyShortcutPending) {
         return;
     }
 
@@ -1091,24 +1099,8 @@ void ButtonThread::updatePowerHoldAnimation()
                 interfaceModule->updatePowerHoldAnimation(holdAnimationLastMs);
             }
 
-            // 先顯示關機頁面（提前到 4s），但不進入關機流程
-            if (holdAnimationMode == HoldAnimationMode::PowerOff && !s_shutdownMessageShown &&
-                holdAnimationLastMs >= kShutdownMessageEarlyMs) {
-                if (screen) {
-                    screen->startHermesXAlert(kShutdownMessage);
-                }
-                s_shutdownMessageShown = true;
-            }
-
-            // 達標即啟動關機視覺，避免重跑或提前被 stop
             if (holdAnimationMode == HoldAnimationMode::PowerOff && holdAnimationLastMs >= shutdownGateMs) {
-                startShutdownVisuals(shutdownGateMs);
-                return;
-            }
-
-            // 關機長按已經進行且累積達標後，不再接受後續 long-start 重置
-            if (holdAnimationMode == HoldAnimationMode::PowerOff && holdAnimationLastMs >= shutdownGateMs) {
-                holdAnimationActive = false; // 交由關機流程收尾
+                triggerEmergencyShortcutNow();
                 return;
             }
 
@@ -1128,16 +1120,8 @@ void ButtonThread::updatePowerHoldAnimation()
                 interfaceModule->updatePowerHoldAnimation(holdAnimationLastMs);
             }
 
-            // 達標即進入關機視覺，避免進度重跑第二輪
             if (holdAnimationMode == HoldAnimationMode::PowerOff && holdAnimationLastMs >= holdDurationMs) {
-                startShutdownVisuals(holdDurationMs);
-                return;
-            }
-
-            // 關機長按：逐格轉紅達標就啟動關機視覺（不必等放開）
-            if (s_deferShutdownUi && holdAnimationMode == HoldAnimationMode::PowerOff &&
-                holdAnimationLastMs >= holdDurationMs) {
-                startShutdownVisuals(holdDurationMs);
+                triggerEmergencyShortcutNow();
             }
         }
 
@@ -1157,7 +1141,6 @@ void ButtonThread::updatePowerHoldAnimation()
         holdAnimationLastMs = 0;
         holdAnimationStarted = false;
         s_holdPressStartMs = 0;
-        s_shutdownMessageShown = false;
         if (auto *interfaceModule = HermesXInterfaceModule::instance) {
             interfaceModule->stopPowerHoldAnimation(false);
         }
@@ -1165,9 +1148,8 @@ void ButtonThread::updatePowerHoldAnimation()
         s_holdPressStartMs = 0;
     }
 
-    // 若已經進入關機序列，確保長按閘門狀態清掉，避免提前發生 shutdown
 #if !MESHTASTIC_EXCLUDE_HERMESX
-    if (s_shutdownSequenceStarted || s_shutdownAnimArmed) {
+    if (s_emergencyShortcutTriggered || s_emergencyShortcutPending) {
         s_longGateArmed = false;
         s_longEventPending = false;
         s_longStartMillis = 0;
@@ -1417,12 +1399,8 @@ void ButtonThread::userButtonPressedLongStart()
     if (isLongPressSuppressedNow()) {
         return;
     }
-    // 已啟動關機序列時忽略後續長按開始，避免中途再次觸發導致提前關機
-#if !MESHTASTIC_EXCLUDE_HERMESX
-    if (s_shutdownSequenceStarted || s_shutdownAnimArmed) {
-        return;
-    }
     // 已有任何逐燈動畫在跑（開/關機皆然），避免 OneButton 重複觸發 long start 造成重置
+#if !MESHTASTIC_EXCLUDE_HERMESX
     if (buttonThread && buttonThread->holdAnimationActive) {
         return;
     }
@@ -1460,10 +1438,6 @@ void ButtonThread::userButtonPressedLongStart()
 
     if (s_requireReleaseBeforeLongPress)
         return;
-
-    if (s_shutdownSequenceStarted || s_shutdownAnimArmed) {
-        return;
-    }
 
     if (!holdAllowed)
         return;
@@ -1515,16 +1489,6 @@ void ButtonThread::userButtonPressedLongStart()
 void ButtonThread::userButtonPressedLongStop()
 {
 #if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT)
-    // 已啟動關機序列時忽略，避免提前 shutdown
-#if !MESHTASTIC_EXCLUDE_HERMESX
-    if (s_shutdownSequenceStarted || s_shutdownAnimArmed) {
-        s_longGateArmed = false;
-        s_longEventPending = false;
-        s_longStartMillis = 0;
-        s_longPressFromAlt = false;
-        return;
-    }
-#endif
     if (isLongPressSuppressedNow()) {
         s_longGateArmed = false;
         s_longEventPending = false;
@@ -1582,10 +1546,7 @@ void ButtonThread::userButtonPressedLongStop()
     // 收尾時再更新一次動畫進度，確保達標時會進入完成態
     if (auto *interfaceModule = HermesXInterfaceModule::instance) {
         interfaceModule->updatePowerHoldAnimation(duration);
-        const bool deferPowerHoldCompletion = s_deferShutdownUi;
-        if (!deferPowerHoldCompletion) {
-            interfaceModule->stopPowerHoldAnimation(duration + 20 >= BUTTON_LONGPRESS_MS);
-        }
+        interfaceModule->stopPowerHoldAnimation(duration + 20 >= longPressThreshold);
     }
 #endif
 
@@ -1613,7 +1574,11 @@ void ButtonThread::clearHoldAnimationState()
         buttonThread->holdAnimationLastMs = 0;
     }
     s_holdPressStartMs = 0;
-    s_shutdownMessageShown = false;
+    s_emergencyShortcutTriggered = false;
+    s_emergencyShortcutPending = false;
+    s_emergencyShortcutDeadlineMs = 0;
+    s_emergencyShortcutNextBeepMs = 0;
+    s_emergencyShortcutShownSec = -1;
 #endif
 }
 

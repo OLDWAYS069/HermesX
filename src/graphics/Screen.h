@@ -28,6 +28,7 @@ class Screen
     uint8_t getBrightnessLevel() const { return 150; }
     void setBrightnessLevel(uint8_t) {}
     void maybeArmIncomingTextPopup(const meshtastic_MeshPacket &) {}
+    void showTraceRouteResultPopup(const char *, const char *) {}
     void setFunctionSymbol(std::string) {}
     void removeFunctionSymbol(std::string) {}
     void startAlert(const char *) {}
@@ -217,6 +218,7 @@ class Screen : public concurrency::OSThread
     }
     bool isOn() const { return screenOn; }
     void maybeArmIncomingTextPopup(const meshtastic_MeshPacket &packet);
+    void showTraceRouteResultPopup(const char *title, const char *body);
 
     /**
      * Prepare the display for the unit going to the lowest power mode possible.  Most screens will just
@@ -266,11 +268,23 @@ class Screen : public concurrency::OSThread
     }
 
     void startHermesXAlert(const char *text);
+    void showEmergencyConfirmPopup(uint32_t remainingSec);
+    void updateEmergencyConfirmPopup(uint32_t remainingSec);
+    void hideEmergencyConfirmPopup();
+    bool isEmergencyConfirmPopupVisible() const { return hermesEmergencyConfirmVisible; }
+    bool consumeEmergencyConfirmCancelRequest();
     bool isHermesXMainPageActive() const;
     bool isHermesFastSetupActive() const;
     bool isHermesXActionPageActive() const;
     bool isRecentTextMessagesPageActive() const;
     bool isRecentTextMessageDetailPageActive() const;
+    bool isOnlineNodeListPageActive() const;
+    bool isOnlineNodeDetailPageActive() const;
+    bool isFinderPulseConfirmVisible() const { return hermesFinderPulseConfirmVisible; }
+    bool isFinderPulseSendingVisible() const { return hermesFinderPulseSendingVisible; }
+    uint8_t getFinderPulseConfirmSelected() const { return hermesFinderPulseConfirmSelected; }
+    uint32_t getFinderPulseConfirmShownAtMs() const { return hermesFinderPulseConfirmShownAtMs; }
+    uint32_t getFinderPulseSendingShownAtMs() const { return hermesFinderPulseSendingShownAtMs; }
     uint8_t getCurrentFrameIndexForDebug() const;
     uint8_t getRecentListFrameIndexForDebug() const;
     uint8_t getRecentDetailFrameIndexForDebug() const;
@@ -281,6 +295,8 @@ class Screen : public concurrency::OSThread
     bool showFrameByIndex(uint8_t frameIndex);
     bool showHermesXActionPage();
     bool showHermesXMainPage();
+    bool showOnlineNodeListPage();
+    bool showOnlineNodeDetailPage();
     bool showRecentTextMessageListPage();
     bool showTextMessageDetailPage();
 
@@ -579,6 +595,9 @@ class Screen : public concurrency::OSThread
     /// Used to force (super slow) eink displays to draw critical frames
     void forceDisplay(bool forceUiUpdate = false);
 
+    /// Request an immediate redraw for external state changes (works on TFT and E-Ink)
+    void requestImmediateRedraw();
+
     /// Draws our SSL cert screen during boot (called from WebServer)
     void setSSLFrames();
 
@@ -644,6 +663,8 @@ class Screen : public concurrency::OSThread
             uint8_t fault = 0;
             uint8_t textMessageList = 0;
             uint8_t textMessage = 0;
+            uint8_t onlineList = 0;
+            uint8_t onlineDetail = 0;
             uint8_t waypoint = 0;
             uint8_t focusedModule = 0;
             uint8_t main = 0;
@@ -689,17 +710,27 @@ class Screen : public concurrency::OSThread
     bool handleHermesFastSetupInput(const InputEvent *event);
     static void drawHermesXMainFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     void drawHermesXMain(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
+    static void drawEmergencyConfirmOverlay(OLEDDisplay *display, OLEDDisplayUiState *state);
     static void drawHermesXActionFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     void drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     bool handleHermesXActionInput(const InputEvent *event);
     static void drawLowMemoryReminderOverlay(OLEDDisplay *display, OLEDDisplayUiState *state);
     bool handleLowMemoryReminderInput(const InputEvent *event);
+    bool handleEmergencyConfirmInput(const InputEvent *event);
+    bool handleFinderPulseConfirmInput(const InputEvent *event);
+    bool handleFinderPulseSendingInput(const InputEvent *event);
     static void drawHermesXShareChannelFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     void drawHermesXShareChannel(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
+    static void drawOnlineNodeListFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
+    static void drawOnlineNodeDetailFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     bool handleRecentTextMessageListInput(const InputEvent *event);
     bool handleRecentTextMessageDetailInput(const InputEvent *event);
+    bool handleOnlineNodeListInput(const InputEvent *event);
+    bool handleOnlineNodeDetailInput(const InputEvent *event);
     bool handleIncomingNodePopupInput(const InputEvent *event);
     bool handleTextMessagePopupInput(const InputEvent *event);
+    bool handleSetupDetailPopupInput(const InputEvent *event);
+    bool handleTraceRoutePopupInput(const InputEvent *event);
     void syncTextMessageNotification();
 
 #if defined(DISPLAY_CLOCK_FRAME)
@@ -739,6 +770,7 @@ class Screen : public concurrency::OSThread
     bool moduleObserversAttached = false;
     uint32_t stealthScreenWakeUntilMs = 0;
     bool stealthRestoreChecked = false;
+    bool hermesUpdateModalActive = false;
 
     // Implementation to Adjust Brightness
     uint8_t brightness = BRIGHTNESS_DEFAULT; // H = 254, MH = 192, ML = 130 L = 103
@@ -749,12 +781,29 @@ class Screen : public concurrency::OSThread
         Entry,
         Root,
         EmacMenu,
+        EmacEmInfoMenu,
+        EmacEmInfoIntervalSelect,
+        EmacHeartbeatIntervalSelect,
+        EmacOfflineThresholdSelect,
+        EmacBatteryIncludeSelect,
         UiMenu,
         UiBrightnessSelect,
         UiScreenSleepSelect,
         UiTimezoneSelect,
         UiRotarySwapSelect,
         NodeMenu,
+        UpdateIntro,
+        UpdateMenu,
+        UpdateCheckMenu,
+        UpdateCheckFlowPage,
+        UpdateDetailPopup,
+        UpdateRuntimeMenu,
+        UpdateWifiConfigMenu,
+        UpdateWifiMenu,
+        UpdateUploadMenu,
+        UpdateApplyMenu,
+        UpdateWifiSsidEdit,
+        UpdateWifiPasswordEdit,
         NodeDatabaseMenu,
         NodeDatabaseResetSelect,
         MqttMenu,
@@ -783,16 +832,44 @@ class Screen : public concurrency::OSThread
         GpsSmartIntervalSelect,
     };
     HermesFastSetupPage hermesSetupPage = HermesFastSetupPage::Entry;
+    enum class HermesFinderUiMode : uint8_t {
+        None,
+        Menu,
+        PositionList,
+    };
+    enum class HermesManualUpdateFlow : uint8_t {
+        None,
+        Wifi,
+        Usb,
+    };
+    enum class HermesPendingUpdateCheckAction : uint8_t {
+        None,
+        Check,
+        Download,
+    };
     int16_t hermesSetupSelected = 0;
     int16_t hermesSetupOffset = 0;
+    HermesFastSetupPage hermesSetupReturnPage = HermesFastSetupPage::Root;
     uint32_t hermesSetupLastNavAtMs = 0;
     int8_t hermesSetupLastNavDir = 0;
+    uint32_t hermesUpdateIntroStartedAtMs = 0;
     int8_t hermesActionSelected = 0;
     uint32_t hermesActionLastNavAtMs = 0;
     int8_t hermesActionLastNavDir = 0;
     bool hermesActionStealthConfirmVisible = false;
     uint8_t hermesActionStealthConfirmSelected = 0; // 0=No, 1=Yes
     uint32_t hermesActionStealthConfirmShownAtMs = 0;
+    bool hermesEmergencyConfirmVisible = false;
+    bool hermesEmergencyConfirmCancelRequested = false;
+    uint32_t hermesEmergencyConfirmRemainingSec = 0;
+    HermesFinderUiMode hermesFinderUiMode = HermesFinderUiMode::None;
+    uint8_t hermesFinderMenuSelected = 0;
+    bool hermesFinderPulseConfirmVisible = false;
+    uint8_t hermesFinderPulseConfirmSelected = 0; // 0=Cancel, 1=Broadcast
+    uint32_t hermesFinderPulseConfirmShownAtMs = 0;
+    bool hermesFinderPulseDispatched = false;
+    bool hermesFinderPulseSendingVisible = false;
+    uint32_t hermesFinderPulseSendingShownAtMs = 0;
     bool lowMemoryReminderVisible = false;
     uint8_t lowMemoryReminderSelected = 1; // 0=later, 1=go clean
     uint32_t lowMemoryReminderSuppressUntilMs = 0;
@@ -805,8 +882,15 @@ class Screen : public concurrency::OSThread
     uint8_t hermesSetupKeyCol = 0;
     uint8_t hermesSetupEditingSlot = 0;
     uint8_t hermesSetupChannelIndex = 0;
+    bool hermesSetupWifiLowercase = false;
+    bool hermesSetupWifiEnabledDraft = false;
+    bool hermesSetupWifiDirty = false;
+    HermesPendingUpdateCheckAction hermesPendingUpdateCheckAction = HermesPendingUpdateCheckAction::None;
+    HermesManualUpdateFlow hermesManualUpdateFlow = HermesManualUpdateFlow::None;
     String hermesSetupPassDraft;
     String hermesSetupFrequencyDraft;
+    String hermesSetupWifiSsidDraft;
+    String hermesSetupWifiPasswordDraft;
     String hermesSetupToast;
     uint32_t hermesSetupToastUntilMs = 0;
     float compassHeading;

@@ -110,6 +110,17 @@ NodeInfoModule::NodeInfoModule()
                                          // after we start (to give network time to setup)
 }
 
+void NodeInfoModule::pauseForUpdateMode()
+{
+    disable();
+}
+
+void NodeInfoModule::resumeFromUpdateMode()
+{
+    enabled = true;
+    setIntervalFromNow(setStartDelay());
+}
+
 int32_t NodeInfoModule::runOnce()
 {
     // If we changed channels, ask everyone else for their latest info

@@ -6,6 +6,7 @@ from os.path import join
 import json
 import re
 import subprocess
+from datetime import datetime
 
 from readprops import readProps
 
@@ -98,8 +99,15 @@ prefsLoc = projenv["PROJECT_DIR"] + "/version.properties"
 verObj = readProps(prefsLoc)
 print("Using meshtastic platformio-custom.py, firmware version " + verObj["long"] + " on " + env.get("PIOENV"))
 
-# Display version: prefer branch-based HermesX tag without git suffix (HXB_<branch>), fallback to app version
-display_short = "HXB_0.2.9"
+# HermesX product versioning:
+# - APP_VERSION keeps the upstream Meshtastic build version for compatibility
+# - APP_BASE_VERSION keeps the upstream short base version (e.g. 2.6.11)
+# - APP_HERMES_VERSION is the build-unique HermesX OTA comparison version
+# - APP_HERMES_VERSION_SHORT / APP_VERSION_DISPLAY remain the user-facing product version
+base_version = verObj["short"]
+display_short = "HXB0.2.9"
+build_stamp = datetime.now().strftime("%Y%m%d_%H%M")
+build_version = f"{display_short}_{build_stamp}"
 
 jsonLoc = env["PROJECT_DIR"] + "/userPrefs.jsonc"
 with open(jsonLoc) as f:
@@ -123,9 +131,12 @@ for pref in userPrefs:
 
 # General options that are passed to the C and C++ compilers
 flags = [
+        "-DAPP_BASE_VERSION=" + base_version,
         "-DAPP_VERSION=" + verObj["long"],
         "-DAPP_VERSION_SHORT=" + verObj["short"],
         "-DAPP_VERSION_DISPLAY=" + display_short,
+        "-DAPP_HERMES_VERSION=" + build_version,
+        "-DAPP_HERMES_VERSION_SHORT=" + display_short,
         "-DAPP_ENV=" + env.get("PIOENV"),
     ] + pref_flags
 

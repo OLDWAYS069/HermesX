@@ -118,7 +118,7 @@ public:
     void renderPowerHoldProgress(uint32_t now);
     void renderPowerHoldFade(uint32_t now);
     void renderPowerHoldLatchedRed();
-    void renderEmergencyLampRed();
+    void renderEmergencyLampRed(uint32_t now);
     void renderAckFlash(uint32_t now);
     void renderNackFlash(uint32_t now);
     void renderSendAnim(uint32_t now);
@@ -300,6 +300,9 @@ private:
 
     uint32_t toneStopTime = 0;
     uint32_t emergencyToneStopTime = 0;
+    bool finderSonarActive = false;
+    uint8_t finderSonarStage = 0;
+    uint32_t finderSonarNextAtMs = 0;
     bool outputsDisabled = false;
     bool emergencyLampEnabled = false;
 

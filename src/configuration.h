@@ -44,6 +44,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #ifndef APP_VERSION_DISPLAY
 #define APP_VERSION_DISPLAY APP_VERSION_SHORT
 #endif
+#ifndef APP_HERMES_VERSION
+#define APP_HERMES_VERSION APP_VERSION
+#endif
+#ifndef APP_HERMES_VERSION_SHORT
+#define APP_HERMES_VERSION_SHORT APP_VERSION_DISPLAY
+#endif
 
 // FIXME: This is still needed by the Bluetooth Stack and needs to be replaced by something better. Remnant of the old versioning
 // system.
