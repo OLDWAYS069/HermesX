@@ -40,15 +40,16 @@ constexpr uint32_t kEmNavArmMs = 5000;
 constexpr uint32_t kEmNavMinIntervalMs = 80;
 constexpr uint32_t kEmNavFlipGuardMs = 800;
 constexpr const char *kEmItems[] = {"TRAPPED", "MEDICAL", "SUPPLIES", "SAFE", "REPORT_STATS",
-                                    "DEVICE_STATUS", "EMINFO_TOGGLE", "SET_PASS_A", "SET_PASS_B", "RESET_EMAC"};
-constexpr const char *kEmItemsZh[] = {"受困", "醫療", "物資", "安全", "回報統計", "各裝置狀態", "EMINFO廣播", "設定密碼A", "設定密碼B", "EMAC解除"};
+                                    "DEVICE_STATUS", "EMINFO_TOGGLE", "SET_GROUP_A", "SET_GROUP_B", "RESET_EMAC"};
+constexpr const char *kEmItemsZh[] = {"受困", "醫療", "物資", "安全", "回報統計", "各裝置狀態", "EMINFO廣播", "GROUP PIN A",
+                                      "GROUP PIN B", "解除EMAC"};
 constexpr uint8_t kEmActionCount = 4;
 constexpr const char *kEmHeaderZh = "人員尋回模式啟動";
 constexpr const int16_t kRightColumnWidth = 42;
 constexpr float kScreamFreq = 2600.0f;
 constexpr uint32_t kScreamToneMs = 600;
 constexpr uint32_t kScreamGapMs = 200;
-constexpr const char *kEmUiBuzzerFile = "/prefs/hermesx_emui_buzzer.txt";
+constexpr const char *kLegacyEmUiBuzzerFile = "/prefs/hermesx_emui_buzzer.txt";
 constexpr const char *kEmInfoEnabledFile = "/prefs/hermesx_eminfo_enabled.txt";
 constexpr const char *kEmInfoIntervalFile = "/prefs/hermesx_eminfo_interval.txt";
 constexpr const char *kEmHeartbeatIntervalFile = "/prefs/hermesx_emheartbeat_interval.txt";
@@ -72,8 +73,8 @@ constexpr const char *kKeyRows[][10] = {
 };
 constexpr uint8_t kKeyRowLengths[] = {10, 10, 9, 9};
 constexpr uint8_t kKeyRowCount = sizeof(kKeyRowLengths) / sizeof(kKeyRowLengths[0]);
-constexpr const char *kPassHeaderA = "設定密碼A";
-constexpr const char *kPassHeaderB = "設定密碼B";
+constexpr const char *kPassHeaderA = "GROUP PIN A";
+constexpr const char *kPassHeaderB = "GROUP PIN B";
 constexpr const char *kReportHeader = "五線回報";
 constexpr const char *kStatsHeader = "回報統計";
 constexpr const char *kStatsLabels[] = {"受困", "醫療需求", "物資需求", "安全"};
@@ -87,10 +88,12 @@ constexpr const char *kEmInfoStateSupplies = "SUPPLIES";
 constexpr const char *kEmInfoStateSafe = "SAFE";
 constexpr uint8_t kEmInfoSignature0 = 0x48; // H
 constexpr uint8_t kEmInfoSignature1 = 0x58; // X
-constexpr uint8_t kEmInfoVersion = 1;
+constexpr uint8_t kEmInfoVersion = 2;
+constexpr uint8_t kEmInfoLegacyVersion = 1;
 constexpr uint8_t kEmHeartbeatSignature0 = 0x48; // H
 constexpr uint8_t kEmHeartbeatSignature1 = 0x42; // B
-constexpr uint8_t kEmHeartbeatVersion = 1;
+constexpr uint8_t kEmHeartbeatVersion = 2;
+constexpr uint8_t kEmHeartbeatLegacyVersion = 1;
 constexpr uint32_t kDefaultEmHeartbeatIntervalSec = 5;
 constexpr uint8_t kDefaultEmOfflineThresholdCount = 3;
 constexpr uint32_t kNodeStaleFallbackMs = 15 * 1000;
@@ -142,6 +145,25 @@ const char *emInfoStateByteToCode(uint8_t state)
     default:
         return kEmInfoStateIdle;
     }
+}
+
+void writeGroupFingerprint(uint8_t *bytes, uint32_t fingerprint)
+{
+    bytes[0] = static_cast<uint8_t>(fingerprint & 0xFF);
+    bytes[1] = static_cast<uint8_t>((fingerprint >> 8) & 0xFF);
+    bytes[2] = static_cast<uint8_t>((fingerprint >> 16) & 0xFF);
+    bytes[3] = static_cast<uint8_t>((fingerprint >> 24) & 0xFF);
+}
+
+uint32_t readGroupFingerprint(const uint8_t *bytes)
+{
+    return static_cast<uint32_t>(bytes[0]) | (static_cast<uint32_t>(bytes[1]) << 8) |
+           (static_cast<uint32_t>(bytes[2]) << 16) | (static_cast<uint32_t>(bytes[3]) << 24);
+}
+
+bool isGroupFingerprintAllowed(uint32_t fingerprint)
+{
+    return lighthouseModule == nullptr || lighthouseModule->isEmergencyGroupFingerprintAllowed(fingerprint);
 }
 
 template <typename T> T clampValue(T value, T minValue, T maxValue)
@@ -262,17 +284,8 @@ HermesXEmUiModule::HermesXEmUiModule()
 #ifdef FSCom
     {
         concurrency::LockGuard g(spiLock);
-        auto f = FSCom.open(kEmUiBuzzerFile, FILE_O_READ);
-        if (f) {
-            String content;
-            while (f.available()) {
-                content += static_cast<char>(f.read());
-            }
-            f.close();
-            content.trim();
-            if (content.length() > 0) {
-                sirenEnabled = !(content == "0" || content.equalsIgnoreCase("false"));
-            }
+        if (FSCom.exists(kLegacyEmUiBuzzerFile)) {
+            FSCom.remove(kLegacyEmUiBuzzerFile);
         }
         auto emInfoFile = FSCom.open(kEmInfoEnabledFile, FILE_O_READ);
         if (emInfoFile) {
@@ -482,20 +495,12 @@ void HermesXEmUiModule::tickSiren(uint32_t now)
 
 void HermesXEmUiModule::setSirenEnabled(bool enabled)
 {
+    setSirenRuntimeEnabled(enabled);
+}
+
+void HermesXEmUiModule::setSirenRuntimeEnabled(bool enabled)
+{
     sirenEnabled = enabled;
-#ifdef FSCom
-    concurrency::LockGuard g(spiLock);
-    FSCom.mkdir("/prefs");
-    if (FSCom.exists(kEmUiBuzzerFile)) {
-        FSCom.remove(kEmUiBuzzerFile);
-    }
-    auto f = FSCom.open(kEmUiBuzzerFile, FILE_O_WRITE);
-    if (f) {
-        f.print(sirenEnabled ? "1" : "0");
-        f.flush();
-        f.close();
-    }
-#endif
     if (!sirenEnabled) {
         stopScream();
     } else if (active) {
@@ -742,10 +747,10 @@ void HermesXEmUiModule::sendResetLighthouse()
 
     String payload = "RESET: EMAC";
     if (lighthouseModule != nullptr) {
-        const String &pass = lighthouseModule->getEmergencyPassphrase(0).length() > 0 ? lighthouseModule->getEmergencyPassphrase(0)
-                                                                                       : lighthouseModule->getEmergencyPassphrase(1);
+        const String pass = lighthouseModule->getEmergencyGroupPin(0).length() > 0 ? lighthouseModule->getEmergencyGroupPin(0)
+                                                                                   : lighthouseModule->getEmergencyGroupPin(1);
         if (pass.length() > 0) {
-            payload += " ";
+            payload += " GROUP ";
             payload += pass;
         }
     }
@@ -762,7 +767,7 @@ void HermesXEmUiModule::sendResetLighthouse()
     stopScream();
     lastAckAtMs = 0;
 
-    HERMESX_LOG_INFO("EM UI send reset payload=%s via EM port", payload.c_str());
+    HERMESX_LOG_INFO("EM UI send GROUP reset via EM port");
     service->sendToMesh(p, RX_SRC_LOCAL, false);
     if (lighthouseModule) {
         lighthouseModule->resetEmergencyState(false);
@@ -796,7 +801,7 @@ void HermesXEmUiModule::enterPassphraseEdit(uint8_t slot)
     editingPassSlot = slot;
     passDraft = "";
     if (lighthouseModule) {
-        passDraft = lighthouseModule->getEmergencyPassphrase(slot);
+        passDraft = lighthouseModule->getEmergencyGroupPin(slot);
     }
     if (passDraft.length() > kPassMaxLen) {
         passDraft = passDraft.substring(0, kPassMaxLen);
@@ -886,7 +891,7 @@ void HermesXEmUiModule::exitTextEdit(bool save)
 void HermesXEmUiModule::exitPassphraseEdit(bool save)
 {
     if (save && lighthouseModule) {
-        const bool ok = lighthouseModule->setEmergencyPassphraseSlot(editingPassSlot, passDraft);
+        const bool ok = lighthouseModule->setEmergencyGroupPinSlot(editingPassSlot, passDraft);
         notifyPassphraseSaved(editingPassSlot, passDraft, ok);
     }
     uiMode = UiMode::Menu;
@@ -920,9 +925,9 @@ void HermesXEmUiModule::notifyPassphraseSaved(uint8_t slot, const String &value,
 {
     const char slotChar = slot == 0 ? 'A' : 'B';
     if (ok) {
-        lastAlertMessage = String(u8"EM 密碼") + slotChar + u8" 已設定: " + value;
+        lastAlertMessage = String("GROUP PIN ") + slotChar + u8" 已設定: " + value;
     } else {
-        lastAlertMessage = String(u8"EM 密碼") + slotChar + u8" 設定失敗";
+        lastAlertMessage = String("GROUP PIN ") + slotChar + u8" 設定失敗";
     }
     if (screen) {
         screen->startHermesXAlert(lastAlertMessage.c_str());
@@ -1067,16 +1072,36 @@ void HermesXEmUiModule::recordEmInfoPayload(const meshtastic_MeshPacket &mp)
     }
 
     const uint8_t *bytes = mp.decoded.payload.bytes;
-    if (bytes[0] != kEmInfoSignature0 || bytes[1] != kEmInfoSignature1 || bytes[2] != kEmInfoVersion) {
+    if (bytes[0] != kEmInfoSignature0 || bytes[1] != kEmInfoSignature1 ||
+        (bytes[2] != kEmInfoVersion && bytes[2] != kEmInfoLegacyVersion)) {
         return;
     }
 
-    const uint8_t stateByte = bytes[3];
-    const uint8_t batteryPercent = bytes[4];
+    uint8_t stateByte = 0;
+    uint8_t batteryPercent = 0;
+    size_t shortNameOffset = 0;
+    if (bytes[2] == kEmInfoVersion) {
+        if (mp.decoded.payload.size < 9) {
+            return;
+        }
+        const uint32_t groupFingerprint = readGroupFingerprint(bytes + 3);
+        if (!isGroupFingerprintAllowed(groupFingerprint)) {
+            HERMESX_LOG_INFO("EMINFO ignored: GROUP fingerprint mismatch from=0x%x", getFrom(&mp));
+            return;
+        }
+        stateByte = bytes[7];
+        batteryPercent = bytes[8];
+        shortNameOffset = 9;
+    } else {
+        stateByte = bytes[3];
+        batteryPercent = bytes[4];
+        shortNameOffset = 5;
+    }
+
     char shortName[16] = {0};
-    const size_t shortNameLen = std::min<size_t>(sizeof(shortName) - 1, mp.decoded.payload.size - 5);
+    const size_t shortNameLen = std::min<size_t>(sizeof(shortName) - 1, mp.decoded.payload.size - shortNameOffset);
     if (shortNameLen > 0) {
-        memcpy(shortName, bytes + 5, shortNameLen);
+        memcpy(shortName, bytes + shortNameOffset, shortNameLen);
         shortName[shortNameLen] = '\0';
     }
 
@@ -1112,31 +1137,56 @@ void HermesXEmUiModule::recordEmHeartbeatPayload(const meshtastic_MeshPacket &mp
     }
 
     const uint8_t *bytes = mp.decoded.payload.bytes;
-    if (bytes[0] != kEmHeartbeatSignature0 || bytes[1] != kEmHeartbeatSignature1 || bytes[2] != kEmHeartbeatVersion) {
+    if (bytes[0] != kEmHeartbeatSignature0 || bytes[1] != kEmHeartbeatSignature1 ||
+        (bytes[2] != kEmHeartbeatVersion && bytes[2] != kEmHeartbeatLegacyVersion)) {
         return;
+    }
+
+    size_t payloadOffset = 0;
+    if (bytes[2] == kEmHeartbeatVersion) {
+        if (mp.decoded.payload.size < 13) {
+            return;
+        }
+        const uint32_t groupFingerprint = readGroupFingerprint(bytes + 3);
+        if (!isGroupFingerprintAllowed(groupFingerprint)) {
+            HERMESX_LOG_INFO("EMHB ignored: GROUP fingerprint mismatch from=0x%x", getFrom(&mp));
+            return;
+        }
+        payloadOffset = 7;
+    } else {
+        payloadOffset = 3;
     }
 
     const NodeNum nodeNum = getFrom(&mp);
     const uint32_t now = millis();
-    const bool activeFlag = (bytes[3] & 0x01) != 0;
-    const uint8_t seq = bytes[4];
-    uint32_t remoteTimestamp = static_cast<uint32_t>(bytes[5]) | (static_cast<uint32_t>(bytes[6]) << 8) |
-                               (static_cast<uint32_t>(bytes[7]) << 16) | (static_cast<uint32_t>(bytes[8]) << 24);
-    const bool hasBattery = mp.decoded.payload.size >= 10;
-    const uint8_t batteryPercent = hasBattery ? bytes[9] : 0;
+    const bool activeFlag = (bytes[payloadOffset] & 0x01) != 0;
+    const uint8_t seq = bytes[payloadOffset + 1];
+    uint32_t remoteTimestamp = static_cast<uint32_t>(bytes[payloadOffset + 2]) |
+                               (static_cast<uint32_t>(bytes[payloadOffset + 3]) << 8) |
+                               (static_cast<uint32_t>(bytes[payloadOffset + 4]) << 16) |
+                               (static_cast<uint32_t>(bytes[payloadOffset + 5]) << 24);
+    const bool hasBattery = mp.decoded.payload.size >= payloadOffset + 7;
+    const uint8_t batteryPercent = hasBattery ? bytes[payloadOffset + 6] : 0;
 
-    for (int i = 0; i < kMaxEmInfoNodes; ++i) {
-        if (!emInfoNodes[i].valid || emInfoNodes[i].nodeNum != nodeNum) {
-            continue;
-        }
-        emInfoNodes[i].lastHeartbeatMs = now;
-        emInfoNodes[i].remoteTimestamp = remoteTimestamp;
-        emInfoNodes[i].heartbeatSeq = seq;
-        emInfoNodes[i].heartbeatActive = activeFlag;
-        if (hasBattery) {
-            emInfoNodes[i].batteryPercent = batteryPercent;
-        }
+    EmInfoNodeStatus *entry = findOrCreateNodeStatus(nodeNum);
+    if (!entry) {
         return;
+    }
+    entry->lastHeartbeatMs = now;
+    entry->remoteTimestamp = remoteTimestamp;
+    entry->heartbeatSeq = seq;
+    entry->heartbeatActive = activeFlag;
+    if (hasBattery) {
+        entry->batteryPercent = batteryPercent;
+    }
+    if (entry->shortName[0] == '\0') {
+        const meshtastic_NodeInfoLite *node = nodeDB->getMeshNode(nodeNum);
+        if (node) {
+            snprintf(entry->shortName, sizeof(entry->shortName), "%s", node->user.short_name);
+        }
+    }
+    if (entry->state[0] == '\0') {
+        snprintf(entry->state, sizeof(entry->state), "%s", emInfoStateCodeToZh(kEmInfoStateIdle));
     }
 }
 
@@ -1146,30 +1196,49 @@ void HermesXEmUiModule::sendEmInfoNow()
         return;
     }
 
-    meshtastic_MeshPacket *p = allocDataPacket();
-    if (!p) {
-        return;
-    }
-
-    p->to = NODENUM_BROADCAST;
-    p->channel = channels.getPrimaryIndex();
-    p->want_ack = false;
-
     char shortName[16];
     snprintf(shortName, sizeof(shortName), "%s", owner.short_name);
     const uint8_t batteryPercent = emBatteryIncluded && powerStatus ? powerStatus->getBatteryChargePercent() : 0;
-
     const size_t shortNameLen = strnlen(shortName, sizeof(shortName));
-    p->decoded.payload.size = static_cast<uint16_t>(5 + shortNameLen);
-    p->decoded.payload.bytes[0] = kEmInfoSignature0;
-    p->decoded.payload.bytes[1] = kEmInfoSignature1;
-    p->decoded.payload.bytes[2] = kEmInfoVersion;
-    p->decoded.payload.bytes[3] = currentEmInfoStateCode;
-    p->decoded.payload.bytes[4] = batteryPercent;
-    if (shortNameLen > 0) {
-        memcpy(p->decoded.payload.bytes + 5, shortName, shortNameLen);
+
+    uint32_t fingerprints[2] = {0, 0};
+    uint8_t fingerprintCount = 0;
+    if (lighthouseModule && lighthouseModule->hasEmergencyGroupPin()) {
+        for (uint8_t slot = 0; slot < 2; ++slot) {
+            if (lighthouseModule->getEmergencyGroupPin(slot).length() == 0) {
+                continue;
+            }
+            const uint32_t fingerprint = lighthouseModule->getEmergencyGroupFingerprint(slot);
+            if (fingerprintCount == 0 || fingerprints[0] != fingerprint) {
+                fingerprints[fingerprintCount++] = fingerprint;
+            }
+        }
     }
-    service->sendToMesh(p, RX_SRC_LOCAL, false);
+    if (fingerprintCount == 0) {
+        fingerprintCount = 1;
+    }
+
+    for (uint8_t i = 0; i < fingerprintCount; ++i) {
+        meshtastic_MeshPacket *p = allocDataPacket();
+        if (!p) {
+            return;
+        }
+
+        p->to = NODENUM_BROADCAST;
+        p->channel = channels.getPrimaryIndex();
+        p->want_ack = false;
+        p->decoded.payload.size = static_cast<uint16_t>(9 + shortNameLen);
+        p->decoded.payload.bytes[0] = kEmInfoSignature0;
+        p->decoded.payload.bytes[1] = kEmInfoSignature1;
+        p->decoded.payload.bytes[2] = kEmInfoVersion;
+        writeGroupFingerprint(p->decoded.payload.bytes + 3, fingerprints[i]);
+        p->decoded.payload.bytes[7] = currentEmInfoStateCode;
+        p->decoded.payload.bytes[8] = batteryPercent;
+        if (shortNameLen > 0) {
+            memcpy(p->decoded.payload.bytes + 9, shortName, shortNameLen);
+        }
+        service->sendToMesh(p, RX_SRC_LOCAL, false);
+    }
     lastEmInfoSentMs = millis();
     HERMESX_LOG_INFO("EMINFO broadcast state=%s battery=%u short=%s", emInfoStateByteToCode(currentEmInfoStateCode),
                      static_cast<unsigned>(batteryPercent), shortName);
@@ -1185,30 +1254,51 @@ void HermesXEmUiModule::sendEmHeartbeatNow()
         return;
     }
 
-    meshtastic_MeshPacket *p = allocDataPacket();
-    if (!p) {
-        return;
+    const uint32_t nowSec = static_cast<uint32_t>(getValidTime(RTCQualityFromNet));
+    const uint8_t seq = ++emHeartbeatSeq;
+    uint32_t fingerprints[2] = {0, 0};
+    uint8_t fingerprintCount = 0;
+    if (lighthouseModule && lighthouseModule->hasEmergencyGroupPin()) {
+        for (uint8_t slot = 0; slot < 2; ++slot) {
+            if (lighthouseModule->getEmergencyGroupPin(slot).length() == 0) {
+                continue;
+            }
+            const uint32_t fingerprint = lighthouseModule->getEmergencyGroupFingerprint(slot);
+            if (fingerprintCount == 0 || fingerprints[0] != fingerprint) {
+                fingerprints[fingerprintCount++] = fingerprint;
+            }
+        }
+    }
+    if (fingerprintCount == 0) {
+        fingerprintCount = 1;
     }
 
-    p->to = NODENUM_BROADCAST;
-    p->channel = channels.getPrimaryIndex();
-    p->want_ack = false;
-    p->decoded.payload.bytes[0] = kEmHeartbeatSignature0;
-    p->decoded.payload.bytes[1] = kEmHeartbeatSignature1;
-    p->decoded.payload.bytes[2] = kEmHeartbeatVersion;
-    p->decoded.payload.bytes[3] = active ? 0x01 : 0x00;
-    p->decoded.payload.bytes[4] = ++emHeartbeatSeq;
-    const uint32_t nowSec = static_cast<uint32_t>(getValidTime(RTCQualityFromNet));
-    p->decoded.payload.bytes[5] = static_cast<uint8_t>(nowSec & 0xFF);
-    p->decoded.payload.bytes[6] = static_cast<uint8_t>((nowSec >> 8) & 0xFF);
-    p->decoded.payload.bytes[7] = static_cast<uint8_t>((nowSec >> 16) & 0xFF);
-    p->decoded.payload.bytes[8] = static_cast<uint8_t>((nowSec >> 24) & 0xFF);
-    uint16_t payloadSize = 9;
-    if (emBatteryIncluded) {
-        p->decoded.payload.bytes[payloadSize++] = powerStatus ? powerStatus->getBatteryChargePercent() : 0;
+    for (uint8_t i = 0; i < fingerprintCount; ++i) {
+        meshtastic_MeshPacket *p = allocDataPacket();
+        if (!p) {
+            return;
+        }
+
+        p->to = NODENUM_BROADCAST;
+        p->channel = channels.getPrimaryIndex();
+        p->want_ack = false;
+        p->decoded.payload.bytes[0] = kEmHeartbeatSignature0;
+        p->decoded.payload.bytes[1] = kEmHeartbeatSignature1;
+        p->decoded.payload.bytes[2] = kEmHeartbeatVersion;
+        writeGroupFingerprint(p->decoded.payload.bytes + 3, fingerprints[i]);
+        p->decoded.payload.bytes[7] = active ? 0x01 : 0x00;
+        p->decoded.payload.bytes[8] = seq;
+        p->decoded.payload.bytes[9] = static_cast<uint8_t>(nowSec & 0xFF);
+        p->decoded.payload.bytes[10] = static_cast<uint8_t>((nowSec >> 8) & 0xFF);
+        p->decoded.payload.bytes[11] = static_cast<uint8_t>((nowSec >> 16) & 0xFF);
+        p->decoded.payload.bytes[12] = static_cast<uint8_t>((nowSec >> 24) & 0xFF);
+        uint16_t payloadSize = 13;
+        if (emBatteryIncluded) {
+            p->decoded.payload.bytes[payloadSize++] = powerStatus ? powerStatus->getBatteryChargePercent() : 0;
+        }
+        p->decoded.payload.size = payloadSize;
+        service->sendToMesh(p, RX_SRC_LOCAL, false);
     }
-    p->decoded.payload.size = payloadSize;
-    service->sendToMesh(p, RX_SRC_LOCAL, false);
     lastEmHeartbeatSentMs = millis();
     HERMESX_LOG_INFO("EMHB broadcast seq=%u active=%d", static_cast<unsigned>(emHeartbeatSeq), active ? 1 : 0);
 }
@@ -2149,6 +2239,21 @@ ProcessMessage HermesXEmUiModule::handleReceived(const meshtastic_MeshPacket &mp
         if (mp.decoded.payload.size >= strlen("RESET: EMAC") &&
             strncmp(reinterpret_cast<const char *>(mp.decoded.payload.bytes), "RESET: EMAC", strlen("RESET: EMAC")) == 0) {
             HERMESX_LOG_INFO("EM UI received reset payload");
+            char payload[128];
+            size_t payloadLen = mp.decoded.payload.size;
+            if (payloadLen >= sizeof(payload)) {
+                payloadLen = sizeof(payload) - 1;
+            }
+            memcpy(payload, mp.decoded.payload.bytes, payloadLen);
+            payload[payloadLen] = '\0';
+            while (payloadLen > 0 &&
+                   (payload[payloadLen - 1] == '\n' || payload[payloadLen - 1] == '\r' || payload[payloadLen - 1] == ' ')) {
+                payload[--payloadLen] = '\0';
+            }
+            if (lighthouseModule && !lighthouseModule->isEmergencyResetAuthorized(payload, getFrom(&mp))) {
+                HERMESX_LOG_WARN("EM UI ignored RESET: EMAC from=0x%x (not authorized)", getFrom(&mp));
+                return ProcessMessage::CONTINUE;
+            }
             if (lighthouseModule) {
                 lighthouseModule->resetEmergencyState(false);
             }

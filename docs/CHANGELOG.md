@@ -2,6 +2,66 @@
 
 本文件為可對外發布版本的更新紀錄，整理 HermesX 韌體的重要功能更新、體驗調整與修正項目。
 
+## 2026-05-09
+
+### 修正
+
+- 修正 EM UI 收到 `RESET: EMAC` 時未重新檢查 GROUP 授權的問題；未授權封包現在不會讓本機退出 EMAC / EMUI。
+- 修正低記憶體保護頁預設選中 `清除節點` 的危險行為；現在彈出時預設選 `退出`，避免誤按清空 NodeDB。
+- 修正 GROUP 節點清單可能漏掉只送出 Heartbeat 的同組裝置；Heartbeat 現在可建立最小節點狀態並更新 LastHB。
+- EMINFO / Heartbeat 接收端恢復相容 v1 舊格式，同時保留 v2 GROUP fingerprint 檢查，避免新舊韌體混跑時互相看不到。
+- 修正 GROUP PIN A/B fingerprint 發送不對稱；A/B 兩組 PIN 都有設定時會分別送出對應 fingerprint，避免 B-only 同組裝置看不到 A+B 裝置。
+- 修正 EMAC active 開機時跳過 Stealth restore 後仍留下 persisted stealth state 的問題；現在會清掉殘留，避免解除 EMAC 後下次開機又套回 Stealth。
+- 修正 Lighthouse persisted state 檔案太短時未關閉檔案 handle 的問題。
+
+### 驗證
+
+- `git diff --check` 通過。
+- `platformio run -e heltec-wireless-tracker` 編譯成功。
+- 已依 `docs/AI_UPDATE_HANDOFF.md` 搬移韌體產物：
+  - `/Users/oldways/Desktop/HermesX韌體/HXB0.2.9_20260508_2026.bin`
+  - `/Users/oldways/Desktop/HermesX韌體/HXB0.2.9_20260508_2026.factory.bin`
+
+## 2026-05-07
+
+### 改進
+
+- `裝置管理 > 更新模式` 入口改為按下後立即切到獨立更新動畫頁並排程重開機；畫面中央顯示 `重開中`，不再停留在原本選單頁只於底部顯示提示。
+- 更新模式進出動畫統一使用同一套更新轉場頁：進入更新模式顯示 `進入更新模式`，退出 dedicated update environment 時顯示 `退出更新模式中`。
+- WiFi / USB 手動更新頁的底部條狀進度改為甜甜圈式圓形進度動畫，保留百分比資訊並降低小螢幕上的橫向擁擠。
+
+### 修正
+
+- 修正從 Home 短按進入 HermesX 主選單時，預設焦點停在第一項 `潛行模式` 的問題；現在會直接停在 `Home` 項目，符合從 Home 進選單的操作預期。
+- 修正主選單側邊 action tile 顯示英文項目時可能被 `drawMixedBounded()` 擠到換行的問題；`ONLINE`、`GROUP`、`MSG`、`Home` 等純 ASCII label 現在改用不換行的置中繪製。
+- 修正更新模式進入/退出等待重開機時仍停在上一層設定頁的問題；等待期間現在會留在專用更新轉場頁，避免使用者誤以為還能操作原本選單。
+- 修正 EMAC 進入後可能沒有蜂鳴器警報聲的問題；舊版內部偏好檔 `/prefs/hermesx_emui_buzzer.txt` 若曾被寫成 `0`，會導致 EM UI siren 被持久化靜音。
+- EM UI 啟動時會移除舊的 siren 偏好檔，讓 EMAC 蜂鳴器只受 `UI設定 > 全域蜂鳴器` 控制。
+- Stealth / TAK 進入時改為只暫時關閉 EM siren runtime 狀態，退出時恢復原狀，不再寫入 EMAC siren 偏好。
+- Heltec Wireless Tracker 的蜂鳴器腳位維持既有 GPIO17 路徑，未改動硬體腳位設定。
+
+### 驗證
+
+- `platformio run -e heltec-wireless-tracker` 編譯成功。
+- 已依 `docs/AI_UPDATE_HANDOFF.md` 搬移韌體產物：
+  - `/Users/oldways/Desktop/HermesX韌體/HXB0.2.9_20260507_1428.bin`
+  - `/Users/oldways/Desktop/HermesX韌體/HXB0.2.9_20260507_1428.factory.bin`
+
+## 2026-05-06
+
+### 新增
+
+- 主選單新增 `GROUP` 入口；進入後先顯示 `GROUP設定 / 節點列表`，將設定與已配對節點狀態收斂到同一個 GROUP 區。
+- `節點列表` 顯示已配對節點、目前 EM 狀態與 `在線 / 延遲 / 離線`，在線判斷沿用 EMINFO Heartbeat。
+- `GROUP DETAIL` 新增節點明細，可查看 EM 狀態、LastHB、電量、地/物、座標、高度與 Node ID。
+- `GROUP DETAIL` 提供 `MSG` 與 `TraceRoute` 操作，操作語意與 `ONLINE DETAIL` 對齊。
+
+### 修正
+
+- `GROUP DETAIL` 對 MQTT 來源節點維持 `TraceRoute: --` / `LORA ONLY` 限制，避免送出不合理的 mesh route 請求。
+- 從 `GROUP > GROUP設定` 進入既有 GROUP 設定頁時，返回會回到 GROUP 子選單，不會落到 Fast Setup 根目錄。
+- `Screen` frame 容量同步擴充，避免新增 GROUP/ONLINE 等 HermesX action destination frame 後超出原先額外 frame 配置。
+
 ## 2026-05-01
 
 ### 新增
@@ -108,9 +168,10 @@
 ### 改進
 
 - `EMAC` 啟動主流程改為走 `PORTNUM_HERMESX_EMERGENCY (300)`，不再只依賴 `TEXT_MESSAGE_APP` 的 `@EmergencyActive`。
-- `EMAC解除` 改為與啟動流程共用相同的 EM 專用風包與同一組密碼；啟動與解除現在分別使用：
-  - `ACTIVATE: EMAC <pass>`
-  - `RESET: EMAC <pass>`
+- `EMAC解除` 改為與啟動流程共用相同的 EM 專用封包與同一組 `GROUP PIN`；啟動與解除現在分別使用：
+  - `ACTIVATE: EMAC GROUP <pin>`
+  - `RESET: EMAC GROUP <pin>`
+- `尋人模式`、`EMAC`、`EMINFO/Heartbeat` 授權收斂為 `GROUP`：同 PIN 裝置才會接受控制封包，狀態同步也會以 GROUP fingerprint 過濾不同群組。
 - 舊版 `@EmergencyActive` 文字控制路徑暫時保留為相容模式，避免新舊韌體混跑時完全失去互通。
 - `EMINFO` 與 `EM Heartbeat` 收斂為 Hermes 私有 payload，並與 `回報統計`、`各裝置狀態` 分離：
   - `回報統計` 僅統計主回報封包

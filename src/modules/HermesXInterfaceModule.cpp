@@ -233,7 +233,7 @@ LEDAnimation HermesXInterfaceModule::selectActiveAnimation() const
         return LEDAnimation::PowerHoldFade;
     if (powerHoldLatchedRed)
         return LEDAnimation::PowerHoldLatchedRed;
-    if (emergencyLampEnabled)
+    if (emergencyModeLampActive)
         return LEDAnimation::EmergencyLampRed;
     if (startupEffectActive)
         return LEDAnimation::StartupEffect;
@@ -1055,56 +1055,13 @@ void HermesXInterfaceModule::registerRawButtonPress(HermesButtonSource /*source*
     if (hermesXEmUiModule != nullptr && hermesXEmUiModule->isActive()) {
         return;
     }
-    const uint32_t now = millis();
-
-    // Expire the SAFE double-press window if the timeout has elapsed.
-    if (safeWindowActive && now > safeWindowDeadlineMs) {
-        safeWindowActive = false;
-        safePressCount = 0;
-        safeWindowDeadlineMs = 0;
-    }
-
-    constexpr uint32_t kMultiPressWindowMs = 1200;
-    constexpr uint32_t kTripleTotalWindowMs = 1200;
-    if (lastRawPressMs == 0 || now - lastRawPressMs > kMultiPressWindowMs) {
-        rawPressCount = 0;
-        firstRawPressMs = 0;
-    }
-
-    if (rawPressCount == 0) {
-        firstRawPressMs = now;
-    }
-
-    lastRawPressMs = now;
-    rawPressCount++;
-
-    if (rawPressCount >= 3) {
-        const bool inWindow = (firstRawPressMs != 0) && ((now - firstRawPressMs) <= kTripleTotalWindowMs);
-        rawPressCount = 0;
-        firstRawPressMs = 0;
-        safeWindowActive = false;
-        safePressCount = 0;
-        safeWindowDeadlineMs = 0;
-        if (inWindow) {
-            onTripleClick();
-            return;
-        }
-    }
-
-    constexpr uint32_t kSafeWindowMs = 3000;
-    if (!safeWindowActive) {
-        safeWindowActive = true;
-        safePressCount = 1;
-        safeWindowDeadlineMs = now + kSafeWindowMs;
-    } else {
-        safePressCount++;
-        if (safePressCount >= 2 && now <= safeWindowDeadlineMs) {
-            safeWindowActive = false;
-            safePressCount = 0;
-            safeWindowDeadlineMs = 0;
-            onDoubleClickWithin3s();
-        }
-    }
+    rawPressCount = 0;
+    firstRawPressMs = 0;
+    lastRawPressMs = 0;
+    safeWindowActive = false;
+    safePressCount = 0;
+    safeWindowDeadlineMs = 0;
+    HERMESX_LOG_INFO("EM UI local trigger ignored (rotary triple disabled; use long press)");
 }
 
 
@@ -1255,6 +1212,10 @@ void HermesXInterfaceModule::setEmergencyLampEnabled(bool enabled)
 
     emergencyLampEnabled = enabled;
     if (!emergencyLampEnabled) {
+        if (emergencyModeLampActive) {
+            applyUserLedBrightness();
+            return;
+        }
         if (emergencyLampBrightnessForced) {
             setUserLedBrightness(emergencyLampPrevBrightness);
             emergencyLampBrightnessForced = false;
@@ -1337,17 +1298,30 @@ bool HermesXInterfaceModule::audioAllowed() const
 
 
 void HermesXInterfaceModule::updateLED() {
-    if (outputsDisabled && !emergencyLampEnabled) {
+    const bool anyEmergencyLampVisible = emergencyLampEnabled || emergencyModeLampActive;
+    if (outputsDisabled && !anyEmergencyLampVisible) {
         forceAllLedsOff();
         return;
     }
-    if (outputsDisabled && emergencyLampEnabled) {
-        renderEmergencyLampRed(millis());
+    if (outputsDisabled && anyEmergencyLampVisible) {
+        const uint32_t now = millis();
+        if (emergencyModeLampActive) {
+            renderEmergencyLampRed(now);
+        } else {
+            rgb.fill(kPowerHoldRedColor);
+            rgb.show();
+        }
         return;
     }
 
-    if (userOutputsMuted && !emergencyLampEnabled) {
+    if (userOutputsMuted && !anyEmergencyLampVisible) {
         rgb.clear();
+        rgb.show();
+        return;
+    }
+
+    if (emergencyLampEnabled && !emergencyModeLampActive) {
+        rgb.fill(kPowerHoldRedColor);
         rgb.show();
         return;
     }
@@ -1760,6 +1734,7 @@ int32_t HermesXInterfaceModule::runOnce() {
             noTone(pin);
         }
         emergencyToneStopTime = 0;
+        restoreBuzzerOutput();
     }
 
     if (finderSonarActive && toneStopTime == 0 && now >= finderSonarNextAtMs) {
@@ -1904,7 +1879,33 @@ void HermesXInterfaceModule::onDoubleClickWithin3s()
 
 void HermesXInterfaceModule::onEmergencyModeChanged(bool active)
 {
-    setEmergencyLampEnabled(active);
+    if (emergencyModeLampActive == active) {
+        return;
+    }
+
+    emergencyModeLampActive = active;
+    if (emergencyModeLampActive) {
+        if (ledUserBrightness == 0) {
+            emergencyLampBrightnessForced = true;
+            emergencyLampPrevBrightness = ledUserBrightness;
+            const uint8_t restore = ledUserBrightnessRestore ? ledUserBrightnessRestore : kLedBrightnessDefault;
+            setUserLedBrightness(restore);
+        } else {
+            applyUserLedBrightness();
+        }
+        startLEDAnimation(LEDAnimation::EmergencyLampRed);
+        return;
+    }
+
+    stopLEDAnimation(LEDAnimation::EmergencyLampRed);
+    if (!emergencyLampEnabled) {
+        if (emergencyLampBrightnessForced) {
+            setUserLedBrightness(emergencyLampPrevBrightness);
+            emergencyLampBrightnessForced = false;
+        } else {
+            applyUserLedBrightness();
+        }
+    }
 }
 
 
@@ -1963,6 +1964,18 @@ void HermesXInterfaceModule::stopEmergencySiren()
     }
     emergencyToneStopTime = 0;
     // Re-attach buzzer pin to music channel after tone() steals it.
+    music.begin();
+}
+
+void HermesXInterfaceModule::restoreBuzzerOutput()
+{
+    if (!isBuzzerGloballyEnabled()) {
+        return;
+    }
+#ifdef BUZZER_EN_PIN
+    pinMode(BUZZER_EN_PIN, OUTPUT);
+    digitalWrite(BUZZER_EN_PIN, HIGH);
+#endif
     music.begin();
 }
 

@@ -107,6 +107,7 @@ public:
     bool isEmergencyLampEnabled() const;
     void startEmergencySiren(float freq, uint32_t duration_ms);
     void stopEmergencySiren();
+    void restoreBuzzerOutput();
 
     // 集中式 LED 控制 API（後續逐步遷移）
     void startLEDAnimation(LEDAnimation anim);
@@ -305,6 +306,7 @@ private:
     uint32_t finderSonarNextAtMs = 0;
     bool outputsDisabled = false;
     bool emergencyLampEnabled = false;
+    bool emergencyModeLampActive = false;
 
     LedTheme currentTheme {
         .colorSendPrimary = 0xFFFFFF,

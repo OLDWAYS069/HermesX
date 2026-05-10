@@ -1,9 +1,36 @@
+## 2026-05-09
+- `TAK MODE` 入口改為獨立盾牌 icon 頁：短按會叫出彈窗操作頁，可切換 TAK ON/OFF、進入 `TAKMODE設定`、啟動 EMUI / 尋人模組，並從彈窗選擇返回主選單；開啟後離開頁面仍維持 TAK，重開機後也會自動恢復，`TAKMODE設定` 可調整裝置資訊廣播、GPS 刷新、位置廣播、SmartPosition 門檻與聲光靜默。
+- 修正 `TAK MODE` 彈窗選單在小螢幕上不會捲動的問題；現在只繪製可視列，選取項超出畫面時會跟著捲到後續選項。
+- 修正退出 `TAK MODE` 後聲光靜默可能殘留的問題；現在會記錄 TAK 是否真的套用過靜默，關閉 TAK 或在 TAK 中關閉靜默時會還原狀態 LED、緊急燈、EMUI siren、heartbeat 與 buzzer enable 腳。
+- 修正 TAK 靜默期間 `noTone()` 釋放 buzzer 後沒有重新接回 HermesX 音效通道的問題；退出 TAK 靜默與 emergency tone 自動停止後會重新初始化 buzzer 輸出，避免音效仍像被關閉。
+- 修正退出 `TAK MODE` 後一般音效仍被 `outputsDisabled` 擋住的問題；現在 TAK role 進出會立即重跑 output policy，退出後一般 HermesX 音效會跟著恢復，不必等下一輪狀態刷新或重開機。
+- 停用殘留的 Rotary 三擊本地 EMAC 入口；本機進入 EMAC 改以旋鈕長按 3 秒倒數確認為準，避免開機後快速連按誤觸。
+- 修正 EM UI 收到未授權 `RESET: EMAC` 也會退出本機 EMAC / EMUI 的問題；現在解除也會走 GROUP 授權檢查。
+- 修正低記憶體保護頁預設選中 `清除節點` 的危險行為；彈出時改為預設 `退出`，避免誤清 NodeDB。
+- GROUP Heartbeat 現在可建立最小節點狀態，避免只送 Heartbeat 的同組裝置不出現在 `節點列表`。
+- EMINFO / Heartbeat 接收端相容 v1 舊格式，v2 仍保留 GROUP fingerprint 檢查，降低新舊韌體混跑斷層。
+- GROUP PIN A/B 都設定時會分別送出對應 fingerprint，避免 B-only 同組裝置看不到 A+B 裝置。
+- EMAC active 開機時若抑制 Stealth restore，會清掉殘留 stealth state，避免解除 EMAC 後下次開機又套回 Stealth。
+- `heltec-wireless-tracker` 編譯成功，韌體產物已依 handoff 搬到 `/Users/oldways/Desktop/HermesX韌體/HXB0.2.9_20260509_0505.bin` 與 `.factory.bin`。
+
+## 2026-05-07
+- `裝置管理 > 更新模式` 入口改為按下後直接切到獨立更新動畫頁，中央顯示 `重開中` 並排程重開機，不再停留在原本設定頁只顯示底部提示。
+- 更新模式進出轉場統一：進入顯示 `進入更新模式`，退出 dedicated update environment 顯示 `退出更新模式中`。
+- WiFi / USB 手動更新頁的條狀進度改為甜甜圈式圓形進度動畫，降低小螢幕上的擁擠感。
+- 修正從 Home 短按進入 HermesX 主選單時預設停在 `潛行模式` 的問題；現在進選單會直接停在 `Home`。
+- 修正主選單側邊英文項目可能被擠到換行的問題；`ONLINE`、`GROUP`、`MSG`、`Home` 等純 ASCII label 改為不換行置中顯示。
+- 修正 EMAC 進入後可能沒有蜂鳴器警報聲的問題；舊 `/prefs/hermesx_emui_buzzer.txt` 會被清除，Stealth/TAK 也只暫時靜音，不再持久關閉 EM siren。
+- `heltec-wireless-tracker` 編譯成功，韌體產物已依 handoff 搬到 `/Users/oldways/Desktop/HermesX韌體/HXB0.2.9_20260507_1428.bin` 與 `.factory.bin`。
+
+## 2026-05-06
+- 主選單新增 `GROUP` 入口；進入後先顯示 `GROUP設定 / 節點列表`，把設定與配對節點狀態收斂在同一個 GROUP 區。
+- `節點列表` 顯示已配對且送出 `EMINFO/Heartbeat` 的節點，包含節點名稱、EM 狀態與 `在線 / 延遲 / 離線`；在線判斷沿用 `EM Heartbeat` 的最近收到時間。
+- `GROUP DETAIL` 可查看節點 EM 狀態、LastHB、電量、地/物、座標與 Node ID，並提供 `MSG` 與 `TraceRoute` 操作；MQTT 節點維持 `LORA ONLY` 限制。
+
 ## 2026-05-01
-- `ONLINE DETAIL` 重新補回 `MSG` 與 `TraceRoute` 操作；`MSG` 可直接對節點開私訊，`TraceRoute` 可直接對 LoRa 節點送出路由追蹤。
-- `ONLINE DETAIL` 新增 `Link: LORA / MQTT` 顯示；MQTT 節點的 TraceRoute 會顯示為 `TraceRoute: --`，按下時提示 `LORA ONLY`，避免對 MQTT-only 節點送出不合理的 mesh route 請求。
-- 修正 `ONLINE DETAIL` 畫面列數與 input handler 可選列數不一致，游標可能移到空白 action 位的問題。
-- `設定 > 裝置管理 > 節點資料庫 > 重設資料庫` 新增 `全部清除`，可保留本機節點並清空其他節點資料。
-- 本輪已通過 `platformio run -e heltec-wireless-tracker`，並依 `AI_UPDATE_HANDOFF` 搬移產物到 `~/Desktop/HermesX韌體/HXB0.2.9_20260501_0609.*`。
+- `尋人模式`、`EMAC` 與 `EMINFO/Heartbeat` 授權收斂為 `GROUP`：裝置需使用同一組 `GROUP PIN`，EMINFO/Heartbeat 也會用 GROUP fingerprint 過濾不同群組。
+- `GROUP設定` 取代原 `EMAC設定` 內的密碼語意，設定項改為 `GROUP PIN A/B`、`查看GROUP PIN` 與 `解除EMAC`；舊 `/prefs/lighthouse_passphrase.txt` 仍沿用，避免既有裝置遺失設定。
+- EM 專用封包送出格式改為 `ACTIVATE: EMAC GROUP <pin>`、`RESET: EMAC GROUP <pin>`、`REQUEST: POS GROUP <pin>`，接收端仍相容舊的 `<pass>` 格式。
 - `尋人模式` 選單補齊：入口 icon 改為雷達/準星風格，文案調整為 `發送尋人訊號 / 位置訊息`，不再沿用舊的 `尋人模組` 命名。
 - 修正 `發送尋人訊號` 確認 popup 的收尾流程：`取消`、手動發送與 3 秒倒數自動發送都會正確回到有效頁面，不再掉入黑屏。
 - `發送尋人訊號` 新增前景雷達掃描動畫，並改為持續顯示直到真的收到任一 `POSITION` 回報才切進 `位置訊息`；若 `12s` 內都沒有位置回報，則顯示失敗提示。
@@ -13,7 +40,7 @@
 - 新增 `尋人模式` 入口；進入後分為 `發送尋人訊號` 與 `位置訊息` 兩層，不再直接覆蓋原本的 `ONLINE`。
 - `發送尋人訊號` 走 `REQUEST: POS <pass>` 輕量位置點名；收到且授權通過的同頻裝置會各自廣播一次自己的位置封包。
 - `發送尋人訊號` 確認 popup 改為沿用既有確認框流程，提供 `取消 / 廣播` 選項；`廣播` 需等 `3 秒` 倒數完成後才可選取。
-- `位置訊息` 清單顯示最近在線且有有效位置的節點；點入明細後只顯示 `LongName / LastHeard / location / 經 / 緯 / 高度 / 相對位置`。
+- `位置訊息` 清單顯示最近在線且有有效位置的節點；點入明細後只顯示 `LongName / LastHeard / location / 經 / 緯 / 高度 / 相對位置`
 
 ## 2026-04-30
 - 更新模式完成 WiFi / USB / URL 三條更新路徑整合：手動更新分為 `WiFi更新` 與 `USB更新`，URL 更新支援檢查、下載、進度與套用更新。

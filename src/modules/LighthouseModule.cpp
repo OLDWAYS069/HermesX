@@ -27,6 +27,7 @@
 static const char *bootFile = "/prefs/lighthouse_boot.bin";
 static const char *modeFile = "/prefs/lighthouse_mode.bin";
 static const char *whitelistFile = "/prefs/lighthouse_whitelist.txt";
+// Keep the legacy filename so existing devices retain their configured GROUP PINs.
 static const char *passphraseFile = "/prefs/lighthouse_passphrase.txt";
 
 static const uint32_t POLLING_AWAKE_MS = 300000UL; // 醒來期間
@@ -232,15 +233,13 @@ void LighthouseModule::loadState()
     concurrency::LockGuard g(spiLock);
     auto f = FSCom.open(modeFile, FILE_O_READ);
     if (f) {
-        uint8_t v = 0;
         if (f && f.available() >= 2) {
-        uint8_t flags[2];
-        f.read(flags, sizeof(flags));
-        emergencyModeActive = (flags[0] == 1);
-        pollingModeRequested = (flags[1] == 1);
+            uint8_t flags[2];
+            f.read(flags, sizeof(flags));
+            emergencyModeActive = (flags[0] == 1);
+            pollingModeRequested = (flags[1] == 1);
+        }
         f.close();
-    }
-      
     }
 #endif
 }
@@ -314,7 +313,7 @@ void LighthouseModule::loadPassphrase()
 
     auto f = FSCom.open(passphraseFile, FILE_O_READ);
     if (!f) {
-        HERMESX_LOG_INFO("lighthouse passphrase missing (%s); passphrase auth disabled", passphraseFile);
+        HERMESX_LOG_INFO("lighthouse GROUP PIN missing (%s); GROUP auth disabled", passphraseFile);
         return;
     }
 
@@ -328,15 +327,15 @@ void LighthouseModule::loadPassphrase()
     f.close();
 
     if (emergencyPassphrase[0].length() == 0 && emergencyPassphrase[1].length() == 0) {
-        HERMESX_LOG_WARN("lighthouse passphrase file empty; passphrase auth disabled");
+        HERMESX_LOG_WARN("lighthouse GROUP PIN file empty; GROUP auth disabled");
         return;
     }
 
-    HERMESX_LOG_INFO("lighthouse passphrase loaded (slotA=%s, slotB=%s)",
+    HERMESX_LOG_INFO("lighthouse GROUP PIN loaded (slotA=%s, slotB=%s)",
                      emergencyPassphrase[0].length() > 0 ? "set" : "empty",
                      emergencyPassphrase[1].length() > 0 ? "set" : "empty");
 #else
-    HERMESX_LOG_INFO("FSCom not available; passphrase disabled");
+    HERMESX_LOG_INFO("FSCom not available; GROUP PIN disabled");
 #endif
 }
 
@@ -350,7 +349,7 @@ void LighthouseModule::savePassphrase()
     }
     auto f = FSCom.open(passphraseFile, FILE_O_WRITE);
     if (!f) {
-        HERMESX_LOG_WARN("lighthouse passphrase save failed (%s)", passphraseFile);
+        HERMESX_LOG_WARN("lighthouse GROUP PIN save failed (%s)", passphraseFile);
         return;
     }
     f.print(emergencyPassphrase[0]);
@@ -361,7 +360,20 @@ void LighthouseModule::savePassphrase()
 #endif
 }
 
-bool LighthouseModule::setEmergencyPassphraseSlot(uint8_t slot, const String &value)
+uint32_t LighthouseModule::calculateGroupFingerprint(const String &value)
+{
+    if (value.length() == 0) {
+        return 0;
+    }
+    uint32_t hash = 2166136261UL;
+    for (size_t i = 0; i < value.length(); ++i) {
+        hash ^= static_cast<uint8_t>(value[i]);
+        hash *= 16777619UL;
+    }
+    return hash == 0 ? 1 : hash;
+}
+
+bool LighthouseModule::setEmergencyGroupPinSlot(uint8_t slot, const String &value)
 {
     if (slot >= 2) {
         return false;
@@ -369,15 +381,15 @@ bool LighthouseModule::setEmergencyPassphraseSlot(uint8_t slot, const String &va
     emergencyPassphrase[slot] = value;
 #ifdef FSCom
     savePassphrase();
-    HERMESX_LOG_INFO("lighthouse passphrase slot %u updated", static_cast<unsigned int>(slot));
+    HERMESX_LOG_INFO("lighthouse GROUP PIN slot %u updated", static_cast<unsigned int>(slot));
     return true;
 #else
-    HERMESX_LOG_WARN("FSCom not available; passphrase will not persist");
+    HERMESX_LOG_WARN("FSCom not available; GROUP PIN will not persist");
     return true;
 #endif
 }
 
-String LighthouseModule::getEmergencyPassphrase(uint8_t slot) const
+String LighthouseModule::getEmergencyGroupPin(uint8_t slot) const
 {
     if (slot >= 2) {
         return "";
@@ -385,10 +397,53 @@ String LighthouseModule::getEmergencyPassphrase(uint8_t slot) const
     return emergencyPassphrase[slot];
 }
 
+bool LighthouseModule::hasEmergencyGroupPin() const
+{
+    return emergencyPassphrase[0].length() > 0 || emergencyPassphrase[1].length() > 0;
+}
+
+uint32_t LighthouseModule::getEmergencyGroupFingerprint() const
+{
+    const String &pin = emergencyPassphrase[0].length() > 0 ? emergencyPassphrase[0] : emergencyPassphrase[1];
+    return calculateGroupFingerprint(pin);
+}
+
+uint32_t LighthouseModule::getEmergencyGroupFingerprint(uint8_t slot) const
+{
+    if (slot >= 2) {
+        return 0;
+    }
+    return calculateGroupFingerprint(emergencyPassphrase[slot]);
+}
+
+bool LighthouseModule::isEmergencyGroupFingerprintAllowed(uint32_t fingerprint) const
+{
+    if (fingerprint == 0) {
+        return !hasEmergencyGroupPin();
+    }
+    return fingerprint == calculateGroupFingerprint(emergencyPassphrase[0]) ||
+           fingerprint == calculateGroupFingerprint(emergencyPassphrase[1]);
+}
+
+bool LighthouseModule::setEmergencyPassphraseSlot(uint8_t slot, const String &value)
+{
+    return setEmergencyGroupPinSlot(slot, value);
+}
+
+String LighthouseModule::getEmergencyPassphrase(uint8_t slot) const
+{
+    return getEmergencyGroupPin(slot);
+}
+
 bool LighthouseModule::isEmergencyActiveAuthorized(const char *txt, NodeNum from) const
 {
     return isEmergencyCommandAuthorized(txt, "@EmergencyActive", from, true) ||
            isEmergencyCommandAuthorized(txt, "ACTIVATE: EMAC", from, true);
+}
+
+bool LighthouseModule::isEmergencyResetAuthorized(const char *txt, NodeNum from) const
+{
+    return isEmergencyCommandAuthorized(txt, "RESET: EMAC", from, false);
 }
 
 bool LighthouseModule::isEmergencyCommandAuthorized(const char *txt, const char *prefix, NodeNum from, bool allowWhitelist) const
@@ -402,6 +457,12 @@ bool LighthouseModule::isEmergencyCommandAuthorized(const char *txt, const char 
             while (*p == ' ' || *p == ':' || *p == '=') {
                 ++p;
             }
+            if (strncmp(p, "GROUP", 5) == 0 && (p[5] == ' ' || p[5] == ':' || p[5] == '=')) {
+                p += 5;
+                while (*p == ' ' || *p == ':' || *p == '=') {
+                    ++p;
+                }
+            }
             if (*p != '\0') {
                 const String provided(p);
                 passOk = (provided == emergencyPassphrase[0]) || (provided == emergencyPassphrase[1]);
@@ -410,7 +471,7 @@ bool LighthouseModule::isEmergencyCommandAuthorized(const char *txt, const char 
     }
 
     const bool whiteOk = allowWhitelist ? isEmergencyActiveAllowed(from) : false;
-    HERMESX_LOG_INFO("EM auth prefix=%s pass=%s white=%s", prefix, passOk ? "ok" : "no", whiteOk ? "ok" : "no");
+    HERMESX_LOG_INFO("GROUP auth prefix=%s pin=%s white=%s", prefix, passOk ? "ok" : "no", whiteOk ? "ok" : "no");
     return passOk || whiteOk;
 }
 
@@ -560,7 +621,7 @@ void LighthouseModule::broadcastEmergencyActive()
     String payload = "ACTIVATE: EMAC";
     const String &pass = emergencyPassphrase[0].length() > 0 ? emergencyPassphrase[0] : emergencyPassphrase[1];
     if (pass.length() > 0) {
-        payload += " ";
+        payload += " GROUP ";
         payload += pass;
     }
     p->decoded.payload.size = payload.length();
@@ -623,7 +684,7 @@ bool LighthouseModule::requestPositionPulse()
     String payload = "REQUEST: POS";
     const String &pass = emergencyPassphrase[0].length() > 0 ? emergencyPassphrase[0] : emergencyPassphrase[1];
     if (pass.length() > 0) {
-        payload += " ";
+        payload += " GROUP ";
         payload += pass;
     }
     p->decoded.payload.size = payload.length();

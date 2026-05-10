@@ -25,6 +25,7 @@ class HermesXEmUiModule : public SinglePortModule, public Observable<const UIFra
     bool isActive() const { return active; }
     bool isSirenEnabled() const { return sirenEnabled; }
     void setSirenEnabled(bool enabled);
+    void setSirenRuntimeEnabled(bool enabled);
     void tickSiren(uint32_t now);
     void drawOverlay(OLEDDisplay *display, OLEDDisplayUiState *state);
     void sendResetLighthouseNow();
@@ -38,6 +39,36 @@ class HermesXEmUiModule : public SinglePortModule, public Observable<const UIFra
     void setEmOfflineThresholdCount(uint8_t count);
     bool isEmBatteryIncluded() const { return emBatteryIncluded; }
     void setEmBatteryIncluded(bool enabled);
+
+    struct EmInfoNodeStatus {
+        NodeNum nodeNum = 0;
+        char shortName[16] = {0};
+        char state[20] = {0};
+        char place[24] = {0};
+        char item[24] = {0};
+        char timeCode[20] = {0};
+        int32_t latitudeI = 0;
+        int32_t longitudeI = 0;
+        int32_t altitude = 0;
+        uint8_t batteryPercent = 0;
+        uint32_t lastSeenMs = 0;
+        uint32_t lastHeartbeatMs = 0;
+        uint32_t remoteTimestamp = 0;
+        uint8_t heartbeatSeq = 0;
+        bool heartbeatActive = false;
+        bool valid = false;
+    };
+
+    int getVisibleEmInfoNodeCount() const;
+    const EmInfoNodeStatus *getVisibleEmInfoNodeByIndex(int index) const;
+    const char *getNodePresenceLabel(const EmInfoNodeStatus &entry) const;
+    String getNodeTimeLabel(const EmInfoNodeStatus &entry) const;
+    String getNodeRelativeHeardLabel(const EmInfoNodeStatus &entry) const;
+    String getNodeLatitudeText(const EmInfoNodeStatus &entry) const;
+    String getNodeLongitudeText(const EmInfoNodeStatus &entry) const;
+    String getNodeAltitudeText(const EmInfoNodeStatus &entry) const;
+    int buildDeviceDetailLines(const EmInfoNodeStatus &entry, String *lines, int maxLines) const;
+    int buildRelativePositionLines(const EmInfoNodeStatus &entry, String *lines, int maxLines) const;
 
   protected:
     bool wantPacket(const meshtastic_MeshPacket *p) override
@@ -89,25 +120,6 @@ class HermesXEmUiModule : public SinglePortModule, public Observable<const UIFra
         uint16_t medical = 0;
         uint16_t supplies = 0;
         uint16_t safe = 0;
-    };
-
-    struct EmInfoNodeStatus {
-        NodeNum nodeNum = 0;
-        char shortName[16] = {0};
-        char state[20] = {0};
-        char place[24] = {0};
-        char item[24] = {0};
-        char timeCode[20] = {0};
-        int32_t latitudeI = 0;
-        int32_t longitudeI = 0;
-        int32_t altitude = 0;
-        uint8_t batteryPercent = 0;
-        uint32_t lastSeenMs = 0;
-        uint32_t lastHeartbeatMs = 0;
-        uint32_t remoteTimestamp = 0;
-        uint8_t heartbeatSeq = 0;
-        bool heartbeatActive = false;
-        bool valid = false;
     };
 
     bool active = false;
@@ -178,17 +190,7 @@ class HermesXEmUiModule : public SinglePortModule, public Observable<const UIFra
     void sendEmHeartbeatNow();
     uint32_t getEmInfoIntervalMs() const;
     uint32_t getEmHeartbeatIntervalMs() const;
-    int getVisibleEmInfoNodeCount() const;
-    const EmInfoNodeStatus *getVisibleEmInfoNodeByIndex(int index) const;
-    const char *getNodePresenceLabel(const EmInfoNodeStatus &entry) const;
-    String getNodeTimeLabel(const EmInfoNodeStatus &entry) const;
-    String getNodeRelativeHeardLabel(const EmInfoNodeStatus &entry) const;
     const EmInfoNodeStatus *getSelectedEmInfoNode() const;
-    String getNodeLatitudeText(const EmInfoNodeStatus &entry) const;
-    String getNodeLongitudeText(const EmInfoNodeStatus &entry) const;
-    String getNodeAltitudeText(const EmInfoNodeStatus &entry) const;
-    int buildDeviceDetailLines(const EmInfoNodeStatus &entry, String *lines, int maxLines) const;
-    int buildRelativePositionLines(const EmInfoNodeStatus &entry, String *lines, int maxLines) const;
     void updateListOffset();
     void updateReportListOffset();
     void updateDeviceStatusOffset();

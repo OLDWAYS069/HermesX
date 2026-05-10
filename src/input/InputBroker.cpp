@@ -33,6 +33,12 @@ int InputBroker::handleInputEvent(const InputEvent *event)
     // If display was off, first input should only wake the display.
     // This prevents wake presses/rotations from immediately entering menus.
     if (wasScreenOff) {
+        if (screen != nullptr) {
+            if (screen->isStealthModeConstrained()) {
+                screen->armStealthWakeWindow();
+            }
+            screen->setOn(true);
+        }
         s_wakeOnlyUntilMs = now + kWakeInputGuardMs;
         return 0;
     }

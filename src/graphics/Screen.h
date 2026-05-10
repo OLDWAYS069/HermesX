@@ -280,6 +280,9 @@ class Screen : public concurrency::OSThread
     bool isRecentTextMessageDetailPageActive() const;
     bool isOnlineNodeListPageActive() const;
     bool isOnlineNodeDetailPageActive() const;
+    bool isGroupNodeListPageActive() const;
+    bool isGroupNodeDetailPageActive() const;
+    bool isTakModePageActive() const;
     bool isFinderPulseConfirmVisible() const { return hermesFinderPulseConfirmVisible; }
     bool isFinderPulseSendingVisible() const { return hermesFinderPulseSendingVisible; }
     uint8_t getFinderPulseConfirmSelected() const { return hermesFinderPulseConfirmSelected; }
@@ -297,6 +300,9 @@ class Screen : public concurrency::OSThread
     bool showHermesXMainPage();
     bool showOnlineNodeListPage();
     bool showOnlineNodeDetailPage();
+    bool showGroupNodeListPage();
+    bool showGroupNodeDetailPage();
+    bool showTakModePage();
     bool showRecentTextMessageListPage();
     bool showTextMessageDetailPage();
 
@@ -665,6 +671,9 @@ class Screen : public concurrency::OSThread
             uint8_t textMessage = 0;
             uint8_t onlineList = 0;
             uint8_t onlineDetail = 0;
+            uint8_t groupList = 0;
+            uint8_t groupDetail = 0;
+            uint8_t takMode = 0;
             uint8_t waypoint = 0;
             uint8_t focusedModule = 0;
             uint8_t main = 0;
@@ -710,6 +719,7 @@ class Screen : public concurrency::OSThread
     bool handleHermesFastSetupInput(const InputEvent *event);
     static void drawHermesXMainFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     void drawHermesXMain(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
+    void drawLowMemoryProtectionFrame(OLEDDisplay *display, OLEDDisplayUiState *state);
     static void drawEmergencyConfirmOverlay(OLEDDisplay *display, OLEDDisplayUiState *state);
     static void drawHermesXActionFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     void drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
@@ -723,10 +733,16 @@ class Screen : public concurrency::OSThread
     void drawHermesXShareChannel(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     static void drawOnlineNodeListFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     static void drawOnlineNodeDetailFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
+    static void drawGroupNodeListFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
+    static void drawGroupNodeDetailFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
+    static void drawTakModeFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     bool handleRecentTextMessageListInput(const InputEvent *event);
     bool handleRecentTextMessageDetailInput(const InputEvent *event);
     bool handleOnlineNodeListInput(const InputEvent *event);
     bool handleOnlineNodeDetailInput(const InputEvent *event);
+    bool handleGroupNodeListInput(const InputEvent *event);
+    bool handleGroupNodeDetailInput(const InputEvent *event);
+    bool handleTakModeInput(const InputEvent *event);
     bool handleIncomingNodePopupInput(const InputEvent *event);
     bool handleTextMessagePopupInput(const InputEvent *event);
     bool handleSetupDetailPopupInput(const InputEvent *event);
@@ -793,6 +809,7 @@ class Screen : public concurrency::OSThread
         UiRotarySwapSelect,
         NodeMenu,
         UpdateIntro,
+        UpdateExitPending,
         UpdateMenu,
         UpdateCheckMenu,
         UpdateCheckFlowPage,
@@ -856,6 +873,7 @@ class Screen : public concurrency::OSThread
     int8_t hermesActionSelected = 0;
     uint32_t hermesActionLastNavAtMs = 0;
     int8_t hermesActionLastNavDir = 0;
+    bool hermesSetupReturnToGroupMenu = false;
     bool hermesActionStealthConfirmVisible = false;
     uint8_t hermesActionStealthConfirmSelected = 0; // 0=No, 1=Yes
     uint32_t hermesActionStealthConfirmShownAtMs = 0;
@@ -875,6 +893,7 @@ class Screen : public concurrency::OSThread
     uint32_t lowMemoryReminderSuppressUntilMs = 0;
     uint32_t lowMemoryReminderTriggerFree = 0;
     uint32_t lowMemoryReminderTriggerLargest = 0;
+    char lowMemoryProtectionStatus[48] = "";
     uint32_t hermesSetupNodeCleanupAgeSeconds = 12U * 60U * 60U;
     bool hasUnreadTextMessage = false;
     uint8_t notifyingTextMessageFrame = UINT8_MAX;

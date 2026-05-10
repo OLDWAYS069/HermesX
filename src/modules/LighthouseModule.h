@@ -22,6 +22,13 @@ class LighthouseModule : public SinglePortModule, private concurrency::OSThread
     void activateEmergencyLocal();
     void resetEmergencyState(bool restartDevice);
     int32_t getEmergencyGraceRemainingSec() const;
+    bool setEmergencyGroupPinSlot(uint8_t slot, const String &value);
+    String getEmergencyGroupPin(uint8_t slot) const;
+    bool hasEmergencyGroupPin() const;
+    uint32_t getEmergencyGroupFingerprint() const;
+    uint32_t getEmergencyGroupFingerprint(uint8_t slot) const;
+    bool isEmergencyGroupFingerprintAllowed(uint32_t fingerprint) const;
+    bool isEmergencyResetAuthorized(const char *txt, NodeNum from) const;
     bool setEmergencyPassphraseSlot(uint8_t slot, const String &value);
     String getEmergencyPassphrase(uint8_t slot) const;
     bool requestPositionPulse();
@@ -29,6 +36,7 @@ class LighthouseModule : public SinglePortModule, private concurrency::OSThread
     PositionPulseUiResult consumePositionPulseUiResult();
     void cancelPositionPulseRequest(bool clearResponders = false);
     bool didNodeRespondToLastPositionPulse(NodeNum nodeNum) const;
+    bool isEmergencyModeActive() const { return emergencyModeActive; }
 
   protected:
     virtual bool wantPacket(const meshtastic_MeshPacket *p) override;
@@ -43,6 +51,7 @@ class LighthouseModule : public SinglePortModule, private concurrency::OSThread
     void loadWhitelist();
     void loadPassphrase();
     void savePassphrase();
+    static uint32_t calculateGroupFingerprint(const String &value);
     void captureConfigSnapshot();
     void restoreConfigSnapshot();
     bool isEmergencyActiveAllowed(NodeNum from) const;

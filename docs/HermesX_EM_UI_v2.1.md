@@ -21,7 +21,8 @@
 - 必須先旋轉導覽（5 秒內 armed），Press 才會送出。
 - 送出冷卻 1.5 秒。
 - Cancel/Back：退出 EM UI。
-- Rotary 三擊：本地觸發 EM UI，並廣播 `@EmergencyActive`。
+- 旋鈕長按：顯示 3 秒倒數確認；倒數未取消後本地觸發 EM UI，並廣播 `@EmergencyActive`。
+- Rotary 三擊本地 EM 入口已停用，避免一般快速連按誤觸 EMAC。
 
 ## 送出封包
 使用 `PORTNUM_HERMESX_EMERGENCY`（300）Broadcast：

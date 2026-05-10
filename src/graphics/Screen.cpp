@@ -119,11 +119,11 @@ namespace graphics
 #define DIRECT_HOME_CLOCK_FRAMERATE 4 // in fps
 
 // DEBUG
-#define NUM_EXTRA_FRAMES 3 // text message and debug frame
+#define NUM_EXTRA_FRAMES 19 // HermesX action pages + text/debug/system frames
 // if defined a pixel will blink to show redraws
 // #define SHOW_REDRAWS
 
-// A text message frame + debug frame + all the node infos
+// Static HermesX/system frames + all the module frames
 FrameCallback *normalFrames;
 static uint32_t targetFramerate = IDLE_FRAMERATE;
 static uint32_t fastUntilMs = 0;
@@ -4315,6 +4315,15 @@ struct FinderNodeState {
 };
 static FinderNodeState gFinderNodeState;
 
+struct GroupNodeState {
+    uint8_t menuCursor = 0;
+    bool nodeListVisible = false;
+    uint8_t listCursor = 0;
+    uint8_t selectedIndex = 0;
+    uint8_t detailCursor = 0;
+};
+static GroupNodeState gGroupNodeState;
+
 struct IncomingTextPopupState {
     meshtastic_MeshPacket packet{};
     bool pending = false;
@@ -4672,6 +4681,109 @@ static const meshtastic_NodeInfoLite *getSelectedFinderNode()
         return nullptr;
     }
     return getFinderNodeAt(gFinderNodeState.selectedIndex);
+}
+
+static int getGroupNodeCount()
+{
+    return hermesXEmUiModule ? hermesXEmUiModule->getVisibleEmInfoNodeCount() : 0;
+}
+
+static void clampGroupNodeState()
+{
+    const int count = getGroupNodeCount();
+    if (count <= 0) {
+        gGroupNodeState.listCursor = 0;
+        gGroupNodeState.selectedIndex = 0;
+        gGroupNodeState.detailCursor = 0;
+        return;
+    }
+    if (gGroupNodeState.listCursor > count) {
+        gGroupNodeState.listCursor = static_cast<uint8_t>(count);
+    }
+    if (gGroupNodeState.selectedIndex >= count) {
+        gGroupNodeState.selectedIndex = static_cast<uint8_t>(count - 1);
+    }
+}
+
+static const HermesXEmUiModule::EmInfoNodeStatus *getGroupNodeAt(uint8_t index)
+{
+    if (!hermesXEmUiModule) {
+        return nullptr;
+    }
+    clampGroupNodeState();
+    return hermesXEmUiModule->getVisibleEmInfoNodeByIndex(index);
+}
+
+static const HermesXEmUiModule::EmInfoNodeStatus *getSelectedGroupNode()
+{
+    return getGroupNodeAt(gGroupNodeState.selectedIndex);
+}
+
+static const meshtastic_NodeInfoLite *getGroupMeshNode(const HermesXEmUiModule::EmInfoNodeStatus &entry)
+{
+    return nodeDB ? nodeDB->getMeshNode(entry.nodeNum) : nullptr;
+}
+
+static String getGroupNodeDisplayName(const HermesXEmUiModule::EmInfoNodeStatus &entry)
+{
+    if (entry.shortName[0] != '\0') {
+        return String(entry.shortName);
+    }
+    const meshtastic_NodeInfoLite *node = getGroupMeshNode(entry);
+    if (node && node->has_user) {
+        if (node->user.short_name[0] != '\0') {
+            return String(node->user.short_name);
+        }
+        if (node->user.long_name[0] != '\0') {
+            return String(node->user.long_name);
+        }
+    }
+    char buf[12];
+    snprintf(buf, sizeof(buf), "%04lx", static_cast<unsigned long>(entry.nodeNum & 0xFFFFu));
+    return String(buf);
+}
+
+static constexpr uint8_t kGroupDetailBackRow = 0;
+static constexpr uint8_t kGroupDetailMessageRow = 1;
+static constexpr uint8_t kGroupDetailTraceRouteRow = 2;
+
+static uint8_t buildGroupNodeDetailRows(const HermesXEmUiModule::EmInfoNodeStatus &entry, String *rows, uint8_t maxRows)
+{
+    uint8_t rowCount = 0;
+    auto appendRow = [&](const String &row) {
+        if (rows && rowCount < maxRows) {
+            rows[rowCount] = row;
+        }
+        ++rowCount;
+    };
+
+    const meshtastic_NodeInfoLite *node = getGroupMeshNode(entry);
+    appendRow(u8"返回");
+    appendRow("MSG");
+    appendRow((node && node->via_mqtt) ? "TraceRoute: --" : "TraceRoute");
+    appendRow(String(u8"EM狀態: ") + (entry.state[0] ? entry.state : u8"未知"));
+    appendRow(String(u8"在線: ") + (hermesXEmUiModule ? hermesXEmUiModule->getNodePresenceLabel(entry) : u8"未知"));
+    appendRow(String("LastHB: ") + (hermesXEmUiModule ? hermesXEmUiModule->getNodeRelativeHeardLabel(entry) : String("--")));
+    appendRow(String(u8"電量: ") + (entry.batteryPercent > 0 ? String(entry.batteryPercent) + "%" : String("--")));
+    appendRow(String("LongName: ") +
+              ((node && node->has_user && node->user.long_name[0]) ? String(node->user.long_name) : String("--")));
+    if (entry.place[0]) {
+        appendRow(String(u8"地: ") + entry.place);
+    }
+    if (entry.item[0]) {
+        appendRow(String(u8"物: ") + entry.item);
+    }
+    if (entry.latitudeI != 0 || entry.longitudeI != 0) {
+        appendRow(String(u8"經: ") + (hermesXEmUiModule ? hermesXEmUiModule->getNodeLongitudeText(entry) : String("")));
+        appendRow(String(u8"緯: ") + (hermesXEmUiModule ? hermesXEmUiModule->getNodeLatitudeText(entry) : String("")));
+        appendRow(String(u8"高度: ") + (hermesXEmUiModule ? hermesXEmUiModule->getNodeAltitudeText(entry) : String("")));
+    } else {
+        appendRow(String(u8"經: --"));
+        appendRow(String(u8"緯: --"));
+        appendRow(String(u8"高度: --"));
+    }
+    appendRow(String("Node: !") + String(entry.nodeNum, HEX));
+    return rowCount;
 }
 
 static bool sendOnlineNodeTraceRoute(NodeNum nodeNum)
@@ -5575,6 +5687,143 @@ void Screen::drawOnlineNodeDetailFrame(OLEDDisplay *display, OLEDDisplayUiState 
     }
 }
 
+void Screen::drawGroupNodeListFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
+{
+    (void)state;
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+    display->setFont(FONT_SMALL);
+    graphics::HermesX_zh::drawMixedBounded(*display, x, y, display->getWidth() - 2, "GROUP",
+                                           graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
+
+    const int16_t width = display->getWidth();
+    const int16_t rowH = FONT_HEIGHT_SMALL + 3;
+    const int16_t listTop = y + FONT_HEIGHT_SMALL + 2;
+    int8_t visibleRows = (display->getHeight() - listTop - 1) / rowH;
+    if (visibleRows < 1) {
+        visibleRows = 1;
+    }
+    if (visibleRows > 4) {
+        visibleRows = 4;
+    }
+
+    if (!gGroupNodeState.nodeListVisible) {
+        static const char *kGroupMenuItems[] = {u8"返回", u8"GROUP設定", u8"節點列表"};
+        constexpr uint8_t kGroupMenuCount = sizeof(kGroupMenuItems) / sizeof(kGroupMenuItems[0]);
+        if (gGroupNodeState.menuCursor >= kGroupMenuCount) {
+            gGroupNodeState.menuCursor = kGroupMenuCount - 1;
+        }
+        for (uint8_t row = 0; row < visibleRows && row < kGroupMenuCount; ++row) {
+            const int16_t rowY = listTop + row * rowH;
+            if (row == gGroupNodeState.menuCursor) {
+                display->drawRect(x, rowY - 1, width - 2, rowH);
+            }
+            graphics::HermesX_zh::drawMixedBounded(*display, x + 2, rowY, width - 4, kGroupMenuItems[row],
+                                                   graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
+        }
+        return;
+    }
+
+    clampGroupNodeState();
+
+    const int total = getGroupNodeCount();
+    const int totalRows = total + 1;
+    uint8_t startCursor = 0;
+    if (gGroupNodeState.listCursor >= static_cast<uint8_t>(visibleRows)) {
+        startCursor = gGroupNodeState.listCursor - static_cast<uint8_t>(visibleRows) + 1;
+    }
+
+    for (int8_t row = 0; row < visibleRows; ++row) {
+        const uint8_t cursorIndex = startCursor + row;
+        if (cursorIndex >= totalRows) {
+            break;
+        }
+        const int16_t rowY = listTop + row * rowH;
+        const bool selected = cursorIndex == gGroupNodeState.listCursor;
+        if (selected) {
+            display->drawRect(x, rowY - 1, width - 2, rowH);
+        }
+        if (cursorIndex == 0) {
+            graphics::HermesX_zh::drawMixedBounded(*display, x + 2, rowY, width - 4, u8"返回",
+                                                   graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
+            continue;
+        }
+        const auto *entry = getGroupNodeAt(cursorIndex - 1);
+        if (!entry) {
+            continue;
+        }
+        const String presence = hermesXEmUiModule ? String(hermesXEmUiModule->getNodePresenceLabel(*entry)) : String(u8"未知");
+        const int16_t presenceW = graphics::HermesX_zh::stringAdvance(presence.c_str(), graphics::HermesX_zh::GLYPH_WIDTH, display);
+        const int16_t presenceX = x + width - presenceW - 2;
+        graphics::HermesX_zh::drawMixedBounded(*display, presenceX, rowY, presenceW + 2, presence.c_str(),
+                                               graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
+
+        String line = getGroupNodeDisplayName(*entry);
+        if (entry->state[0]) {
+            line += " ";
+            line += entry->state;
+        }
+        const int16_t textWidth = presenceX - x - 4;
+        graphics::HermesX_zh::drawMixedBounded(*display, x + 2, rowY, textWidth > 0 ? textWidth : width - 4, line.c_str(),
+                                               graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
+    }
+
+    if (total == 0 && visibleRows > 1) {
+        graphics::HermesX_zh::drawMixedBounded(*display, x + 2, listTop + rowH, width - 4, u8"沒有已配對節點",
+                                               graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
+    }
+}
+
+void Screen::drawGroupNodeDetailFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
+{
+    (void)state;
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+    display->setFont(FONT_SMALL);
+    graphics::HermesX_zh::drawMixedBounded(*display, x, y, display->getWidth() - 2, "GROUP DETAIL",
+                                           graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
+
+    const auto *entry = getSelectedGroupNode();
+    if (!entry) {
+        graphics::HermesX_zh::drawMixedBounded(*display, x + 2, y + FONT_HEIGHT_SMALL + 4, display->getWidth() - 4,
+                                               u8"無節點資料", graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
+        return;
+    }
+
+    String rows[16];
+    const uint8_t rowCount = buildGroupNodeDetailRows(*entry, rows, sizeof(rows) / sizeof(rows[0]));
+    if (gGroupNodeState.detailCursor >= rowCount) {
+        gGroupNodeState.detailCursor = rowCount > 0 ? rowCount - 1 : 0;
+    }
+
+    const int16_t width = display->getWidth();
+    const int16_t rowH = FONT_HEIGHT_SMALL + 3;
+    const int16_t listTop = y + FONT_HEIGHT_SMALL + 2;
+    int8_t visibleRows = (display->getHeight() - listTop - 1) / rowH;
+    if (visibleRows < 1) {
+        visibleRows = 1;
+    }
+    if (visibleRows > 4) {
+        visibleRows = 4;
+    }
+
+    uint8_t startCursor = 0;
+    if (gGroupNodeState.detailCursor >= static_cast<uint8_t>(visibleRows)) {
+        startCursor = gGroupNodeState.detailCursor - static_cast<uint8_t>(visibleRows) + 1;
+    }
+
+    for (int8_t row = 0; row < visibleRows; ++row) {
+        const uint8_t rowIndex = startCursor + row;
+        if (rowIndex >= rowCount) {
+            break;
+        }
+        const int16_t rowY = listTop + row * rowH;
+        if (rowIndex == gGroupNodeState.detailCursor) {
+            display->drawRect(x, rowY - 1, width - 2, rowH);
+        }
+        graphics::HermesX_zh::drawMixedBounded(*display, x + 2, rowY, width - 4, rows[rowIndex].c_str(),
+                                               graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
+    }
+}
+
 /// Draw the last text message we received
 static void drawTextMessageFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
 {
@@ -6252,85 +6501,86 @@ static void drawHermesGpsFallbackCornerMapOutline(OLEDDisplay *display, int16_t 
 
 void Screen::drawLowMemoryReminderOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
 {
-    (void)state;
     if (!display || !screen || !screen->lowMemoryReminderVisible) {
+        return;
+    }
+    screen->drawLowMemoryProtectionFrame(display, state);
+}
+
+void Screen::drawLowMemoryProtectionFrame(OLEDDisplay *display, OLEDDisplayUiState *state)
+{
+    (void)state;
+    if (!display) {
         return;
     }
 
     const int16_t width = display->getWidth();
     const int16_t height = display->getHeight();
-    const int16_t boxX = 4;
-    const int16_t boxY = 4;
-    const int16_t boxW = width - 8;
-    const int16_t boxH = height - 8;
-    const int16_t titleBarH = 12;
-    const int16_t bodyX = boxX + 5;
-    const int16_t bodyW = boxW - 10;
-    const int16_t bodyY = boxY + titleBarH + 3;
-    const int16_t optionH = 10;
-    const int16_t optionY = boxY + boxH - optionH - 2;
-    const int16_t optionW = (boxW - 13) / 2;
-    const int16_t leftX = boxX + 4;
-    const int16_t rightX = leftX + optionW + 5;
-
 #if defined(USE_EINK)
-    const auto dialogBg = EINK_WHITE;
-    const auto dialogFg = EINK_BLACK;
+    display->setColor(EINK_WHITE);
 #else
-    const auto dialogBg = OLEDDISPLAY_COLOR::WHITE;
-    const auto dialogFg = OLEDDISPLAY_COLOR::BLACK;
+    display->setColor(OLEDDISPLAY_COLOR::BLACK);
+#endif
+    display->fillRect(0, 0, width, height);
+#if defined(USE_EINK)
+    display->setColor(EINK_BLACK);
+#else
+    display->setColor(OLEDDISPLAY_COLOR::WHITE);
 #endif
 
-    display->setColor(dialogBg);
-    display->fillRect(boxX, boxY, boxW, boxH);
-    display->setColor(dialogFg);
-    display->drawRect(boxX, boxY, boxW, boxH);
-    display->fillRect(boxX + 1, boxY + 1, boxW - 2, titleBarH);
-    display->setColor(dialogBg);
-    const char *title = u8"記憶體警告";
-    const int titleW = graphics::HermesX_zh::stringAdvance(title, graphics::HermesX_zh::GLYPH_WIDTH, display);
-    int16_t titleX = boxX + (boxW - titleW) / 2;
-    if (titleX < boxX + 2) {
-        titleX = boxX + 2;
-    }
-    graphics::HermesX_zh::drawMixedBounded(*display, titleX, boxY + 1, boxW - 4, title, graphics::HermesX_zh::GLYPH_WIDTH,
-                                           FONT_HEIGHT_SMALL, nullptr);
-    display->setColor(dialogFg);
-
     const int advance = graphics::HermesX_zh::GLYPH_WIDTH - 1;
-    const int16_t lineHeight = 11;
-    graphics::HermesX_zh::drawMixedBounded(*display, bodyX, bodyY, bodyW, u8"記憶體偏低，可能導致藍牙或收發異常。", advance,
-                                           lineHeight, nullptr);
-    graphics::HermesX_zh::drawMixedBounded(*display, bodyX, bodyY + lineHeight, bodyW, u8"請前往 裝置管理 > 節點資料庫 清理。",
-                                           advance, lineHeight, nullptr);
+    const int16_t margin = 5;
+    const int16_t bodyW = width - margin * 2;
+    graphics::HermesX_zh::drawMixedBounded(*display, margin, 2, bodyW, u8"HEAP 保護模式", advance, 12, nullptr);
+    graphics::HermesX_zh::drawMixedBounded(*display, margin, 16, bodyW, u8"已停用HOME特效與選單", advance, 11, nullptr);
 
-    char heapBuf[64];
-    snprintf(heapBuf, sizeof(heapBuf), "Heap %lu/%lu", static_cast<unsigned long>(screen->lowMemoryReminderTriggerFree),
-             static_cast<unsigned long>(screen->lowMemoryReminderTriggerLargest));
-    graphics::HermesX_zh::drawMixedBounded(*display, bodyX, bodyY + lineHeight * 2, bodyW, heapBuf, advance, lineHeight,
-                                           nullptr);
+    char heapBuf[48];
+    snprintf(heapBuf, sizeof(heapBuf), "Heap %lu/%lu", static_cast<unsigned long>(lowMemoryReminderTriggerFree),
+             static_cast<unsigned long>(lowMemoryReminderTriggerLargest));
+    graphics::HermesX_zh::drawMixedBounded(*display, margin, 29, bodyW, heapBuf, advance, 11, nullptr);
 
+    const char *status = lowMemoryProtectionStatus[0] ? lowMemoryProtectionStatus : u8"可清除節點資料庫釋放空間";
+    graphics::HermesX_zh::drawMixedBounded(*display, margin, 42, bodyW, status, advance, 11, nullptr);
+
+    const int16_t optionY = height - 13;
+    const int16_t optionW = (width - 14) / 2;
     auto drawOption = [&](int16_t optionX, const char *label, bool selected) {
         if (selected) {
-            display->setColor(dialogFg);
-            display->fillRect(optionX, optionY, optionW, optionH);
-            display->setColor(dialogBg);
+#if defined(USE_EINK)
+            display->setColor(EINK_BLACK);
+#else
+            display->setColor(OLEDDISPLAY_COLOR::WHITE);
+#endif
+            display->fillRect(optionX, optionY, optionW, 11);
+#if defined(USE_EINK)
+            display->setColor(EINK_WHITE);
+#else
+            display->setColor(OLEDDISPLAY_COLOR::BLACK);
+#endif
         } else {
-            display->setColor(dialogFg);
-            display->drawRect(optionX, optionY, optionW, optionH);
+#if defined(USE_EINK)
+            display->setColor(EINK_BLACK);
+#else
+            display->setColor(OLEDDISPLAY_COLOR::WHITE);
+#endif
+            display->drawRect(optionX, optionY, optionW, 11);
         }
-        const int textW = graphics::HermesX_zh::stringAdvance(label, graphics::HermesX_zh::GLYPH_WIDTH, display);
-        int16_t textX = optionX + (optionW - textW) / 2;
-        if (textX < optionX + 1) {
-            textX = optionX + 1;
+        const int16_t labelW = graphics::HermesX_zh::stringAdvance(label, graphics::HermesX_zh::GLYPH_WIDTH, display);
+        int16_t labelX = optionX + (optionW - labelW) / 2;
+        if (labelX < optionX + 1) {
+            labelX = optionX + 1;
         }
-        graphics::HermesX_zh::drawMixedBounded(*display, textX, optionY + 1, optionW - 2, label,
+        graphics::HermesX_zh::drawMixedBounded(*display, labelX, optionY + 1, optionW - 2, label,
                                                graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-        display->setColor(dialogFg);
+#if defined(USE_EINK)
+        display->setColor(EINK_BLACK);
+#else
+        display->setColor(OLEDDISPLAY_COLOR::WHITE);
+#endif
     };
 
-    drawOption(leftX, u8"稍後", screen->lowMemoryReminderSelected == 0);
-    drawOption(rightX, u8"前往清理", screen->lowMemoryReminderSelected != 0);
+    drawOption(4, u8"退出", lowMemoryReminderSelected == 0);
+    drawOption(10 + optionW, u8"清除節點", lowMemoryReminderSelected != 0);
 }
 
 static void drawHermesGpsNeonAsciiText(OLEDDisplay *display,
@@ -7693,7 +7943,8 @@ constexpr size_t kSetupWifiPasswordMaxLen = 64;
 constexpr uint32_t kSetupNavMinIntervalMs = 80;
 constexpr uint32_t kSetupNavFlipGuardMs = 800;
 constexpr uint8_t kMainActionVisibleSlots = 3;
-constexpr uint8_t kMainActionCount = 11;
+constexpr uint8_t kMainActionCount = 12;
+constexpr uint8_t kMainActionHomeIndex = 5;
 constexpr uint32_t kStealthConfirmArmMs = 3000;
 constexpr uint32_t kStealthWakeMs = 1000;
 constexpr uint32_t kLowMemoryReminderFreeThreshold = 6 * 1024;
@@ -7702,11 +7953,12 @@ constexpr uint32_t kLowMemoryReminderSuppressMs = 5 * 60 * 1000;
 #if HERMESX_CIV_DISABLE_EMAC
 static const char *kSetupRootItems[] = {u8"返回", u8"UI設定", u8"裝置管理", u8"罐頭訊息", u8"儲存並重新開機"};
 #else
-static const char *kSetupRootItems[] = {u8"返回", u8"EMAC設定", u8"UI設定", u8"裝置管理", u8"罐頭訊息",
+static const char *kSetupRootItems[] = {u8"返回", u8"GROUP設定", u8"UI設定", u8"裝置管理", u8"罐頭訊息",
                                         u8"儲存並重新開機"};
 #endif
 static const uint8_t kSetupRootCount = sizeof(kSetupRootItems) / sizeof(kSetupRootItems[0]);
-static const char *kSetupEmacItems[] = {u8"返回", u8"EMINFO設定", u8"設定密碼A", u8"設定密碼B", u8"顯示密碼", u8"EMAC解除"};
+static const char *kSetupEmacItems[] = {u8"返回", u8"EMINFO設定", "GROUP PIN A", "GROUP PIN B", u8"查看GROUP PIN",
+                                        u8"解除EMAC"};
 static const uint8_t kSetupEmacCount = sizeof(kSetupEmacItems) / sizeof(kSetupEmacItems[0]);
 static const char *kSetupEmInfoItems[] = {u8"返回", u8"EMINFO廣播", u8"EMINFO週期", u8"Heartbeat週期", u8"離線門檻",
                                           u8"附帶電量"};
@@ -7726,6 +7978,7 @@ static const uint8_t kSetupNodeMenuCount = 9;
 static const uint8_t kSetupUpdateEntryMenuCount = 2;
 static const uint8_t kSetupUpdateMenuCount = 4;
 static constexpr uint32_t kSetupUpdateIntroMs = 900;
+static constexpr uint32_t kSetupUpdateExitRebootMs = 1200;
 static const uint8_t kSetupUpdateCheckMenuCount = 8;
 static const uint8_t kSetupUpdateCheckFlowCount = 2;
 static const uint8_t kSetupUpdateRuntimeMenuCount = 3;
@@ -7794,6 +8047,25 @@ static const uint8_t kSetupGpsSmartIntervalCount =
     sizeof(kSetupGpsSmartIntervalOptions) / sizeof(kSetupGpsSmartIntervalOptions[0]);
 static const char *kSetupGpsSmartIntervalLabels[] = {u8"15秒", u8"30秒", u8"1分鐘", u8"2分鐘", u8"5分鐘", u8"10分鐘",
                                                      u8"30分鐘"};
+
+static const uint32_t kTakNodeInfoOptions[] = {ONE_DAY, 3600, 1800, 600, 300, 60};
+static const char *kTakNodeInfoLabels[] = {"24h", "1h", "30m", "10m", "5m", "1m"};
+static const uint8_t kTakNodeInfoCount = sizeof(kTakNodeInfoOptions) / sizeof(kTakNodeInfoOptions[0]);
+static const uint32_t kTakGpsUpdateOptions[] = {5, 15, 30, 60, 120};
+static const char *kTakGpsUpdateLabels[] = {"5s", "15s", "30s", "60s", "120s"};
+static const uint8_t kTakGpsUpdateCount = sizeof(kTakGpsUpdateOptions) / sizeof(kTakGpsUpdateOptions[0]);
+static const uint32_t kTakPositionBroadcastOptions[] = {20, 30, 60, 120, 300};
+static const char *kTakPositionBroadcastLabels[] = {"20s", "30s", "60s", "120s", "300s"};
+static const uint8_t kTakPositionBroadcastCount =
+    sizeof(kTakPositionBroadcastOptions) / sizeof(kTakPositionBroadcastOptions[0]);
+static const uint32_t kTakSmartDistanceOptions[] = {10, 20, 50, 100};
+static const char *kTakSmartDistanceLabels[] = {"10m", "20m", "50m", "100m"};
+static const uint8_t kTakSmartDistanceCount = sizeof(kTakSmartDistanceOptions) / sizeof(kTakSmartDistanceOptions[0]);
+static const uint32_t kTakSmartIntervalOptions[] = {15, 30, 60, 120};
+static const char *kTakSmartIntervalLabels[] = {"15s", "30s", "60s", "120s"};
+static const uint8_t kTakSmartIntervalCount = sizeof(kTakSmartIntervalOptions) / sizeof(kTakSmartIntervalOptions[0]);
+static constexpr uint8_t kTakPopupRowCount = 5;
+static constexpr uint8_t kTakSettingsRowCount = 9;
 
 static const uint32_t kSetupMqttMapPublishOptions[] = {3600, 7200, 10800, 21600, 43200, 86400};
 static const uint8_t kSetupMqttMapPublishCount =
@@ -8068,6 +8340,31 @@ static const char *getSetupRoleOptionLabel(meshtastic_Config_DeviceConfig_Role r
         }
     }
     return getSetupRoleLabel(role);
+}
+
+static const char *getTakOptionLabel(uint32_t value, const uint32_t *options, const char *const *labels, uint8_t count)
+{
+    for (uint8_t i = 0; i < count; ++i) {
+        if (options[i] == value) {
+            return labels[i];
+        }
+    }
+    return u8"自訂";
+}
+
+static void cycleTakOption(uint32_t &value, const uint32_t *options, uint8_t count)
+{
+    if (!options || count == 0) {
+        return;
+    }
+    uint8_t index = 0;
+    for (uint8_t i = 0; i < count; ++i) {
+        if (options[i] == value) {
+            index = i;
+            break;
+        }
+    }
+    value = options[(index + 1) % count];
 }
 
 static bool shouldShowHermesXHomeFrame()
@@ -8592,6 +8889,39 @@ static void clearUpdateBootFlag()
 static constexpr uint32_t kStealthRetainedMagic = 0x4853544CUL; // HSTL
 static constexpr uint16_t kStealthRetainedVersion = 1;
 static constexpr const char *kStealthStateFile = "/prefs/hermesx_stealth_state.bin";
+static constexpr uint32_t kTakRetainedMagic = 0x4854414BUL; // HTAK
+static constexpr uint16_t kTakRetainedVersion = 2;
+static constexpr const char *kTakStateFile = "/prefs/hermesx_tak_state.bin";
+static constexpr uint32_t kTakProfileMagic = 0x48545046UL; // HTPF
+static constexpr uint16_t kTakProfileVersion = 1;
+static constexpr const char *kTakProfileFile = "/prefs/hermesx_tak_profile.bin";
+
+struct TakModeProfile {
+    uint32_t magic = kTakProfileMagic;
+    uint16_t version = kTakProfileVersion;
+    uint16_t stateSize = sizeof(TakModeProfile);
+    uint32_t nodeInfoBroadcastSecs = ONE_DAY;
+    uint32_t gpsUpdateIntervalSecs = 5;
+    uint32_t positionBroadcastSecs = 20;
+    uint32_t smartMinimumDistanceMeters = 10;
+    uint32_t smartMinimumIntervalSecs = 15;
+    bool quietOutputs = true;
+    bool allowEmUi = true;
+    bool allowFinder = true;
+};
+static TakModeProfile gTakModeProfile;
+static bool gTakModeProfileLoaded = false;
+
+enum class TakModePageView : uint8_t {
+    Main,
+    Popup,
+    Settings,
+};
+static TakModePageView gTakModePageView = TakModePageView::Main;
+static uint8_t gTakModePopupSelected = 0;
+static uint8_t gTakModePopupOffset = 0;
+static uint8_t gTakModeSettingsSelected = 0;
+static uint8_t gTakModeSettingsOffset = 0;
 
 struct StealthRetainedState {
     uint32_t magic;
@@ -8603,6 +8933,7 @@ RTC_NOINIT_ATTR static StealthRetainedState gStealthRetainedState;
 
 struct TakRuntimeState {
     bool active = false;
+    bool quietOutputsApplied = false;
     bool emergencyLampEnabled = false;
     bool sirenEnabled = false;
     bool ledHeartbeatDisabled = false;
@@ -8618,6 +8949,14 @@ struct TakRuntimeState {
     uint32_t telemetryDeviceUpdateInterval = 0;
 };
 static TakRuntimeState gTakRuntimeState;
+
+struct TakRetainedState {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t stateSize;
+    TakRuntimeState state;
+};
+RTC_NOINIT_ATTR static TakRetainedState gTakRetainedState;
 
 static bool isStealthModeActive()
 {
@@ -8635,6 +8974,40 @@ static bool isValidStealthRetainedState(const StealthRetainedState &state)
            state.stateSize == sizeof(StealthRuntimeState) && state.state.active;
 }
 
+static bool isValidTakRetainedState(const TakRetainedState &state)
+{
+    return state.magic == kTakRetainedMagic && state.version == kTakRetainedVersion &&
+           state.stateSize == sizeof(TakRuntimeState) && state.state.active;
+}
+
+static bool isValidTakModeProfile(const TakModeProfile &profile)
+{
+    return profile.magic == kTakProfileMagic && profile.version == kTakProfileVersion &&
+           profile.stateSize == sizeof(TakModeProfile);
+}
+
+static void normalizeTakModeProfile(TakModeProfile &profile)
+{
+    profile.magic = kTakProfileMagic;
+    profile.version = kTakProfileVersion;
+    profile.stateSize = sizeof(TakModeProfile);
+    if (profile.nodeInfoBroadcastSecs == 0) {
+        profile.nodeInfoBroadcastSecs = ONE_DAY;
+    }
+    if (profile.gpsUpdateIntervalSecs == 0) {
+        profile.gpsUpdateIntervalSecs = 5;
+    }
+    if (profile.positionBroadcastSecs == 0) {
+        profile.positionBroadcastSecs = 20;
+    }
+    if (profile.smartMinimumDistanceMeters == 0) {
+        profile.smartMinimumDistanceMeters = 10;
+    }
+    if (profile.smartMinimumIntervalSecs == 0) {
+        profile.smartMinimumIntervalSecs = 15;
+    }
+}
+
 static void syncRetainedStealthState()
 {
     gStealthRetainedState.magic = kStealthRetainedMagic;
@@ -8643,12 +9016,28 @@ static void syncRetainedStealthState()
     gStealthRetainedState.state = gStealthRuntimeState;
 }
 
+static void syncRetainedTakState()
+{
+    gTakRetainedState.magic = kTakRetainedMagic;
+    gTakRetainedState.version = kTakRetainedVersion;
+    gTakRetainedState.stateSize = sizeof(TakRuntimeState);
+    gTakRetainedState.state = gTakRuntimeState;
+}
+
 static void clearRetainedStealthState()
 {
     gStealthRetainedState.magic = 0;
     gStealthRetainedState.version = 0;
     gStealthRetainedState.stateSize = 0;
     gStealthRetainedState.state = StealthRuntimeState{};
+}
+
+static void clearRetainedTakState()
+{
+    gTakRetainedState.magic = 0;
+    gTakRetainedState.version = 0;
+    gTakRetainedState.stateSize = 0;
+    gTakRetainedState.state = TakRuntimeState{};
 }
 
 static void persistStealthStateToFile()
@@ -8677,12 +9066,76 @@ static void persistStealthStateToFile()
 #endif
 }
 
+static void persistTakStateToFile()
+{
+#ifdef FSCom
+    concurrency::LockGuard g(spiLock);
+
+    if (!FSCom.exists("/prefs")) {
+        FSCom.mkdir("/prefs");
+    }
+    if (FSCom.exists(kTakStateFile)) {
+        FSCom.remove(kTakStateFile);
+    }
+
+    auto f = FSCom.open(kTakStateFile, FILE_O_WRITE);
+    if (!f) {
+        return;
+    }
+
+    const size_t stateLen = sizeof(gTakRetainedState);
+    const size_t written = f.write(reinterpret_cast<const uint8_t *>(&gTakRetainedState), stateLen);
+    if (written == stateLen) {
+        f.flush();
+    }
+    f.close();
+#endif
+}
+
+static void persistTakModeProfileToFile()
+{
+#ifdef FSCom
+    normalizeTakModeProfile(gTakModeProfile);
+    concurrency::LockGuard g(spiLock);
+
+    if (!FSCom.exists("/prefs")) {
+        FSCom.mkdir("/prefs");
+    }
+    if (FSCom.exists(kTakProfileFile)) {
+        FSCom.remove(kTakProfileFile);
+    }
+
+    auto f = FSCom.open(kTakProfileFile, FILE_O_WRITE);
+    if (!f) {
+        return;
+    }
+
+    const size_t written = f.write(reinterpret_cast<const uint8_t *>(&gTakModeProfile), sizeof(gTakModeProfile));
+    if (written == sizeof(gTakModeProfile)) {
+        f.flush();
+    }
+    f.close();
+#else
+    normalizeTakModeProfile(gTakModeProfile);
+#endif
+}
+
 static void clearPersistedStealthStateFile()
 {
 #ifdef FSCom
     concurrency::LockGuard g(spiLock);
     if (FSCom.exists(kStealthStateFile)) {
         FSCom.remove(kStealthStateFile);
+    }
+#endif
+}
+
+static void clearPersistedTakStateFile()
+{
+#ifdef FSCom
+    concurrency::LockGuard g(spiLock);
+    if (FSCom.exists(kTakStateFile)) {
+        FSCom.remove(kTakStateFile);
     }
 #endif
 }
@@ -8695,6 +9148,63 @@ static bool hasPersistedStealthStateFile()
 #else
     return false;
 #endif
+}
+
+static bool loadPersistedTakStateFromFile()
+{
+#ifdef FSCom
+    concurrency::LockGuard g(spiLock);
+    auto f = FSCom.open(kTakStateFile, FILE_O_READ);
+    if (!f) {
+        return false;
+    }
+
+    TakRetainedState persistedState = {};
+    bool ok = false;
+    if (f.available() >= static_cast<int>(sizeof(persistedState))) {
+        const size_t readLen = f.read(reinterpret_cast<uint8_t *>(&persistedState), sizeof(persistedState));
+        ok = (readLen == sizeof(persistedState)) && isValidTakRetainedState(persistedState);
+    }
+    f.close();
+
+    if (ok) {
+        gTakRetainedState = persistedState;
+        return true;
+    }
+
+    if (FSCom.exists(kTakStateFile)) {
+        FSCom.remove(kTakStateFile);
+    }
+#endif
+    return false;
+}
+
+static void loadTakModeProfileIfNeeded()
+{
+    if (gTakModeProfileLoaded) {
+        return;
+    }
+    gTakModeProfileLoaded = true;
+
+#ifdef FSCom
+    concurrency::LockGuard g(spiLock);
+    auto f = FSCom.open(kTakProfileFile, FILE_O_READ);
+    if (f) {
+        TakModeProfile persisted = {};
+        bool ok = false;
+        if (f.available() >= static_cast<int>(sizeof(persisted))) {
+            const size_t readLen = f.read(reinterpret_cast<uint8_t *>(&persisted), sizeof(persisted));
+            ok = (readLen == sizeof(persisted)) && isValidTakModeProfile(persisted);
+        }
+        f.close();
+        if (ok) {
+            gTakModeProfile = persisted;
+        } else if (FSCom.exists(kTakProfileFile)) {
+            FSCom.remove(kTakProfileFile);
+        }
+    }
+#endif
+    normalizeTakModeProfile(gTakModeProfile);
 }
 
 static void logStealthStateProbe(const char *phase)
@@ -8763,7 +9273,7 @@ static bool applyStealthModeSettings()
         if (hermesXEmUiModule->isSirenEnabled()) {
             changed = true;
         }
-        hermesXEmUiModule->setSirenEnabled(false);
+        hermesXEmUiModule->setSirenRuntimeEnabled(false);
     }
     if (cannedMessageModule) {
         const auto runState = cannedMessageModule->getRunState();
@@ -8816,9 +9326,13 @@ static bool applyStealthModeSettings()
     setBluetoothEnable(false);
 #if defined(ARCH_ESP32) && !MESHTASTIC_EXCLUDE_BLUETOOTH
     if (nimbleBluetooth) {
-        nimbleBluetooth->deinit();
+        if (nimbleBluetooth->isActive()) {
+            nimbleBluetooth->deinit();
+            changed = true;
+        } else {
+            LOG_INFO("[HermesX] Skip BT deinit during stealth apply: NimBLE not active yet");
+        }
         gStealthRuntimeState.needsRebootOnExit = true;
-        changed = true;
     }
 #endif
 #if defined(ARCH_NRF52) && !MESHTASTIC_EXCLUDE_BLUETOOTH
@@ -8838,6 +9352,18 @@ static bool applyStealthModeSettings()
 static bool restoreStealthModeAfterBoot()
 {
     if (gStealthRuntimeState.active) {
+        return false;
+    }
+    if (isTakModeActive()) {
+        LOG_INFO("[HermesX] Skip stealth restore during boot because TAK MODE is active");
+        clearRetainedStealthState();
+        clearPersistedStealthStateFile();
+        return false;
+    }
+    if (lighthouseModule != nullptr && lighthouseModule->isEmergencyModeActive()) {
+        LOG_INFO("[HermesX] Skip stealth restore during boot because EMAC is active");
+        clearRetainedStealthState();
+        clearPersistedStealthStateFile();
         return false;
     }
     if (!isValidStealthRetainedState(gStealthRetainedState) && !loadPersistedStealthStateFromFile()) {
@@ -8902,7 +9428,7 @@ static bool disableStealthMode(bool *needsReboot)
         HermesXInterfaceModule::instance->setEmergencyLampEnabled(gStealthRuntimeState.emergencyLampEnabled);
     }
     if (hermesXEmUiModule) {
-        hermesXEmUiModule->setSirenEnabled(gStealthRuntimeState.sirenEnabled);
+        hermesXEmUiModule->setSirenRuntimeEnabled(gStealthRuntimeState.sirenEnabled);
     }
     if (screen) {
         screen->setBrightnessLevel(gStealthRuntimeState.screenBrightness);
@@ -9047,6 +9573,85 @@ static bool disableUpdateLowLoadMode()
     return true;
 }
 
+static bool applyTakModeSettings()
+{
+    loadTakModeProfileIfNeeded();
+    bool changed = false;
+
+    if (gTakModeProfile.quietOutputs && HermesXInterfaceModule::instance) {
+        if (HermesXInterfaceModule::instance->isEmergencyLampEnabled()) {
+            HermesXInterfaceModule::instance->setEmergencyLampEnabled(false);
+            changed = true;
+        }
+        HermesXInterfaceModule::instance->setUiLedBrightness(0);
+        HermesXInterfaceModule::instance->stopEmergencySiren();
+        changed = true;
+    }
+
+    if (gTakModeProfile.quietOutputs && hermesXEmUiModule) {
+        hermesXEmUiModule->setSirenRuntimeEnabled(false);
+        changed = true;
+    }
+
+    if (gTakModeProfile.quietOutputs) {
+#ifdef PIN_BUZZER
+        noTone(PIN_BUZZER);
+        changed = true;
+#endif
+        if (config.device.buzzer_gpio) {
+            noTone(config.device.buzzer_gpio);
+            changed = true;
+        }
+#ifdef BUZZER_EN_PIN
+        pinMode(BUZZER_EN_PIN, OUTPUT);
+        digitalWrite(BUZZER_EN_PIN, LOW);
+        changed = true;
+#endif
+
+        if (!config.device.led_heartbeat_disabled) {
+            changed = true;
+        }
+        setHeartbeatLedDisabled(true);
+        gTakRuntimeState.quietOutputsApplied = true;
+    } else if (gTakRuntimeState.quietOutputsApplied) {
+        if (HermesXInterfaceModule::instance) {
+            HermesXInterfaceModule::instance->setUiLedBrightness(gTakRuntimeState.uiLedBrightness);
+            HermesXInterfaceModule::instance->setEmergencyLampEnabled(gTakRuntimeState.emergencyLampEnabled);
+            HermesXInterfaceModule::instance->restoreBuzzerOutput();
+        }
+        if (hermesXEmUiModule) {
+            hermesXEmUiModule->setSirenRuntimeEnabled(gTakRuntimeState.sirenEnabled);
+        }
+        setHeartbeatLedDisabled(gTakRuntimeState.ledHeartbeatDisabled);
+#ifdef BUZZER_EN_PIN
+        pinMode(BUZZER_EN_PIN, OUTPUT);
+        digitalWrite(BUZZER_EN_PIN, HIGH);
+#endif
+        gTakRuntimeState.quietOutputsApplied = false;
+        changed = true;
+    }
+
+    if (config.device.role != meshtastic_Config_DeviceConfig_Role_TAK) {
+        changed = true;
+    }
+    config.device.role = meshtastic_Config_DeviceConfig_Role_TAK;
+    if (HermesXInterfaceModule::instance) {
+        HermesXInterfaceModule::instance->applyRoleOutputPolicy();
+    }
+    if (nodeDB) {
+        nodeDB->installRoleDefaults(meshtastic_Config_DeviceConfig_Role_TAK);
+        changed = true;
+    }
+    config.device.node_info_broadcast_secs = gTakModeProfile.nodeInfoBroadcastSecs;
+    config.position.gps_update_interval = gTakModeProfile.gpsUpdateIntervalSecs;
+    config.position.position_broadcast_smart_enabled = true;
+    config.position.position_broadcast_secs = gTakModeProfile.positionBroadcastSecs;
+    config.position.broadcast_smart_minimum_distance = gTakModeProfile.smartMinimumDistanceMeters;
+    config.position.broadcast_smart_minimum_interval_secs = gTakModeProfile.smartMinimumIntervalSecs;
+
+    return changed;
+}
+
 static bool enableTakMode()
 {
     if (gTakRuntimeState.active) {
@@ -9069,37 +9674,38 @@ static bool enableTakMode()
     if (HermesXInterfaceModule::instance) {
         gTakRuntimeState.uiLedBrightness = HermesXInterfaceModule::instance->getUiLedBrightness();
         gTakRuntimeState.emergencyLampEnabled = HermesXInterfaceModule::instance->isEmergencyLampEnabled();
-        if (gTakRuntimeState.emergencyLampEnabled) {
-            HermesXInterfaceModule::instance->setEmergencyLampEnabled(false);
-        }
-        HermesXInterfaceModule::instance->setUiLedBrightness(0);
-        HermesXInterfaceModule::instance->stopEmergencySiren();
     }
 
     if (hermesXEmUiModule) {
         gTakRuntimeState.sirenEnabled = hermesXEmUiModule->isSirenEnabled();
-        hermesXEmUiModule->setSirenEnabled(false);
     }
 
-#ifdef PIN_BUZZER
-    noTone(PIN_BUZZER);
-#endif
-    if (config.device.buzzer_gpio) {
-        noTone(config.device.buzzer_gpio);
-    }
-#ifdef BUZZER_EN_PIN
-    pinMode(BUZZER_EN_PIN, OUTPUT);
-    digitalWrite(BUZZER_EN_PIN, LOW);
-#endif
-
-    setHeartbeatLedDisabled(true);
-
-    config.device.role = meshtastic_Config_DeviceConfig_Role_TAK;
-    if (nodeDB) {
-        nodeDB->installRoleDefaults(meshtastic_Config_DeviceConfig_Role_TAK);
-    }
-
+    applyTakModeSettings();
+    syncRetainedTakState();
+    persistTakStateToFile();
     return true;
+}
+
+static bool restoreTakModeAfterBoot()
+{
+    if (gTakRuntimeState.active) {
+        return false;
+    }
+    if (!isValidTakRetainedState(gTakRetainedState) && !loadPersistedTakStateFromFile()) {
+        return false;
+    }
+    if (!isValidTakRetainedState(gTakRetainedState)) {
+        clearRetainedTakState();
+        clearPersistedTakStateFile();
+        return false;
+    }
+
+    gTakRuntimeState = gTakRetainedState.state;
+    gTakRuntimeState.active = true;
+    const bool changed = applyTakModeSettings();
+    syncRetainedTakState();
+    persistTakStateToFile();
+    return changed;
 }
 
 static bool disableTakMode()
@@ -9108,12 +9714,21 @@ static bool disableTakMode()
         return false;
     }
 
-    if (HermesXInterfaceModule::instance) {
-        HermesXInterfaceModule::instance->setUiLedBrightness(gTakRuntimeState.uiLedBrightness);
-        HermesXInterfaceModule::instance->setEmergencyLampEnabled(gTakRuntimeState.emergencyLampEnabled);
-    }
-    if (hermesXEmUiModule) {
-        hermesXEmUiModule->setSirenEnabled(gTakRuntimeState.sirenEnabled);
+    if (gTakRuntimeState.quietOutputsApplied) {
+        if (HermesXInterfaceModule::instance) {
+            HermesXInterfaceModule::instance->setUiLedBrightness(gTakRuntimeState.uiLedBrightness);
+            HermesXInterfaceModule::instance->setEmergencyLampEnabled(gTakRuntimeState.emergencyLampEnabled);
+            HermesXInterfaceModule::instance->restoreBuzzerOutput();
+        }
+        if (hermesXEmUiModule) {
+            hermesXEmUiModule->setSirenRuntimeEnabled(gTakRuntimeState.sirenEnabled);
+        }
+        setHeartbeatLedDisabled(gTakRuntimeState.ledHeartbeatDisabled);
+#ifdef BUZZER_EN_PIN
+        pinMode(BUZZER_EN_PIN, OUTPUT);
+        digitalWrite(BUZZER_EN_PIN, HIGH);
+#endif
+        gTakRuntimeState.quietOutputsApplied = false;
     }
 
     config.device.role = gTakRuntimeState.previousRole;
@@ -9126,7 +9741,13 @@ static bool disableTakMode()
     config.position.position_flags = gTakRuntimeState.positionFlags;
     moduleConfig.telemetry.device_update_interval = gTakRuntimeState.telemetryDeviceUpdateInterval;
     setHeartbeatLedDisabled(gTakRuntimeState.ledHeartbeatDisabled);
+    if (HermesXInterfaceModule::instance) {
+        HermesXInterfaceModule::instance->applyRoleOutputPolicy();
+        HermesXInterfaceModule::instance->restoreBuzzerOutput();
+    }
 
+    clearPersistedTakStateFile();
+    clearRetainedTakState();
     gTakRuntimeState.active = false;
     return true;
 }
@@ -9892,8 +10513,242 @@ void Screen::drawHermesXShareChannelFrame(OLEDDisplay *display, OLEDDisplayUiSta
     screen->drawHermesXShareChannel(display, state, x, y);
 }
 
+static void drawTakShieldIcon(OLEDDisplay *display, int16_t cx, int16_t topY, int16_t w, int16_t h, uint8_t thickness)
+{
+    if (!display) {
+        return;
+    }
+    if (w < 18) {
+        w = 18;
+    }
+    if (h < 20) {
+        h = 20;
+    }
+    if (thickness == 0) {
+        thickness = 1;
+    }
+
+    for (uint8_t t = 0; t < thickness; ++t) {
+        const int16_t left = cx - w / 2 + t;
+        const int16_t right = cx + w / 2 - t;
+        const int16_t top = topY + t;
+        const int16_t shoulderY = top + h / 5;
+        const int16_t waistY = top + (h * 2) / 3;
+        const int16_t bottom = top + h - t;
+        if (right - left < 8 || bottom - top < 8) {
+            break;
+        }
+        display->drawLine(left + 2, shoulderY, cx, top);
+        display->drawLine(cx, top, right - 2, shoulderY);
+        display->drawLine(left, shoulderY + 1, left + 4, waistY);
+        display->drawLine(right, shoulderY + 1, right - 4, waistY);
+        display->drawLine(left + 4, waistY, cx, bottom);
+        display->drawLine(right - 4, waistY, cx, bottom);
+    }
+
+    const int16_t midY = topY + h / 2;
+    display->drawLine(cx, topY + h / 4, cx, topY + h - 5);
+    display->drawLine(cx - w / 5, midY, cx + w / 5, midY);
+}
+
+void Screen::drawTakModeFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
+{
+    (void)state;
+    if (!display) {
+        return;
+    }
+
+    const int16_t width = display->getWidth();
+    const int16_t height = display->getHeight();
+
+#if defined(USE_EINK)
+    display->setColor(EINK_WHITE);
+#else
+    display->setColor(OLEDDISPLAY_COLOR::BLACK);
+#endif
+    display->fillRect(0, 0, width, height);
+#if defined(USE_EINK)
+    display->setColor(EINK_BLACK);
+#else
+    display->setColor(OLEDDISPLAY_COLOR::WHITE);
+#endif
+
+    display->setFont(FONT_SMALL);
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+
+    loadTakModeProfileIfNeeded();
+    const bool popupView = gTakModePageView == TakModePageView::Popup;
+    const bool settingsView = gTakModePageView == TakModePageView::Settings;
+    const char *title = "TAK MODE";
+    const int16_t titleW = graphics::HermesX_zh::stringAdvance(title, graphics::HermesX_zh::GLYPH_WIDTH, display);
+    int16_t titleX = x + (width - titleW) / 2;
+    if (titleX < x + 2) {
+        titleX = x + 2;
+    }
+    const int16_t titleY = y + 2;
+    graphics::HermesX_zh::drawMixedBounded(*display, titleX, titleY, width - 4, title,
+                                           graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
+
+    const int16_t shieldH = std::max<int16_t>(24, std::min<int16_t>(height / 2, 38));
+    const int16_t shieldW = shieldH + 8;
+    const int16_t shieldTop = y + (height - shieldH) / 2 - 5;
+    drawTakShieldIcon(display, x + width / 2, shieldTop, shieldW, shieldH, 2);
+
+    const char *status = isTakModeActive() ? "ON" : "OFF";
+    const int16_t statusW = graphics::HermesX_zh::stringAdvance(status, graphics::HermesX_zh::GLYPH_WIDTH, display);
+    graphics::HermesX_zh::drawMixedBounded(*display, x + (width - statusW) / 2, y + height - FONT_HEIGHT_SMALL - 3,
+                                           width - 4, status, graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL,
+                                           nullptr);
+
+    if (popupView || settingsView) {
+        const int16_t boxX = x + 8;
+        const int16_t boxY = y + 10;
+        const int16_t boxW = width - 16;
+        const int16_t boxH = height - 18;
+#if defined(USE_EINK)
+        display->setColor(EINK_WHITE);
+#else
+        display->setColor(OLEDDISPLAY_COLOR::BLACK);
+#endif
+        display->fillRect(boxX, boxY, boxW, boxH);
+#if defined(USE_EINK)
+        display->setColor(EINK_BLACK);
+#else
+        display->setColor(OLEDDISPLAY_COLOR::WHITE);
+#endif
+        display->drawRect(boxX, boxY, boxW, boxH);
+
+        const char *modalTitle = settingsView ? u8"TAKMODE設定" : "TAK MODE";
+        const int16_t modalTitleW =
+            graphics::HermesX_zh::stringAdvance(modalTitle, graphics::HermesX_zh::GLYPH_WIDTH, display);
+        graphics::HermesX_zh::drawMixedBounded(*display, boxX + std::max<int16_t>(2, (boxW - modalTitleW) / 2),
+                                               boxY + 2, boxW - 4, modalTitle,
+                                               graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
+
+        const int16_t rowH = FONT_HEIGHT_SMALL + 1;
+        const int16_t listTop = boxY + FONT_HEIGHT_SMALL + 6;
+        uint8_t visibleRows = (boxY + boxH - listTop - 2) / rowH;
+        if (visibleRows < 1) {
+            visibleRows = 1;
+        }
+        if (visibleRows > 5) {
+            visibleRows = 5;
+        }
+
+        if (!settingsView) {
+            static const char *kRows[] = {"TAK MODE", u8"TAKMODE設定", "EMUI", u8"尋人模組", u8"返回主選單"};
+            if (gTakModePopupSelected >= kTakPopupRowCount) {
+                gTakModePopupSelected = 0;
+            }
+            if (visibleRows > kTakPopupRowCount) {
+                visibleRows = kTakPopupRowCount;
+            }
+            if (gTakModePopupSelected < gTakModePopupOffset) {
+                gTakModePopupOffset = gTakModePopupSelected;
+            } else if (gTakModePopupSelected >= gTakModePopupOffset + visibleRows) {
+                gTakModePopupOffset = gTakModePopupSelected - visibleRows + 1;
+            }
+            if (gTakModePopupOffset + visibleRows > kTakPopupRowCount) {
+                gTakModePopupOffset = kTakPopupRowCount - visibleRows;
+            }
+
+            for (uint8_t row = 0; row < visibleRows; ++row) {
+                const uint8_t index = gTakModePopupOffset + row;
+                if (index >= kTakPopupRowCount) {
+                    break;
+                }
+                const int16_t rowY = listTop + row * rowH;
+                const bool selected = (index == gTakModePopupSelected);
+                if (selected) {
+                    display->drawRect(boxX + 3, rowY - 1, boxW - 6, rowH);
+                }
+
+                String line = kRows[index];
+                if (index == 0) {
+                    line += isTakModeActive() ? ": ON" : ": OFF";
+                } else if (index == 2 && !gTakModeProfile.allowEmUi) {
+                    line += ": OFF";
+                } else if (index == 3 && !gTakModeProfile.allowFinder) {
+                    line += ": OFF";
+                }
+                graphics::HermesX_zh::drawMixedBounded(*display, boxX + 6, rowY, boxW - 12, line.c_str(),
+                                                       graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
+            }
+            return;
+        }
+
+        if (gTakModeSettingsSelected >= kTakSettingsRowCount) {
+            gTakModeSettingsSelected = 0;
+        }
+        if (gTakModeSettingsSelected < gTakModeSettingsOffset) {
+            gTakModeSettingsOffset = gTakModeSettingsSelected;
+        } else if (gTakModeSettingsSelected >= gTakModeSettingsOffset + visibleRows) {
+            gTakModeSettingsOffset = gTakModeSettingsSelected - visibleRows + 1;
+        }
+        if (gTakModeSettingsOffset + visibleRows > kTakSettingsRowCount) {
+            gTakModeSettingsOffset = kTakSettingsRowCount - visibleRows;
+        }
+
+        auto buildSettingRow = [&](uint8_t row) -> String {
+            switch (row) {
+            case 0:
+                return u8"返回";
+            case 1:
+                return String(u8"裝置資訊: ") +
+                       getTakOptionLabel(gTakModeProfile.nodeInfoBroadcastSecs, kTakNodeInfoOptions, kTakNodeInfoLabels,
+                                         kTakNodeInfoCount);
+            case 2:
+                return String(u8"GPS刷新: ") +
+                       getTakOptionLabel(gTakModeProfile.gpsUpdateIntervalSecs, kTakGpsUpdateOptions, kTakGpsUpdateLabels,
+                                         kTakGpsUpdateCount);
+            case 3:
+                return String(u8"位置廣播: ") +
+                       getTakOptionLabel(gTakModeProfile.positionBroadcastSecs, kTakPositionBroadcastOptions,
+                                         kTakPositionBroadcastLabels, kTakPositionBroadcastCount);
+            case 4:
+                return String(u8"智慧距離: ") +
+                       getTakOptionLabel(gTakModeProfile.smartMinimumDistanceMeters, kTakSmartDistanceOptions,
+                                         kTakSmartDistanceLabels, kTakSmartDistanceCount);
+            case 5:
+                return String(u8"智慧間隔: ") +
+                       getTakOptionLabel(gTakModeProfile.smartMinimumIntervalSecs, kTakSmartIntervalOptions,
+                                         kTakSmartIntervalLabels, kTakSmartIntervalCount);
+            case 6:
+                return String(u8"聲光靜默: ") + (gTakModeProfile.quietOutputs ? "ON" : "OFF");
+            case 7:
+                return String("EMUI: ") + (gTakModeProfile.allowEmUi ? "ON" : "OFF");
+            case 8:
+                return String(u8"尋人模組: ") + (gTakModeProfile.allowFinder ? "ON" : "OFF");
+            default:
+                return "";
+            }
+        };
+
+        for (uint8_t row = 0; row < visibleRows; ++row) {
+            const uint8_t index = gTakModeSettingsOffset + row;
+            if (index >= kTakSettingsRowCount) {
+                break;
+            }
+            const int16_t rowY = listTop + row * rowH;
+            const bool selected = index == gTakModeSettingsSelected;
+            if (selected) {
+                display->drawRect(boxX + 3, rowY - 1, boxW - 6, rowH);
+            }
+            const String line = buildSettingRow(index);
+            graphics::HermesX_zh::drawMixedBounded(*display, boxX + 6, rowY, boxW - 12, line.c_str(),
+                                                   graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
+        }
+        return;
+    }
+}
+
 void Screen::drawHermesXMain(OLEDDisplay *display, OLEDDisplayUiState * /*state*/, int16_t x, int16_t y)
 {
+    if (lowMemoryReminderVisible) {
+        drawLowMemoryProtectionFrame(display, nullptr);
+        return;
+    }
+
     (void)x;
     (void)y;
     const int16_t width = display->getWidth();
@@ -10373,18 +11228,20 @@ void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*stat
 
         static const char *kTileLabelExact[kMainActionCount] = {
             u8"潛行模式", u8"緊急照明燈", "GPS", u8"TAK MODE", u8"休眠", "Home", u8"頻道", u8"設定", "MSG", "ONLINE",
-            u8"尋人模組",
+            "GROUP", u8"尋人模組",
         };
         static const char *kTileLabelCompact[kMainActionCount] = {
-            u8"潛行", u8"照明", "GPS", "TAK", u8"休眠", "Home", u8"頻道", u8"設定", "MSG", "ONLINE", u8"尋人",
+            u8"潛行", u8"照明", "GPS", "TAK", u8"休眠", "Home", u8"頻道", u8"設定", "MSG", "ONLINE", "GROUP", u8"尋人",
         };
         const bool compactLayout = (width < 180 || height < 100);
-        bool tileHasState[kMainActionCount] = {true, true, true, true, false, false, false, false, false, false, false};
-        bool tileState[kMainActionCount] = {stealthOn, lampOn, gpsOn, takOn, false, false, false, false, false, false, false};
+        bool tileHasState[kMainActionCount] = {true, true, true, true, false, false, false, false, false, false, false, false};
+        bool tileState[kMainActionCount] = {stealthOn, lampOn, gpsOn, takOn, false, false, false, false, false, false, false, false};
         tileHasState[8] = hasRecentMessages;
         tileState[8] = recentUnread;
         tileHasState[9] = (gOnlineNodeState.count > 0);
         tileState[9] = (gOnlineNodeState.count > 0);
+        tileHasState[10] = getGroupNodeCount() > 0;
+        tileState[10] = getGroupNodeCount() > 0;
 
         const int16_t labelLineH = compactLayout ? FONT_HEIGHT_SMALL : (FONT_HEIGHT_SMALL + 2);
 
@@ -10634,7 +11491,16 @@ void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*stat
                     display->drawLine(rightHeadX - 4, cy + 5, rightHeadX + 4, cy + 5);
                     break;
                 }
-                case 10: { // 尋人模組（小圖）
+                case 10: { // GROUP（小圖）
+                    display->drawLine(cx - 7, cy - 3, cx + 7, cy - 3);
+                    display->drawLine(cx - 7, cy - 3, cx, cy + 7);
+                    display->drawLine(cx + 7, cy - 3, cx, cy + 7);
+                    display->drawCircle(cx - 7, cy - 3, 3);
+                    display->drawCircle(cx + 7, cy - 3, 3);
+                    display->drawCircle(cx, cy + 7, 3);
+                    break;
+                }
+                case 11: { // 尋人模組（小圖）
                     drawFinderRadarIconShape(display, cx, cy + 1, 10, true);
                     break;
                 }
@@ -10859,7 +11725,24 @@ void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*stat
                 display->drawLine(rightHeadX - rightHeadR + 1, rightBodyY - 4, rightHeadX + rightHeadR - 1, rightBodyY - 4);
                 break;
             }
-            case 10: { // 尋人模組
+            case 10: { // GROUP
+                const int16_t topY = iy + ih / 2 - base / 4;
+                const int16_t botY = iy + ih / 2 + base / 4;
+                const int16_t leftX = cx - base / 3;
+                const int16_t rightX = cx + base / 3;
+                int16_t nodeR = base / 9 + 3;
+                if (nodeR < 5) {
+                    nodeR = 5;
+                }
+                display->drawLine(leftX, topY, rightX, topY);
+                display->drawLine(leftX, topY, cx, botY);
+                display->drawLine(rightX, topY, cx, botY);
+                display->drawCircle(leftX, topY, nodeR);
+                display->drawCircle(rightX, topY, nodeR);
+                display->drawCircle(cx, botY, nodeR);
+                break;
+            }
+            case 11: { // 尋人模組
                 int16_t radarR = base / 2;
                 if (radarR < 16) {
                     radarR = 16;
@@ -10881,10 +11764,34 @@ void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*stat
 
         auto drawActionLabel = [&](int index, int16_t tx, int16_t ty, int16_t tw, int16_t th, bool selected,
                                    const char *label) {
-            const int labelW = graphics::HermesX_zh::stringAdvance(label, graphics::HermesX_zh::GLYPH_WIDTH, display);
+            display->setTextAlignment(TEXT_ALIGN_LEFT);
+            display->setFont(FONT_SMALL);
+            bool asciiOnly = true;
+            for (const char *p = label; p && *p; ++p) {
+                const uint8_t ch = static_cast<uint8_t>(*p);
+                if (ch < 0x20 || ch >= 0x7F) {
+                    asciiOnly = false;
+                    break;
+                }
+            }
+            const char *drawLabel = label;
+            int labelW = graphics::HermesX_zh::stringAdvance(drawLabel, graphics::HermesX_zh::GLYPH_WIDTH, display);
+            if (asciiOnly && !selected && labelW > tw - 4) {
+                switch (index) {
+                case 9:
+                    drawLabel = "ON";
+                    break;
+                case 10:
+                    drawLabel = "GRP";
+                    break;
+                default:
+                    break;
+                }
+                labelW = graphics::HermesX_zh::stringAdvance(drawLabel, graphics::HermesX_zh::GLYPH_WIDTH, display);
+            }
             const int16_t labelY = ty + th - labelLineH - (compactLayout ? 3 : 8);
             int16_t labelX = tx + (tw - labelW) / 2;
-            if (labelX < tx + 2) {
+            if (labelX < tx + (asciiOnly ? 1 : 2)) {
                 labelX = tx + 2;
             }
 
@@ -10899,8 +11806,12 @@ void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*stat
                 display->drawRect(boxX, labelY - boxPadY, boxW, labelLineH + boxPadY * 2);
             }
 
-            graphics::HermesX_zh::drawMixedBounded(*display, labelX, labelY, tx + tw - labelX - 2, label,
-                                                   graphics::HermesX_zh::GLYPH_WIDTH, labelLineH, nullptr);
+            if (asciiOnly) {
+                display->drawString(labelX, labelY, drawLabel);
+            } else {
+                graphics::HermesX_zh::drawMixedBounded(*display, labelX, labelY, tx + tw - labelX - 2, drawLabel,
+                                                       graphics::HermesX_zh::GLYPH_WIDTH, labelLineH, nullptr);
+            }
 
             if (!compactLayout || !tileHasState[index] || !tileState[index]) {
                 return;
@@ -11111,6 +12022,61 @@ void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*stat
     }
 }
 
+static void drawSetupDonutProgress(OLEDDisplay *display, int16_t cx, int16_t cy, int16_t radius, int progressPercent)
+{
+    if (!display || radius < 8) {
+        return;
+    }
+
+    const int boundedPercent = std::max(0, std::min(100, progressPercent));
+    const int16_t arcR = std::max<int16_t>(2, radius / 8);
+    const uint32_t now = millis();
+    const int spinnerHead = static_cast<int>((now / 9U) % 360U);
+    const int pulse = static_cast<int>((now / 140U) % 4U);
+
+    display->drawCircle(cx, cy, radius);
+    if (radius > 3) {
+        display->drawCircle(cx, cy, radius - 3);
+    }
+
+    int arcStart = -90;
+    int arcEnd = -90 + (360 * boundedPercent) / 100;
+    if (boundedPercent <= 0) {
+        arcStart = spinnerHead - 58;
+        arcEnd = spinnerHead;
+    } else if (boundedPercent >= 100) {
+        arcStart = -90;
+        arcEnd = 270;
+    }
+
+    for (int deg = arcStart; deg <= arcEnd; deg += 4) {
+        const float angle = deg * PI / 180.0f;
+        const int16_t x = cx + static_cast<int16_t>(lrintf(cosf(angle) * radius));
+        const int16_t y = cy + static_cast<int16_t>(lrintf(sinf(angle) * radius));
+        display->fillCircle(x, y, arcR);
+    }
+
+    if (arcEnd >= arcStart) {
+        const float startAngle = arcStart * PI / 180.0f;
+        const float endAngle = arcEnd * PI / 180.0f;
+        display->fillCircle(cx + static_cast<int16_t>(lrintf(cosf(startAngle) * radius)),
+                            cy + static_cast<int16_t>(lrintf(sinf(startAngle) * radius)), arcR);
+        display->fillCircle(cx + static_cast<int16_t>(lrintf(cosf(endAngle) * radius)),
+                            cy + static_cast<int16_t>(lrintf(sinf(endAngle) * radius)), arcR + (pulse == 0 ? 1 : 0));
+    }
+
+    const int shineDeg = (boundedPercent <= 0) ? spinnerHead - 24 : arcEnd - 18;
+    const float shineA = shineDeg * PI / 180.0f;
+    display->fillCircle(cx + static_cast<int16_t>(lrintf(cosf(shineA) * std::max<int16_t>(3, radius - arcR - 2))),
+                        cy + static_cast<int16_t>(lrintf(sinf(shineA) * std::max<int16_t>(3, radius - arcR - 2))), 1);
+
+    char percentText[8];
+    snprintf(percentText, sizeof(percentText), "%d%%", boundedPercent);
+    display->setFont(FONT_SMALL);
+    const int16_t textW = display->getStringWidth(percentText);
+    display->drawString(cx - textW / 2, cy - FONT_HEIGHT_SMALL / 2, percentText);
+}
+
 static void drawSetupUpdateProgressPage(OLEDDisplay *display,
                                         int16_t width,
                                         int16_t height,
@@ -11156,9 +12122,6 @@ static void drawSetupUpdateProgressPage(OLEDDisplay *display,
     const int16_t bodyTop = kSetupHeaderHeight + 3;
     const int16_t lineH = FONT_HEIGHT_SMALL + 2;
     const bool compactLayout = height <= 80;
-    const int16_t barX = 6;
-    const int16_t barW = width - 12;
-    const int16_t barH = 10;
     const int16_t footerH = 14;
     const int16_t footerY = height - footerH - 2;
     const int16_t gap = 4;
@@ -11195,6 +12158,8 @@ static void drawSetupUpdateProgressPage(OLEDDisplay *display,
         }
     };
 
+    const int boundedPercent = std::max(0, std::min(100, progressPercent));
+
     if (compactLayout) {
         const String statusText = instruction.isEmpty() ? String(u8"待命中") : instruction;
         String infoText;
@@ -11210,20 +12175,17 @@ static void drawSetupUpdateProgressPage(OLEDDisplay *display,
             infoText = u8"待更新版本: 無";
         }
 
-        const int16_t statusY = bodyTop;
+        const int16_t donutRadius = std::min<int16_t>(16, std::max<int16_t>(12, (footerY - bodyTop - 4) / 2));
+        const int16_t donutX = 4 + donutRadius;
+        const int16_t donutY = bodyTop + 2 + donutRadius;
+        drawSetupDonutProgress(display, donutX, donutY, donutRadius, boundedPercent);
+
+        const int16_t textX = donutX + donutRadius + 8;
+        const int16_t textW = width - textX - 4;
+        const int16_t statusY = bodyTop + 2;
         const int16_t infoY = statusY + lineH;
-        const int16_t barY = infoY + lineH + 2;
-
-        drawSingleLine(statusText, 4, statusY, width - 8);
-        drawSingleLine(infoText, 4, infoY, width - 8);
-
-        display->drawRect(barX, barY, barW, barH);
-        const int boundedPercent = std::max(0, std::min(100, progressPercent));
-        const int16_t innerW = barW - 2;
-        const int16_t fillW = (innerW * boundedPercent) / 100;
-        if (fillW > 0) {
-            display->fillRect(barX + 1, barY + 1, fillW, barH - 2);
-        }
+        drawSingleLine(statusText, textX, statusY, textW);
+        drawSingleLine(infoText, textX, infoY, textW);
 
         for (int i = 0; i < actionCount; ++i) {
             const bool selected = (selectedIndex == i);
@@ -11263,16 +12225,12 @@ static void drawSetupUpdateProgressPage(OLEDDisplay *display,
         contentY += lineH * drawnInstructionLines;
     }
 
-    const int16_t barY = contentY + 2;
-    const int16_t metaY = barY + barH + 3;
+    const int16_t availableForDonut = std::max<int16_t>(24, footerY - contentY - 26);
+    const int16_t donutRadius = std::min<int16_t>(24, std::max<int16_t>(14, availableForDonut / 2));
+    const int16_t donutY = contentY + 3 + donutRadius;
+    drawSetupDonutProgress(display, width / 2, donutY, donutRadius, boundedPercent);
 
-    display->drawRect(barX, barY, barW, barH);
-    const int boundedPercent = std::max(0, std::min(100, progressPercent));
-    const int16_t innerW = barW - 2;
-    const int16_t fillW = (innerW * boundedPercent) / 100;
-    if (fillW > 0) {
-        display->fillRect(barX + 1, barY + 1, fillW, barH - 2);
-    }
+    const int16_t metaY = donutY + donutRadius + 3;
 
     String percentLine = String(u8"進度 ") + String(boundedPercent) + "%";
     String detailLine;
@@ -11344,7 +12302,12 @@ static void drawSetupUpdateProgressPage(OLEDDisplay *display,
     }
 }
 
-static void drawSetupUpdateIntroPage(OLEDDisplay *display, int16_t width, int16_t height, uint32_t startedAtMs)
+static void drawSetupUpdateTransitionPage(OLEDDisplay *display,
+                                          int16_t width,
+                                          int16_t height,
+                                          uint32_t startedAtMs,
+                                          const char *title,
+                                          const char *status)
 {
     if (!display) {
         return;
@@ -11359,6 +12322,7 @@ static void drawSetupUpdateIntroPage(OLEDDisplay *display, int16_t width, int16_
     const int16_t barW = std::max<int16_t>(width - barX * 2, 32);
     const int16_t barH = compactLayout ? 10 : 12;
     const int16_t titleY = compactLayout ? 14 : 22;
+    const bool hasStatus = status && status[0];
     const int16_t statusY = titleY + (compactLayout ? 18 : 24);
     const int16_t barY = statusY + lineH + (compactLayout ? 4 : 8);
 
@@ -11376,12 +12340,17 @@ static void drawSetupUpdateIntroPage(OLEDDisplay *display, int16_t width, int16_
 #endif
 
     display->setFont(FONT_SMALL);
-    const char *title = "UPDATE CORE";
-    const int16_t titleW = display->getStringWidth(title);
-    display->drawString(std::max<int16_t>(2, (width - titleW) / 2), titleY, title);
-    const char *status = "syncing...";
-    const int16_t statusW = display->getStringWidth(status);
-    display->drawString(std::max<int16_t>(2, (width - statusW) / 2), statusY, status);
+    auto drawCenteredMixed = [&](const char *text, int16_t y) {
+        if (!text || !text[0]) {
+            return;
+        }
+        const int16_t textW = HermesX_zh::stringAdvance(text, HermesX_zh::GLYPH_WIDTH, display);
+        const int16_t textX = std::max<int16_t>(2, (width - textW) / 2);
+        const int16_t maxW = std::max<int16_t>(1, width - textX * 2);
+        HermesX_zh::drawMixedBounded(*display, textX, y, maxW, text, HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
+    };
+    drawCenteredMixed(title, hasStatus ? titleY : titleY + (compactLayout ? 7 : 10));
+    drawCenteredMixed(status, statusY);
 
     display->drawRect(barX, barY, barW, barH);
     const int16_t innerW = barW - 2;
@@ -11400,6 +12369,11 @@ static void drawSetupUpdateIntroPage(OLEDDisplay *display, int16_t width, int16_
     display->drawLine(4, 4, 4, 12);
     display->drawLine(width - 19, edgeY, width - 5, edgeY);
     display->drawLine(width - 5, edgeY - 8, width - 5, edgeY);
+}
+
+static void drawSetupUpdateIntroPage(OLEDDisplay *display, int16_t width, int16_t height, uint32_t startedAtMs)
+{
+    drawSetupUpdateTransitionPage(display, width, height, startedAtMs, u8"進入更新模式", "");
 }
 
 static void drawSetupUrlUpdateFlowPage(OLEDDisplay *display,
@@ -11814,7 +12788,7 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
 
     if (hermesSetupPage == HermesFastSetupPage::PassEdit) {
         applyPaletteNoSelection();
-        const char *header = (hermesSetupEditingSlot == 0) ? u8"設定密碼A" : u8"設定密碼B";
+        const char *header = (hermesSetupEditingSlot == 0) ? "GROUP PIN A" : "GROUP PIN B";
         drawSetupKeyboardPage(display, width, height, header, hermesSetupPassDraft, kSetupKeyRows, kSetupKeyRowLengths,
                               kSetupKeyRowCount, hermesSetupKeyRow, hermesSetupKeyCol, hermesSetupToast,
                               hermesSetupToastUntilMs);
@@ -11843,23 +12817,23 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
 #else
         display->setColor(OLEDDISPLAY_COLOR::WHITE);
 #endif
-        drawSetupHeader(display, width, u8"EMAC 密碼");
+        drawSetupHeader(display, width, "GROUP PIN");
 #if defined(USE_EINK)
         display->setColor(EINK_BLACK);
 #else
         display->setColor(OLEDDISPLAY_COLOR::WHITE);
 #endif
         display->setFont(FONT_SMALL);
-        String passA = lighthouseModule ? lighthouseModule->getEmergencyPassphrase(0) : "";
-        String passB = lighthouseModule ? lighthouseModule->getEmergencyPassphrase(1) : "";
+        String passA = lighthouseModule ? lighthouseModule->getEmergencyGroupPin(0) : "";
+        String passB = lighthouseModule ? lighthouseModule->getEmergencyGroupPin(1) : "";
         if (passA.length() == 0) {
             passA = u8"未設定";
         }
         if (passB.length() == 0) {
             passB = u8"未設定";
         }
-        const String lineA = String(u8"密碼A: ") + passA;
-        const String lineB = String(u8"密碼B: ") + passB;
+        const String lineA = String("PIN A: ") + passA;
+        const String lineB = String("PIN B: ") + passB;
         graphics::HermesX_zh::drawMixedBounded(*display, 2, kSetupHeaderHeight + 2, width - 4, lineA.c_str(),
                                                graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
         graphics::HermesX_zh::drawMixedBounded(*display, 2, kSetupHeaderHeight + 2 + FONT_HEIGHT_SMALL + 2, width - 4,
@@ -11941,7 +12915,7 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
 
     if (hermesSetupPage == HermesFastSetupPage::EmacMenu) {
         applyPaletteList(kSetupEmacCount);
-        drawSetupList(display, width, height, u8"EMAC設定", kSetupEmacItems, kSetupEmacCount, hermesSetupSelected,
+        drawSetupList(display, width, height, u8"GROUP設定", kSetupEmacItems, kSetupEmacCount, hermesSetupSelected,
                       hermesSetupOffset);
         drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
         return;
@@ -12039,7 +13013,7 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
 
         applyPaletteList(kSetupUpdateMenuCount);
         String currentLine = String(u8"目前版本: ") + updateManager.getCurrentVersion();
-        const char *items[] = {u8"返回", currentLine.c_str(), u8"檢查更新", u8"手動更新"};
+        const char *items[] = {u8"退出更新模式", currentLine.c_str(), u8"檢查更新", u8"手動更新"};
         drawSetupList(display, width, height, u8"更新模式", items, kSetupUpdateMenuCount, hermesSetupSelected, hermesSetupOffset);
         drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
         return;
@@ -12048,6 +13022,13 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
     if (hermesSetupPage == HermesFastSetupPage::UpdateIntro) {
         applyPaletteNoSelection();
         drawSetupUpdateIntroPage(display, width, height, hermesUpdateIntroStartedAtMs);
+        return;
+    }
+
+    if (hermesSetupPage == HermesFastSetupPage::UpdateExitPending) {
+        applyPaletteNoSelection();
+        const char *pendingTitle = (hermesSetupToast == u8"重開中") ? u8"重開中" : u8"退出更新模式中";
+        drawSetupUpdateTransitionPage(display, width, height, hermesUpdateIntroStartedAtMs, pendingTitle, "");
         return;
     }
 
@@ -13362,6 +14343,7 @@ int32_t Screen::runOnce()
 
     if (!stealthRestoreChecked && !deferNormalFrames) {
         logStealthStateProbe("pre-check");
+        restoreTakModeAfterBoot();
         restoreStealthModeAfterBoot();
         recoverLegacyStealthCommsIfNeeded();
         gUpdateBootRequested = loadUpdateBootFlag();
@@ -13386,6 +14368,13 @@ int32_t Screen::runOnce()
             hermesSetupOffset = 0;
             hermesSetupLastNavAtMs = 0;
             hermesSetupLastNavDir = 0;
+        }
+        setFastFramerate();
+    }
+
+    if (hermesSetupPage == HermesFastSetupPage::UpdateExitPending) {
+        if (hermesUpdateIntroStartedAtMs == 0) {
+            hermesUpdateIntroStartedAtMs = millis();
         }
         setFastFramerate();
     }
@@ -13621,11 +14610,15 @@ int32_t Screen::runOnce()
         const uint32_t largest = memGet.getLargestFreeBlock();
         if (freeHeap < kLowMemoryReminderFreeThreshold || largest < kLowMemoryReminderLargestThreshold) {
             lowMemoryReminderVisible = true;
-            lowMemoryReminderSelected = 1;
+            lowMemoryReminderSelected = 0;
             lowMemoryReminderTriggerFree = freeHeap;
             lowMemoryReminderTriggerLargest = largest;
+            lowMemoryProtectionStatus[0] = '\0';
             playLowMemoryAlert();
-            LOG_WARN("[LowMemory] reminder trigger free=%u largest=%u", freeHeap, largest);
+            if (ui && framesetInfo.positions.main < framesetInfo.frameCount) {
+                ui->switchToFrame(framesetInfo.positions.main);
+            }
+            LOG_WARN("[LowMemory] protection trigger free=%u largest=%u", freeHeap, largest);
             setFastFramerate();
         }
     }
@@ -13732,7 +14725,7 @@ int32_t Screen::runOnce()
     const bool emergencyUiActive =
         HermesXInterfaceModule::instance && HermesXInterfaceModule::instance->isEmergencyUiActive();
     if (directNeonBuffersReady && onFixedMainFrame && canUseDirectHermesXHomeClock(dispdev) && !incomingTextPopupActive &&
-        !incomingNodePopupActive && !hermesEmergencyConfirmVisible && !emergencyUiActive) {
+        !incomingNodePopupActive && !hermesEmergencyConfirmVisible && !emergencyUiActive && !lowMemoryReminderVisible) {
         const bool enteringDirectHomeOverlay = !gDirectHomeClockWasVisible && !gDirectHomeDogWasVisible;
 
         char homeDateBuf[24];
@@ -14399,6 +15392,9 @@ void Screen::setFrames(FrameFocus focus)
     fsi.positions.share = 0xFF;
     fsi.positions.onlineList = 0xFF;
     fsi.positions.onlineDetail = 0xFF;
+    fsi.positions.groupList = 0xFF;
+    fsi.positions.groupDetail = 0xFF;
+    fsi.positions.takMode = 0xFF;
 
     LOG_DEBUG("Show standard frames");
     showingNormalScreen = true;
@@ -14495,6 +15491,12 @@ void Screen::setFrames(FrameFocus focus)
     normalFrames[numframes++] = &Screen::drawOnlineNodeListFrame;
     fsi.positions.onlineDetail = numframes;
     normalFrames[numframes++] = &Screen::drawOnlineNodeDetailFrame;
+    fsi.positions.groupList = numframes;
+    normalFrames[numframes++] = &Screen::drawGroupNodeListFrame;
+    fsi.positions.groupDetail = numframes;
+    normalFrames[numframes++] = &Screen::drawGroupNodeDetailFrame;
+    fsi.positions.takMode = numframes;
+    normalFrames[numframes++] = &Screen::drawTakModeFrame;
 
     fsi.positions.log = numframes;
     normalFrames[numframes++] = &Screen::drawDebugInfoTrampoline;
@@ -14584,6 +15586,12 @@ void Screen::setFrames(FrameFocus focus)
             ui->switchToFrame(fsi.positions.onlineList);
         else if (canMap(oldFsi.positions.onlineDetail, fsi.positions.onlineDetail))
             ui->switchToFrame(fsi.positions.onlineDetail);
+        else if (canMap(oldFsi.positions.groupList, fsi.positions.groupList))
+            ui->switchToFrame(fsi.positions.groupList);
+        else if (canMap(oldFsi.positions.groupDetail, fsi.positions.groupDetail))
+            ui->switchToFrame(fsi.positions.groupDetail);
+        else if (canMap(oldFsi.positions.takMode, fsi.positions.takMode))
+            ui->switchToFrame(fsi.positions.takMode);
         else if (canMap(oldFsi.positions.waypoint, fsi.positions.waypoint))
             ui->switchToFrame(fsi.positions.waypoint);
         else if (canMap(oldFsi.positions.main, fsi.positions.main))
@@ -14831,8 +15839,8 @@ void Screen::handleOnPress()
         wakeInputGuardUntilMs = 0;
     }
 
-    // FastSetup page locks frame switching unless Exit is pressed.
-    if (isHermesFastSetupActive() || isHermesXActionPageActive()) {
+    // These pages own their input; do not advance the normal frame carousel on raw press.
+    if (isHermesFastSetupActive() || isHermesXActionPageActive() || isTakModePageActive()) {
         return;
     }
     // If Canned Messages is using the "Scan and Select" input, dismiss the canned message frame when user button is pressed
@@ -14843,6 +15851,9 @@ void Screen::handleOnPress()
     // If screen was off, wake it first. This matters for Stealth, where the PowerFSM
     // state can stay ON while the screen itself has been forcibly blanked.
     if (!screenOn) {
+        if (isStealthModeActive()) {
+            armStealthWakeWindow();
+        }
         handleSetOn(true);
         enabled = true;
         setFastFramerate();
@@ -14866,6 +15877,15 @@ void Screen::handleOnPress()
 void Screen::handleShowPrevFrame()
 {
     // If screen was off, just wake it, otherwise go back to previous frame
+    if (!screenOn) {
+        if (isStealthModeActive()) {
+            armStealthWakeWindow();
+        }
+        handleSetOn(true);
+        enabled = true;
+        setFastFramerate();
+        return;
+    }
     // If we are in a transition, the press must have bounced, drop it.
     if (ui->getUiState()->frameState == FIXED) {
         ui->previousFrame();
@@ -14877,6 +15897,15 @@ void Screen::handleShowPrevFrame()
 void Screen::handleShowNextFrame()
 {
     // If screen was off, just wake it, otherwise advance to next frame
+    if (!screenOn) {
+        if (isStealthModeActive()) {
+            armStealthWakeWindow();
+        }
+        handleSetOn(true);
+        enabled = true;
+        setFastFramerate();
+        return;
+    }
     // If we are in a transition, the press must have bounced, drop it.
     if (ui->getUiState()->frameState == FIXED) {
         ui->nextFrame();
@@ -15380,6 +16409,7 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
     };
 
     auto openHermesFastSetupPage = [&](HermesFastSetupPage page) {
+        hermesSetupReturnToGroupMenu = false;
         hermesSetupPage = page;
         hermesSetupSelected = 0;
         hermesSetupOffset = 0;
@@ -15539,20 +16569,10 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
             screen->print("GPS page unavailable\n");
         }
     } else if (hermesActionSelected == 3) {
-        if (!isTakModeActive()) {
-            if (isStealthModeActive()) {
-                if (screen) {
-                    screen->print("Disable Stealth first\n");
-                }
-            } else if (enableTakMode()) {
-                if (screen) {
-                    screen->print("TAK MODE ON (role=TAK)\n");
-                }
-            }
-        } else if (disableTakMode()) {
-            if (screen) {
-                screen->print("TAK MODE OFF\n");
-            }
+        if (screen && !screen->showTakModePage()) {
+            screen->print("TAK page unavailable\n");
+        } else if (!screen && ui && framesetInfo.positions.takMode < framesetInfo.frameCount) {
+            ui->switchToFrame(framesetInfo.positions.takMode);
         }
     } else if (hermesActionSelected == 4) {
         if (screen) {
@@ -15572,6 +16592,14 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
         hermesFinderUiMode = HermesFinderUiMode::None;
         openOnlineNodeList();
     } else if (hermesActionSelected == 10) {
+        gGroupNodeState.menuCursor = 1;
+        gGroupNodeState.nodeListVisible = false;
+        gGroupNodeState.listCursor = 0;
+        gGroupNodeState.selectedIndex = 0;
+        gGroupNodeState.detailCursor = 0;
+        hermesSetupReturnToGroupMenu = false;
+        showGroupNodeListPage();
+    } else if (hermesActionSelected == 11) {
         hermesFinderUiMode = HermesFinderUiMode::Menu;
         hermesFinderMenuSelected = 1;
         openOnlineNodeList();
@@ -15619,6 +16647,7 @@ bool Screen::handleLowMemoryReminderInput(const InputEvent *event)
     if (isCancel) {
         lowMemoryReminderVisible = false;
         lowMemoryReminderSuppressUntilMs = millis() + kLowMemoryReminderSuppressMs;
+        lowMemoryProtectionStatus[0] = '\0';
         setFastFramerate();
         return true;
     }
@@ -15629,17 +16658,24 @@ bool Screen::handleLowMemoryReminderInput(const InputEvent *event)
     lowMemoryReminderVisible = false;
     if (lowMemoryReminderSelected == 0) {
         lowMemoryReminderSuppressUntilMs = millis() + kLowMemoryReminderSuppressMs;
+        lowMemoryProtectionStatus[0] = '\0';
         setFastFramerate();
         return true;
     }
 
-    hermesSetupPage = HermesFastSetupPage::NodeDatabaseMenu;
-    hermesSetupSelected = 1;
-    hermesSetupOffset = 0;
-    hermesSetupLastNavAtMs = 0;
-    hermesSetupLastNavDir = 0;
-    if (ui && framesetInfo.positions.setup < framesetInfo.frameCount) {
-        ui->switchToFrame(framesetInfo.positions.setup);
+    lowMemoryReminderVisible = true;
+    lowMemoryReminderSelected = 0;
+    if (nodeDB) {
+        const int beforeCount = static_cast<int>(nodeDB->getNumMeshNodes());
+        nodeDB->resetNodes();
+        const int removed = beforeCount > 0 ? beforeCount - 1 : 0;
+        snprintf(lowMemoryProtectionStatus, sizeof(lowMemoryProtectionStatus), u8"已清除 %d 筆節點", removed);
+        lowMemoryReminderTriggerFree = memGet.getFreeHeap();
+        lowMemoryReminderTriggerLargest = memGet.getLargestFreeBlock();
+        LOG_WARN("[LowMemory] protection cleared NodeDB removed=%d free=%u largest=%u", removed, lowMemoryReminderTriggerFree,
+                 lowMemoryReminderTriggerLargest);
+    } else {
+        snprintf(lowMemoryProtectionStatus, sizeof(lowMemoryProtectionStatus), u8"NodeDB 尚未就緒");
     }
     setFastFramerate();
     return true;
@@ -15749,6 +16785,10 @@ bool Screen::handleFinderPulseConfirmInput(const InputEvent *event)
     };
 
     if (isCancel) {
+        if (lighthouseModule) {
+            lighthouseModule->cancelPositionPulseRequest();
+            (void)lighthouseModule->consumePositionPulseUiResult();
+        }
         hermesFinderPulseConfirmVisible = false;
         hermesFinderPulseConfirmSelected = 0;
         hermesFinderPulseConfirmShownAtMs = 0;
@@ -15756,7 +16796,10 @@ bool Screen::handleFinderPulseConfirmInput(const InputEvent *event)
         hermesFinderPulseSendingVisible = false;
         hermesFinderPulseSendingShownAtMs = 0;
         hermesFinderUiMode = HermesFinderUiMode::Menu;
-        showOnlineNodeListPage();
+        hermesFinderMenuSelected = 1;
+        if (!showOnlineNodeListPage()) {
+            showHermesXActionPage();
+        }
         setFastFramerate();
         requestImmediateRedraw();
         return true;
@@ -15790,11 +16833,18 @@ bool Screen::handleFinderPulseConfirmInput(const InputEvent *event)
                 showTraceRoutePopup(u8"尋人模式", "SEND FAIL");
             }
         } else {
+            if (lighthouseModule) {
+                lighthouseModule->cancelPositionPulseRequest();
+                (void)lighthouseModule->consumePositionPulseUiResult();
+            }
             hermesFinderPulseSendingVisible = false;
             hermesFinderPulseSendingShownAtMs = 0;
             hermesFinderUiMode = HermesFinderUiMode::Menu;
+            hermesFinderMenuSelected = 1;
         }
-        showOnlineNodeListPage();
+        if (!showOnlineNodeListPage()) {
+            showHermesXActionPage();
+        }
         setFastFramerate();
         requestImmediateRedraw();
         return true;
@@ -16081,13 +17131,25 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                  ESP.getFreeHeap(), ESP.getMaxAllocHeap());
         setFastFramerate();
     };
-    auto enterUpdateMode = [&]() {
-        enterUpdateModeModal();
-        stopMiniUpdateUploadServer();
-        HermesXUpdateManager::instance().resetUiSession(true);
-        resetMenu(HermesFastSetupPage::UpdateMenu);
+    auto scheduleEnterUpdateModeReboot = [&]() {
+        if (saveUpdateBootFlag()) {
+            enterUpdateModeModal();
+            stopMiniUpdateUploadServer();
+            HermesXUpdateManager::instance().resetUiSession(true);
+            hermesSetupToast = u8"重開中";
+            hermesSetupToastUntilMs = millis() + kSetupUpdateExitRebootMs;
+            rebootAtMsec = millis() + kSetupUpdateExitRebootMs;
+            resetMenu(HermesFastSetupPage::UpdateExitPending);
+            hermesUpdateIntroStartedAtMs = millis();
+            setFastFramerate();
+            requestImmediateRedraw();
+        } else {
+            hermesSetupToast = u8"無法進入更新環境";
+            hermesSetupToastUntilMs = millis() + 1500;
+            setFastFramerate();
+        }
     };
-    auto leaveUpdateMode = [&]() {
+    auto leaveUpdateMode = [&]() -> bool {
         const bool dedicatedUpdateBoot = gUpdateBootRequested;
         stopMiniUpdateUploadServer();
         if (!HermesXUpdateManager::instance().isBusy()) {
@@ -16098,11 +17160,17 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
             clearUpdateBootFlag();
             gUpdateBootRequested = false;
             gUpdateBootHandled = false;
-            hermesSetupToast = u8"離開更新模式，重開中";
-            hermesSetupToastUntilMs = millis() + 1200;
-            rebootAtMsec = millis() + 1200;
+            hermesSetupToast = u8"退出更新模式，重開中";
+            hermesSetupToastUntilMs = millis() + kSetupUpdateExitRebootMs;
+            rebootAtMsec = millis() + kSetupUpdateExitRebootMs;
+            resetMenu(HermesFastSetupPage::UpdateExitPending);
+            hermesUpdateIntroStartedAtMs = millis();
+            setFastFramerate();
+            requestImmediateRedraw();
+            return true;
         }
         exitUpdateModeModal();
+        return false;
     };
 
     if (hermesSetupPage == HermesFastSetupPage::Entry) {
@@ -16157,11 +17225,11 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                 if (strcmp(label, "OK") == 0) {
                     bool ok = false;
                     if (lighthouseModule) {
-                        ok = lighthouseModule->setEmergencyPassphraseSlot(hermesSetupEditingSlot, hermesSetupPassDraft);
+                        ok = lighthouseModule->setEmergencyGroupPinSlot(hermesSetupEditingSlot, hermesSetupPassDraft);
                     }
                     const char slotChar = hermesSetupEditingSlot == 0 ? 'A' : 'B';
-                    String msg = ok ? String(u8"密碼") + slotChar + u8" 已設定: " + hermesSetupPassDraft
-                                    : String(u8"密碼") + slotChar + u8" 設定失敗";
+                    String msg = ok ? String("GROUP PIN ") + slotChar + u8" 已設定: " + hermesSetupPassDraft
+                                    : String("GROUP PIN ") + slotChar + u8" 設定失敗";
                     hermesSetupToast = msg;
                     hermesSetupToastUntilMs = millis() + 1500;
                     resetMenu(HermesFastSetupPage::EmacMenu);
@@ -16457,7 +17525,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
             } else if (hermesSetupSelected == 7) {
                 resetMenu(HermesFastSetupPage::NodeDatabaseMenu);
             } else if (hermesSetupSelected == 8) {
-                enterUpdateMode();
+                scheduleEnterUpdateModeReboot();
             }
             setFastFramerate();
             return true;
@@ -16482,21 +17550,15 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
             if (!dedicatedUpdateBoot) {
                 if (hermesSetupSelected == 0) {
                     if (!updateManager.isBusy()) {
-                        leaveUpdateMode();
-                        resetMenu(HermesFastSetupPage::NodeMenu);
+                        if (!leaveUpdateMode()) {
+                            resetMenu(HermesFastSetupPage::NodeMenu);
+                        }
                     } else {
                         hermesSetupToast = u8"更新寫入中，請先取消";
                         hermesSetupToastUntilMs = millis() + 1500;
                     }
                 } else {
-                    if (saveUpdateBootFlag()) {
-                        hermesSetupToast = u8"進入更新環境，重開中";
-                        hermesSetupToastUntilMs = millis() + 1200;
-                        rebootAtMsec = millis() + 1200;
-                    } else {
-                        hermesSetupToast = u8"無法進入更新環境";
-                        hermesSetupToastUntilMs = millis() + 1500;
-                    }
+                    scheduleEnterUpdateModeReboot();
                 }
                 setFastFramerate();
                 return true;
@@ -16504,8 +17566,9 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
 
             if (hermesSetupSelected == 0) {
                 if (!updateManager.isBusy()) {
-                    leaveUpdateMode();
-                    resetMenu(HermesFastSetupPage::NodeMenu);
+                    if (!leaveUpdateMode()) {
+                        resetMenu(HermesFastSetupPage::NodeMenu);
+                    }
                 } else {
                     hermesSetupToast = u8"更新寫入中，請先取消";
                     hermesSetupToastUntilMs = millis() + 1500;
@@ -16525,8 +17588,9 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         }
         if (isCancel) {
             if (!updateManager.isBusy()) {
-                leaveUpdateMode();
-                resetMenu(HermesFastSetupPage::NodeMenu);
+                if (!leaveUpdateMode()) {
+                    resetMenu(HermesFastSetupPage::NodeMenu);
+                }
             } else {
                 hermesSetupToast = u8"更新寫入中，請先取消";
                 hermesSetupToastUntilMs = millis() + 1500;
@@ -16540,6 +17604,15 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
     if (hermesSetupPage == HermesFastSetupPage::UpdateIntro) {
         hermesUpdateIntroStartedAtMs = 0;
         resetMenu(HermesFastSetupPage::UpdateMenu);
+        setFastFramerate();
+        return true;
+    }
+
+    if (hermesSetupPage == HermesFastSetupPage::UpdateExitPending) {
+        if (hermesSetupToast != u8"重開中") {
+            hermesSetupToast = u8"退出更新模式，重開中";
+        }
+        hermesSetupToastUntilMs = std::max<uint32_t>(hermesSetupToastUntilMs, millis() + 250);
         setFastFramerate();
         return true;
     }
@@ -17282,12 +18355,23 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
             setFastFramerate();
             return true;
         }
+        auto returnFromGroupSettings = [&]() {
+            if (hermesSetupReturnToGroupMenu) {
+                gGroupNodeState.menuCursor = 1;
+                gGroupNodeState.nodeListVisible = false;
+                showGroupNodeListPage();
+            } else {
+                resetMenu(HermesFastSetupPage::Root);
+            }
+        };
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 1) {
+            if (hermesSetupSelected == 0) {
+                returnFromGroupSettings();
+            } else if (hermesSetupSelected == 1) {
                 enterMenu(HermesFastSetupPage::EmacEmInfoMenu, kSetupEmInfoCount, 1);
             } else if (hermesSetupSelected == 2 || hermesSetupSelected == 3) {
                 hermesSetupEditingSlot = (hermesSetupSelected == 2) ? 0 : 1;
-                hermesSetupPassDraft = lighthouseModule ? lighthouseModule->getEmergencyPassphrase(hermesSetupEditingSlot) : "";
+                hermesSetupPassDraft = lighthouseModule ? lighthouseModule->getEmergencyGroupPin(hermesSetupEditingSlot) : "";
                 if (hermesSetupPassDraft.length() > kSetupPassMaxLen) {
                     hermesSetupPassDraft = hermesSetupPassDraft.substring(0, kSetupPassMaxLen);
                 }
@@ -17299,21 +18383,21 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
             } else if (hermesSetupSelected == 5) {
                 if (hermesXEmUiModule) {
                     hermesXEmUiModule->sendResetLighthouseNow();
-                    hermesSetupToast = u8"EMAC解除已送出";
+                    hermesSetupToast = u8"解除EMAC已送出";
                 } else {
-                    hermesSetupToast = u8"EMAC解除失敗";
+                    hermesSetupToast = u8"解除EMAC失敗";
                 }
                 hermesSetupToastUntilMs = millis() + 1500;
                 setFastFramerate();
                 return true;
             } else {
-                resetMenu(HermesFastSetupPage::Root);
+                returnFromGroupSettings();
             }
             setFastFramerate();
             return true;
         }
         if (isCancel) {
-            resetMenu(HermesFastSetupPage::Root);
+            returnFromGroupSettings();
             setFastFramerate();
             return true;
         }
@@ -18831,6 +19915,408 @@ bool Screen::handleOnlineNodeDetailInput(const InputEvent *event)
     return false;
 }
 
+bool Screen::handleGroupNodeListInput(const InputEvent *event)
+{
+    if (!event || !showingNormalScreen || !ui || framesetInfo.positions.groupList >= framesetInfo.frameCount) {
+        return false;
+    }
+
+    clampGroupNodeState();
+    const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
+    const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
+    const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
+    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
+    const bool isDown = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
+    const bool isLeft = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
+    const bool isRight = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
+    const bool isSelect = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
+    const bool isCancel =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
+    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
+    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
+    const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
+
+    int8_t navDir = 0;
+    const bool isRotary = (event->source && strncmp(event->source, "rotEnc", 6) == 0);
+    if (isRotary) {
+        if (isCcw) navDir = -1;
+        else if (isCw) navDir = 1;
+        else if (eventCw == 0 && eventCcw == 0) {
+            if (isUp || isLeft) navDir = -1;
+            else if (isDown || isRight) navDir = 1;
+        }
+    } else {
+        if (isCcw || isUp || isLeft) navDir = -1;
+        else if (isCw || isDown || isRight) navDir = 1;
+    }
+
+    if (!gGroupNodeState.nodeListVisible) {
+        constexpr int kGroupMenuCount = 3;
+        if (navDir != 0) {
+            int nextCursor = static_cast<int>(gGroupNodeState.menuCursor) + navDir;
+            if (nextCursor < 0) {
+                nextCursor = 0;
+            } else if (nextCursor >= kGroupMenuCount) {
+                nextCursor = kGroupMenuCount - 1;
+            }
+            if (nextCursor != gGroupNodeState.menuCursor) {
+                gGroupNodeState.menuCursor = static_cast<uint8_t>(nextCursor);
+                setFastFramerate();
+            }
+            return true;
+        }
+
+        if (isSelect || isPress) {
+            if (gGroupNodeState.menuCursor == 0) {
+                showHermesXActionPage();
+            } else if (gGroupNodeState.menuCursor == 1) {
+                hermesSetupReturnToGroupMenu = true;
+                hermesSetupPage = HermesFastSetupPage::EmacMenu;
+                hermesSetupSelected = 0;
+                hermesSetupOffset = 0;
+                hermesSetupLastNavAtMs = 0;
+                hermesSetupLastNavDir = 0;
+                ui->switchToFrame(framesetInfo.positions.setup);
+            } else {
+                gGroupNodeState.nodeListVisible = true;
+                gGroupNodeState.listCursor = 0;
+                gGroupNodeState.selectedIndex = 0;
+                gGroupNodeState.detailCursor = 0;
+            }
+            setFastFramerate();
+            return true;
+        }
+
+        if (isCancel) {
+            showHermesXActionPage();
+            setFastFramerate();
+            return true;
+        }
+
+        return false;
+    }
+
+    const int totalEntries = getGroupNodeCount() + 1;
+    if (navDir != 0) {
+        int nextCursor = static_cast<int>(gGroupNodeState.listCursor) + navDir;
+        if (nextCursor < 0) {
+            nextCursor = 0;
+        } else if (nextCursor >= totalEntries) {
+            nextCursor = totalEntries - 1;
+        }
+        if (nextCursor != gGroupNodeState.listCursor) {
+            gGroupNodeState.listCursor = static_cast<uint8_t>(nextCursor);
+            if (nextCursor > 0) {
+                gGroupNodeState.selectedIndex = static_cast<uint8_t>(nextCursor - 1);
+            }
+            setFastFramerate();
+        }
+        return true;
+    }
+
+    if (isSelect || isPress) {
+        if (gGroupNodeState.listCursor == 0) {
+            gGroupNodeState.nodeListVisible = false;
+        } else {
+            gGroupNodeState.selectedIndex = gGroupNodeState.listCursor - 1;
+            gGroupNodeState.detailCursor = 0;
+            showGroupNodeDetailPage();
+        }
+        setFastFramerate();
+        return true;
+    }
+
+    if (isCancel) {
+        gGroupNodeState.nodeListVisible = false;
+        setFastFramerate();
+        return true;
+    }
+
+    return false;
+}
+
+bool Screen::handleGroupNodeDetailInput(const InputEvent *event)
+{
+    if (!event || !showingNormalScreen || !ui || framesetInfo.positions.groupDetail >= framesetInfo.frameCount) {
+        return false;
+    }
+
+    const auto *entry = getSelectedGroupNode();
+    if (!entry) {
+        showGroupNodeListPage();
+        setFastFramerate();
+        return true;
+    }
+
+    const uint8_t rowCount = buildGroupNodeDetailRows(*entry, nullptr, 0);
+    if (gGroupNodeState.detailCursor >= rowCount) {
+        gGroupNodeState.detailCursor = rowCount > 0 ? rowCount - 1 : 0;
+    }
+
+    const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
+    const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
+    const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
+    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
+    const bool isDown = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
+    const bool isLeft = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
+    const bool isRight = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
+    const bool isSelect = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
+    const bool isCancel =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
+    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
+    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
+    const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
+
+    int8_t navDir = 0;
+    const bool isRotary = (event->source && strncmp(event->source, "rotEnc", 6) == 0);
+    if (isRotary) {
+        if (isCcw) navDir = -1;
+        else if (isCw) navDir = 1;
+        else if (eventCw == 0 && eventCcw == 0) {
+            if (isUp) navDir = -1;
+            else if (isDown) navDir = 1;
+        }
+    } else {
+        if (isUp || isCcw) navDir = -1;
+        else if (isDown || isCw) navDir = 1;
+    }
+
+    if (navDir != 0) {
+        int nextCursor = static_cast<int>(gGroupNodeState.detailCursor) + navDir;
+        if (nextCursor < 0) {
+            nextCursor = 0;
+        } else if (nextCursor >= rowCount) {
+            nextCursor = rowCount - 1;
+        }
+        if (nextCursor != gGroupNodeState.detailCursor) {
+            gGroupNodeState.detailCursor = static_cast<uint8_t>(nextCursor);
+            setFastFramerate();
+        }
+        return true;
+    }
+
+    if (isSelect || isPress) {
+        if (gGroupNodeState.detailCursor == kGroupDetailBackRow) {
+            showGroupNodeListPage();
+        } else if (gGroupNodeState.detailCursor == kGroupDetailMessageRow) {
+            if (cannedMessageModule) {
+                cannedMessageModule->openDirectMessageComposer(entry->nodeNum);
+            }
+        } else if (gGroupNodeState.detailCursor == kGroupDetailTraceRouteRow) {
+            const meshtastic_NodeInfoLite *node = getGroupMeshNode(*entry);
+            if (node && node->via_mqtt) {
+                if (HermesXInterfaceModule::instance) {
+                    HermesXInterfaceModule::instance->playNackFail();
+                }
+                showTraceRoutePopup("TraceRoute", "LORA ONLY");
+            } else {
+                sendOnlineNodeTraceRoute(entry->nodeNum);
+            }
+        }
+        setFastFramerate();
+        return true;
+    }
+
+    if (isCancel || isLeft || isRight) {
+        showGroupNodeListPage();
+        setFastFramerate();
+        return true;
+    }
+
+    return false;
+}
+
+bool Screen::handleTakModeInput(const InputEvent *event)
+{
+    if (!event || !showingNormalScreen || !ui || framesetInfo.positions.takMode >= framesetInfo.frameCount) {
+        return false;
+    }
+
+    const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
+    const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
+    const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
+
+    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
+    const bool isDown =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
+    const bool isLeft =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
+    const bool isRight =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
+    const bool isSelect =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
+    const bool isCancel =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
+    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
+    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
+    const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
+    const bool isRotary = (event->source && strncmp(event->source, "rotEnc", 6) == 0);
+
+    int8_t navDir = 0;
+    if (isRotary) {
+        if (isCcw) {
+            navDir = -1;
+        } else if (isCw) {
+            navDir = 1;
+        } else if (eventCw == 0 && eventCcw == 0) {
+            if (isUp || isLeft) {
+                navDir = -1;
+            } else if (isDown || isRight) {
+                navDir = 1;
+            }
+        }
+    } else if (isUp || isLeft || isCcw) {
+        navDir = -1;
+    } else if (isDown || isRight || isCw) {
+        navDir = 1;
+    }
+
+    if (isCancel) {
+        if (gTakModePageView == TakModePageView::Settings) {
+            gTakModePageView = TakModePageView::Popup;
+            gTakModePopupSelected = 1;
+            gTakModePopupOffset = 0;
+            setFastFramerate();
+        } else if (gTakModePageView == TakModePageView::Popup) {
+            gTakModePageView = TakModePageView::Main;
+            setFastFramerate();
+        } else {
+            gTakModePageView = TakModePageView::Popup;
+            gTakModePopupSelected = 0;
+            gTakModePopupOffset = 0;
+            setFastFramerate();
+        }
+        return true;
+    }
+
+    if (gTakModePageView == TakModePageView::Main) {
+        if (isSelect || isPress || navDir != 0) {
+            gTakModePageView = TakModePageView::Popup;
+            gTakModePopupSelected = 0;
+            gTakModePopupOffset = 0;
+            setFastFramerate();
+            return true;
+        }
+        return false;
+    }
+
+    if (navDir != 0) {
+        uint8_t &selected =
+            (gTakModePageView == TakModePageView::Settings) ? gTakModeSettingsSelected : gTakModePopupSelected;
+        const uint8_t rowCount =
+            (gTakModePageView == TakModePageView::Settings) ? kTakSettingsRowCount : kTakPopupRowCount;
+        int next = static_cast<int>(selected) + navDir;
+        if (next < 0) {
+            next = rowCount - 1;
+        } else if (next >= rowCount) {
+            next = 0;
+        }
+        selected = static_cast<uint8_t>(next);
+        setFastFramerate();
+        return true;
+    }
+
+    if (!isSelect && !isPress) {
+        return false;
+    }
+
+    if (gTakModePageView == TakModePageView::Settings) {
+        switch (gTakModeSettingsSelected) {
+        case 0:
+            gTakModePageView = TakModePageView::Popup;
+            gTakModePopupSelected = 1;
+            gTakModePopupOffset = 0;
+            break;
+        case 1:
+            cycleTakOption(gTakModeProfile.nodeInfoBroadcastSecs, kTakNodeInfoOptions, kTakNodeInfoCount);
+            break;
+        case 2:
+            cycleTakOption(gTakModeProfile.gpsUpdateIntervalSecs, kTakGpsUpdateOptions, kTakGpsUpdateCount);
+            break;
+        case 3:
+            cycleTakOption(gTakModeProfile.positionBroadcastSecs, kTakPositionBroadcastOptions, kTakPositionBroadcastCount);
+            break;
+        case 4:
+            cycleTakOption(gTakModeProfile.smartMinimumDistanceMeters, kTakSmartDistanceOptions, kTakSmartDistanceCount);
+            break;
+        case 5:
+            cycleTakOption(gTakModeProfile.smartMinimumIntervalSecs, kTakSmartIntervalOptions, kTakSmartIntervalCount);
+            break;
+        case 6:
+            gTakModeProfile.quietOutputs = !gTakModeProfile.quietOutputs;
+            break;
+        case 7:
+            gTakModeProfile.allowEmUi = !gTakModeProfile.allowEmUi;
+            break;
+        case 8:
+            gTakModeProfile.allowFinder = !gTakModeProfile.allowFinder;
+            break;
+        default:
+            break;
+        }
+        persistTakModeProfileToFile();
+        if (isTakModeActive()) {
+            applyTakModeSettings();
+            syncRetainedTakState();
+            persistTakStateToFile();
+        }
+        setFastFramerate();
+        return true;
+    }
+
+    if (gTakModePopupSelected == 0) {
+        if (!isTakModeActive()) {
+            if (isStealthModeActive()) {
+                if (screen) {
+                    screen->print("Disable Stealth first\n");
+                }
+            } else if (enableTakMode() && screen) {
+                screen->print("TAK MODE ON (role=TAK)\n");
+            }
+        } else if (disableTakMode() && screen) {
+            screen->print("TAK MODE OFF\n");
+        }
+        setFastFramerate();
+        return true;
+    }
+
+    if (gTakModePopupSelected == 1) {
+        gTakModePageView = TakModePageView::Settings;
+        gTakModeSettingsSelected = 0;
+        gTakModeSettingsOffset = 0;
+        setFastFramerate();
+        return true;
+    }
+
+    if (gTakModePopupSelected == 2) {
+        if (gTakModeProfile.allowEmUi && hermesXEmUiModule) {
+            hermesXEmUiModule->enterEmergencyMode(u8"TAK MODE");
+        } else if (screen) {
+            screen->print("EMUI disabled in TAK profile\n");
+        }
+        setFastFramerate();
+        return true;
+    }
+
+    if (gTakModePopupSelected == 3) {
+        if (gTakModeProfile.allowFinder) {
+            hermesFinderUiMode = HermesFinderUiMode::Menu;
+            hermesFinderMenuSelected = 0;
+            showOnlineNodeListPage();
+        } else if (screen) {
+            screen->print("Finder disabled in TAK profile\n");
+        }
+        setFastFramerate();
+        return true;
+    }
+
+    showHermesXActionPage();
+    return true;
+}
+
 int Screen::handleInputEvent(const InputEvent *event)
 {
     if (!event) {
@@ -18971,6 +20457,30 @@ int Screen::handleInputEvent(const InputEvent *event)
             }
         }
 
+        if (isGroupNodeListPageActive()) {
+            LOG_INFO("[Screen] handleInputEvent route -> GROUP list frame=%u", currentFrame);
+            if (handleGroupNodeListInput(event)) {
+                return 0;
+            }
+            return 0;
+        }
+
+        if (isGroupNodeDetailPageActive()) {
+            LOG_INFO("[Screen] handleInputEvent route -> GROUP detail frame=%u", currentFrame);
+            if (handleGroupNodeDetailInput(event)) {
+                return 0;
+            }
+            return 0;
+        }
+
+        if (isTakModePageActive()) {
+            LOG_INFO("[Screen] handleInputEvent route -> TAK mode frame=%u", currentFrame);
+            if (handleTakModeInput(event)) {
+                return 0;
+            }
+            return 0;
+        }
+
         const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
         const bool isSelect = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
         const bool isConfiguredPress = (eventPress != 0) && (event->inputEvent == eventPress);
@@ -19093,6 +20603,39 @@ bool Screen::isOnlineNodeDetailPageActive() const
     return ui->getUiState()->currentFrame == framesetInfo.positions.onlineDetail;
 }
 
+bool Screen::isGroupNodeListPageActive() const
+{
+    if (!showingNormalScreen || !ui) {
+        return false;
+    }
+    if (framesetInfo.positions.groupList >= framesetInfo.frameCount) {
+        return false;
+    }
+    return ui->getUiState()->currentFrame == framesetInfo.positions.groupList;
+}
+
+bool Screen::isGroupNodeDetailPageActive() const
+{
+    if (!showingNormalScreen || !ui) {
+        return false;
+    }
+    if (framesetInfo.positions.groupDetail >= framesetInfo.frameCount) {
+        return false;
+    }
+    return ui->getUiState()->currentFrame == framesetInfo.positions.groupDetail;
+}
+
+bool Screen::isTakModePageActive() const
+{
+    if (!showingNormalScreen || !ui) {
+        return false;
+    }
+    if (framesetInfo.positions.takMode >= framesetInfo.frameCount) {
+        return false;
+    }
+    return ui->getUiState()->currentFrame == framesetInfo.positions.takMode;
+}
+
 uint8_t Screen::getCurrentFrameIndexForDebug() const
 {
     if (!ui || !ui->getUiState()) {
@@ -19144,6 +20687,9 @@ bool Screen::shouldShowHermesXMenuFooter(uint8_t frameIndex) const
     if (frameIndex == framesetInfo.positions.setup) { // FastSetup already has its own navigation model.
         return false;
     }
+    if (frameIndex == framesetInfo.positions.takMode) { // TAK page owns its toggle controls.
+        return false;
+    }
     if (frameIndex == framesetInfo.positions.settings) { // GPS hero poster reserves top-right corner visuals.
         return false;
     }
@@ -19162,7 +20708,11 @@ bool Screen::showHermesXActionPage()
     if (framesetInfo.positions.mainAction >= framesetInfo.frameCount) {
         return false;
     }
+    hermesActionSelected = kMainActionHomeIndex;
+    hermesActionLastNavAtMs = 0;
+    hermesActionLastNavDir = 0;
     ui->switchToFrame(framesetInfo.positions.mainAction);
+    setFastFramerate();
     return true;
 #endif
 }
@@ -19237,6 +20787,55 @@ bool Screen::showOnlineNodeDetailPage()
     }
 
     ui->switchToFrame(framesetInfo.positions.onlineDetail);
+    setFastFramerate();
+    return true;
+}
+
+bool Screen::showGroupNodeListPage()
+{
+    if (!showingNormalScreen || !ui) {
+        return false;
+    }
+    if (framesetInfo.positions.groupList >= framesetInfo.frameCount) {
+        return false;
+    }
+
+    if (hermesSetupReturnToGroupMenu) {
+        hermesSetupReturnToGroupMenu = false;
+        gGroupNodeState.nodeListVisible = false;
+    }
+    ui->switchToFrame(framesetInfo.positions.groupList);
+    setFastFramerate();
+    return true;
+}
+
+bool Screen::showGroupNodeDetailPage()
+{
+    if (!showingNormalScreen || !ui) {
+        return false;
+    }
+    if (framesetInfo.positions.groupDetail >= framesetInfo.frameCount) {
+        return false;
+    }
+
+    ui->switchToFrame(framesetInfo.positions.groupDetail);
+    setFastFramerate();
+    return true;
+}
+
+bool Screen::showTakModePage()
+{
+    if (!showingNormalScreen || !ui) {
+        return false;
+    }
+    if (framesetInfo.positions.takMode >= framesetInfo.frameCount) {
+        return false;
+    }
+
+    gTakModePageView = TakModePageView::Main;
+    gTakModePopupSelected = 0;
+    gTakModePopupOffset = 0;
+    ui->switchToFrame(framesetInfo.positions.takMode);
     setFastFramerate();
     return true;
 }

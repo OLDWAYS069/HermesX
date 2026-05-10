@@ -1,8 +1,9 @@
 # HermesX Emergency Mode Reference（現行實作）
 
 ## 入口 / 觸發
-- 收到 `@EmergencyActive`（TEXT_MESSAGE_APP）且通過白名單或 passphrase。
-- Rotary 三擊（本地觸發）：直接進入 EM UI，並對外廣播 `@EmergencyActive`。
+- 收到 `@EmergencyActive`（TEXT_MESSAGE_APP）且通過白名單或 `GROUP PIN`。
+- 旋鈕長按（本地觸發）：顯示 3 秒倒數確認；倒數未取消後進入 EM UI，並對外廣播 `@EmergencyActive`。
+- Rotary 三擊本地 EM 入口已停用，避免一般快速連按誤觸 EMAC。
 - Lighthouse 設 `emergencyModeActive=true`、關閉省電、角色改為 `ROUTER`，並彈出 EM UI（banner 預設「請在60秒內回復」）。
 - 若來源為手機（`from==0`）立即啟用 EM Tx lock；否則回送 Emergency OK（port 300，want_ack=true），ACK 後啟用 EM Tx lock。
 
@@ -36,8 +37,15 @@
 - 啟用時只允許 port 300 的 Emergency 封包。
 - 允許手機文字指令：`@EmergencyActive`, `@ResetLighthouse`, `@GoToSleep`, `@HiHermes`, `@Status`。
 
-## EMINFO / 各裝置狀態
+## GROUP / EMINFO / 各裝置狀態
+- `GROUP` 是尋人模式、EMAC 與 EMINFO/Heartbeat 共用的配對機制。
+- 同一組 `GROUP PIN` 的裝置才會接受 `ACTIVATE: EMAC GROUP <pin>`、`RESET: EMAC GROUP <pin>`、`REQUEST: POS GROUP <pin>`。
+- `EMINFO` 與 `EM Heartbeat` 會攜帶 GROUP fingerprint；本機已設定 GROUP PIN 時，只接納同 PIN 群組的狀態同步。
 - `EMINFO` 為 HermesX 擴充機制，用於同步各節點目前的 EM 狀態。
+- 主選單 `GROUP` 頁面先顯示 `GROUP設定 / 節點列表`。
+- `GROUP設定` 進入既有 GROUP 設定流程，包含 `GROUP PIN A/B`、`EMINFO設定`、`查看GROUP PIN` 與 `解除EMAC`。
+- `節點列表` 列出有送出 `EMINFO/Heartbeat` 且通過 GROUP fingerprint 的已配對節點，顯示節點名稱、EM 狀態與 `在線 / 延遲 / 離線`；判斷來源為 EM Heartbeat 的最近收到時間。
+- `GROUP DETAIL` 可查看單一節點 EM 狀態、LastHB、電量、地/物、座標、高度與 Node ID，並可像 `ONLINE DETAIL` 一樣對該節點執行 `MSG` 與 `TraceRoute`。
 - `各裝置狀態` 頁面只列出有送出 `EMINFO` 的裝置。
 - `EMINFO` 不等於主回報封包：
   - 主回報封包用於 `受困 / 醫療 / 物資 / 安全`
@@ -55,8 +63,9 @@
 - 建議預設週期為 `5 秒`
 - 建議超過 `15 秒` 未收到則視為離線或失聯
 
-## EMAC 設定中的相關參數
-- `EMAC設定` 應可調整以下參數：
+## GROUP 設定中的相關參數
+- `GROUP設定` 應可調整以下參數：
+  - `GROUP PIN A/B`
   - `EMINFO廣播`
   - `EMINFO週期`
   - `Heartbeat週期`
