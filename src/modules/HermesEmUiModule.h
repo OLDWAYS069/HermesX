@@ -190,6 +190,7 @@ class HermesXEmUiModule : public SinglePortModule, public Observable<const UIFra
     void sendEmHeartbeatNow();
     uint32_t getEmInfoIntervalMs() const;
     uint32_t getEmHeartbeatIntervalMs() const;
+    void keepEmergencyUiAwake();
     const EmInfoNodeStatus *getSelectedEmInfoNode() const;
     void updateListOffset();
     void updateReportListOffset();

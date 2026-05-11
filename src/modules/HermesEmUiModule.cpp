@@ -16,6 +16,7 @@
 #include "Default.h"
 #include "NodeDB.h"
 #include "PowerStatus.h"
+#include "PowerFSM.h"
 #include "RTC.h"
 #include "gps/GeoCoord.h"
 #include "main.h"
@@ -417,6 +418,7 @@ void HermesXEmUiModule::setThemeActive(bool enabled)
 void HermesXEmUiModule::enterEmergencyMode(const char *reason)
 {
     active = true;
+    keepEmergencyUiAwake();
     uiMode = UiMode::Menu;
     selectedIndex = 0;
     listOffset = 0;
@@ -607,6 +609,7 @@ void HermesXEmUiModule::setEmBatteryIncluded(bool enabled)
 
 void HermesXEmUiModule::sendEmergencyAction(EmAction action)
 {
+    keepEmergencyUiAwake();
     meshtastic_MeshPacket *p = allocDataPacket();
     if (!p) {
         HERMESX_LOG_WARN("EM UI allocDataPacket failed");
@@ -672,6 +675,7 @@ void HermesXEmUiModule::sendEmergencyAction(EmAction action)
 
 void HermesXEmUiModule::sendFiveLineReport()
 {
+    keepEmergencyUiAwake();
     meshtastic_MeshPacket *p = allocDataPacket();
     if (!p) {
         HERMESX_LOG_WARN("EM UI allocDataPacket failed (5-line)");
@@ -735,6 +739,7 @@ void HermesXEmUiModule::sendFiveLineReport()
 
 void HermesXEmUiModule::sendResetLighthouse()
 {
+    keepEmergencyUiAwake();
     meshtastic_MeshPacket *p = allocDataPacket();
     if (!p) {
         HERMESX_LOG_WARN("EM UI allocDataPacket failed (reset)");
@@ -1306,6 +1311,18 @@ void HermesXEmUiModule::sendEmHeartbeatNow()
 uint32_t HermesXEmUiModule::getEmHeartbeatIntervalMs() const
 {
     return emHeartbeatIntervalSec * 1000UL;
+}
+
+void HermesXEmUiModule::keepEmergencyUiAwake()
+{
+    if (!active) {
+        return;
+    }
+    powerFSM.trigger(EVENT_INPUT);
+    if (screen) {
+        screen->setOn(true);
+        screen->requestImmediateRedraw();
+    }
 }
 
 int HermesXEmUiModule::getVisibleEmInfoNodeCount() const
@@ -2282,6 +2299,7 @@ ProcessMessage HermesXEmUiModule::handleReceived(const meshtastic_MeshPacket &mp
     lastAckAtMs = millis();
     awaitingAck = false;
     lastRequestId = 0;
+    keepEmergencyUiAwake();
     HERMESX_LOG_INFO("EM UI ACK result=%s", lastAckSuccess ? "ACK" : "NACK");
 
     if (HermesXInterfaceModule::instance) {
@@ -2304,6 +2322,7 @@ int32_t HermesXEmUiModule::runOnce()
         const uint32_t now = millis();
         const uint32_t emInfoIntervalMs = getEmInfoIntervalMs();
         const uint32_t emHeartbeatIntervalMs = getEmHeartbeatIntervalMs();
+        keepEmergencyUiAwake();
         if (emInfoBroadcastEnabled && (lastEmInfoSentMs == 0 || static_cast<uint32_t>(now - lastEmInfoSentMs) >= emInfoIntervalMs)) {
             sendEmInfoNow();
         }

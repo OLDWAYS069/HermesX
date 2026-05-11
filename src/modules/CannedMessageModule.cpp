@@ -372,6 +372,11 @@ int CannedMessageModule::handleInputEvent(const InputEvent *event)
             return 0;
         }
     }
+    if (screen && (screen->isGroupNodeListPageActive() || screen->isGroupNodeDetailPageActive())) {
+        if (this->runState == CANNED_MESSAGE_RUN_STATE_DISABLED || this->runState == CANNED_MESSAGE_RUN_STATE_INACTIVE) {
+            return 0;
+        }
+    }
     if (screen && (screen->isRecentTextMessagesPageActive() || screen->isRecentTextMessageDetailPageActive())) {
         // Guard only blocks opening canned input while user is actively browsing Recent pages.
         // If canned is already active, do NOT force-exit here; that caused unexpected home jumps
