@@ -9,7 +9,7 @@
 從編譯輸出找到：
 
 ```text
--DAPP_HERMES_VERSION=HXB0.2.9_YYYYMMDD_HHMM
+-DAPP_HERMES_VERSION=HXB_G0.3.2_YYYYMMDD_HHMM
 ```
 
 後續檔名必須使用這個版本碼。
@@ -29,7 +29,7 @@ cp '/Users/oldways/HermesX/.pio/build/heltec-wireless-tracker/firmware.factory.b
 範例：
 
 ```bash
-cp '/Users/oldways/HermesX/.pio/build/heltec-wireless-tracker/firmware.bin' '/Users/oldways/Desktop/HermesX韌體/HXB0.2.9_20260430_0428.bin'
+cp '/Users/oldways/HermesX/.pio/build/heltec-wireless-tracker/firmware.bin' '/Users/oldways/Desktop/HermesX韌體/HXB_G0.3.2_20260430_0428.bin'
 ```
 
 ## 3. 回覆 WiFi 更新指令
@@ -49,7 +49,7 @@ curl -# -H 'Expect:' -H 'X-Hermes-Filename: <APP_HERMES_VERSION>.bin' -T /Users/
 範例：
 
 ```bash
-curl -# -H 'Expect:' -H 'X-Hermes-Filename: HXB0.2.9_20260430_0428.bin' -T /Users/oldways/Desktop/HermesX韌體/HXB0.2.9_20260430_0428.bin http://192.168.43.21/upload-update-bin
+curl -# -H 'Expect:' -H 'X-Hermes-Filename: HXB_G0.3.2_20260430_0428.bin' -T /Users/oldways/Desktop/HermesX韌體/HXB_G0.3.2_20260430_0428.bin http://192.168.43.21/upload-update-bin
 ```
 
 ## 4. 回覆格式
