@@ -20,7 +20,7 @@
   <a href="docs/CHANGELOG_MINI.md">Changelog</a>
 </div>
 
-> 目前此分支為 `HermesX_0.2.9` 的 `GOV` 整合版：以一般版為基底，整合 `CIV` 分支的 UI/功能更新，但不等同於純 `CIV` 配置。
+> 目前此分支為 `HermesX_C0.3.2` 的 `CIV` 版：由 `HermesX_0.2.9` 原樣升版，套用 CIV 的 EMAC/Lighthouse 關閉配置。
 
 > 在沒有網路或行動訊號的時候，HermesX 讓 LoRa 裝置仍能「看得見、操得到、傳得出去」。
 
@@ -43,7 +43,7 @@ HermesX 是基於 Meshtastic 的客製化韌體，主開發目標是 `heltec-wir
 ## 專案現況
 - HermesX 的主體功能與 UI 調整，仍以 `heltec-wireless-tracker` 的操作體驗為中心。
 - repo 目前的 `platformio.ini` 預設 environment 是 `tbeam`，這是上游多 target 結構的一部分，不代表 HermesX 的主要硬體目標已改變。
-- 目前 `HermesX_0.2.9` 為 `GOV` 整合版：已吸收 `CIV` 的多項更新，但預設仍保留 `GOV` 行為，不直接套用 `CIV` 的 `EMAC/Lighthouse` 關閉配置。
+- 目前 `HermesX_C0.3.2` 為 `CIV` 版：由 `HermesX_0.2.9` 原樣升版，但預設套用 `CIV` 的 `EMAC/Lighthouse` 關閉配置。
 
 ## HermesX 特色
 HermesX 不只是把 Meshtastic 功能搬上裝置，而是把整體操作重新整理成比較像「可單手操作的隨身終端」。

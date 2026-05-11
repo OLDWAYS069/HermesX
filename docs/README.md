@@ -1,10 +1,11 @@
 ㄋ# HermesX Documentation Index
 
-> 文件目前以 `HermesX_0.2.9` 的 `GOV` 整合版為主；部分內容保留 `CIV` 開發脈絡，閱讀時請以目前分支設定為準。
+> 文件目前以 `HermesX_C0.3.2` 的 `CIV` 版為主；此分支由 `HermesX_0.2.9` 原樣升版，閱讀時請以目前分支設定為準。
 
 | 類型 | 檔名 | 說明 |
 |------|------|------|
-| 📌 分支 | HermesX_0.2.9 (`GOV`) | 一般版基底，已整合 `CIV` 更新 |
+| 📌 分支 | HermesX_C0.3.2 (`CIV`) | 由 `HermesX_0.2.9` 原樣升版，關閉 EMAC/Lighthouse |
+| 🔀 版本切換 | VERSION_BRANCHES.md | `GOV` / `CIV` 分支、版號與 build flags 對照 |
 | 📘 規格 | REF_prd.md | 需求規格與驗收條件 |
 | 📗 狀態 | REF_status.md | 開發進度與議題 |
 | 🧭 協議狀態 | REF_30211_status.md | 302.1.1 Core / Extension 實作矩陣 |
