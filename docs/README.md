@@ -4,7 +4,7 @@
 
 | 類型 | 檔名 | 說明 |
 |------|------|------|
-| 📌 分支 | HermesX_C0.3.2 (`CIV`) | 由 `HermesX_0.2.9` 原樣升版，關閉 EMAC/Lighthouse |
+| 📌 分支 | HermesX_C0.3.2 (`CIV`) | 由 `HermesX_0.2.9` 原樣升版，關閉 EMAC，保留 GROUP/尋人 |
 | 🔀 版本切換 | VERSION_BRANCHES.md | `GOV` / `CIV` 分支、版號與 build flags 對照 |
 | 📘 規格 | REF_prd.md | 需求規格與驗收條件 |
 | 📗 狀態 | REF_status.md | 開發進度與議題 |

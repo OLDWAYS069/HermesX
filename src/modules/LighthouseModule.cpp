@@ -23,6 +23,10 @@
 #include "modules/PositionModule.h"
 #endif
 
+#ifndef HERMESX_CIV_DISABLE_EMAC
+#define HERMESX_CIV_DISABLE_EMAC 0
+#endif
+
 
 static const char *bootFile = "/prefs/lighthouse_boot.bin";
 static const char *modeFile = "/prefs/lighthouse_mode.bin";
@@ -129,6 +133,10 @@ void LighthouseModule::restoreConfigSnapshot()
 
 void LighthouseModule::activateEmergencyLocal()
 {
+#if HERMESX_CIV_DISABLE_EMAC
+    HERMESX_LOG_INFO("Emergency local activation ignored (CIV build, EMAC disabled)");
+    return;
+#endif
     const uint32_t now = millis();
     const bool wasActive = emergencyModeActive;
 
@@ -607,6 +615,10 @@ void LighthouseModule::sendEmergencyOk(NodeNum dest)
 
 void LighthouseModule::broadcastEmergencyActive()
 {
+#if HERMESX_CIV_DISABLE_EMAC
+    HERMESX_LOG_INFO("EmergencyActive broadcast skipped (CIV build, EMAC disabled)");
+    return;
+#endif
     meshtastic_MeshPacket *p = allocDataPacket();
     if (!p) {
         HERMESX_LOG_WARN("EmergencyActive broadcast alloc failed");
@@ -633,6 +645,10 @@ void LighthouseModule::broadcastEmergencyActive()
 
 void LighthouseModule::sendEmergencySos()
 {
+#if HERMESX_CIV_DISABLE_EMAC
+    HERMESX_LOG_INFO("Emergency LOST skipped (CIV build, EMAC disabled)");
+    return;
+#endif
     meshtastic_MeshPacket *p = allocDataPacket();
     if (!p) {
         HERMESX_LOG_WARN("Emergency LOST alloc failed");
@@ -833,6 +849,10 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
         }
 
         if (strncmp(payload, "ACTIVATE: EMAC", 14) == 0) {
+#if HERMESX_CIV_DISABLE_EMAC
+            HERMESX_LOG_INFO("ignore ACTIVATE: EMAC from 0x%x (CIV build, EMAC disabled)", mp.from);
+            return ProcessMessage::CONTINUE;
+#endif
             HERMESX_LOG_INFO("EM activate received from=0x%x text=[%s]", mp.from, payload);
             if (!isEmergencyCommandAuthorized(payload, "ACTIVATE: EMAC", mp.from, true)) {
                 HERMESX_LOG_WARN("ignore ACTIVATE: EMAC from 0x%x (not authorized)", mp.from);
@@ -883,6 +903,10 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
         }
 
         if (strncmp(payload, "RESET: EMAC", 11) == 0) {
+#if HERMESX_CIV_DISABLE_EMAC
+            HERMESX_LOG_INFO("ignore RESET: EMAC from 0x%x (CIV build, EMAC disabled)", mp.from);
+            return ProcessMessage::CONTINUE;
+#endif
             HERMESX_LOG_INFO("EM reset received from=0x%x text=[%s]", mp.from, payload);
             if (!isEmergencyCommandAuthorized(payload, "RESET: EMAC", mp.from, false)) {
                 HERMESX_LOG_WARN("ignore RESET: EMAC from 0x%x (bad pass)", mp.from);
@@ -893,6 +917,10 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
         }
 
         if (strcmp(payload, "STATUS: LOST") == 0) {
+#if HERMESX_CIV_DISABLE_EMAC
+            HERMESX_LOG_INFO("ignore STATUS: LOST from 0x%x (CIV build, EMAC disabled)", mp.from);
+            return ProcessMessage::CONTINUE;
+#endif
             const bool wasActive = emergencyModeActive;
             const uint32_t now = millis();
             emergencyModeActive = true;
@@ -952,11 +980,19 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
 
 
     if (strcmp(txt, "@ResetLighthouse") == 0) {
+#if HERMESX_CIV_DISABLE_EMAC
+        HERMESX_LOG_INFO("ignore @ResetLighthouse (CIV build, EMAC disabled)");
+        return ProcessMessage::CONTINUE;
+#endif
         resetEmergencyState(true);
         return ProcessMessage::CONTINUE;
     }
 
     if (strncmp(txt, "@EmergencyActive", 16) == 0) {
+#if HERMESX_CIV_DISABLE_EMAC
+        HERMESX_LOG_INFO("ignore @EmergencyActive from=0x%x (CIV build, EMAC disabled)", mp.from);
+        return ProcessMessage::CONTINUE;
+#endif
         HERMESX_LOG_INFO("EmergencyActive received from=0x%x text=[%s]", mp.from, txt);
         if (!isEmergencyActiveAuthorized(txt, mp.from)) {
             HERMESX_LOG_WARN("ignore @EmergencyActive from 0x%x (not authorized)", mp.from);
@@ -1009,6 +1045,10 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
     }
 
     if (strcmp(txt, "@GoToSleep") == 0) {
+#if HERMESX_CIV_DISABLE_EMAC
+        HERMESX_LOG_INFO("ignore @GoToSleep (CIV build, EMAC disabled)");
+        return ProcessMessage::CONTINUE;
+#endif
         emergencyModeActive = false;
         pollingModeRequested = true;
         firstBootMillis = millis();
@@ -1070,6 +1110,12 @@ int32_t LighthouseModule::runOnce()
         firstTime = false;
         awakeStart = millis();
         HERMESX_LOG_INFO("startup status broadcast disabled");
+#if HERMESX_CIV_DISABLE_EMAC
+        if (emergencyModeActive || pollingModeRequested) {
+            HERMESX_LOG_INFO("CIV build clearing persisted Lighthouse EMAC state");
+            resetEmergencyState(false);
+        }
+#else
         if (emergencyModeActive) {
             HERMESX_LOG_INFO("boot resume check: previous shutdown left EM active");
 #if HAS_SCREEN
@@ -1078,8 +1124,10 @@ int32_t LighthouseModule::runOnce()
             }
 #endif
         }
+#endif
     }
 
+#if !HERMESX_CIV_DISABLE_EMAC
     if (emergencyModeActive && !emergencySafeAcked) {
         if (emergencyActivatedAtMs == 0) {
             emergencyActivatedAtMs = now;
@@ -1095,7 +1143,9 @@ int32_t LighthouseModule::runOnce()
             }
         }
     }
+#endif
 
+#if !HERMESX_CIV_DISABLE_EMAC
     if (pollingModeRequested && !emergencyModeActive) {
         uint32_t awakeElapsed = now - awakeStart;
 
@@ -1113,6 +1163,7 @@ int32_t LighthouseModule::runOnce()
 #endif
         return 100;  // 醒來時每 100ms 檢查一次
     }
+#endif
 
     if (collectingPositionPulseResponses && positionPulseRequestAtMs != 0 &&
         static_cast<int32_t>(now - positionPulseRequestAtMs) >= static_cast<int32_t>(POSITION_PULSE_RESULT_TIMEOUT_MS)) {

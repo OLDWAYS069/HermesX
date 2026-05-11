@@ -7950,15 +7950,15 @@ constexpr uint32_t kStealthWakeMs = 1000;
 constexpr uint32_t kLowMemoryReminderFreeThreshold = 6 * 1024;
 constexpr uint32_t kLowMemoryReminderLargestThreshold = 4 * 1024;
 constexpr uint32_t kLowMemoryReminderSuppressMs = 5 * 60 * 1000;
-#if HERMESX_CIV_DISABLE_EMAC
-static const char *kSetupRootItems[] = {u8"返回", u8"UI設定", u8"裝置管理", u8"罐頭訊息", u8"儲存並重新開機"};
-#else
 static const char *kSetupRootItems[] = {u8"返回", u8"GROUP設定", u8"UI設定", u8"裝置管理", u8"罐頭訊息",
                                         u8"儲存並重新開機"};
-#endif
 static const uint8_t kSetupRootCount = sizeof(kSetupRootItems) / sizeof(kSetupRootItems[0]);
+#if HERMESX_CIV_DISABLE_EMAC
+static const char *kSetupEmacItems[] = {u8"返回", u8"EMINFO設定", "GROUP PIN A", "GROUP PIN B", u8"查看GROUP PIN"};
+#else
 static const char *kSetupEmacItems[] = {u8"返回", u8"EMINFO設定", "GROUP PIN A", "GROUP PIN B", u8"查看GROUP PIN",
                                         u8"解除EMAC"};
+#endif
 static const uint8_t kSetupEmacCount = sizeof(kSetupEmacItems) / sizeof(kSetupEmacItems[0]);
 static const char *kSetupEmInfoItems[] = {u8"返回", u8"EMINFO廣播", u8"EMINFO週期", u8"Heartbeat週期", u8"離線門檻",
                                           u8"附帶電量"};
@@ -17433,22 +17433,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         if (isSelect || isPress) {
             if (hermesSetupSelected == 0) {
                 exitFastSetupToActionPage();
-            }
-#if HERMESX_CIV_DISABLE_EMAC
-            else if (hermesSetupSelected == 1) {
-                resetMenu(HermesFastSetupPage::UiMenu);
-            } else if (hermesSetupSelected == 2) {
-                resetMenu(HermesFastSetupPage::NodeMenu);
-            } else if (hermesSetupSelected == 3) {
-                resetMenu(HermesFastSetupPage::CannedMenu);
-            } else {
-                nodeDB->saveToDisk(SEGMENT_CONFIG | SEGMENT_MODULECONFIG | SEGMENT_CHANNELS | SEGMENT_DEVICESTATE);
-                hermesSetupToast = u8"即將重新開機";
-                hermesSetupToastUntilMs = millis() + 1500;
-                rebootAtMsec = millis() + 2000;
-            }
-#else
-            else if (hermesSetupSelected == 1) {
+            } else if (hermesSetupSelected == 1) {
                 resetMenu(HermesFastSetupPage::EmacMenu);
             } else if (hermesSetupSelected == 2) {
                 resetMenu(HermesFastSetupPage::UiMenu);
@@ -17462,7 +17447,6 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                 hermesSetupToastUntilMs = millis() + 1500;
                 rebootAtMsec = millis() + 2000;
             }
-#endif
             setFastFramerate();
             return true;
         }
@@ -20292,11 +20276,17 @@ bool Screen::handleTakModeInput(const InputEvent *event)
     }
 
     if (gTakModePopupSelected == 2) {
+#if HERMESX_CIV_DISABLE_EMAC
+        if (screen) {
+            screen->print("EMUI disabled in CIV build\n");
+        }
+#else
         if (gTakModeProfile.allowEmUi && hermesXEmUiModule) {
             hermesXEmUiModule->enterEmergencyMode(u8"TAK MODE");
         } else if (screen) {
             screen->print("EMUI disabled in TAK profile\n");
         }
+#endif
         setFastFramerate();
         return true;
     }

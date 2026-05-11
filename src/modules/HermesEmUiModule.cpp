@@ -29,6 +29,10 @@
 #include <cstdlib>
 #include <cstring>
 
+#ifndef HERMESX_CIV_DISABLE_EMAC
+#define HERMESX_CIV_DISABLE_EMAC 0
+#endif
+
 HermesXEmUiModule *hermesXEmUiModule = nullptr;
 
 namespace {
@@ -416,6 +420,11 @@ void HermesXEmUiModule::setThemeActive(bool enabled)
 
 void HermesXEmUiModule::enterEmergencyMode(const char *reason)
 {
+#if HERMESX_CIV_DISABLE_EMAC
+    HERMESX_LOG_INFO("EM UI enter ignored (CIV build, EMAC disabled)");
+    (void)reason;
+    return;
+#endif
     active = true;
     uiMode = UiMode::Menu;
     selectedIndex = 0;
@@ -2238,6 +2247,10 @@ ProcessMessage HermesXEmUiModule::handleReceived(const meshtastic_MeshPacket &mp
     if (mp.decoded.portnum == PORTNUM_HERMESX_EMERGENCY) {
         if (mp.decoded.payload.size >= strlen("RESET: EMAC") &&
             strncmp(reinterpret_cast<const char *>(mp.decoded.payload.bytes), "RESET: EMAC", strlen("RESET: EMAC")) == 0) {
+#if HERMESX_CIV_DISABLE_EMAC
+            HERMESX_LOG_INFO("EM UI ignored RESET: EMAC (CIV build, EMAC disabled)");
+            return ProcessMessage::CONTINUE;
+#endif
             HERMESX_LOG_INFO("EM UI received reset payload");
             char payload[128];
             size_t payloadLen = mp.decoded.payload.size;
