@@ -367,7 +367,9 @@ int CannedMessageModule::handleInputEvent(const InputEvent *event)
     if (screen && (screen->isHermesFastSetupActive() || screen->isHermesXActionPageActive())) {
         return 0;
     }
-    if (screen && (screen->isOnlineNodeListPageActive() || screen->isOnlineNodeDetailPageActive())) {
+    if (screen && (screen->isOnlineNodeListPageActive() || screen->isOnlineNodeDetailPageActive() ||
+                   screen->isFinderNodeListPageActive() || screen->isFinderNodeDetailPageActive() ||
+                   screen->isGroupNodeListPageActive() || screen->isGroupNodeDetailPageActive())) {
         if (this->runState == CANNED_MESSAGE_RUN_STATE_DISABLED || this->runState == CANNED_MESSAGE_RUN_STATE_INACTIVE) {
             return 0;
         }
@@ -758,6 +760,14 @@ void CannedMessageModule::captureReturnTarget()
         returnTarget = CANNED_MESSAGE_RETURN_TARGET_ONLINE_DETAIL;
     } else if (screen->isOnlineNodeListPageActive()) {
         returnTarget = CANNED_MESSAGE_RETURN_TARGET_ONLINE_LIST;
+    } else if (screen->isFinderNodeDetailPageActive()) {
+        returnTarget = CANNED_MESSAGE_RETURN_TARGET_FINDER_DETAIL;
+    } else if (screen->isFinderNodeListPageActive()) {
+        returnTarget = CANNED_MESSAGE_RETURN_TARGET_FINDER_LIST;
+    } else if (screen->isGroupNodeDetailPageActive()) {
+        returnTarget = CANNED_MESSAGE_RETURN_TARGET_GROUP_DETAIL;
+    } else if (screen->isGroupNodeListPageActive()) {
+        returnTarget = CANNED_MESSAGE_RETURN_TARGET_GROUP_LIST;
     } else if (screen->isHermesXActionPageActive()) {
         returnTarget = CANNED_MESSAGE_RETURN_TARGET_ACTION;
     }
@@ -788,6 +798,18 @@ void CannedMessageModule::restoreReturnTarget()
         break;
     case CANNED_MESSAGE_RETURN_TARGET_ONLINE_LIST:
         restored = screen->showOnlineNodeListPage();
+        break;
+    case CANNED_MESSAGE_RETURN_TARGET_FINDER_DETAIL:
+        restored = screen->showFinderNodeDetailPage();
+        break;
+    case CANNED_MESSAGE_RETURN_TARGET_FINDER_LIST:
+        restored = screen->showFinderNodeListPage();
+        break;
+    case CANNED_MESSAGE_RETURN_TARGET_GROUP_DETAIL:
+        restored = screen->showGroupNodeDetailPage();
+        break;
+    case CANNED_MESSAGE_RETURN_TARGET_GROUP_LIST:
+        restored = screen->showGroupNodeListPage();
         break;
     case CANNED_MESSAGE_RETURN_TARGET_ACTION:
         restored = screen->showHermesXActionPage();
@@ -1501,7 +1523,10 @@ void CannedMessageModule::drawEnterIcon(OLEDDisplay *display, int x, int y, floa
 // This prevents the left & right keys being used for nav. between screen frames during text entry.
 bool CannedMessageModule::interceptingKeyboardInput()
 {
-    if (screen && (screen->isRecentTextMessagesPageActive() || screen->isRecentTextMessageDetailPageActive())) {
+    if (screen && (screen->isRecentTextMessagesPageActive() || screen->isRecentTextMessageDetailPageActive() ||
+                   screen->isOnlineNodeListPageActive() || screen->isOnlineNodeDetailPageActive() ||
+                   screen->isFinderNodeListPageActive() || screen->isFinderNodeDetailPageActive() ||
+                   screen->isGroupNodeListPageActive() || screen->isGroupNodeDetailPageActive())) {
         return false;
     }
 

@@ -1,3 +1,9 @@
+## 2026-05-15
+- 修正 `尋人模式` 收到對方 `POSITION` 回傳後可能跳到黑畫面的問題；現在尋人模組有自己的清單與明細 frame，不再共用 `ONLINE` frame/input，成功收到同 GROUP/EM 密碼授權且有座標的節點後，會進入尋人模組自己的 `尋人清單` 並提供明確 `離開` 選項。
+- 修正 `尋人清單` / `尋人模式` frame 已切換且 TFT overlay 已執行，但畫面仍可能全黑的問題；現在尋人 frame 每次繪製都會明確清黑底並重設白色前景，避免沿用前一頁留下的 BLACK 繪圖狀態。
+- 修正旁聽到別人的 TraceRoute 回覆、或被其他節點 TraceRoute 時會誤跳出 TraceRoute 結果頁的問題；現在只顯示本機主動送出的 TraceRoute 回覆。
+- `heltec-wireless-tracker` 編譯成功，韌體產物已依 handoff 搬到 `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.2_20260515_1702.bin` 與 `.factory.bin`。
+
 ## 2026-05-09
 - `TAK MODE` 入口改為獨立盾牌 icon 頁：短按會叫出彈窗操作頁，可切換 TAK ON/OFF、進入 `TAKMODE設定`、啟動 EMUI / 尋人模組，並從彈窗選擇返回主選單；開啟後離開頁面仍維持 TAK，重開機後也會自動恢復，`TAKMODE設定` 可調整裝置資訊廣播、GPS 刷新、位置廣播、SmartPosition 門檻與聲光靜默。
 - 修正 `TAK MODE` 彈窗選單在小螢幕上不會捲動的問題；現在只繪製可視列，選取項超出畫面時會跟著捲到後續選項。

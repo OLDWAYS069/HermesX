@@ -28,7 +28,7 @@ class Screen
     uint8_t getBrightnessLevel() const { return 150; }
     void setBrightnessLevel(uint8_t) {}
     void maybeArmIncomingTextPopup(const meshtastic_MeshPacket &) {}
-    void showTraceRouteResultPopup(const char *, const char *) {}
+    bool showTraceRouteResultPopup(NodeNum, uint32_t, const char *, const char *) { return false; }
     void setFunctionSymbol(std::string) {}
     void removeFunctionSymbol(std::string) {}
     void startAlert(const char *) {}
@@ -218,7 +218,7 @@ class Screen : public concurrency::OSThread
     }
     bool isOn() const { return screenOn; }
     void maybeArmIncomingTextPopup(const meshtastic_MeshPacket &packet);
-    void showTraceRouteResultPopup(const char *title, const char *body);
+    bool showTraceRouteResultPopup(NodeNum fromNode, uint32_t requestId, const char *title, const char *body);
 
     /**
      * Prepare the display for the unit going to the lowest power mode possible.  Most screens will just
@@ -280,6 +280,8 @@ class Screen : public concurrency::OSThread
     bool isRecentTextMessageDetailPageActive() const;
     bool isOnlineNodeListPageActive() const;
     bool isOnlineNodeDetailPageActive() const;
+    bool isFinderNodeListPageActive() const;
+    bool isFinderNodeDetailPageActive() const;
     bool isGroupNodeListPageActive() const;
     bool isGroupNodeDetailPageActive() const;
     bool isTakModePageActive() const;
@@ -300,6 +302,8 @@ class Screen : public concurrency::OSThread
     bool showHermesXMainPage();
     bool showOnlineNodeListPage();
     bool showOnlineNodeDetailPage();
+    bool showFinderNodeListPage();
+    bool showFinderNodeDetailPage();
     bool showGroupNodeListPage();
     bool showGroupNodeDetailPage();
     bool showTakModePage();
@@ -671,6 +675,8 @@ class Screen : public concurrency::OSThread
             uint8_t textMessage = 0;
             uint8_t onlineList = 0;
             uint8_t onlineDetail = 0;
+            uint8_t finderList = 0;
+            uint8_t finderDetail = 0;
             uint8_t groupList = 0;
             uint8_t groupDetail = 0;
             uint8_t takMode = 0;
@@ -733,13 +739,18 @@ class Screen : public concurrency::OSThread
     void drawHermesXShareChannel(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     static void drawOnlineNodeListFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     static void drawOnlineNodeDetailFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
+    static void drawFinderNodeListFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
+    static void drawFinderNodeDetailFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     static void drawGroupNodeListFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     static void drawGroupNodeDetailFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     static void drawTakModeFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     bool handleRecentTextMessageListInput(const InputEvent *event);
     bool handleRecentTextMessageDetailInput(const InputEvent *event);
+    bool showFinderListPageSafely(bool fallbackToActionPage = true);
     bool handleOnlineNodeListInput(const InputEvent *event);
     bool handleOnlineNodeDetailInput(const InputEvent *event);
+    bool handleFinderNodeListInput(const InputEvent *event);
+    bool handleFinderNodeDetailInput(const InputEvent *event);
     bool handleGroupNodeListInput(const InputEvent *event);
     bool handleGroupNodeDetailInput(const InputEvent *event);
     bool handleTakModeInput(const InputEvent *event);

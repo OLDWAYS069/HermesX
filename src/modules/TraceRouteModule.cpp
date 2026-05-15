@@ -82,7 +82,10 @@ bool TraceRouteModule::handleReceivedProtobuf(const meshtastic_MeshPacket &mp, m
                  static_cast<unsigned>(r->route_back_count), mp.rx_rssi, mp.rx_snr);
         String title = String("TraceRoute ") + formatTraceRouteNodeLabel(mp.from);
         String body = buildTraceRoutePopupBody(mp, *r);
-        screen->showTraceRouteResultPopup(title.c_str(), body.c_str());
+        if (!screen->showTraceRouteResultPopup(mp.from, mp.decoded.request_id, title.c_str(), body.c_str())) {
+            LOG_DEBUG("[TraceRoute] response ignored by UI from=%08lx req=%08lx",
+                      static_cast<unsigned long>(mp.from), static_cast<unsigned long>(mp.decoded.request_id));
+        }
     }
     // We only alter the packet in alterReceivedProtobuf()
     return false; // let it be handled by RoutingModule

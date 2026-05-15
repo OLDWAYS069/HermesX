@@ -2,6 +2,22 @@
 
 本文件為可對外發布版本的更新紀錄，整理 HermesX 韌體的重要功能更新、體驗調整與修正項目。
 
+## 2026-05-15
+
+### 修正
+
+- 修正 `尋人模式` 收到對方 `POSITION` 定位回傳後可能跳到黑畫面的問題；現在尋人模組有自己的清單與明細 frame，不再共用 `ONLINE` frame/input，成功收到同 GROUP/EM 密碼授權且有座標的節點後，會進入尋人模組自己的 `尋人清單` 並提供明確 `離開` 選項。
+- 修正 `尋人清單` / `尋人模式` frame 已切換且 TFT overlay 已執行，但畫面仍可能全黑的問題；現在尋人 frame 每次繪製都會明確清黑底並重設白色前景，避免沿用前一頁留下的 BLACK 繪圖狀態。
+- 修正旁聽到別人的 TraceRoute 回覆、或被其他節點 TraceRoute 時，HermesX 會誤跳出 TraceRoute 結果頁的問題；現在只會顯示本機剛主動送出的 TraceRoute 回覆。
+
+### 驗證
+
+- `git diff --check` 通過。
+- `platformio run -e heltec-wireless-tracker` 編譯成功。
+- 已依 `docs/AI_UPDATE_HANDOFF.md` 搬移韌體產物：
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.2_20260515_1702.bin`
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.2_20260515_1702.factory.bin`
+
 ## 2026-05-09
 
 ### 修正
