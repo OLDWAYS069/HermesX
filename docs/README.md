@@ -13,6 +13,7 @@
 | 🧠 議題 | ISSUE_neon_memory_pressure_2026-03-20.md | HermesX TFT/neon 記憶體壓力調查、量測結果與優化紀錄 |
 | 🆘 緊急模式 | REF_EmergencyMode.md | Emergency Mode 規格（302.1 架構） |
 | 🎨 介面 | HermesX_EM_UI_v2.1.md | 最新 EM UI 設計 |
+| 📡 尋人 | 尋人模組.md | 尋人模組、GROUP 授權與尋人清單使用說明 |
 | 🗺️ 計劃 | PLAN_upstream_2.7.15_migration.md | 升級到 upstream 2.7.15 並完整搬移 HermesX UI/功能的計劃 |
 | 🧩 任務 | task_emui_rotary3021.md | Codex 專用任務指令 |
 | 🕒 變更 | REF_changelog.md | Commit 記錄範本與分支脈絡註記 |
