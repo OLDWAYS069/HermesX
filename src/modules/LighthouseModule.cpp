@@ -1,5 +1,7 @@
 #include "LighthouseModule.h"
 #if HAS_SCREEN
+#include "graphics/Screen.h"
+#include "main.h"
 #include "modules/HermesEmUiModule.h"
 #endif
 #include "MeshService.h"
@@ -475,6 +477,29 @@ bool LighthouseModule::isEmergencyCommandAuthorized(const char *txt, const char 
     return passOk || whiteOk;
 }
 
+static String extractEmergencyCommandGroupToken(const char *txt, const char *prefix)
+{
+    if (!txt || !prefix) {
+        return "";
+    }
+    const size_t prefixLen = strlen(prefix);
+    if (strncmp(txt, prefix, prefixLen) != 0) {
+        return "";
+    }
+
+    const char *p = txt + prefixLen;
+    while (*p == ' ' || *p == ':' || *p == '=') {
+        ++p;
+    }
+    if (strncmp(p, "GROUP", 5) == 0 && (p[5] == ' ' || p[5] == ':' || p[5] == '=')) {
+        p += 5;
+        while (*p == ' ' || *p == ':' || *p == '=') {
+            ++p;
+        }
+    }
+    return String(p);
+}
+
 void flushDelaySleep(uint32_t extraDelay = 1000, uint32_t sleepMs = 1800000UL)
 {
     HERMESX_LOG_INFO("wait fo pak（delay %ums）...", extraDelay);
@@ -668,35 +693,92 @@ void LighthouseModule::triggerPositionPulse(uint8_t channel)
 #endif
 }
 
-bool LighthouseModule::requestPositionPulse()
+void LighthouseModule::sendPositionPulseAck(NodeNum dest, uint8_t channel, uint32_t groupFingerprint)
 {
-    meshtastic_MeshPacket *p = allocDataPacket();
-    if (!p) {
-        HERMESX_LOG_WARN("Position pulse request alloc failed");
-        return false;
+    if (dest == 0) {
+        return;
     }
 
-    p->to = NODENUM_BROADCAST;
-    p->channel = channels.getPrimaryIndex();
+    meshtastic_MeshPacket *p = allocDataPacket();
+    if (!p) {
+        HERMESX_LOG_WARN("Position pulse ack alloc failed");
+        return;
+    }
+
+    p->to = dest;
+    p->channel = channel;
     p->decoded.portnum = PORTNUM_HERMESX_EMERGENCY;
     p->want_ack = false;
 
-    String payload = "REQUEST: POS";
-    const String &pass = emergencyPassphrase[0].length() > 0 ? emergencyPassphrase[0] : emergencyPassphrase[1];
-    if (pass.length() > 0) {
+    String payload = "POSITION: OK";
+    if (groupFingerprint != 0 || hasEmergencyGroupPin()) {
         payload += " GROUP ";
-        payload += pass;
+        payload += String(groupFingerprint, HEX);
     }
     p->decoded.payload.size = payload.length();
     memcpy(p->decoded.payload.bytes, payload.c_str(), p->decoded.payload.size);
+    service->sendToMesh(p, RX_SRC_LOCAL, false);
+    HERMESX_LOG_INFO("Position pulse ack sent to=0x%x group=%08lx", dest, static_cast<unsigned long>(groupFingerprint));
+}
+
+bool LighthouseModule::requestPositionPulse()
+{
+    if (!hasEmergencyGroupPin()) {
+        HERMESX_LOG_WARN("Position pulse request ignored: GROUP PIN not configured");
+        return false;
+    }
 
     awaitingPositionPulseResult = true;
     collectingPositionPulseResponses = true;
     positionPulseRequestAtMs = millis();
     lastPositionPulseResponder = 0;
     positionPulseUiResult = PositionPulseUiResult::None;
+    lastPositionPulseCandidates.clear();
+    lastPositionPulseAuthorizedResponders.clear();
     lastPositionPulseResponders.clear();
-    service->sendToMesh(p, RX_SRC_LOCAL, false);
+
+    bool sentAny = false;
+    String sentPasses[2];
+    uint8_t sentPassCount = 0;
+    for (uint8_t slot = 0; slot < 2; ++slot) {
+        const String pass = emergencyPassphrase[slot];
+        if (pass.length() == 0) {
+            continue;
+        }
+        bool duplicate = false;
+        for (uint8_t i = 0; i < sentPassCount; ++i) {
+            if (sentPasses[i] == pass) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (duplicate) {
+            continue;
+        }
+
+        meshtastic_MeshPacket *p = allocDataPacket();
+        if (!p) {
+            HERMESX_LOG_WARN("Position pulse request alloc failed");
+            continue;
+        }
+
+        p->to = NODENUM_BROADCAST;
+        p->channel = channels.getPrimaryIndex();
+        p->decoded.portnum = PORTNUM_HERMESX_EMERGENCY;
+        p->want_ack = false;
+
+        String payload = "REQUEST: POS GROUP ";
+        payload += pass;
+        p->decoded.payload.size = payload.length();
+        memcpy(p->decoded.payload.bytes, payload.c_str(), p->decoded.payload.size);
+        service->sendToMesh(p, RX_SRC_LOCAL, false);
+        sentPasses[sentPassCount++] = pass;
+        sentAny = true;
+    }
+    if (!sentAny) {
+        cancelPositionPulseRequest(true);
+        return false;
+    }
     if (HermesXInterfaceModule::instance) {
         HermesXInterfaceModule::instance->playSendFeedback();
     }
@@ -724,6 +806,8 @@ void LighthouseModule::cancelPositionPulseRequest(bool clearResponders)
     lastPositionPulseResponder = 0;
     positionPulseUiResult = PositionPulseUiResult::None;
     if (clearResponders) {
+        lastPositionPulseCandidates.clear();
+        lastPositionPulseAuthorizedResponders.clear();
         lastPositionPulseResponders.clear();
     }
 }
@@ -733,6 +817,12 @@ void LighthouseModule::finishPositionPulseRequest(PositionPulseUiResult result, 
     awaitingPositionPulseResult = false;
     lastPositionPulseResponder = responder;
     positionPulseUiResult = result;
+#if HAS_SCREEN
+    if (screen) {
+        screen->setOn(true);
+        screen->requestImmediateRedraw();
+    }
+#endif
     if (result == PositionPulseUiResult::Success) {
         if (HermesXInterfaceModule::instance) {
             HermesXInterfaceModule::instance->playAckSuccess();
@@ -741,6 +831,9 @@ void LighthouseModule::finishPositionPulseRequest(PositionPulseUiResult result, 
     } else if (result == PositionPulseUiResult::Timeout) {
         collectingPositionPulseResponses = false;
         positionPulseRequestAtMs = 0;
+        lastPositionPulseCandidates.clear();
+        lastPositionPulseAuthorizedResponders.clear();
+        lastPositionPulseResponders.clear();
         if (HermesXInterfaceModule::instance) {
             HermesXInterfaceModule::instance->playNackFail();
         }
@@ -757,6 +850,80 @@ bool LighthouseModule::didNodeRespondToLastPositionPulse(NodeNum nodeNum) const
         if (responder == nodeNum) {
             return true;
         }
+    }
+    return false;
+}
+
+void LighthouseModule::recordPositionPulseCandidate(NodeNum nodeNum)
+{
+    if (nodeNum == 0) {
+        return;
+    }
+    for (NodeNum candidate : lastPositionPulseCandidates) {
+        if (candidate == nodeNum) {
+            return;
+        }
+    }
+    lastPositionPulseCandidates.push_back(nodeNum);
+}
+
+void LighthouseModule::recordPositionPulseAuthorizedResponder(NodeNum nodeNum)
+{
+    if (nodeNum == 0) {
+        return;
+    }
+    for (NodeNum responder : lastPositionPulseAuthorizedResponders) {
+        if (responder == nodeNum) {
+            return;
+        }
+    }
+    lastPositionPulseAuthorizedResponders.push_back(nodeNum);
+}
+
+bool LighthouseModule::isPositionPulseAuthorizedResponder(NodeNum nodeNum) const
+{
+    if (nodeNum == 0) {
+        return false;
+    }
+    for (NodeNum responder : lastPositionPulseAuthorizedResponders) {
+        if (responder == nodeNum) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool LighthouseModule::tryFinishPositionPulseFromCandidates()
+{
+    if (!collectingPositionPulseResponses || !nodeDB) {
+        return false;
+    }
+
+    for (NodeNum candidate : lastPositionPulseCandidates) {
+        if (!isPositionPulseAuthorizedResponder(candidate)) {
+            continue;
+        }
+        bool alreadyRecorded = false;
+        for (NodeNum responder : lastPositionPulseResponders) {
+            if (responder == candidate) {
+                alreadyRecorded = true;
+                break;
+            }
+        }
+        if (alreadyRecorded) {
+            continue;
+        }
+
+        meshtastic_NodeInfoLite *node = nodeDB->getMeshNode(candidate);
+        if (!node || !nodeDB->hasValidPosition(node)) {
+            continue;
+        }
+
+        lastPositionPulseResponders.push_back(candidate);
+        if (awaitingPositionPulseResult) {
+            finishPositionPulseRequest(PositionPulseUiResult::Success, candidate);
+        }
+        return true;
     }
     return false;
 }
@@ -787,19 +954,8 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
     if (collectingPositionPulseResponses && mp.decoded.portnum == meshtastic_PortNum_POSITION_APP) {
         const NodeNum ourNode = nodeDB ? nodeDB->getNodeNum() : 0;
         if (mp.from != 0 && mp.from != ourNode) {
-            bool knownResponder = false;
-            for (NodeNum responder : lastPositionPulseResponders) {
-                if (responder == mp.from) {
-                    knownResponder = true;
-                    break;
-                }
-            }
-            if (!knownResponder) {
-                lastPositionPulseResponders.push_back(mp.from);
-            }
-            if (awaitingPositionPulseResult) {
-                finishPositionPulseRequest(PositionPulseUiResult::Success, mp.from);
-            }
+            recordPositionPulseCandidate(mp.from);
+            tryFinishPositionPulseFromCandidates();
         }
         return ProcessMessage::CONTINUE;
     }
@@ -830,6 +986,27 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
 
         while (payloadLen > 0 && (payload[payloadLen - 1] == '\n' || payload[payloadLen - 1] == '\r' || payload[payloadLen - 1] == ' ')) {
             payload[--payloadLen] = '\0';
+        }
+
+        if (collectingPositionPulseResponses && strncmp(payload, "POSITION: OK", 12) == 0) {
+            uint32_t groupFingerprint = 0;
+            const char *group = strstr(payload, "GROUP");
+            if (group) {
+                group += 5;
+                while (*group == ' ' || *group == ':' || *group == '=') {
+                    ++group;
+                }
+                groupFingerprint = static_cast<uint32_t>(strtoul(group, nullptr, 16));
+            }
+            if (isEmergencyGroupFingerprintAllowed(groupFingerprint)) {
+                recordPositionPulseAuthorizedResponder(mp.from);
+                tryFinishPositionPulseFromCandidates();
+                HERMESX_LOG_INFO("Position pulse ack accepted from=0x%x group=%08lx", mp.from,
+                                  static_cast<unsigned long>(groupFingerprint));
+            } else {
+                HERMESX_LOG_WARN("Position pulse ack ignored from=0x%x group mismatch", mp.from);
+            }
+            return ProcessMessage::CONTINUE;
         }
 
         if (strncmp(payload, "ACTIVATE: EMAC", 14) == 0) {
@@ -914,7 +1091,7 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
 
         if (strncmp(payload, "REQUEST: POS", 12) == 0) {
             HERMESX_LOG_INFO("Position pulse request received from=0x%x text=[%s]", mp.from, payload);
-            if (!isEmergencyCommandAuthorized(payload, "REQUEST: POS", mp.from, true)) {
+            if (!isEmergencyCommandAuthorized(payload, "REQUEST: POS", mp.from, false)) {
                 HERMESX_LOG_WARN("ignore REQUEST: POS from 0x%x (not authorized)", mp.from);
                 return ProcessMessage::CONTINUE;
             }
@@ -928,6 +1105,9 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
 
             lastPositionPulseRequestId = mp.id;
             lastPositionPulseAtMs = now;
+            const String providedGroup = extractEmergencyCommandGroupToken(payload, "REQUEST: POS");
+            const uint32_t responseFingerprint = providedGroup.length() > 0 ? calculateGroupFingerprint(providedGroup) : 0;
+            sendPositionPulseAck(mp.from, mp.channel, responseFingerprint);
             triggerPositionPulse(mp.channel);
             return ProcessMessage::CONTINUE;
         }
@@ -1114,14 +1294,17 @@ int32_t LighthouseModule::runOnce()
         return 100;  // 醒來時每 100ms 檢查一次
     }
 
-    if (collectingPositionPulseResponses && positionPulseRequestAtMs != 0 &&
-        static_cast<int32_t>(now - positionPulseRequestAtMs) >= static_cast<int32_t>(POSITION_PULSE_RESULT_TIMEOUT_MS)) {
-        if (awaitingPositionPulseResult) {
-            finishPositionPulseRequest(PositionPulseUiResult::Timeout);
-        } else {
-            collectingPositionPulseResponses = false;
-            positionPulseRequestAtMs = 0;
+    if (collectingPositionPulseResponses && positionPulseRequestAtMs != 0) {
+        tryFinishPositionPulseFromCandidates();
+        if (static_cast<int32_t>(now - positionPulseRequestAtMs) >= static_cast<int32_t>(POSITION_PULSE_RESULT_TIMEOUT_MS)) {
+            if (awaitingPositionPulseResult) {
+                finishPositionPulseRequest(PositionPulseUiResult::Timeout);
+            } else {
+                collectingPositionPulseResponses = false;
+                positionPulseRequestAtMs = 0;
+            }
         }
+        return 100;
     }
 
     return 1000;  // 非輪詢模式，每 1 秒檢查一次

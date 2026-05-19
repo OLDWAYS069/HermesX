@@ -64,7 +64,12 @@ class LighthouseModule : public SinglePortModule, private concurrency::OSThread
     void sendEmergencySos();
     void broadcastEmergencyActive();
     void triggerPositionPulse(uint8_t channel);
+    void sendPositionPulseAck(NodeNum dest, uint8_t channel, uint32_t groupFingerprint);
     void finishPositionPulseRequest(PositionPulseUiResult result, NodeNum responder = 0);
+    void recordPositionPulseCandidate(NodeNum nodeNum);
+    void recordPositionPulseAuthorizedResponder(NodeNum nodeNum);
+    bool isPositionPulseAuthorizedResponder(NodeNum nodeNum) const;
+    bool tryFinishPositionPulseFromCandidates();
 
     bool emergencyModeActive = false;
     bool roleCorrected = false;
@@ -84,6 +89,8 @@ class LighthouseModule : public SinglePortModule, private concurrency::OSThread
     uint32_t positionPulseRequestAtMs = 0;
     NodeNum lastPositionPulseResponder = 0;
     PositionPulseUiResult positionPulseUiResult = PositionPulseUiResult::None;
+    std::vector<NodeNum> lastPositionPulseCandidates;
+    std::vector<NodeNum> lastPositionPulseAuthorizedResponders;
     std::vector<NodeNum> lastPositionPulseResponders;
     bool emergencySafeAcked = false;
     bool restoreConfigValid = false;

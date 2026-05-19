@@ -119,7 +119,7 @@ namespace graphics
 #define DIRECT_HOME_CLOCK_FRAMERATE 4 // in fps
 
 // DEBUG
-#define NUM_EXTRA_FRAMES 19 // HermesX action pages + text/debug/system frames
+#define NUM_EXTRA_FRAMES 21 // HermesX action pages + text/debug/system frames
 // if defined a pixel will blink to show redraws
 // #define SHOW_REDRAWS
 
@@ -4364,6 +4364,7 @@ static constexpr uint32_t kSetupDetailPopupDismissGuardMs = 250;
 
 struct TraceRouteRequestState {
     NodeNum destNode = 0;
+    uint32_t requestId = 0;
     bool pending = false;
     uint32_t startedMs = 0;
 };
@@ -4456,9 +4457,10 @@ static void showSetupDetailPopup(const char *title, const String &body)
     fastUntilMs = millis() + 1200;
 }
 
-static void startTraceRoutePending(NodeNum destNode)
+static void startTraceRoutePending(NodeNum destNode, uint32_t requestId)
 {
     gTraceRouteRequestState.destNode = destNode;
+    gTraceRouteRequestState.requestId = requestId;
     gTraceRouteRequestState.pending = true;
     gTraceRouteRequestState.startedMs = millis();
 }
@@ -4466,8 +4468,15 @@ static void startTraceRoutePending(NodeNum destNode)
 static void clearTraceRoutePending()
 {
     gTraceRouteRequestState.destNode = 0;
+    gTraceRouteRequestState.requestId = 0;
     gTraceRouteRequestState.pending = false;
     gTraceRouteRequestState.startedMs = 0;
+}
+
+static bool isExpectedTraceRouteResult(NodeNum fromNode, uint32_t requestId)
+{
+    return gTraceRouteRequestState.pending && fromNode != 0 && requestId != 0 &&
+           gTraceRouteRequestState.destNode == fromNode && gTraceRouteRequestState.requestId == requestId;
 }
 
 static void armIncomingTextPopup(const meshtastic_MeshPacket &packet)
@@ -4510,10 +4519,18 @@ void Screen::maybeArmIncomingTextPopup(const meshtastic_MeshPacket &packet)
     }
 }
 
-void Screen::showTraceRouteResultPopup(const char *title, const char *body)
+bool Screen::showTraceRouteResultPopup(NodeNum fromNode, uint32_t requestId, const char *title, const char *body)
 {
+    if (!isExpectedTraceRouteResult(fromNode, requestId)) {
+        LOG_DEBUG("[Screen] Ignore TraceRoute result from=%08lx req=%08lx pending=%u dest=%08lx pending_req=%08lx",
+                  static_cast<unsigned long>(fromNode), static_cast<unsigned long>(requestId),
+                  gTraceRouteRequestState.pending ? 1 : 0, static_cast<unsigned long>(gTraceRouteRequestState.destNode),
+                  static_cast<unsigned long>(gTraceRouteRequestState.requestId));
+        return false;
+    }
     clearTraceRoutePending();
     showTraceRoutePopup(title, body);
+    return true;
 }
 
 static bool hasRecentTextMessages()
@@ -4540,14 +4557,11 @@ static bool isFinderNodeCandidate(const meshtastic_NodeInfoLite &node)
     if (node.num == 0 || nodeDB == nullptr || node.num == nodeDB->getNodeNum()) {
         return false;
     }
-    if (!node.has_user || node.last_heard == 0) {
-        return false;
-    }
     if (!lighthouseModule || !lighthouseModule->didNodeRespondToLastPositionPulse(node.num)) {
         return false;
     }
     meshtastic_NodeInfoLite *mutableNode = const_cast<meshtastic_NodeInfoLite *>(&node);
-    return nodeDB->hasValidPosition(mutableNode) && sinceLastSeen(&node) < (60U * 60U * 2U);
+    return nodeDB->hasValidPosition(mutableNode);
 }
 
 static void rebuildOnlineNodeOrder()
@@ -4763,7 +4777,7 @@ static uint8_t buildGroupNodeDetailRows(const HermesXEmUiModule::EmInfoNodeStatu
     appendRow((node && node->via_mqtt) ? "TraceRoute: --" : "TraceRoute");
     appendRow(String(u8"EM狀態: ") + (entry.state[0] ? entry.state : u8"未知"));
     appendRow(String(u8"在線: ") + (hermesXEmUiModule ? hermesXEmUiModule->getNodePresenceLabel(entry) : u8"未知"));
-    appendRow(String("LastHB: ") + (hermesXEmUiModule ? hermesXEmUiModule->getNodeRelativeHeardLabel(entry) : String("--")));
+    appendRow(String("Last: ") + (hermesXEmUiModule ? hermesXEmUiModule->getNodeRelativeHeardLabel(entry) : String("--")));
     appendRow(String(u8"電量: ") + (entry.batteryPercent > 0 ? String(entry.batteryPercent) + "%" : String("--")));
     appendRow(String("LongName: ") +
               ((node && node->has_user && node->user.long_name[0]) ? String(node->user.long_name) : String("--")));
@@ -4814,8 +4828,9 @@ static bool sendOnlineNodeTraceRoute(NodeNum nodeNum)
     meshtastic_RouteDiscovery route = meshtastic_RouteDiscovery_init_default;
     p->decoded.payload.size =
         pb_encode_to_bytes(p->decoded.payload.bytes, sizeof(p->decoded.payload.bytes), &meshtastic_RouteDiscovery_msg, &route);
+    const uint32_t requestId = p->id;
     service->sendToMesh(p, RX_SRC_LOCAL, true);
-    startTraceRoutePending(nodeNum);
+    startTraceRoutePending(nodeNum, requestId);
 
     if (HermesXInterfaceModule::instance) {
         HermesXInterfaceModule::instance->playSendFeedback();
@@ -4872,7 +4887,7 @@ static uint8_t buildOnlineNodeDetailRows(const meshtastic_NodeInfoLite &node, bo
         ++rowCount;
     };
 
-    appendRow(u8"返回");
+    appendRow(finderMode ? u8"離開" : u8"返回");
     if (!finderMode) {
         appendRow("MSG");
         appendRow(node.via_mqtt ? "TraceRoute: --" : "TraceRoute");
@@ -5548,33 +5563,9 @@ void Screen::drawOnlineNodeListFrame(OLEDDisplay *display, OLEDDisplayUiState *s
     (void)state;
     display->setTextAlignment(TEXT_ALIGN_LEFT);
     display->setFont(FONT_SMALL);
-    if (screen && screen->hermesFinderUiMode == Screen::HermesFinderUiMode::Menu) {
-        graphics::HermesX_zh::drawMixedBounded(*display, x, y, display->getWidth() - 2, u8"尋人模式",
-                                               graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-        const char *items[3] = {u8"返回", u8"發送尋人訊號", u8"位置訊息"};
-        const int16_t width = display->getWidth();
-        const int16_t rowH = FONT_HEIGHT_SMALL + 4;
-        const int16_t listTop = y + FONT_HEIGHT_SMALL + 6;
-        for (uint8_t i = 0; i < 3; ++i) {
-            const int16_t rowY = listTop + i * rowH;
-            if (screen->hermesFinderMenuSelected == i) {
-                display->drawRect(x, rowY - 1, width - 2, rowH);
-            }
-            graphics::HermesX_zh::drawMixedBounded(*display, x + 2, rowY, width - 4, items[i],
-                                                   graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
-        }
-        return;
-    }
-
-    const bool finderMode = screen && screen->hermesFinderUiMode == Screen::HermesFinderUiMode::PositionList;
-    graphics::HermesX_zh::drawMixedBounded(*display, x, y, display->getWidth() - 2, finderMode ? u8"位置訊息" : "ONLINE",
+    graphics::HermesX_zh::drawMixedBounded(*display, x, y, display->getWidth() - 2, "ONLINE",
                                            graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-
-    if (finderMode) {
-        rebuildFinderNodeOrder();
-    } else {
-        rebuildOnlineNodeOrder();
-    }
+    rebuildOnlineNodeOrder();
 
     const int16_t width = display->getWidth();
     const int16_t rowH = FONT_HEIGHT_SMALL + 3;
@@ -5587,11 +5578,10 @@ void Screen::drawOnlineNodeListFrame(OLEDDisplay *display, OLEDDisplayUiState *s
         visibleRows = 3;
     }
 
-    const uint8_t totalRows = (finderMode ? gFinderNodeState.count : gOnlineNodeState.count) + 1;
+    const uint8_t totalRows = gOnlineNodeState.count + 1;
     uint8_t startCursor = 0;
-    const uint8_t listCursor = finderMode ? gFinderNodeState.listCursor : gOnlineNodeState.listCursor;
-    if (listCursor >= static_cast<uint8_t>(visibleRows)) {
-        startCursor = listCursor - static_cast<uint8_t>(visibleRows) + 1;
+    if (gOnlineNodeState.listCursor >= static_cast<uint8_t>(visibleRows)) {
+        startCursor = gOnlineNodeState.listCursor - static_cast<uint8_t>(visibleRows) + 1;
     }
 
     for (int8_t row = 0; row < visibleRows; ++row) {
@@ -5601,8 +5591,7 @@ void Screen::drawOnlineNodeListFrame(OLEDDisplay *display, OLEDDisplayUiState *s
         }
 
         const int16_t rowY = listTop + row * rowH;
-        const bool selected = (cursorIndex == listCursor);
-        if (selected) {
+        if (cursorIndex == gOnlineNodeState.listCursor) {
             display->drawRect(x, rowY - 1, width - 2, rowH);
         }
 
@@ -5612,7 +5601,7 @@ void Screen::drawOnlineNodeListFrame(OLEDDisplay *display, OLEDDisplayUiState *s
             continue;
         }
 
-        const meshtastic_NodeInfoLite *node = finderMode ? getFinderNodeAt(cursorIndex - 1) : getOnlineNodeAt(cursorIndex - 1);
+        const meshtastic_NodeInfoLite *node = getOnlineNodeAt(cursorIndex - 1);
         if (!node) {
             continue;
         }
@@ -5628,9 +5617,117 @@ void Screen::drawOnlineNodeListFrame(OLEDDisplay *display, OLEDDisplayUiState *s
                                                graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
     }
 
-    if ((finderMode ? gFinderNodeState.count : gOnlineNodeState.count) == 0 && visibleRows > 1) {
-        graphics::HermesX_zh::drawMixedBounded(*display, x + 2, listTop + rowH, width - 4,
-                                               finderMode ? u8"沒有位置訊息" : u8"沒有在線節點",
+    if (gOnlineNodeState.count == 0 && visibleRows > 1) {
+        graphics::HermesX_zh::drawMixedBounded(*display, x + 2, listTop + rowH, width - 4, u8"沒有在線節點",
+                                               graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
+    }
+}
+
+void Screen::drawFinderNodeListFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
+{
+    (void)state;
+    const int16_t width = display->getWidth();
+    const int16_t height = display->getHeight();
+#if defined(USE_EINK)
+    display->setColor(EINK_WHITE);
+#else
+    display->setColor(OLEDDISPLAY_COLOR::BLACK);
+#endif
+    display->fillRect(x, y, width, height);
+#if defined(USE_EINK)
+    display->setColor(EINK_BLACK);
+#else
+    display->setColor(OLEDDISPLAY_COLOR::WHITE);
+#endif
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+    display->setFont(FONT_SMALL);
+    if (screen && screen->hermesFinderUiMode == Screen::HermesFinderUiMode::Menu) {
+        static uint8_t lastMenuSelected = 0xFF;
+        if (lastMenuSelected != screen->hermesFinderMenuSelected) {
+            lastMenuSelected = screen->hermesFinderMenuSelected;
+            LOG_INFO("[Screen] draw FINDER menu selected=%u", static_cast<unsigned>(screen->hermesFinderMenuSelected));
+        }
+        graphics::HermesX_zh::drawMixedBounded(*display, x, y, display->getWidth() - 2, u8"尋人模式",
+                                               graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
+        const char *items[3] = {u8"離開", u8"發送尋人訊號", u8"節點列表"};
+        const int16_t rowH = FONT_HEIGHT_SMALL + 4;
+        const int16_t listTop = y + FONT_HEIGHT_SMALL + 6;
+        for (uint8_t i = 0; i < 3; ++i) {
+            const int16_t rowY = listTop + i * rowH;
+            if (screen->hermesFinderMenuSelected == i) {
+                display->drawRect(x, rowY - 1, width - 2, rowH);
+            }
+            graphics::HermesX_zh::drawMixedBounded(*display, x + 2, rowY, width - 4, items[i],
+                                                   graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
+        }
+        return;
+    }
+
+    graphics::HermesX_zh::drawMixedBounded(*display, x, y, display->getWidth() - 2, u8"尋人清單",
+                                           graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
+    rebuildFinderNodeOrder();
+    static uint8_t lastListCount = 0xFF;
+    static uint8_t lastListCursor = 0xFF;
+    if (lastListCount != gFinderNodeState.count || lastListCursor != gFinderNodeState.listCursor) {
+        lastListCount = gFinderNodeState.count;
+        lastListCursor = gFinderNodeState.listCursor;
+        LOG_INFO("[Screen] draw FINDER list count=%u cursor=%u selected=%u",
+                 static_cast<unsigned>(gFinderNodeState.count), static_cast<unsigned>(gFinderNodeState.listCursor),
+                 static_cast<unsigned>(gFinderNodeState.selectedIndex));
+    }
+
+    const int16_t rowH = FONT_HEIGHT_SMALL + 3;
+    const int16_t listTop = y + FONT_HEIGHT_SMALL + 2;
+    int8_t visibleRows = (display->getHeight() - listTop - 1) / rowH;
+    if (visibleRows < 1) {
+        visibleRows = 1;
+    }
+    if (visibleRows > 3) {
+        visibleRows = 3;
+    }
+
+    const uint8_t totalRows = gFinderNodeState.count + 1;
+    uint8_t startCursor = 0;
+    const uint8_t listCursor = gFinderNodeState.listCursor;
+    if (listCursor >= static_cast<uint8_t>(visibleRows)) {
+        startCursor = listCursor - static_cast<uint8_t>(visibleRows) + 1;
+    }
+
+    for (int8_t row = 0; row < visibleRows; ++row) {
+        const uint8_t cursorIndex = startCursor + row;
+        if (cursorIndex >= totalRows) {
+            break;
+        }
+
+        const int16_t rowY = listTop + row * rowH;
+        if (cursorIndex == listCursor) {
+            display->drawRect(x, rowY - 1, width - 2, rowH);
+        }
+
+        if (cursorIndex == 0) {
+            graphics::HermesX_zh::drawMixedBounded(*display, x + 2, rowY, width - 4, u8"離開",
+                                                   graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
+            continue;
+        }
+
+        const meshtastic_NodeInfoLite *node = getFinderNodeAt(cursorIndex - 1);
+        if (!node) {
+            continue;
+        }
+
+        const String seenAgo = formatOnlineNodeSeenAgo(*node);
+        const int16_t seenW = display->getStringWidth(seenAgo);
+        const int16_t seenX = x + width - seenW - 2;
+        display->drawString(seenX, rowY, seenAgo);
+
+        String line = getOnlineNodeDisplayName(*node) + " " + getOnlineNodeShortId(*node);
+        const int16_t textWidth = seenX - x - 4;
+        graphics::HermesX_zh::drawMixedBounded(*display, x + 2, rowY, textWidth > 0 ? textWidth : width - 4, line.c_str(),
+                                               graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
+    }
+
+    if (gFinderNodeState.count == 0 && visibleRows > 1) {
+        graphics::HermesX_zh::drawMixedBounded(*display, x + 2, listTop + rowH, width - 4, u8"沒有節點",
                                                graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
     }
 }
@@ -5640,25 +5737,86 @@ void Screen::drawOnlineNodeDetailFrame(OLEDDisplay *display, OLEDDisplayUiState 
     (void)state;
     display->setTextAlignment(TEXT_ALIGN_LEFT);
     display->setFont(FONT_SMALL);
-    const bool finderMode = screen && screen->hermesFinderUiMode == Screen::HermesFinderUiMode::PositionList;
-    graphics::HermesX_zh::drawMixedBounded(*display, x, y, display->getWidth() - 2, finderMode ? u8"位置訊息" : "ONLINE DETAIL",
+    graphics::HermesX_zh::drawMixedBounded(*display, x, y, display->getWidth() - 2, "ONLINE DETAIL",
                                            graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
 
-    const meshtastic_NodeInfoLite *node = finderMode ? getSelectedFinderNode() : getSelectedOnlineNode();
+    const meshtastic_NodeInfoLite *node = getSelectedOnlineNode();
     if (!node) {
         display->drawString(x + 2, y + FONT_HEIGHT_SMALL + 4, "No node");
         return;
     }
 
     String rows[12];
-    const uint8_t rowCount = buildOnlineNodeDetailRows(*node, finderMode, rows, sizeof(rows) / sizeof(rows[0]));
+    const uint8_t rowCount = buildOnlineNodeDetailRows(*node, false, rows, sizeof(rows) / sizeof(rows[0]));
 
-    uint8_t &detailCursor = finderMode ? gFinderNodeState.detailCursor : gOnlineNodeState.detailCursor;
+    uint8_t &detailCursor = gOnlineNodeState.detailCursor;
     if (detailCursor >= rowCount) {
         detailCursor = rowCount - 1;
     }
 
     const int16_t width = display->getWidth();
+    const int16_t rowH = FONT_HEIGHT_SMALL + 3;
+    const int16_t listTop = y + FONT_HEIGHT_SMALL + 2;
+    int8_t visibleRows = (display->getHeight() - listTop - 1) / rowH;
+    if (visibleRows < 1) {
+        visibleRows = 1;
+    }
+    if (visibleRows > 4) {
+        visibleRows = 4;
+    }
+    uint8_t startCursor = 0;
+    if (detailCursor >= static_cast<uint8_t>(visibleRows)) {
+        startCursor = detailCursor - static_cast<uint8_t>(visibleRows) + 1;
+    }
+
+    for (int8_t row = 0; row < visibleRows; ++row) {
+        const uint8_t rowIndex = startCursor + row;
+        if (rowIndex >= rowCount) {
+            break;
+        }
+        const int16_t rowY = listTop + row * rowH;
+        if (rowIndex == detailCursor) {
+            display->drawRect(x, rowY - 1, width - 2, rowH);
+        }
+        graphics::HermesX_zh::drawMixedBounded(*display, x + 2, rowY, width - 4, rows[rowIndex].c_str(),
+                                               graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
+    }
+}
+
+void Screen::drawFinderNodeDetailFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
+{
+    (void)state;
+    const int16_t width = display->getWidth();
+    const int16_t height = display->getHeight();
+#if defined(USE_EINK)
+    display->setColor(EINK_WHITE);
+#else
+    display->setColor(OLEDDISPLAY_COLOR::BLACK);
+#endif
+    display->fillRect(x, y, width, height);
+#if defined(USE_EINK)
+    display->setColor(EINK_BLACK);
+#else
+    display->setColor(OLEDDISPLAY_COLOR::WHITE);
+#endif
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+    display->setFont(FONT_SMALL);
+    graphics::HermesX_zh::drawMixedBounded(*display, x, y, display->getWidth() - 2, u8"尋人清單",
+                                           graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
+
+    const meshtastic_NodeInfoLite *node = getSelectedFinderNode();
+    if (!node) {
+        display->drawString(x + 2, y + FONT_HEIGHT_SMALL + 4, "No node");
+        return;
+    }
+
+    String rows[12];
+    const uint8_t rowCount = buildOnlineNodeDetailRows(*node, true, rows, sizeof(rows) / sizeof(rows[0]));
+    uint8_t &detailCursor = gFinderNodeState.detailCursor;
+    if (detailCursor >= rowCount) {
+        detailCursor = rowCount - 1;
+    }
+
     const int16_t rowH = FONT_HEIGHT_SMALL + 3;
     const int16_t listTop = y + FONT_HEIGHT_SMALL + 2;
     int8_t visibleRows = (display->getHeight() - listTop - 1) / rowH;
@@ -7950,21 +8108,21 @@ constexpr uint32_t kStealthWakeMs = 1000;
 constexpr uint32_t kLowMemoryReminderFreeThreshold = 6 * 1024;
 constexpr uint32_t kLowMemoryReminderLargestThreshold = 4 * 1024;
 constexpr uint32_t kLowMemoryReminderSuppressMs = 5 * 60 * 1000;
-#if HERMESX_CIV_DISABLE_EMAC
-static const char *kSetupRootItems[] = {u8"返回", u8"UI設定", u8"裝置管理", u8"罐頭訊息", u8"儲存並重新開機"};
-#else
 static const char *kSetupRootItems[] = {u8"返回", u8"GROUP設定", u8"UI設定", u8"裝置管理", u8"罐頭訊息",
                                         u8"儲存並重新開機"};
-#endif
 static const uint8_t kSetupRootCount = sizeof(kSetupRootItems) / sizeof(kSetupRootItems[0]);
+#if HERMESX_CIV_DISABLE_EMAC
+static const char *kSetupEmacItems[] = {u8"返回", u8"EMINFO設定", "GROUP PIN A", "GROUP PIN B", u8"查看GROUP PIN"};
+#else
 static const char *kSetupEmacItems[] = {u8"返回", u8"EMINFO設定", "GROUP PIN A", "GROUP PIN B", u8"查看GROUP PIN",
                                         u8"解除EMAC"};
+#endif
 static const uint8_t kSetupEmacCount = sizeof(kSetupEmacItems) / sizeof(kSetupEmacItems[0]);
 static const char *kSetupEmInfoItems[] = {u8"返回", u8"EMINFO廣播", u8"EMINFO週期", u8"Heartbeat週期", u8"離線門檻",
                                           u8"附帶電量"};
 static const uint8_t kSetupEmInfoCount = sizeof(kSetupEmInfoItems) / sizeof(kSetupEmInfoItems[0]);
-static const uint32_t kSetupEmInfoIntervalOptions[] = {0, 5, 10, 30, 60, 120, 300};
-static const char *kSetupEmInfoIntervalLabels[] = {u8"沿用系統", "5s", "10s", "30s", "60s", "120s", "300s"};
+static const uint32_t kSetupEmInfoIntervalOptions[] = {0, 300, 600};
+static const char *kSetupEmInfoIntervalLabels[] = {u8"沿用系統", "300s", "600s"};
 static const uint8_t kSetupEmInfoIntervalCount = sizeof(kSetupEmInfoIntervalOptions) / sizeof(kSetupEmInfoIntervalOptions[0]);
 static const uint32_t kSetupHeartbeatIntervalOptions[] = {0, 5, 10, 15, 30, 60};
 static const char *kSetupHeartbeatIntervalLabels[] = {u8"關閉", "5s", "10s", "15s", "30s", "60s"};
@@ -14028,6 +14186,9 @@ void Screen::requestImmediateRedraw()
     if (!useDisplay || !ui) {
         return;
     }
+    enabled = true;
+    runASAP = true;
+    setInterval(0);
     setFastFramerate();
     if (ui->getUiState()) {
         ui->getUiState()->lastUpdate = 0;
@@ -14048,6 +14209,7 @@ static uint32_t hermesXBootHoldHeldMs = 0;
 static uint32_t hermesXBootHoldLongMs = 1;
 static bool hermesXBootHoldBootScreenPending = false;
 static uint32_t hermesXBootHoldBootScreenAtMs = 0;
+static uint32_t hermesFinderTftFullRepaintUntilMs = 0;
 
 static bool showingBootScreen = true;
 static uint32_t bootScreenStartMs = 0;
@@ -14581,24 +14743,35 @@ int32_t Screen::runOnce()
         setFastFramerate();
     }
 
-    if (hermesFinderPulseSendingVisible && lighthouseModule) {
+    if ((hermesFinderPulseSendingVisible || hermesFinderUiMode == HermesFinderUiMode::PositionList) && lighthouseModule) {
         const auto pulseResult = lighthouseModule->consumePositionPulseUiResult();
         if (pulseResult == LighthouseModule::PositionPulseUiResult::Success) {
             hermesFinderPulseSendingVisible = false;
             hermesFinderPulseSendingShownAtMs = 0;
             hermesFinderUiMode = HermesFinderUiMode::PositionList;
             rebuildFinderNodeOrder();
-            gFinderNodeState.listCursor = 0;
+            LOG_INFO("[Screen] Finder pulse success -> position list count=%u", static_cast<unsigned>(gFinderNodeState.count));
+            gFinderNodeState.listCursor = gFinderNodeState.count > 0 ? 1 : 0;
             gFinderNodeState.selectedIndex = 0;
             gFinderNodeState.detailCursor = 0;
-            showOnlineNodeListPage();
+            if (!showingNormalScreen && ui) {
+                setFrames(FOCUS_PRESERVE);
+            }
+            if (!screenOn) {
+                handleSetOn(true);
+            }
+            showFinderListPageSafely(true);
             setFastFramerate();
             requestImmediateRedraw();
         } else if (pulseResult == LighthouseModule::PositionPulseUiResult::Timeout) {
             hermesFinderPulseSendingVisible = false;
             hermesFinderPulseSendingShownAtMs = 0;
-            hermesFinderUiMode = HermesFinderUiMode::Menu;
-            showOnlineNodeListPage();
+            hermesFinderUiMode = HermesFinderUiMode::PositionList;
+            gFinderNodeState.listCursor = 0;
+            gFinderNodeState.selectedIndex = 0;
+            gFinderNodeState.detailCursor = 0;
+            LOG_WARN("[Screen] Finder pulse timeout -> position list");
+            showFinderListPageSafely(true);
             showTraceRoutePopup(u8"尋人模式", "SEND FAIL");
             setFastFramerate();
             requestImmediateRedraw();
@@ -14632,11 +14805,14 @@ int32_t Screen::runOnce()
         hermesFinderUiMode = HermesFinderUiMode::Menu;
         hermesFinderPulseSendingVisible = requestStarted;
         hermesFinderPulseSendingShownAtMs = requestStarted ? millis() : 0;
-        showOnlineNodeListPage();
+        if (requestStarted) {
+            showFinderListPageSafely(true);
+        }
         if (!requestStarted) {
             if (HermesXInterfaceModule::instance) {
                 HermesXInterfaceModule::instance->playNackFail();
             }
+            showFinderListPageSafely(true);
             showTraceRoutePopup(u8"尋人模式", "SEND FAIL");
         }
         setFastFramerate();
@@ -14681,6 +14857,12 @@ int32_t Screen::runOnce()
     const uint16_t normalBg = TFTDisplay::rgb565(0x00, 0x00, 0x00);
     const uint16_t stealthFg = TFTDisplay::rgb565(0xFF, 0x20, 0x20);
     const uint8_t currentFrameIndex = ui->getUiState()->currentFrame;
+    const bool finderTftFrameActive =
+        showingNormalScreen && (hermesFinderUiMode == HermesFinderUiMode::Menu || hermesFinderUiMode == HermesFinderUiMode::PositionList) &&
+        ((framesetInfo.positions.finderList < framesetInfo.frameCount && currentFrameIndex == framesetInfo.positions.finderList) ||
+         (framesetInfo.positions.finderDetail < framesetInfo.frameCount && currentFrameIndex == framesetInfo.positions.finderDetail));
+    const bool finderTftFullRepaintActive =
+        finderTftFrameActive && hermesFinderTftFullRepaintUntilMs != 0 && millis() < hermesFinderTftFullRepaintUntilMs;
     const bool frameIndexChanged = currentFrameIndex != gDirectLastFrameIndex;
     const bool isCurrentGpsFrame = showingNormalScreen && (framesetInfo.positions.settings < framesetInfo.frameCount) &&
                                    (currentFrameIndex == framesetInfo.positions.settings);
@@ -14944,6 +15126,15 @@ int32_t Screen::runOnce()
         tft->clearColorPaletteZones();
         tft->setColorPaletteDefaults(isStealthModeActive() ? stealthFg : normalFg, normalBg);
     }
+    if (finderTftFullRepaintActive) {
+        skipUiUpdate = false;
+        tft->clearColorPaletteZones();
+        tft->setColorPaletteDefaults(normalFg, normalBg);
+        tft->markColorPaletteDirty();
+        if (ui->getUiState()) {
+            ui->getUiState()->lastUpdate = 0;
+        }
+    }
 #endif
 
     // this must be before the frameState == FIXED check, because we always
@@ -14955,6 +15146,11 @@ int32_t Screen::runOnce()
 #if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
     defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
     const bool uiRenderedThisTick = !skipUiUpdate && ui->getUiState()->lastUpdate != uiLastUpdateBefore;
+    if (finderTftFullRepaintActive && uiRenderedThisTick) {
+        tft->overlayBufferForeground565();
+        LOG_INFO("[Screen] Finder TFT foreground overlay frame=%u count=%u",
+                 ui->getUiState() ? ui->getUiState()->currentFrame : 0xFF, static_cast<unsigned>(gFinderNodeState.count));
+    }
     if (onFixedGpsFrame && uiRenderedThisTick) {
         gDirectGpsNeedsFullFrameAfterSwitch = false;
         gDirectGpsBasePainted = true;
@@ -15392,6 +15588,8 @@ void Screen::setFrames(FrameFocus focus)
     fsi.positions.share = 0xFF;
     fsi.positions.onlineList = 0xFF;
     fsi.positions.onlineDetail = 0xFF;
+    fsi.positions.finderList = 0xFF;
+    fsi.positions.finderDetail = 0xFF;
     fsi.positions.groupList = 0xFF;
     fsi.positions.groupDetail = 0xFF;
     fsi.positions.takMode = 0xFF;
@@ -15491,6 +15689,10 @@ void Screen::setFrames(FrameFocus focus)
     normalFrames[numframes++] = &Screen::drawOnlineNodeListFrame;
     fsi.positions.onlineDetail = numframes;
     normalFrames[numframes++] = &Screen::drawOnlineNodeDetailFrame;
+    fsi.positions.finderList = numframes;
+    normalFrames[numframes++] = &Screen::drawFinderNodeListFrame;
+    fsi.positions.finderDetail = numframes;
+    normalFrames[numframes++] = &Screen::drawFinderNodeDetailFrame;
     fsi.positions.groupList = numframes;
     normalFrames[numframes++] = &Screen::drawGroupNodeListFrame;
     fsi.positions.groupDetail = numframes;
@@ -16602,7 +16804,7 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
     } else if (hermesActionSelected == 11) {
         hermesFinderUiMode = HermesFinderUiMode::Menu;
         hermesFinderMenuSelected = 1;
-        openOnlineNodeList();
+        showFinderListPageSafely(true);
     }
 
     setFastFramerate();
@@ -16797,7 +16999,7 @@ bool Screen::handleFinderPulseConfirmInput(const InputEvent *event)
         hermesFinderPulseSendingShownAtMs = 0;
         hermesFinderUiMode = HermesFinderUiMode::Menu;
         hermesFinderMenuSelected = 1;
-        if (!showOnlineNodeListPage()) {
+        if (!showFinderListPageSafely(false)) {
             showHermesXActionPage();
         }
         setFastFramerate();
@@ -16842,7 +17044,7 @@ bool Screen::handleFinderPulseConfirmInput(const InputEvent *event)
             hermesFinderUiMode = HermesFinderUiMode::Menu;
             hermesFinderMenuSelected = 1;
         }
-        if (!showOnlineNodeListPage()) {
+        if (!showFinderListPageSafely(false)) {
             showHermesXActionPage();
         }
         setFastFramerate();
@@ -16891,7 +17093,7 @@ bool Screen::handleFinderPulseSendingInput(const InputEvent *event)
         hermesFinderPulseSendingShownAtMs = 0;
         hermesFinderUiMode = HermesFinderUiMode::Menu;
         hermesFinderMenuSelected = 1;
-        if (!showOnlineNodeListPage()) {
+        if (!showFinderListPageSafely(false)) {
             showHermesXActionPage();
         }
         setFastFramerate();
@@ -17433,22 +17635,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         if (isSelect || isPress) {
             if (hermesSetupSelected == 0) {
                 exitFastSetupToActionPage();
-            }
-#if HERMESX_CIV_DISABLE_EMAC
-            else if (hermesSetupSelected == 1) {
-                resetMenu(HermesFastSetupPage::UiMenu);
-            } else if (hermesSetupSelected == 2) {
-                resetMenu(HermesFastSetupPage::NodeMenu);
-            } else if (hermesSetupSelected == 3) {
-                resetMenu(HermesFastSetupPage::CannedMenu);
-            } else {
-                nodeDB->saveToDisk(SEGMENT_CONFIG | SEGMENT_MODULECONFIG | SEGMENT_CHANNELS | SEGMENT_DEVICESTATE);
-                hermesSetupToast = u8"即將重新開機";
-                hermesSetupToastUntilMs = millis() + 1500;
-                rebootAtMsec = millis() + 2000;
-            }
-#else
-            else if (hermesSetupSelected == 1) {
+            } else if (hermesSetupSelected == 1) {
                 resetMenu(HermesFastSetupPage::EmacMenu);
             } else if (hermesSetupSelected == 2) {
                 resetMenu(HermesFastSetupPage::UiMenu);
@@ -17462,7 +17649,6 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                 hermesSetupToastUntilMs = millis() + 1500;
                 rebootAtMsec = millis() + 2000;
             }
-#endif
             setFastFramerate();
             return true;
         }
@@ -18415,7 +18601,12 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
             } else if (hermesSetupSelected == 1) {
                 if (hermesXEmUiModule) {
                     hermesXEmUiModule->setEmInfoBroadcastEnabled(!hermesXEmUiModule->isEmInfoBroadcastEnabled());
-                    hermesSetupToast = hermesXEmUiModule->isEmInfoBroadcastEnabled() ? u8"EMINFO廣播已開啟" : u8"EMINFO廣播已關閉";
+                    if (hermesXEmUiModule->isEmInfoBroadcastEnabled()) {
+                        hermesSetupToast = (lighthouseModule && lighthouseModule->hasEmergencyGroupPin()) ? u8"GROUP INFO已送出"
+                                                                                                          : u8"請先設定GROUP PIN";
+                    } else {
+                        hermesSetupToast = u8"EMINFO廣播已關閉";
+                    }
                     hermesSetupToastUntilMs = millis() + 1500;
                 }
             } else if (hermesSetupSelected == 2) {
@@ -19341,6 +19532,17 @@ bool Screen::handleTraceRoutePopupInput(const InputEvent *event)
 
     if (wantsDismiss) {
         dismissTraceRoutePopup();
+#if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
+    defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
+        if (screen && (screen->isFinderNodeListPageActive() || screen->isFinderNodeDetailPageActive())) {
+            auto *tft = static_cast<TFTDisplay *>(dispdev);
+            ui->init();
+            tft->resetColorPalette(true);
+            tft->markColorPaletteDirty();
+            hermesFinderTftFullRepaintUntilMs = millis() + 2000;
+        }
+#endif
+        requestImmediateRedraw();
         setFastFramerate();
         return true;
     }
@@ -19915,6 +20117,228 @@ bool Screen::handleOnlineNodeDetailInput(const InputEvent *event)
     return false;
 }
 
+bool Screen::handleFinderNodeListInput(const InputEvent *event)
+{
+    if (!event || !showingNormalScreen || !ui || framesetInfo.positions.finderList >= framesetInfo.frameCount) {
+        return false;
+    }
+
+    const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
+    const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
+    const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
+    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
+    const bool isDown = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
+    const bool isLeft = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
+    const bool isRight = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
+    const bool isSelect = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
+    const bool isCancel = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
+                          event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
+    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
+    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
+    const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
+
+    int8_t navDir = 0;
+    const bool isRotary = (event->source && strncmp(event->source, "rotEnc", 6) == 0);
+    if (isRotary) {
+        if (isCcw) {
+            navDir = -1;
+        } else if (isCw) {
+            navDir = 1;
+        } else if (eventCw == 0 && eventCcw == 0) {
+            if (isUp || isLeft) {
+                navDir = -1;
+            } else if (isDown || isRight) {
+                navDir = 1;
+            }
+        }
+    } else {
+        if (isCcw || isUp || isLeft) {
+            navDir = -1;
+        } else if (isCw || isDown || isRight) {
+            navDir = 1;
+        }
+    }
+
+    if (hermesFinderUiMode == HermesFinderUiMode::Menu) {
+        if (navDir != 0) {
+            int next = static_cast<int>(hermesFinderMenuSelected) + navDir;
+            if (next < 0) {
+                next = 0;
+            }
+            if (next > 2) {
+                next = 2;
+            }
+            hermesFinderMenuSelected = static_cast<uint8_t>(next);
+            setFastFramerate();
+            return true;
+        }
+        if (isCancel || ((isSelect || isPress) && hermesFinderMenuSelected == 0)) {
+            hermesFinderUiMode = HermesFinderUiMode::None;
+            showHermesXActionPage();
+            setFastFramerate();
+            return true;
+        }
+        if (isSelect || isPress) {
+            if (hermesFinderMenuSelected == 1) {
+                hermesFinderPulseConfirmVisible = true;
+                hermesFinderPulseConfirmSelected = 0;
+                hermesFinderPulseConfirmShownAtMs = millis();
+                hermesFinderPulseDispatched = false;
+                hermesFinderPulseSendingVisible = false;
+                hermesFinderPulseSendingShownAtMs = 0;
+            } else if (hermesFinderMenuSelected == 2) {
+                hermesFinderUiMode = HermesFinderUiMode::PositionList;
+                rebuildFinderNodeOrder();
+                gFinderNodeState.listCursor = 0;
+                gFinderNodeState.selectedIndex = 0;
+                gFinderNodeState.detailCursor = 0;
+                showFinderListPageSafely(true);
+            }
+            setFastFramerate();
+            return true;
+        }
+        return true;
+    }
+
+    hermesFinderUiMode = HermesFinderUiMode::PositionList;
+    rebuildFinderNodeOrder();
+    LOG_INFO("[Screen] FINDER list input src=%s event=%d frame=%u finderList=%u finderDetail=%u cursor=%u count=%u",
+             event->source ? event->source : "(null)", event->inputEvent, ui->getUiState()->currentFrame,
+             framesetInfo.positions.finderList, framesetInfo.positions.finderDetail, gFinderNodeState.listCursor,
+             gFinderNodeState.count);
+
+    uint8_t &listCursor = gFinderNodeState.listCursor;
+    const int totalEntries = static_cast<int>(gFinderNodeState.count) + 1;
+    if (navDir != 0) {
+        int nextCursor = static_cast<int>(listCursor) + navDir;
+        if (nextCursor < 0) {
+            nextCursor = 0;
+        } else if (nextCursor >= totalEntries) {
+            nextCursor = totalEntries - 1;
+        }
+        if (nextCursor != listCursor) {
+            listCursor = static_cast<uint8_t>(nextCursor);
+            if (nextCursor > 0) {
+                gFinderNodeState.selectedIndex = static_cast<uint8_t>(nextCursor - 1);
+            }
+            setFastFramerate();
+        }
+        return true;
+    }
+
+    if (isSelect || isPress) {
+        if (listCursor == 0) {
+            hermesFinderUiMode = HermesFinderUiMode::None;
+            showHermesXActionPage();
+        } else {
+            gFinderNodeState.selectedIndex = listCursor - 1;
+            gFinderNodeState.detailCursor = 0;
+            showFinderNodeDetailPage();
+        }
+        setFastFramerate();
+        return true;
+    }
+
+    if (isCancel) {
+        hermesFinderUiMode = HermesFinderUiMode::Menu;
+        hermesFinderMenuSelected = 2;
+        showFinderListPageSafely(true);
+        setFastFramerate();
+        return true;
+    }
+
+    return false;
+}
+
+bool Screen::handleFinderNodeDetailInput(const InputEvent *event)
+{
+    if (!event || !showingNormalScreen || !ui || framesetInfo.positions.finderDetail >= framesetInfo.frameCount) {
+        return false;
+    }
+
+    const meshtastic_NodeInfoLite *node = getSelectedFinderNode();
+    LOG_INFO("[Screen] FINDER detail input src=%s event=%d frame=%u finderList=%u finderDetail=%u cursor=%u node=%08lx",
+             event->source ? event->source : "(null)", event->inputEvent, ui->getUiState()->currentFrame,
+             framesetInfo.positions.finderList, framesetInfo.positions.finderDetail, gFinderNodeState.detailCursor,
+             static_cast<unsigned long>(node ? node->num : 0));
+    if (!node) {
+        hermesFinderUiMode = HermesFinderUiMode::PositionList;
+        gFinderNodeState.listCursor = 0;
+        gFinderNodeState.selectedIndex = 0;
+        gFinderNodeState.detailCursor = 0;
+        if (framesetInfo.positions.finderList < framesetInfo.frameCount) {
+            ui->switchToFrame(framesetInfo.positions.finderList);
+        }
+        requestImmediateRedraw();
+        setFastFramerate();
+        return true;
+    }
+
+    const uint8_t rowCount = buildOnlineNodeDetailRows(*node, true, nullptr, 0);
+    uint8_t &detailCursor = gFinderNodeState.detailCursor;
+    if (detailCursor >= rowCount) {
+        detailCursor = rowCount - 1;
+    }
+
+    const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
+    const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
+    const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
+    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
+    const bool isDown = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
+    const bool isLeft = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
+    const bool isRight = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
+    const bool isSelect = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
+    const bool isCancel = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
+                          event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
+    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
+    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
+    const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
+
+    int8_t navDir = 0;
+    const bool isRotary = (event->source && strncmp(event->source, "rotEnc", 6) == 0);
+    if (isRotary) {
+        if (isCcw) {
+            navDir = -1;
+        } else if (isCw) {
+            navDir = 1;
+        } else if (eventCw == 0 && eventCcw == 0) {
+            if (isUp) {
+                navDir = -1;
+            } else if (isDown) {
+                navDir = 1;
+            }
+        }
+    } else {
+        if (isUp || isCcw) {
+            navDir = -1;
+        } else if (isDown || isCw) {
+            navDir = 1;
+        }
+    }
+
+    if (navDir != 0) {
+        int nextCursor = static_cast<int>(detailCursor) + navDir;
+        if (nextCursor < 0) {
+            nextCursor = 0;
+        } else if (nextCursor >= rowCount) {
+            nextCursor = rowCount - 1;
+        }
+        if (nextCursor != detailCursor) {
+            detailCursor = static_cast<uint8_t>(nextCursor);
+            setFastFramerate();
+        }
+        return true;
+    }
+
+    if (isSelect || isPress || isCancel || isLeft || isRight) {
+        showFinderListPageSafely(true);
+        setFastFramerate();
+        return true;
+    }
+
+    return false;
+}
+
 bool Screen::handleGroupNodeListInput(const InputEvent *event)
 {
     if (!event || !showingNormalScreen || !ui || framesetInfo.positions.groupList >= framesetInfo.frameCount) {
@@ -20305,7 +20729,7 @@ bool Screen::handleTakModeInput(const InputEvent *event)
         if (gTakModeProfile.allowFinder) {
             hermesFinderUiMode = HermesFinderUiMode::Menu;
             hermesFinderMenuSelected = 0;
-            showOnlineNodeListPage();
+            showFinderListPageSafely(true);
         } else if (screen) {
             screen->print("Finder disabled in TAK profile\n");
         }
@@ -20440,6 +20864,22 @@ int Screen::handleInputEvent(const InputEvent *event)
             if (handleRecentTextMessageDetailInput(event)) {
                 return 0;
             }
+        }
+
+        if (isFinderNodeListPageActive()) {
+            LOG_INFO("[Screen] handleInputEvent route -> FINDER list frame=%u", currentFrame);
+            if (handleFinderNodeListInput(event)) {
+                return 0;
+            }
+            return 0;
+        }
+
+        if (isFinderNodeDetailPageActive()) {
+            LOG_INFO("[Screen] handleInputEvent route -> FINDER detail frame=%u", currentFrame);
+            if (handleFinderNodeDetailInput(event)) {
+                return 0;
+            }
+            return 0;
         }
 
         if (isOnlineNodeListPageActive()) {
@@ -20603,6 +21043,28 @@ bool Screen::isOnlineNodeDetailPageActive() const
     return ui->getUiState()->currentFrame == framesetInfo.positions.onlineDetail;
 }
 
+bool Screen::isFinderNodeListPageActive() const
+{
+    if (!showingNormalScreen || !ui) {
+        return false;
+    }
+    if (framesetInfo.positions.finderList >= framesetInfo.frameCount) {
+        return false;
+    }
+    return ui->getUiState()->currentFrame == framesetInfo.positions.finderList;
+}
+
+bool Screen::isFinderNodeDetailPageActive() const
+{
+    if (!showingNormalScreen || !ui) {
+        return false;
+    }
+    if (framesetInfo.positions.finderDetail >= framesetInfo.frameCount) {
+        return false;
+    }
+    return ui->getUiState()->currentFrame == framesetInfo.positions.finderDetail;
+}
+
 bool Screen::isGroupNodeListPageActive() const
 {
     if (!showingNormalScreen || !ui) {
@@ -20688,6 +21150,15 @@ bool Screen::shouldShowHermesXMenuFooter(uint8_t frameIndex) const
         return false;
     }
     if (frameIndex == framesetInfo.positions.takMode) { // TAK page owns its toggle controls.
+        return false;
+    }
+    if (frameIndex == framesetInfo.positions.onlineList || frameIndex == framesetInfo.positions.onlineDetail) {
+        return false;
+    }
+    if (frameIndex == framesetInfo.positions.finderList || frameIndex == framesetInfo.positions.finderDetail) {
+        return false;
+    }
+    if (frameIndex == framesetInfo.positions.groupList || frameIndex == framesetInfo.positions.groupDetail) {
         return false;
     }
     if (frameIndex == framesetInfo.positions.settings) { // GPS hero poster reserves top-right corner visuals.
@@ -20777,6 +21248,74 @@ bool Screen::showOnlineNodeListPage()
     return true;
 }
 
+bool Screen::showFinderNodeListPage()
+{
+    if (!showingNormalScreen || !ui) {
+        return false;
+    }
+    if (framesetInfo.positions.finderList >= framesetInfo.frameCount) {
+        return false;
+    }
+
+    ui->switchToFrame(framesetInfo.positions.finderList);
+    setFastFramerate();
+    return true;
+}
+
+bool Screen::showFinderListPageSafely(bool fallbackToActionPage)
+{
+    if (!ui) {
+        return false;
+    }
+
+    const bool wasScreenOn = screenOn;
+    if (!showingNormalScreen) {
+        setFrames(FOCUS_PRESERVE);
+    }
+    if (!screenOn) {
+        handleSetOn(true);
+    }
+
+#if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||     \
+    defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
+    auto *tft = static_cast<TFTDisplay *>(dispdev);
+    dispdev->displayOn();
+    ui->init();
+    invalidateDirectTftWakeCaches();
+    tft->fillRect565(0, 0, dispdev->getWidth(), dispdev->getHeight(), TFTDisplay::rgb565(0x00, 0x00, 0x00));
+    tft->resetColorPalette(true);
+    tft->markColorPaletteDirty();
+    if (showingNormalScreen && gNormalFramesInitializedAfterBoot) {
+        setFrames(FOCUS_PRESERVE);
+    }
+#endif
+
+    if (showFinderNodeListPage()) {
+#if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||     \
+    defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
+        if (ui->getUiState()) {
+            ui->getUiState()->lastUpdate = 0;
+        }
+        LOG_INFO("[Screen] Finder list display recovery frame=%u finderList=%u count=%u woke=%u",
+                 ui->getUiState() ? ui->getUiState()->currentFrame : 0xFF, framesetInfo.positions.finderList,
+                 static_cast<unsigned>(gFinderNodeState.count), wasScreenOn ? 0 : 1);
+        hermesFinderTftFullRepaintUntilMs = millis() + 2000;
+#else
+        (void)wasScreenOn;
+#endif
+        requestImmediateRedraw();
+        return true;
+    }
+
+    LOG_WARN("[Screen] Finder list frame unavailable normal=%u on=%u finderList=%u frameCount=%u",
+             showingNormalScreen ? 1 : 0, screenOn ? 1 : 0, static_cast<unsigned>(framesetInfo.positions.finderList),
+             static_cast<unsigned>(framesetInfo.frameCount));
+    if (fallbackToActionPage && showHermesXActionPage()) {
+        requestImmediateRedraw();
+    }
+    return false;
+}
+
 bool Screen::showOnlineNodeDetailPage()
 {
     if (!showingNormalScreen || !ui) {
@@ -20787,6 +21326,20 @@ bool Screen::showOnlineNodeDetailPage()
     }
 
     ui->switchToFrame(framesetInfo.positions.onlineDetail);
+    setFastFramerate();
+    return true;
+}
+
+bool Screen::showFinderNodeDetailPage()
+{
+    if (!showingNormalScreen || !ui) {
+        return false;
+    }
+    if (framesetInfo.positions.finderDetail >= framesetInfo.frameCount) {
+        return false;
+    }
+
+    ui->switchToFrame(framesetInfo.positions.finderDetail);
     setFastFramerate();
     return true;
 }

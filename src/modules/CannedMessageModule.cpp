@@ -372,6 +372,25 @@ int CannedMessageModule::handleInputEvent(const InputEvent *event)
             return 0;
         }
     }
+    if (screen && (screen->isFinderNodeListPageActive() || screen->isFinderNodeDetailPageActive())) {
+        if (this->runState == CANNED_MESSAGE_RUN_STATE_DISABLED || this->runState == CANNED_MESSAGE_RUN_STATE_INACTIVE) {
+            return 0;
+        }
+    }
+    if (screen && (screen->isGroupNodeListPageActive() || screen->isGroupNodeDetailPageActive())) {
+        const bool cannedComposerActive = this->runState == CANNED_MESSAGE_RUN_STATE_FREETEXT ||
+                                          this->runState == CANNED_MESSAGE_RUN_STATE_ACTION_SELECT ||
+                                          this->runState == CANNED_MESSAGE_RUN_STATE_SENDING_ACTIVE ||
+                                          this->runState == CANNED_MESSAGE_RUN_STATE_ACK_NACK_RECEIVED ||
+                                          this->runState == CANNED_MESSAGE_RUN_STATE_MESSAGE;
+        if (!cannedComposerActive) {
+            if (this->runState != CANNED_MESSAGE_RUN_STATE_DISABLED && this->runState != CANNED_MESSAGE_RUN_STATE_INACTIVE) {
+                LOG_INFO("[CannedMessage] exit reason=group-page-guard state=%d", static_cast<int>(this->runState));
+                exitMenu();
+            }
+            return 0;
+        }
+    }
     if (screen && (screen->isRecentTextMessagesPageActive() || screen->isRecentTextMessageDetailPageActive())) {
         // Guard only blocks opening canned input while user is actively browsing Recent pages.
         // If canned is already active, do NOT force-exit here; that caused unexpected home jumps
@@ -758,6 +777,10 @@ void CannedMessageModule::captureReturnTarget()
         returnTarget = CANNED_MESSAGE_RETURN_TARGET_ONLINE_DETAIL;
     } else if (screen->isOnlineNodeListPageActive()) {
         returnTarget = CANNED_MESSAGE_RETURN_TARGET_ONLINE_LIST;
+    } else if (screen->isGroupNodeDetailPageActive()) {
+        returnTarget = CANNED_MESSAGE_RETURN_TARGET_GROUP_DETAIL;
+    } else if (screen->isGroupNodeListPageActive()) {
+        returnTarget = CANNED_MESSAGE_RETURN_TARGET_GROUP_LIST;
     } else if (screen->isHermesXActionPageActive()) {
         returnTarget = CANNED_MESSAGE_RETURN_TARGET_ACTION;
     }
@@ -788,6 +811,12 @@ void CannedMessageModule::restoreReturnTarget()
         break;
     case CANNED_MESSAGE_RETURN_TARGET_ONLINE_LIST:
         restored = screen->showOnlineNodeListPage();
+        break;
+    case CANNED_MESSAGE_RETURN_TARGET_GROUP_DETAIL:
+        restored = screen->showGroupNodeDetailPage();
+        break;
+    case CANNED_MESSAGE_RETURN_TARGET_GROUP_LIST:
+        restored = screen->showGroupNodeListPage();
         break;
     case CANNED_MESSAGE_RETURN_TARGET_ACTION:
         restored = screen->showHermesXActionPage();
@@ -1163,6 +1192,16 @@ bool CannedMessageModule::shouldDraw()
 
     if (screen && (screen->isOnlineNodeListPageActive() || screen->isOnlineNodeDetailPageActive())) {
         return false;
+    }
+
+    if (screen && (screen->isFinderNodeListPageActive() || screen->isFinderNodeDetailPageActive())) {
+        return false;
+    }
+
+    if (screen && (screen->isGroupNodeListPageActive() || screen->isGroupNodeDetailPageActive())) {
+        return runState == CANNED_MESSAGE_RUN_STATE_FREETEXT || runState == CANNED_MESSAGE_RUN_STATE_ACTION_SELECT ||
+               runState == CANNED_MESSAGE_RUN_STATE_SENDING_ACTIVE || runState == CANNED_MESSAGE_RUN_STATE_ACK_NACK_RECEIVED ||
+               runState == CANNED_MESSAGE_RUN_STATE_MESSAGE;
     }
 
     // If using "scan and select" input, don't draw the module frame just to say "disabled"

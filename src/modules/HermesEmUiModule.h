@@ -53,6 +53,7 @@ class HermesXEmUiModule : public SinglePortModule, public Observable<const UIFra
         uint8_t batteryPercent = 0;
         uint32_t lastSeenMs = 0;
         uint32_t lastHeartbeatMs = 0;
+        uint32_t lastPresenceMs = 0;
         uint32_t remoteTimestamp = 0;
         uint8_t heartbeatSeq = 0;
         bool heartbeatActive = false;
@@ -151,6 +152,8 @@ class HermesXEmUiModule : public SinglePortModule, public Observable<const UIFra
     uint8_t emOfflineThresholdCount = 3;
     bool emBatteryIncluded = true;
     uint8_t emHeartbeatSeq = 0;
+    uint32_t lastGroupPresenceSentMs = 0;
+    uint8_t groupPresenceSeq = 0;
     int deviceStatusOffset = 0;
     int deviceStatusSelectedIndex = 0;
     int deviceDetailScrollOffset = 0;
@@ -185,9 +188,11 @@ class HermesXEmUiModule : public SinglePortModule, public Observable<const UIFra
     void recordEmergencyReportPayload(const meshtastic_MeshPacket &mp);
     void recordEmInfoPayload(const meshtastic_MeshPacket &mp);
     void recordEmHeartbeatPayload(const meshtastic_MeshPacket &mp);
+    void recordGroupPresencePayload(const meshtastic_MeshPacket &mp);
     EmInfoNodeStatus *findOrCreateNodeStatus(NodeNum nodeNum);
     void sendEmInfoNow();
     void sendEmHeartbeatNow();
+    bool sendGroupPresenceNow();
     uint32_t getEmInfoIntervalMs() const;
     uint32_t getEmHeartbeatIntervalMs() const;
     const EmInfoNodeStatus *getSelectedEmInfoNode() const;

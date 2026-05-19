@@ -1,3 +1,17 @@
+## 2026-05-15
+- 修正 `尋人模式` 收到對方 `POSITION` 回傳後可能跳到黑畫面的問題；現在尋人模組有自己的清單與明細 frame，不再共用 `ONLINE` frame/input，成功收到同 GROUP/EM 密碼授權且有座標的節點後，會進入尋人模組自己的 `尋人清單` 並提供明確 `離開` 選項。
+- 修正 `尋人清單` / `尋人模式` frame 已切換且 TFT overlay 已執行，但畫面仍可能全黑的問題；現在尋人 frame 每次繪製都會明確清黑底並重設白色前景，避免沿用前一頁留下的 BLACK 繪圖狀態。
+- 修正旁聽到別人的 TraceRoute 回覆、或被其他節點 TraceRoute 時會誤跳出 TraceRoute 結果頁的問題；現在只顯示本機主動送出的 TraceRoute 回覆。
+- `heltec-wireless-tracker` 編譯成功，GOV build 版本為 `HXB_G0.3.2_20260519_1457`。
+
+## 2026-05-11
+- GROUP 節點列表新增低頻 `GROUP presence`：同一組 `GROUP PIN` 的裝置只要在線，即使沒有進 EM / EMUI，也會每 5 分鐘送出小型 presence 封包並出現在 `GROUP > 節點列表`；接收端仍用 GROUP fingerprint 過濾不同群組。
+- `GROUP設定 > EMINFO廣播` 開啟時會立即送出一次 GROUP INFO / presence，不再只顯示「已開啟」，也不再切到卡住的 `HermesXAlert` 頁；若尚未設定 GROUP PIN，會提示先設定 PIN。
+- 修正 GROUP 列表 / 明細旋鈕仍可能被 CannedMessage menu 搶走的問題；GROUP 頁只允許從 `MSG` 開出的私訊 composer 接管輸入。
+- GROUP 明細的 `LastHB` 改為 `Last`，避免一般 presence 被誤認為 EM Heartbeat；在線判斷會優先看 EM Heartbeat，其次看 GROUP presence，最後才 fallback 到 EMINFO / 回報封包。
+- `EMINFO週期` 最低允許值調整為 5 分鐘；設定頁只保留 `沿用系統 / 300s / 600s`。
+- `heltec-wireless-tracker` 編譯成功，GOV 韌體產物已依 handoff 搬到 `/Users/oldways/Desktop/HermesX韌體/HXB_G0.3.2_20260513_1631.bin` 與 `.factory.bin`。
+
 ## 2026-05-09
 - `TAK MODE` 入口改為獨立盾牌 icon 頁：短按會叫出彈窗操作頁，可切換 TAK ON/OFF、進入 `TAKMODE設定`、啟動 EMUI / 尋人模組，並從彈窗選擇返回主選單；開啟後離開頁面仍維持 TAK，重開機後也會自動恢復，`TAKMODE設定` 可調整裝置資訊廣播、GPS 刷新、位置廣播、SmartPosition 門檻與聲光靜默。
 - 修正 `TAK MODE` 彈窗選單在小螢幕上不會捲動的問題；現在只繪製可視列，選取項超出畫面時會跟著捲到後續選項。

@@ -94,6 +94,11 @@ constexpr uint8_t kEmHeartbeatSignature0 = 0x48; // H
 constexpr uint8_t kEmHeartbeatSignature1 = 0x42; // B
 constexpr uint8_t kEmHeartbeatVersion = 2;
 constexpr uint8_t kEmHeartbeatLegacyVersion = 1;
+constexpr uint8_t kGroupPresenceSignature0 = 0x47; // G
+constexpr uint8_t kGroupPresenceSignature1 = 0x50; // P
+constexpr uint8_t kGroupPresenceVersion = 1;
+constexpr uint32_t kGroupPresenceIntervalSec = 300;
+constexpr uint32_t kMinEmInfoIntervalSec = 300;
 constexpr uint32_t kDefaultEmHeartbeatIntervalSec = 5;
 constexpr uint8_t kDefaultEmOfflineThresholdCount = 3;
 constexpr uint32_t kNodeStaleFallbackMs = 15 * 1000;
@@ -169,6 +174,41 @@ bool isGroupFingerprintAllowed(uint32_t fingerprint)
 template <typename T> T clampValue(T value, T minValue, T maxValue)
 {
     return std::max(minValue, std::min(maxValue, value));
+}
+
+uint32_t normalizeEmInfoIntervalSec(uint32_t seconds)
+{
+    if (seconds == 0) {
+        return 0;
+    }
+    return clampValue<uint32_t>(seconds, kMinEmInfoIntervalSec, 600);
+}
+
+uint8_t buildGroupFingerprints(uint32_t *fingerprints, uint8_t maxCount, bool requirePin)
+{
+    uint8_t fingerprintCount = 0;
+    if (fingerprints && maxCount > 0 && lighthouseModule && lighthouseModule->hasEmergencyGroupPin()) {
+        for (uint8_t slot = 0; slot < 2 && fingerprintCount < maxCount; ++slot) {
+            if (lighthouseModule->getEmergencyGroupPin(slot).length() == 0) {
+                continue;
+            }
+            const uint32_t fingerprint = lighthouseModule->getEmergencyGroupFingerprint(slot);
+            bool duplicate = false;
+            for (uint8_t i = 0; i < fingerprintCount; ++i) {
+                if (fingerprints[i] == fingerprint) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (!duplicate) {
+                fingerprints[fingerprintCount++] = fingerprint;
+            }
+        }
+    }
+    if (fingerprintCount == 0 && !requirePin && fingerprints && maxCount > 0) {
+        fingerprints[fingerprintCount++] = 0;
+    }
+    return fingerprintCount;
 }
 
 uint32_t parseUintOrDefault(const String &content, uint32_t fallback)
@@ -307,7 +347,7 @@ HermesXEmUiModule::HermesXEmUiModule()
             }
             emInfoIntervalFile.close();
             content.trim();
-            emInfoIntervalSec = clampValue<uint32_t>(parseUintOrDefault(content, 0), 0, 600);
+            emInfoIntervalSec = normalizeEmInfoIntervalSec(parseUintOrDefault(content, 0));
         }
         auto emHeartbeatIntervalFile = FSCom.open(kEmHeartbeatIntervalFile, FILE_O_READ);
         if (emHeartbeatIntervalFile) {
@@ -526,16 +566,31 @@ void HermesXEmUiModule::setEmInfoBroadcastEnabled(bool enabled)
     }
 #endif
 
-    lastAlertMessage = emInfoBroadcastEnabled ? u8"EMINFO 廣播已開啟" : u8"EMINFO 廣播已關閉";
-    if (screen) {
-        screen->startHermesXAlert(lastAlertMessage.c_str());
+    if (emInfoBroadcastEnabled) {
+        lastEmInfoSentMs = 0;
+        lastGroupPresenceSentMs = 0;
+        const bool sentPresence = sendGroupPresenceNow();
+        if (active) {
+            sendEmInfoNow();
+        }
+        if (sentPresence) {
+            lastAlertMessage = u8"GROUP INFO 已送出";
+        } else if (!lighthouseModule || !lighthouseModule->hasEmergencyGroupPin()) {
+            lastAlertMessage = u8"請先設定 GROUP PIN";
+        } else {
+            lastAlertMessage = u8"EMINFO 廣播已開啟";
+        }
+    } else {
+        lastAlertMessage = u8"EMINFO 廣播已關閉";
     }
+    // FastSetup / EM menus show inline feedback; keep this setter from replacing
+    // the current page with a sticky alert frame.
     sendLocalTextToPhone(String(u8"[LOCAL] ") + lastAlertMessage);
 }
 
 void HermesXEmUiModule::setEmInfoIntervalSec(uint32_t seconds)
 {
-    emInfoIntervalSec = clampValue<uint32_t>(seconds, 0, 600);
+    emInfoIntervalSec = normalizeEmInfoIntervalSec(seconds);
 #ifdef FSCom
     concurrency::LockGuard g(spiLock);
     FSCom.mkdir("/prefs");
@@ -1190,6 +1245,70 @@ void HermesXEmUiModule::recordEmHeartbeatPayload(const meshtastic_MeshPacket &mp
     }
 }
 
+void HermesXEmUiModule::recordGroupPresencePayload(const meshtastic_MeshPacket &mp)
+{
+    if (isFromUs(&mp) || mp.decoded.payload.size < 13) {
+        return;
+    }
+
+    const uint8_t *bytes = mp.decoded.payload.bytes;
+    if (bytes[0] != kGroupPresenceSignature0 || bytes[1] != kGroupPresenceSignature1 ||
+        bytes[2] != kGroupPresenceVersion) {
+        return;
+    }
+
+    const uint32_t groupFingerprint = readGroupFingerprint(bytes + 3);
+    if (!isGroupFingerprintAllowed(groupFingerprint)) {
+        HERMESX_LOG_INFO("GROUP presence ignored: GROUP fingerprint mismatch from=0x%x", getFrom(&mp));
+        return;
+    }
+
+    const NodeNum nodeNum = getFrom(&mp);
+    const uint8_t seq = bytes[7];
+    const uint8_t batteryPercent = bytes[8];
+    const uint32_t remoteTimestamp = static_cast<uint32_t>(bytes[9]) | (static_cast<uint32_t>(bytes[10]) << 8) |
+                                     (static_cast<uint32_t>(bytes[11]) << 16) | (static_cast<uint32_t>(bytes[12]) << 24);
+
+    char shortName[16] = {0};
+    const size_t shortNameOffset = 13;
+    if (mp.decoded.payload.size > shortNameOffset) {
+        const size_t shortNameLen = std::min<size_t>(sizeof(shortName) - 1, mp.decoded.payload.size - shortNameOffset);
+        memcpy(shortName, bytes + shortNameOffset, shortNameLen);
+        shortName[shortNameLen] = '\0';
+    }
+
+    EmInfoNodeStatus *entry = findOrCreateNodeStatus(nodeNum);
+    if (!entry) {
+        return;
+    }
+    const uint32_t now = millis();
+    entry->lastPresenceMs = now;
+    entry->remoteTimestamp = remoteTimestamp;
+    entry->heartbeatSeq = seq;
+    if (batteryPercent > 0) {
+        entry->batteryPercent = batteryPercent;
+    }
+    if (shortName[0] != '\0') {
+        snprintf(entry->shortName, sizeof(entry->shortName), "%s", shortName);
+    } else if (entry->shortName[0] == '\0') {
+        const meshtastic_NodeInfoLite *node = nodeDB->getMeshNode(nodeNum);
+        if (node) {
+            snprintf(entry->shortName, sizeof(entry->shortName), "%s", node->user.short_name);
+        }
+    }
+    if (entry->state[0] == '\0') {
+        snprintf(entry->state, sizeof(entry->state), "%s", emInfoStateCodeToZh(kEmInfoStateIdle));
+    }
+
+    const meshtastic_NodeInfoLite *node = nodeDB->getMeshNode(nodeNum);
+    if (node && nodeDB->hasValidPosition(node)) {
+        entry->latitudeI = node->position.latitude_i;
+        entry->longitudeI = node->position.longitude_i;
+        entry->altitude = node->position.altitude;
+    }
+    entry->valid = true;
+}
+
 void HermesXEmUiModule::sendEmInfoNow()
 {
     if (!active || !emInfoBroadcastEnabled) {
@@ -1303,6 +1422,57 @@ void HermesXEmUiModule::sendEmHeartbeatNow()
     HERMESX_LOG_INFO("EMHB broadcast seq=%u active=%d", static_cast<unsigned>(emHeartbeatSeq), active ? 1 : 0);
 }
 
+bool HermesXEmUiModule::sendGroupPresenceNow()
+{
+    uint32_t fingerprints[2] = {0, 0};
+    const uint8_t fingerprintCount = buildGroupFingerprints(fingerprints, 2, true);
+    if (fingerprintCount == 0) {
+        return false;
+    }
+
+    char shortName[16];
+    snprintf(shortName, sizeof(shortName), "%s", owner.short_name);
+    const size_t shortNameLen = strnlen(shortName, sizeof(shortName));
+    const uint8_t batteryPercent = emBatteryIncluded && powerStatus ? powerStatus->getBatteryChargePercent() : 0;
+    const uint32_t nowSec = static_cast<uint32_t>(getValidTime(RTCQualityFromNet));
+    const uint8_t seq = ++groupPresenceSeq;
+
+    bool sent = false;
+    for (uint8_t i = 0; i < fingerprintCount; ++i) {
+        meshtastic_MeshPacket *p = allocDataPacket();
+        if (!p) {
+            return sent;
+        }
+
+        p->to = NODENUM_BROADCAST;
+        p->channel = channels.getPrimaryIndex();
+        p->want_ack = false;
+        p->decoded.payload.bytes[0] = kGroupPresenceSignature0;
+        p->decoded.payload.bytes[1] = kGroupPresenceSignature1;
+        p->decoded.payload.bytes[2] = kGroupPresenceVersion;
+        writeGroupFingerprint(p->decoded.payload.bytes + 3, fingerprints[i]);
+        p->decoded.payload.bytes[7] = seq;
+        p->decoded.payload.bytes[8] = batteryPercent;
+        p->decoded.payload.bytes[9] = static_cast<uint8_t>(nowSec & 0xFF);
+        p->decoded.payload.bytes[10] = static_cast<uint8_t>((nowSec >> 8) & 0xFF);
+        p->decoded.payload.bytes[11] = static_cast<uint8_t>((nowSec >> 16) & 0xFF);
+        p->decoded.payload.bytes[12] = static_cast<uint8_t>((nowSec >> 24) & 0xFF);
+        p->decoded.payload.size = static_cast<uint16_t>(13 + shortNameLen);
+        if (shortNameLen > 0) {
+            memcpy(p->decoded.payload.bytes + 13, shortName, shortNameLen);
+        }
+        service->sendToMesh(p, RX_SRC_LOCAL, false);
+        sent = true;
+    }
+
+    if (sent) {
+        lastGroupPresenceSentMs = millis();
+        HERMESX_LOG_INFO("GROUP presence broadcast seq=%u battery=%u short=%s", static_cast<unsigned>(seq),
+                         static_cast<unsigned>(batteryPercent), shortName);
+    }
+    return sent;
+}
+
 uint32_t HermesXEmUiModule::getEmHeartbeatIntervalMs() const
 {
     return emHeartbeatIntervalSec * 1000UL;
@@ -1341,21 +1511,33 @@ const char *HermesXEmUiModule::getNodePresenceLabel(const EmInfoNodeStatus &entr
 {
     const uint32_t intervalMs = getEmHeartbeatIntervalMs();
     const uint32_t now = millis();
-    if (entry.lastHeartbeatMs == 0 || intervalMs == 0) {
-        if (entry.lastSeenMs == 0) {
-            return u8"未知";
+    if (entry.lastHeartbeatMs != 0 && intervalMs > 0) {
+        const uint32_t elapsedMs = now - entry.lastHeartbeatMs;
+        if (elapsedMs <= intervalMs) {
+            return u8"在線";
         }
-        return (now - entry.lastSeenMs) <= kNodeStaleFallbackMs ? u8"在線" : u8"逾時";
+        if (elapsedMs <= intervalMs * emOfflineThresholdCount) {
+            return u8"延遲";
+        }
+        return u8"離線";
     }
 
-    const uint32_t elapsedMs = now - entry.lastHeartbeatMs;
-    if (elapsedMs <= intervalMs) {
-        return u8"在線";
+    if (entry.lastPresenceMs != 0) {
+        const uint32_t presenceIntervalMs = kGroupPresenceIntervalSec * 1000UL;
+        const uint32_t elapsedMs = now - entry.lastPresenceMs;
+        if (elapsedMs <= presenceIntervalMs) {
+            return u8"在線";
+        }
+        if (elapsedMs <= presenceIntervalMs * emOfflineThresholdCount) {
+            return u8"延遲";
+        }
+        return u8"離線";
     }
-    if (elapsedMs <= intervalMs * emOfflineThresholdCount) {
-        return u8"延遲";
+
+    if (entry.lastSeenMs == 0) {
+        return u8"未知";
     }
-    return u8"離線";
+    return (now - entry.lastSeenMs) <= kNodeStaleFallbackMs ? u8"在線" : u8"逾時";
 }
 
 String HermesXEmUiModule::getNodeTimeLabel(const EmInfoNodeStatus &entry) const
@@ -1365,6 +1547,9 @@ String HermesXEmUiModule::getNodeTimeLabel(const EmInfoNodeStatus &entry) const
     }
 
     uint32_t refMs = entry.lastHeartbeatMs;
+    if (refMs == 0) {
+        refMs = entry.lastPresenceMs;
+    }
     if (refMs == 0) {
         refMs = entry.lastSeenMs;
     }
@@ -1387,6 +1572,9 @@ String HermesXEmUiModule::getNodeTimeLabel(const EmInfoNodeStatus &entry) const
 String HermesXEmUiModule::getNodeRelativeHeardLabel(const EmInfoNodeStatus &entry) const
 {
     uint32_t refMs = entry.lastHeartbeatMs;
+    if (refMs == 0) {
+        refMs = entry.lastPresenceMs;
+    }
     if (refMs == 0) {
         refMs = entry.lastSeenMs;
     }
@@ -2263,6 +2451,7 @@ ProcessMessage HermesXEmUiModule::handleReceived(const meshtastic_MeshPacket &mp
         recordEmergencyReportPayload(mp);
         recordEmInfoPayload(mp);
         recordEmHeartbeatPayload(mp);
+        recordGroupPresencePayload(mp);
         return ProcessMessage::CONTINUE;
     }
 
@@ -2300,8 +2489,14 @@ ProcessMessage HermesXEmUiModule::handleReceived(const meshtastic_MeshPacket &mp
 
 int32_t HermesXEmUiModule::runOnce()
 {
+    const uint32_t now = millis();
+    const uint32_t groupPresenceIntervalMs = kGroupPresenceIntervalSec * 1000UL;
+    if (emInfoBroadcastEnabled && lighthouseModule && lighthouseModule->hasEmergencyGroupPin() &&
+        (lastGroupPresenceSentMs == 0 || static_cast<uint32_t>(now - lastGroupPresenceSentMs) >= groupPresenceIntervalMs)) {
+        sendGroupPresenceNow();
+    }
+
     if (active) {
-        const uint32_t now = millis();
         const uint32_t emInfoIntervalMs = getEmInfoIntervalMs();
         const uint32_t emHeartbeatIntervalMs = getEmHeartbeatIntervalMs();
         if (emInfoBroadcastEnabled && (lastEmInfoSentMs == 0 || static_cast<uint32_t>(now - lastEmInfoSentMs) >= emInfoIntervalMs)) {
@@ -2312,13 +2507,13 @@ int32_t HermesXEmUiModule::runOnce()
             sendEmHeartbeatNow();
         }
         if (emInfoBroadcastEnabled && emHeartbeatIntervalMs > 0) {
-            return std::min(emInfoIntervalMs, emHeartbeatIntervalMs);
+            return std::min(std::min(emInfoIntervalMs, emHeartbeatIntervalMs), groupPresenceIntervalMs);
         }
         if (emInfoBroadcastEnabled) {
-            return emInfoIntervalMs;
+            return std::min(emInfoIntervalMs, groupPresenceIntervalMs);
         }
         if (emHeartbeatIntervalMs > 0) {
-            return emHeartbeatIntervalMs;
+            return std::min(emHeartbeatIntervalMs, groupPresenceIntervalMs);
         }
     }
 

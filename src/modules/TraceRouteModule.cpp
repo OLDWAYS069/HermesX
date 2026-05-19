@@ -82,7 +82,9 @@ bool TraceRouteModule::handleReceivedProtobuf(const meshtastic_MeshPacket &mp, m
                  static_cast<unsigned>(r->route_back_count), mp.rx_rssi, mp.rx_snr);
         String title = String("TraceRoute ") + formatTraceRouteNodeLabel(mp.from);
         String body = buildTraceRoutePopupBody(mp, *r);
-        screen->showTraceRouteResultPopup(title.c_str(), body.c_str());
+        if (!screen->showTraceRouteResultPopup(mp.from, mp.decoded.request_id, title.c_str(), body.c_str())) {
+            return false;
+        }
     }
     // We only alter the packet in alterReceivedProtobuf()
     return false; // let it be handled by RoutingModule
