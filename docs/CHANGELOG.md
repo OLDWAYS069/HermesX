@@ -2,6 +2,27 @@
 
 本文件為可對外發布版本的更新紀錄，整理 HermesX 韌體的重要功能更新、體驗調整與修正項目。
 
+## 2026-05-21
+
+### 修正
+
+- GOV build 新增 `HERMESX_DISABLE_WS2812B`，關閉 HermesX 狀態燈條的 WS2812B 動畫路徑；開機會先送出一次全黑 frame 清空 LED latch，之後待機呼吸燈、傳送/接收/ACK/NACK、緊急燈、長按電源動畫與關機 fallback 都不再啟動，GPIO6 會固定拉低。
+- 修正 `TAK MODE`、GROUP/ONLINE/Finder/Recent 等 HermesX 專用頁與 `CannedMessage` 共用 rotary/input observer 時可能互搶輸入的問題；CannedMessage 現在只在合法私訊 composer 狀態接管輸入，其他 Screen-owned 頁面會直接阻擋或退出 CannedMessage。
+- 修正 frame 位置預設值為 `0` 導致 Home frame 0 被誤判成 Recent detail / 其他不存在頁面的問題；所有不存在的 frame position 改以 `0xFF` 表示，並在 active-page 判斷時檢查 `frameCount`，避免再次出現 `captureReturnTarget=3 frame=0` 這類誤判。
+
+### 驗證
+
+- `git diff --check -- platformio.ini src/modules/HermesXInterfaceModule.cpp` 通過。
+- `platformio run -e heltec-wireless-tracker` 編譯成功，GOV build 版本為 `HXB_G0.3.2_20260521_1251`。
+- 已依 `docs/AI_UPDATE_HANDOFF.md` 搬移韌體產物：
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_G0.3.2_20260521_1251.bin`
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_G0.3.2_20260521_1251.factory.bin`
+- `git diff --check` 通過。
+- `platformio run -e heltec-wireless-tracker` 編譯成功，GOV build 版本為 `HXB_G0.3.2_20260521_1319`。
+- 已依 `docs/AI_UPDATE_HANDOFF.md` 搬移韌體產物：
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_G0.3.2_20260521_1319.bin`
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_G0.3.2_20260521_1319.factory.bin`
+
 ## 2026-05-15
 
 ### 修正

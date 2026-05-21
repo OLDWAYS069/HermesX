@@ -176,6 +176,43 @@ void drawMixedRightAligned(OLEDDisplay &display, int16_t rightX, int16_t y, cons
     drawMixedRightAligned(display, rightX, y, text.c_str(), lineHeight);
 }
 
+bool isCannedComposerState(cannedMessageModuleRunState state)
+{
+    return state == CANNED_MESSAGE_RUN_STATE_FREETEXT || state == CANNED_MESSAGE_RUN_STATE_ACTION_SELECT ||
+           state == CANNED_MESSAGE_RUN_STATE_SENDING_ACTIVE || state == CANNED_MESSAGE_RUN_STATE_ACK_NACK_RECEIVED ||
+           state == CANNED_MESSAGE_RUN_STATE_MESSAGE;
+}
+
+bool isHermesDedicatedPageActive()
+{
+    return screen && (screen->isHermesInputOverlayActive() || screen->isHermesFastSetupActive() ||
+                      screen->isHermesXActionPageActive() ||
+                      screen->isRecentTextMessagesPageActive() || screen->isRecentTextMessageDetailPageActive() ||
+                      screen->isOnlineNodeListPageActive() || screen->isOnlineNodeDetailPageActive() ||
+                      screen->isFinderNodeListPageActive() || screen->isFinderNodeDetailPageActive() ||
+                      screen->isGroupNodeListPageActive() || screen->isGroupNodeDetailPageActive() ||
+                      screen->isTakModePageActive());
+}
+
+bool isHermesComposerAllowedPageActive()
+{
+    return screen && (screen->isRecentTextMessagesPageActive() || screen->isRecentTextMessageDetailPageActive() ||
+                      screen->isOnlineNodeListPageActive() || screen->isOnlineNodeDetailPageActive() ||
+                      screen->isFinderNodeListPageActive() || screen->isFinderNodeDetailPageActive() ||
+                      screen->isGroupNodeListPageActive() || screen->isGroupNodeDetailPageActive());
+}
+
+bool isHermesDedicatedPageBlockingCanned(cannedMessageModuleRunState state)
+{
+    if (!isHermesDedicatedPageActive()) {
+        return false;
+    }
+    if (isHermesComposerAllowedPageActive() && isCannedComposerState(state)) {
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 CannedMessageModule::CannedMessageModule()
@@ -364,45 +401,12 @@ int CannedMessageModule::handleInputEvent(const InputEvent *event)
     if (hermesXEmUiModule && hermesXEmUiModule->isActive()) {
         return 0;
     }
-    if (screen && (screen->isHermesFastSetupActive() || screen->isHermesXActionPageActive())) {
+    if (isHermesDedicatedPageBlockingCanned(this->runState)) {
+        if (this->runState != CANNED_MESSAGE_RUN_STATE_DISABLED && this->runState != CANNED_MESSAGE_RUN_STATE_INACTIVE) {
+            LOG_INFO("[CannedMessage] exit reason=screen-owned-page state=%d", static_cast<int>(this->runState));
+            exitMenu();
+        }
         return 0;
-    }
-    if (screen && (screen->isOnlineNodeListPageActive() || screen->isOnlineNodeDetailPageActive())) {
-        if (this->runState == CANNED_MESSAGE_RUN_STATE_DISABLED || this->runState == CANNED_MESSAGE_RUN_STATE_INACTIVE) {
-            return 0;
-        }
-    }
-    if (screen && (screen->isFinderNodeListPageActive() || screen->isFinderNodeDetailPageActive())) {
-        if (this->runState == CANNED_MESSAGE_RUN_STATE_DISABLED || this->runState == CANNED_MESSAGE_RUN_STATE_INACTIVE) {
-            return 0;
-        }
-    }
-    if (screen && (screen->isGroupNodeListPageActive() || screen->isGroupNodeDetailPageActive())) {
-        const bool cannedComposerActive = this->runState == CANNED_MESSAGE_RUN_STATE_FREETEXT ||
-                                          this->runState == CANNED_MESSAGE_RUN_STATE_ACTION_SELECT ||
-                                          this->runState == CANNED_MESSAGE_RUN_STATE_SENDING_ACTIVE ||
-                                          this->runState == CANNED_MESSAGE_RUN_STATE_ACK_NACK_RECEIVED ||
-                                          this->runState == CANNED_MESSAGE_RUN_STATE_MESSAGE;
-        if (!cannedComposerActive) {
-            if (this->runState != CANNED_MESSAGE_RUN_STATE_DISABLED && this->runState != CANNED_MESSAGE_RUN_STATE_INACTIVE) {
-                LOG_INFO("[CannedMessage] exit reason=group-page-guard state=%d", static_cast<int>(this->runState));
-                exitMenu();
-            }
-            return 0;
-        }
-    }
-    if (screen && (screen->isRecentTextMessagesPageActive() || screen->isRecentTextMessageDetailPageActive())) {
-        // Guard only blocks opening canned input while user is actively browsing Recent pages.
-        // If canned is already active, do NOT force-exit here; that caused unexpected home jumps
-        // on rotary navigation (CCW/CW) when frame context briefly matched Recent.
-        if (this->runState == CANNED_MESSAGE_RUN_STATE_DISABLED || this->runState == CANNED_MESSAGE_RUN_STATE_INACTIVE) {
-            return 0;
-        }
-        const uint16_t cur = screen->getCurrentFrameIndexForDebug();
-        const uint16_t list = screen->getRecentListFrameIndexForDebug();
-        const uint16_t detail = screen->getRecentDetailFrameIndexForDebug();
-        LOG_INFO("[CannedMessage] recent-page-guard bypass state=%d cur=%u list=%u detail=%u fcount=%u",
-                 static_cast<int>(this->runState), cur, list, detail, screen->getFrameCountForDebug());
     }
     if (screen && screen->isStealthModeConstrained()) {
         if (this->runState != CANNED_MESSAGE_RUN_STATE_DISABLED && this->runState != CANNED_MESSAGE_RUN_STATE_INACTIVE) {
@@ -1190,18 +1194,8 @@ bool CannedMessageModule::shouldDraw()
         return false;
     }
 
-    if (screen && (screen->isOnlineNodeListPageActive() || screen->isOnlineNodeDetailPageActive())) {
-        return false;
-    }
-
-    if (screen && (screen->isFinderNodeListPageActive() || screen->isFinderNodeDetailPageActive())) {
-        return false;
-    }
-
-    if (screen && (screen->isGroupNodeListPageActive() || screen->isGroupNodeDetailPageActive())) {
-        return runState == CANNED_MESSAGE_RUN_STATE_FREETEXT || runState == CANNED_MESSAGE_RUN_STATE_ACTION_SELECT ||
-               runState == CANNED_MESSAGE_RUN_STATE_SENDING_ACTIVE || runState == CANNED_MESSAGE_RUN_STATE_ACK_NACK_RECEIVED ||
-               runState == CANNED_MESSAGE_RUN_STATE_MESSAGE;
+    if (isHermesDedicatedPageActive()) {
+        return isHermesComposerAllowedPageActive() && isCannedComposerState(runState);
     }
 
     // If using "scan and select" input, don't draw the module frame just to say "disabled"
@@ -1540,7 +1534,10 @@ void CannedMessageModule::drawEnterIcon(OLEDDisplay *display, int x, int y, floa
 // This prevents the left & right keys being used for nav. between screen frames during text entry.
 bool CannedMessageModule::interceptingKeyboardInput()
 {
-    if (screen && (screen->isRecentTextMessagesPageActive() || screen->isRecentTextMessageDetailPageActive())) {
+    if (isHermesDedicatedPageActive() && !isHermesComposerAllowedPageActive()) {
+        return false;
+    }
+    if (isHermesDedicatedPageActive() && !isCannedComposerState(runState)) {
         return false;
     }
 

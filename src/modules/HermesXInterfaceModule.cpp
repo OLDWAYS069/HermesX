@@ -62,6 +62,10 @@
 #define PIN_LED 6
 #define NUM_LEDS 8
 
+#ifndef HERMESX_DISABLE_WS2812B
+#define HERMESX_DISABLE_WS2812B 0
+#endif
+
 #ifndef BUZZER_PIN
 #ifdef PIN_BUZZER
 #define BUZZER_PIN PIN_BUZZER
@@ -78,6 +82,31 @@ extern graphics::Screen *screen;
 
 namespace
 {
+#if HERMESX_DISABLE_WS2812B
+constexpr bool kWs2812bDisabled = true;
+
+void holdWs2812bDataLineOff()
+{
+    pinMode(PIN_LED, OUTPUT);
+    digitalWrite(PIN_LED, LOW);
+}
+
+void clearWs2812bStrip(Adafruit_NeoPixel &strip)
+{
+    strip.begin();
+    strip.setBrightness(0);
+    strip.clear();
+    strip.show();
+    delay(2);
+    holdWs2812bDataLineOff();
+}
+#else
+constexpr bool kWs2812bDisabled = false;
+
+void holdWs2812bDataLineOff() {}
+void clearWs2812bStrip(Adafruit_NeoPixel &) {}
+#endif
+
 void drawMixedCentered(OLEDDisplay &display, int16_t centerX, int16_t y, const String &text, int lineHeight)
 {
     // drawMixed uses current text alignment; force left so manual centering is accurate
@@ -304,6 +333,14 @@ void disableVisibleOutputsCommon()
 
 void performShutdownAnimation(uint32_t durationMs, Adafruit_NeoPixel &strip, uint32_t baseColor, MusicModule *music)
 {
+    if (kWs2812bDisabled) {
+        holdWs2812bDataLineOff();
+        if (music) {
+            music->stopTone();
+        }
+        return;
+    }
+
     if (durationMs == 0) {
         durationMs = kDefaultShutdownDurationMs;
     }
@@ -365,6 +402,11 @@ void performShutdownAnimation(uint32_t durationMs, Adafruit_NeoPixel &strip, uin
 
 void fallbackShutdownEffect(uint32_t durationMs)
 {
+    if (kWs2812bDisabled) {
+        holdWs2812bDataLineOff();
+        return;
+    }
+
     static Adafruit_NeoPixel fallbackStrip(NUM_LEDS, PIN_LED, NEO_GRB + NEO_KHZ800);
     static bool fallbackStripInit = false;
     if (!fallbackStripInit) {
@@ -399,6 +441,13 @@ static LEDState gLedState;
 
 void HermesXInterfaceModule::startLEDAnimation(LEDAnimation anim)
 {
+    if (kWs2812bDisabled) {
+        holdWs2812bDataLineOff();
+        gLedState.activeAnimation = LEDAnimation::None;
+        gLedState.isRunning = false;
+        return;
+    }
+
     if (!useCentralLedManager) {
         // fallback legacy 路徑
         switch (anim) {
@@ -508,6 +557,11 @@ void HermesXInterfaceModule::stopLEDAnimation(LEDAnimation anim)
 
 void HermesXInterfaceModule::tickLEDAnimation(uint32_t now)
 {
+    if (kWs2812bDisabled) {
+        holdWs2812bDataLineOff();
+        return;
+    }
+
     LEDAnimation selected = selectActiveAnimation();
     if (selected != gLedState.activeAnimation) {
         startLEDAnimation(selected);
@@ -711,6 +765,10 @@ void HermesXInterfaceModule::forceAllLedsOff()
     shutdownEffectActive = false;
     gLedState.activeAnimation = LEDAnimation::None;
     gLedState.isRunning = false;
+    if (kWs2812bDisabled) {
+        clearWs2812bStrip(rgb);
+        return;
+    }
     rgb.clear();
     rgb.show();
 }
@@ -956,8 +1014,7 @@ void HermesXInterfaceModule::setup()
     if (userOutputsMuted) {
         stopLEDAnimation(LEDAnimation::StartupEffect);
         startupEffectActive = false;
-        rgb.clear();
-        rgb.show();
+        forceAllLedsOff();
     }
     applyRoleOutputPolicy();
 }
@@ -1171,6 +1228,15 @@ void HermesXInterfaceModule::drawFace(const char* face, uint16_t color) {
 }
 
 void HermesXInterfaceModule::initLED() {
+    if (kWs2812bDisabled) {
+        ledUserBrightness = 0;
+        appliedLedBrightness = 0;
+        userOutputsMuted = true;
+        clearWs2812bStrip(rgb);
+        HERMESX_LOG_INFO("WS2812B disabled by build flag; strip cleared and data line held LOW");
+        return;
+    }
+
     rgb.begin();
     applyUserLedBrightness();
     rgb.clear();   // 上電先關燈，等動畫/邏輯接管再亮
@@ -1198,6 +1264,9 @@ void HermesXInterfaceModule::setUiLedBrightnessPreference(uint8_t brightness)
 
 uint8_t HermesXInterfaceModule::getUiLedBrightness() const
 {
+    if (kWs2812bDisabled) {
+        return 0;
+    }
     return ledUserBrightness;
 }
 
@@ -1245,6 +1314,14 @@ bool HermesXInterfaceModule::isEmergencyLampEnabled() const
 
 void HermesXInterfaceModule::applyUserLedBrightness()
 {
+    if (kWs2812bDisabled) {
+        ledUserBrightness = 0;
+        appliedLedBrightness = 0;
+        userOutputsMuted = true;
+        holdWs2812bDataLineOff();
+        return;
+    }
+
     if (appliedLedBrightness == ledUserBrightness) {
         return;
     }
@@ -1276,6 +1353,15 @@ void HermesXInterfaceModule::restoreUiLedBrightnessPreference()
 
 void HermesXInterfaceModule::setUserLedBrightness(uint8_t brightness)
 {
+    if (kWs2812bDisabled) {
+        (void)brightness;
+        ledUserBrightness = 0;
+        appliedLedBrightness = 0;
+        userOutputsMuted = true;
+        holdWs2812bDataLineOff();
+        return;
+    }
+
     if (brightness == ledUserBrightness) {
         return;
     }
@@ -1298,6 +1384,11 @@ bool HermesXInterfaceModule::audioAllowed() const
 
 
 void HermesXInterfaceModule::updateLED() {
+    if (kWs2812bDisabled) {
+        holdWs2812bDataLineOff();
+        return;
+    }
+
     const bool anyEmergencyLampVisible = emergencyLampEnabled || emergencyModeLampActive;
     if (outputsDisabled && !anyEmergencyLampVisible) {
         forceAllLedsOff();
@@ -1674,8 +1765,7 @@ int32_t HermesXInterfaceModule::runOnce() {
         if (userOutputsMuted) {
             stopLEDAnimation(LEDAnimation::StartupEffect);
             startupEffectActive = false;
-            rgb.clear();
-            rgb.show();
+            forceAllLedsOff();
         }
         if (outputsAllowed) {
             music.playStartupSound();
@@ -2150,6 +2240,11 @@ void HermesXInterfaceModule::startPowerHoldFade(uint32_t now) {
     flashOn = false;
     flashCount = 0;
 
+    if (kWs2812bDisabled) {
+        holdWs2812bDataLineOff();
+        return;
+    }
+
     rgb.fill(kPowerHoldRedColor);
     rgb.show();
 }
@@ -2169,6 +2264,11 @@ void HermesXInterfaceModule::playStartupLEDAnimation(uint32_t color) {
 
 void HermesXInterfaceModule::legacyStartupAnimation(uint32_t color)
 {
+    if (kWs2812bDisabled) {
+        holdWs2812bDataLineOff();
+        return;
+    }
+
     if (outputsDisabled || userOutputsMuted)
         return;
 
@@ -2242,6 +2342,14 @@ void HermesXInterfaceModule::legacyShutdownAnimation(uint32_t durationMs)
     powerHoldMode = PowerHoldMode::None;
     powerHoldDurationMs = 0;
     powerHoldElapsedMs = 0;
+
+    if (kWs2812bDisabled) {
+        holdWs2812bDataLineOff();
+        music.stopTone();
+        stopTone();
+        disableVisibleOutputsCommon();
+        return;
+    }
 
     applyUserLedBrightness();
     rgb.fill(kPowerHoldRedColor);

@@ -1,3 +1,9 @@
+## 2026-05-21
+- GOV build 新增 `HERMESX_DISABLE_WS2812B`，關閉 HermesX 狀態燈條的 WS2812B 動畫路徑；開機會先送出一次全黑 frame 清空 LED latch，之後待機呼吸燈、傳送/接收/ACK/NACK、緊急燈、長按電源動畫與關機 fallback 都不再啟動，GPIO6 會固定拉低。
+- `heltec-wireless-tracker` 編譯成功，GOV 韌體產物已依 handoff 搬到 `/Users/oldways/Desktop/HermesX韌體/HXB_G0.3.2_20260521_1251.bin` 與 `.factory.bin`。
+- 修正 `TAK MODE` 等 HermesX 專用頁與 `CannedMessage` 互搶 rotary/input 的問題，並修正 frame 位置預設為 `0` 造成 Home frame 0 被誤判成 Recent detail 的根因。
+- `heltec-wireless-tracker` 編譯成功，GOV 韌體產物已依 handoff 搬到 `/Users/oldways/Desktop/HermesX韌體/HXB_G0.3.2_20260521_1319.bin` 與 `.factory.bin`。
+
 ## 2026-05-15
 - 修正 `尋人模式` 收到對方 `POSITION` 回傳後可能跳到黑畫面的問題；現在尋人模組有自己的清單與明細 frame，不再共用 `ONLINE` frame/input，成功收到同 GROUP/EM 密碼授權且有座標的節點後，會進入尋人模組自己的 `尋人清單` 並提供明確 `離開` 選項。
 - 修正 `尋人清單` / `尋人模式` frame 已切換且 TFT overlay 已執行，但畫面仍可能全黑的問題；現在尋人 frame 每次繪製都會明確清黑底並重設白色前景，避免沿用前一頁留下的 BLACK 繪圖狀態。
