@@ -1,3 +1,7 @@
+## 2026-05-23
+- 修正 BLE node-only config 仍重建 file manifest 的問題；手機只要求節點資訊時現在會跳過不必要的檔案系統掃描，避免停在 `SPI lock acquired for file manifest` 後 PANIC 重開機。
+- `heltec-wireless-tracker` 編譯成功，GOV 韌體產物已依 handoff 搬到 `/Users/oldways/Desktop/HermesX韌體/HXB_G0.3.2_20260523_1328.bin` 與 `.factory.bin`。
+
 ## 2026-05-21
 - GOV build 新增 `HERMESX_DISABLE_WS2812B`，關閉 HermesX 狀態燈條的 WS2812B 動畫路徑；開機會先送出一次全黑 frame 清空 LED latch，之後待機呼吸燈、傳送/接收/ACK/NACK、緊急燈、長按電源動畫與關機 fallback 都不再啟動，GPIO6 會固定拉低。
 - `heltec-wireless-tracker` 編譯成功，GOV 韌體產物已依 handoff 搬到 `/Users/oldways/Desktop/HermesX韌體/HXB_G0.3.2_20260521_1251.bin` 與 `.factory.bin`。

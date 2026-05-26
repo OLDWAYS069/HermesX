@@ -2,6 +2,20 @@
 
 本文件為可對外發布版本的更新紀錄，整理 HermesX 韌體的重要功能更新、體驗調整與修正項目。
 
+## 2026-05-23
+
+### 修正
+
+- 修正手機透過 BLE 只要求節點資訊時，韌體仍先重建整個 file manifest，導致 log 停在 `SPI lock acquired for file manifest` 後可能 PANIC 重開機的問題；`SPECIAL_NONCE_ONLY_NODES` 現在會直接清空 manifest 並跳過不必要的檔案系統掃描。
+
+### 驗證
+
+- `git diff --check` 通過。
+- `platformio run -e heltec-wireless-tracker` 編譯成功，GOV build 版本為 `HXB_G0.3.2_20260523_1328`。
+- 已依 `docs/AI_UPDATE_HANDOFF.md` 搬移韌體產物：
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_G0.3.2_20260523_1328.bin`
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_G0.3.2_20260523_1328.factory.bin`
+
 ## 2026-05-21
 
 ### 修正
