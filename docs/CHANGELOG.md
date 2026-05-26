@@ -2,6 +2,32 @@
 
 本文件為可對外發布版本的更新紀錄，整理 HermesX 韌體的重要功能更新、體驗調整與修正項目。
 
+## 2026-05-26
+
+### 修正
+
+- 從 GOV 同步 BLE node-only config 修正：手機只要求節點資訊時不再重建整個 file manifest，避免不必要的檔案系統掃描造成 log 停在 `SPI lock acquired for file manifest` 後 PANIC 重開機。
+
+### 驗證
+
+- `git diff --check -- docs/CHANGELOG.md docs/CHANGELOG_MINI.md src/mesh/PhoneAPI.cpp` 通過。
+- `platformio run -e heltec-wireless-tracker` 編譯成功，CIV build 版本為 `HXB_C0.3.2_20260526_2006`。
+- 已依 `docs/AI_UPDATE_HANDOFF.md` 搬移韌體產物：
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.2_20260526_2006.bin`
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.2_20260526_2006.factory.bin`
+
+## 2026-05-21
+
+### 修正
+
+- 從 GOV 同步 `CannedMessage` / Screen input ownership 修正：`TAK MODE`、GROUP/ONLINE/Finder/Recent 等 HermesX 專用頁不再被 CannedMessage 的 rotary/input observer 搶走輸入；CannedMessage 只在合法私訊 composer 狀態接管輸入，其他 Screen-owned 頁面會直接阻擋或退出 CannedMessage。
+- 修正 frame 位置預設值為 `0` 導致 Home frame 0 被誤判成 Recent detail / 其他不存在頁面的問題；所有不存在的 frame position 改以 `0xFF` 表示，並在 active-page 判斷時檢查 `frameCount`，避免再次出現 `captureReturnTarget=3 frame=0` 這類誤判。
+
+### 驗證
+
+- `git diff --check` 通過。
+- `platformio run -e heltec-wireless-tracker` 編譯成功，CIV build 版本為 `HXB_C0.3.2_20260521_1341`。
+
 ## 2026-05-15
 
 ### 修正

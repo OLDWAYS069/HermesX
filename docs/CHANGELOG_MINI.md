@@ -1,3 +1,12 @@
+## 2026-05-26
+- 從 GOV 同步 BLE node-only config 修正：手機只要求節點資訊時會跳過 file manifest rebuild，避免不必要的檔案系統掃描造成 PANIC 重開機。
+- `heltec-wireless-tracker` 編譯成功，CIV build 版本為 `HXB_C0.3.2_20260526_2006`。
+- 韌體產物已依 handoff 搬到 `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.2_20260526_2006.bin` 與 `.factory.bin`。
+
+## 2026-05-21
+- 從 GOV 同步 `CannedMessage` / Screen input ownership 修正：`TAK MODE` 等 HermesX 專用頁不再被 CannedMessage 搶走 rotary/input，並修正 frame 位置預設為 `0` 造成 Home frame 0 被誤判成 Recent detail 的根因。
+- `heltec-wireless-tracker` 編譯成功，CIV build 版本為 `HXB_C0.3.2_20260521_1341`。
+
 ## 2026-05-15
 - 修正 `尋人模式` 收到對方 `POSITION` 回傳後可能跳到黑畫面的問題；現在尋人模組有自己的清單與明細 frame，不再共用 `ONLINE` frame/input，成功收到同 GROUP/EM 密碼授權且有座標的節點後，會進入尋人模組自己的 `尋人清單` 並提供明確 `離開` 選項。
 - 修正 `尋人清單` / `尋人模式` frame 已切換且 TFT overlay 已執行，但畫面仍可能全黑的問題；現在尋人 frame 每次繪製都會明確清黑底並重設白色前景，避免沿用前一頁留下的 BLACK 繪圖狀態。

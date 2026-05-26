@@ -72,14 +72,19 @@ void PhoneAPI::handleStartConfig()
         state = STATE_SEND_MY_INFO;
     }
     pauseBluetoothLogging = true;
-    LOG_INFO("Start file manifest rebuild");
-    LOG_INFO("Acquiring SPI lock for file manifest");
-    spiLock->lock();
-    LOG_INFO("SPI lock acquired for file manifest");
-    filesManifest = getFiles("/", 10);
-    spiLock->unlock();
-    LOG_INFO("SPI lock released for file manifest");
-    LOG_DEBUG("Got %d files in manifest", filesManifest.size());
+    if (config_nonce == SPECIAL_NONCE_ONLY_NODES) {
+        filesManifest.clear();
+        LOG_INFO("Skipping file manifest rebuild for node-only config");
+    } else {
+        LOG_INFO("Start file manifest rebuild");
+        LOG_INFO("Acquiring SPI lock for file manifest");
+        spiLock->lock();
+        LOG_INFO("SPI lock acquired for file manifest");
+        filesManifest = getFiles("/", 10);
+        spiLock->unlock();
+        LOG_INFO("SPI lock released for file manifest");
+        LOG_DEBUG("Got %d files in manifest", filesManifest.size());
+    }
 
     LOG_INFO("Start API client config");
     {

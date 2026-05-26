@@ -15584,10 +15584,9 @@ void Screen::setFrames(FrameFocus focus)
 
     uint8_t originalPosition = ui->getUiState()->currentFrame;
     FramesetInfo fsi; // Location of specific frames, for applying focus parameter
-    fsi.positions.main = 0xFF;
-    fsi.positions.mainAction = 0xFF;
-    fsi.positions.setup = 0xFF;
-    fsi.positions.share = 0xFF;
+    fsi.positions.fault = 0xFF;
+    fsi.positions.textMessageList = 0xFF;
+    fsi.positions.textMessage = 0xFF;
     fsi.positions.onlineList = 0xFF;
     fsi.positions.onlineDetail = 0xFF;
     fsi.positions.finderList = 0xFF;
@@ -15595,6 +15594,15 @@ void Screen::setFrames(FrameFocus focus)
     fsi.positions.groupList = 0xFF;
     fsi.positions.groupDetail = 0xFF;
     fsi.positions.takMode = 0xFF;
+    fsi.positions.waypoint = 0xFF;
+    fsi.positions.focusedModule = 0;
+    fsi.positions.main = 0xFF;
+    fsi.positions.mainAction = 0xFF;
+    fsi.positions.setup = 0xFF;
+    fsi.positions.share = 0xFF;
+    fsi.positions.log = 0xFF;
+    fsi.positions.settings = 0xFF;
+    fsi.positions.wifi = 0xFF;
 
     LOG_DEBUG("Show standard frames");
     showingNormalScreen = true;
@@ -20999,6 +21007,9 @@ bool Screen::isHermesFastSetupActive() const
     if (!showingNormalScreen || !ui) {
         return false;
     }
+    if (framesetInfo.positions.setup >= framesetInfo.frameCount) {
+        return false;
+    }
     return ui->getUiState()->currentFrame == framesetInfo.positions.setup;
 #endif
 }
@@ -21009,6 +21020,9 @@ bool Screen::isHermesXActionPageActive() const
     return false;
 #else
     if (!showingNormalScreen || !ui) {
+        return false;
+    }
+    if (framesetInfo.positions.mainAction >= framesetInfo.frameCount) {
         return false;
     }
     return ui->getUiState()->currentFrame == framesetInfo.positions.mainAction;
@@ -21112,6 +21126,13 @@ bool Screen::isTakModePageActive() const
         return false;
     }
     return ui->getUiState()->currentFrame == framesetInfo.positions.takMode;
+}
+
+bool Screen::isHermesInputOverlayActive() const
+{
+    return hermesUpdateModalActive || lowMemoryReminderVisible || hermesEmergencyConfirmVisible ||
+           hermesFinderPulseConfirmVisible || hermesFinderPulseSendingVisible || isIncomingTextPopupActive() ||
+           isIncomingNodePopupActive() || isTraceRoutePopupVisible() || isSetupDetailPopupVisible();
 }
 
 uint8_t Screen::getCurrentFrameIndexForDebug() const

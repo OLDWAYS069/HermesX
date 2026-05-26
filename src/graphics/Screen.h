@@ -285,6 +285,7 @@ class Screen : public concurrency::OSThread
     bool isGroupNodeListPageActive() const;
     bool isGroupNodeDetailPageActive() const;
     bool isTakModePageActive() const;
+    bool isHermesInputOverlayActive() const;
     bool isFinderPulseConfirmVisible() const { return hermesFinderPulseConfirmVisible; }
     bool isFinderPulseSendingVisible() const { return hermesFinderPulseSendingVisible; }
     uint8_t getFinderPulseConfirmSelected() const { return hermesFinderPulseConfirmSelected; }
@@ -670,25 +671,25 @@ class Screen : public concurrency::OSThread
     // - Used to dismiss the currently shown frame (txt; waypoint) by CardKB combo
     struct FramesetInfo {
         struct FramePositions {
-            uint8_t fault = 0;
-            uint8_t textMessageList = 0;
-            uint8_t textMessage = 0;
-            uint8_t onlineList = 0;
-            uint8_t onlineDetail = 0;
-            uint8_t finderList = 0;
-            uint8_t finderDetail = 0;
-            uint8_t groupList = 0;
-            uint8_t groupDetail = 0;
-            uint8_t takMode = 0;
-            uint8_t waypoint = 0;
+            uint8_t fault = 0xFF;
+            uint8_t textMessageList = 0xFF;
+            uint8_t textMessage = 0xFF;
+            uint8_t onlineList = 0xFF;
+            uint8_t onlineDetail = 0xFF;
+            uint8_t finderList = 0xFF;
+            uint8_t finderDetail = 0xFF;
+            uint8_t groupList = 0xFF;
+            uint8_t groupDetail = 0xFF;
+            uint8_t takMode = 0xFF;
+            uint8_t waypoint = 0xFF;
             uint8_t focusedModule = 0;
-            uint8_t main = 0;
-            uint8_t mainAction = 0;
-            uint8_t setup = 0;
-            uint8_t share = 0;
-            uint8_t log = 0;
-            uint8_t settings = 0;
-            uint8_t wifi = 0;
+            uint8_t main = 0xFF;
+            uint8_t mainAction = 0xFF;
+            uint8_t setup = 0xFF;
+            uint8_t share = 0xFF;
+            uint8_t log = 0xFF;
+            uint8_t settings = 0xFF;
+            uint8_t wifi = 0xFF;
         } positions;
 
         uint8_t frameCount = 0;
