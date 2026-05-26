@@ -2,7 +2,7 @@
 
 本文件為可對外發布版本的更新紀錄，整理 HermesX 韌體的重要功能更新、體驗調整與修正項目。
 
-## 2026-05-23
+## 2026-05-26
 
 ### 修正
 
@@ -11,10 +11,10 @@
 ### 驗證
 
 - `git diff --check` 通過。
-- `platformio run -e heltec-wireless-tracker` 編譯成功，GOV build 版本為 `HXB_G0.3.2_20260523_1328`。
+- `platformio run -e heltec-wireless-tracker` 編譯成功，GOV build 版本為 `HXB_G0.3.2_20260526_2024`。
 - 已依 `docs/AI_UPDATE_HANDOFF.md` 搬移韌體產物：
-  - `/Users/oldways/Desktop/HermesX韌體/HXB_G0.3.2_20260523_1328.bin`
-  - `/Users/oldways/Desktop/HermesX韌體/HXB_G0.3.2_20260523_1328.factory.bin`
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_G0.3.2_20260526_2024.bin`
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_G0.3.2_20260526_2024.factory.bin`
 
 ## 2026-05-21
 
