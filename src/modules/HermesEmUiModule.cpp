@@ -170,6 +170,11 @@ bool isGroupFingerprintAllowed(uint32_t fingerprint)
     return lighthouseModule == nullptr || lighthouseModule->isEmergencyGroupFingerprintAllowed(fingerprint);
 }
 
+bool shouldBroadcastGroupPresence()
+{
+    return lighthouseModule && lighthouseModule->hasEmergencyGroupPin();
+}
+
 template <typename T> T clampValue(T value, T minValue, T maxValue)
 {
     return std::max(minValue, std::min(maxValue, value));
@@ -536,9 +541,6 @@ void HermesXEmUiModule::setEmInfoBroadcastEnabled(bool enabled)
 #endif
 
     lastAlertMessage = emInfoBroadcastEnabled ? u8"EMINFO 廣播已開啟" : u8"EMINFO 廣播已關閉";
-    if (screen) {
-        screen->startHermesXAlert(lastAlertMessage.c_str());
-    }
     sendLocalTextToPhone(String(u8"[LOCAL] ") + lastAlertMessage);
 }
 
@@ -1255,7 +1257,7 @@ void HermesXEmUiModule::sendEmInfoNow()
 
 void HermesXEmUiModule::sendEmHeartbeatNow()
 {
-    if (!active) {
+    if (!active && !shouldBroadcastGroupPresence()) {
         return;
     }
     const uint32_t intervalMs = getEmHeartbeatIntervalMs();
@@ -2313,21 +2315,23 @@ ProcessMessage HermesXEmUiModule::handleReceived(const meshtastic_MeshPacket &mp
 
 int32_t HermesXEmUiModule::runOnce()
 {
-    if (active) {
+    const bool groupPresenceEnabled = shouldBroadcastGroupPresence();
+    if (active || groupPresenceEnabled) {
         const uint32_t now = millis();
         const uint32_t emInfoIntervalMs = getEmInfoIntervalMs();
         const uint32_t emHeartbeatIntervalMs = getEmHeartbeatIntervalMs();
-        if (emInfoBroadcastEnabled && (lastEmInfoSentMs == 0 || static_cast<uint32_t>(now - lastEmInfoSentMs) >= emInfoIntervalMs)) {
+        if (active && emInfoBroadcastEnabled &&
+            (lastEmInfoSentMs == 0 || static_cast<uint32_t>(now - lastEmInfoSentMs) >= emInfoIntervalMs)) {
             sendEmInfoNow();
         }
         if (emHeartbeatIntervalMs > 0 &&
             (lastEmHeartbeatSentMs == 0 || static_cast<uint32_t>(now - lastEmHeartbeatSentMs) >= emHeartbeatIntervalMs)) {
             sendEmHeartbeatNow();
         }
-        if (emInfoBroadcastEnabled && emHeartbeatIntervalMs > 0) {
+        if (active && emInfoBroadcastEnabled && emHeartbeatIntervalMs > 0) {
             return std::min(emInfoIntervalMs, emHeartbeatIntervalMs);
         }
-        if (emInfoBroadcastEnabled) {
+        if (active && emInfoBroadcastEnabled) {
             return emInfoIntervalMs;
         }
         if (emHeartbeatIntervalMs > 0) {

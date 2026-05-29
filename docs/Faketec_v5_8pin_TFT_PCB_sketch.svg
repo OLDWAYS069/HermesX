@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="820" viewBox="0 0 1280 820">
+  <defs>
+    <style>
+      .bg { fill: #f7f8f5; }
+      .box { fill: #ffffff; stroke: #222; stroke-width: 2; rx: 8; }
+      .soft { fill: #eef4f8; stroke: #2c5f7a; stroke-width: 2; rx: 8; }
+      .warn { fill: #fff4df; stroke: #9a6500; stroke-width: 2; rx: 8; }
+      .power { stroke: #b3261e; stroke-width: 3; fill: none; }
+      .gnd { stroke: #444; stroke-width: 3; fill: none; }
+      .sig { stroke: #1b6b44; stroke-width: 3; fill: none; }
+      .ctrl { stroke: #4d4aa8; stroke-width: 3; fill: none; }
+      .thin { stroke: #666; stroke-width: 2; fill: none; stroke-dasharray: 7 7; }
+      text { font-family: Arial, "Noto Sans TC", sans-serif; fill: #1f1f1f; }
+      .title { font-size: 30px; font-weight: 700; }
+      .h { font-size: 22px; font-weight: 700; }
+      .t { font-size: 18px; }
+      .s { font-size: 15px; }
+      .pin { font-size: 16px; font-family: Menlo, Consolas, monospace; }
+      .label { font-size: 16px; font-weight: 700; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1280" height="820"/>
+  <text class="title" x="48" y="56">Faketec v5: 4-pin SSD1306 OLED -> 8-pin SPI TFT PCB 草圖</text>
+  <text class="t" x="48" y="88">重點：保留原 4-pin OLED 座，新增 8-pin TFT 座；TFT 需要額外 CS / DC / RST / BL 控制線。</text>
+
+  <rect class="box" x="60" y="150" width="315" height="520"/>
+  <text class="h" x="92" y="190">Faketec v5 MCU</text>
+  <text class="s" x="92" y="218">ESP32 / nRF / 依實板 GPIO 配置</text>
+
+  <text class="pin" x="92" y="270">3V3_DISPLAY</text>
+  <text class="pin" x="92" y="315">GND</text>
+  <text class="pin" x="92" y="360">I2C_SCL</text>
+  <text class="pin" x="92" y="405">I2C_SDA</text>
+  <text class="pin" x="92" y="470">TFT_SCK</text>
+  <text class="pin" x="92" y="515">TFT_MOSI</text>
+  <text class="pin" x="92" y="560">TFT_CS</text>
+  <text class="pin" x="92" y="605">TFT_DC</text>
+  <text class="pin" x="92" y="650">TFT_RST</text>
+
+  <circle cx="350" cy="264" r="5" fill="#b3261e"/>
+  <circle cx="350" cy="309" r="5" fill="#444"/>
+  <circle cx="350" cy="354" r="5" fill="#1b6b44"/>
+  <circle cx="350" cy="399" r="5" fill="#1b6b44"/>
+  <circle cx="350" cy="464" r="5" fill="#1b6b44"/>
+  <circle cx="350" cy="509" r="5" fill="#1b6b44"/>
+  <circle cx="350" cy="554" r="5" fill="#4d4aa8"/>
+  <circle cx="350" cy="599" r="5" fill="#4d4aa8"/>
+  <circle cx="350" cy="644" r="5" fill="#4d4aa8"/>
+
+  <rect class="soft" x="780" y="155" width="340" height="210"/>
+  <text class="h" x="812" y="195">保留：4-pin SSD1306 OLED</text>
+  <text class="pin" x="812" y="245">1 GND</text>
+  <text class="pin" x="812" y="285">2 VCC</text>
+  <text class="pin" x="812" y="325">3 SCL</text>
+  <text class="pin" x="812" y="365">4 SDA</text>
+
+  <circle cx="785" cy="239" r="5" fill="#444"/>
+  <circle cx="785" cy="279" r="5" fill="#b3261e"/>
+  <circle cx="785" cy="319" r="5" fill="#1b6b44"/>
+  <circle cx="785" cy="359" r="5" fill="#1b6b44"/>
+
+  <path class="gnd" d="M350 309 H620 V239 H785"/>
+  <path class="power" d="M350 264 H640 V279 H785"/>
+  <path class="sig" d="M350 354 H660 V319 H785"/>
+  <path class="sig" d="M350 399 H680 V359 H785"/>
+
+  <rect class="box" x="780" y="430" width="340" height="310"/>
+  <text class="h" x="812" y="470">新增：8-pin SPI TFT 座</text>
+  <text class="pin" x="812" y="515">1 GND</text>
+  <text class="pin" x="812" y="550">2 VCC 3.3V</text>
+  <text class="pin" x="812" y="585">3 SCK</text>
+  <text class="pin" x="812" y="620">4 MOSI / SDA</text>
+  <text class="pin" x="812" y="655">5 RST / RES</text>
+  <text class="pin" x="812" y="690">6 DC / RS</text>
+  <text class="pin" x="812" y="725">7 CS</text>
+  <text class="pin" x="812" y="760">8 BL / LED</text>
+
+  <circle cx="785" cy="509" r="5" fill="#444"/>
+  <circle cx="785" cy="544" r="5" fill="#b3261e"/>
+  <circle cx="785" cy="579" r="5" fill="#1b6b44"/>
+  <circle cx="785" cy="614" r="5" fill="#1b6b44"/>
+  <circle cx="785" cy="649" r="5" fill="#4d4aa8"/>
+  <circle cx="785" cy="684" r="5" fill="#4d4aa8"/>
+  <circle cx="785" cy="719" r="5" fill="#4d4aa8"/>
+  <circle cx="785" cy="754" r="5" fill="#b3261e"/>
+
+  <path class="gnd" d="M350 309 H600 V509 H785"/>
+  <path class="power" d="M350 264 H575 V544 H785"/>
+  <path class="sig" d="M350 464 H530 V579 H785"/>
+  <path class="sig" d="M350 509 H505 V614 H785"/>
+  <path class="ctrl" d="M350 644 H475 V649 H785"/>
+  <path class="ctrl" d="M350 599 H450 V684 H785"/>
+  <path class="ctrl" d="M350 554 H425 V719 H785"/>
+
+  <rect class="warn" x="420" y="675" width="265" height="90"/>
+  <text class="label" x="445" y="708">背光建議</text>
+  <text class="s" x="445" y="735">2 吋以上 TFT 的 BL</text>
+  <text class="s" x="445" y="758">建議用 MOSFET 控制</text>
+  <path class="power" d="M575 544 V754 H660"/>
+  <path class="thin" d="M660 754 H785"/>
+  <text class="s" x="610" y="792">BL 可接 3V3 常亮，或改 MOSFET/PWM 調光</text>
+
+  <rect class="warn" x="420" y="150" width="265" height="180"/>
+  <text class="label" x="445" y="185">PCB 必改項目</text>
+  <text class="s" x="445" y="215">1. 增加 8-pin TFT 連接器</text>
+  <text class="s" x="445" y="245">2. 多拉 CS/DC/RST/BL</text>
+  <text class="s" x="445" y="275">3. 確認 3.3V 供電電流</text>
+  <text class="s" x="445" y="305">4. 韌體另開 TFT variant</text>
+
+  <rect class="soft" x="420" y="370" width="265" height="180"/>
+  <text class="label" x="445" y="405">推薦 TFT</text>
+  <text class="s" x="445" y="435">2.0 吋 ST7789 240x320</text>
+  <text class="s" x="445" y="465">或 2.4 吋 ILI9341 240x320</text>
+  <text class="s" x="445" y="495">第一版先不要加觸控</text>
+  <text class="s" x="445" y="525">避免多出 Touch CS/IRQ</text>
+
+  <text class="s" x="48" y="790">註：圖中的 TFT_* 是 net name；實際 GPIO 要依 Faketec v5 未占用腳位、boot strap 腳、LoRa/GPS/按鍵腳位再決定。</text>
+</svg>

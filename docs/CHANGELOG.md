@@ -2,6 +2,18 @@
 
 本文件為可對外發布版本的更新紀錄，整理 HermesX 韌體的重要功能更新、體驗調整與修正項目。
 
+## 2026-05-29
+
+### 修正
+
+- 修正 CIV build 的 GROUP 節點清單永遠顯示 `沒有已配對節點` 的問題；GROUP Heartbeat 現在只要已設定 GROUP PIN 就會在非 EMAC 狀態下維持同組 presence，CIV 不需要進入 EMAC 也能讓同組裝置出現在 `GROUP > 節點列表`。
+- 修正 `GROUP設定 > EMINFO設定 > EMINFO廣播` 切換開/關後跳到黑底全螢幕提示且無法退出的問題；切換提示改回設定頁內 toast，不再觸發 Screen alert frame。
+- 修正尋人模式收到同組 `POSITION: OK` ack 但對方未立即重送 position 時，12 秒 timeout 會清空既有有效位置節點的問題；現在授權 ack 搭配 NodeDB 既有有效位置也會完成本次尋人結果。
+
+### 驗證
+
+- `platformio run -e heltec-wireless-tracker` 編譯成功，CIV build 版本為 `HXB_C0.3.2_20260529_1452`。
+
 ## 2026-05-26
 
 ### 修正
