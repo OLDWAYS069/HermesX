@@ -12,7 +12,10 @@
 
 ### 驗證
 
-- `platformio run -e heltec-wireless-tracker` 編譯成功，CIV build 版本為 `HXB_C0.3.2_20260529_1452`。
+- `platformio run -e heltec-wireless-tracker` 編譯成功，CIV build 版本為 `HXB_C0.3.2_20260529_1559`。
+- 已依 `docs/AI_UPDATE_HANDOFF.md` 搬移韌體產物：
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.2_20260529_1559.bin`
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.2_20260529_1559.factory.bin`
 
 ## 2026-05-26
 

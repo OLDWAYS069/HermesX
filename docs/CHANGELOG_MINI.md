@@ -2,7 +2,8 @@
 - 修正 CIV build 的 GROUP 節點清單永遠顯示 `沒有已配對節點`；GROUP Heartbeat 現在只要有 GROUP PIN，就會在非 EMAC 狀態下維持同組 presence。
 - 修正 `GROUP設定 > EMINFO設定 > EMINFO廣播` 切換後跳到黑底提示且無法退出的問題。
 - 修正尋人模式收到同組 `POSITION: OK` ack 但對方未立即重送 position 時，timeout 會清空既有有效位置節點的問題。
-- `heltec-wireless-tracker` 編譯成功，CIV build 版本為 `HXB_C0.3.2_20260529_1452`。
+- `heltec-wireless-tracker` 編譯成功，CIV build 版本為 `HXB_C0.3.2_20260529_1559`。
+- 韌體產物已依 handoff 搬到 `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.2_20260529_1559.bin` 與 `.factory.bin`。
 
 ## 2026-05-26
 - 從 GOV 同步 BLE node-only config 修正：手機只要求節點資訊時會跳過 file manifest rebuild，避免不必要的檔案系統掃描造成 PANIC 重開機。
