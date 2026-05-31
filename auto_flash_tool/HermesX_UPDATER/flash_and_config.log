@@ -1,0 +1,493 @@
+==== 2026-05-27 19:07:33 ====
+[19:07:33] Startup music launched: startup.mp3
+[19:07:55] preferred_file=HermesX_0.2.9_civ-alpha00003_firmware.bin is recorded only; firmware selection now always comes from Target, with a prompt when multiple .bin files exist.
+[19:07:55] Multiple firmware files were found in Target. Please choose one:
+[19:07:56] [1] HXB0.2.9_20260426_1652.bin
+[19:07:56] [2] HXB_G0.3.2.bin
+[19:07:59] === Meshtastic auto flash started ===
+[19:08:00] Firmware: G:\geek_guys_oldways\20251003_2.6.11.6-hermesX_b0.2\auto_flash_tool\HermesX_UPDATER\Target\HXB0.2.9_20260426_1652.bin
+[19:08:00] Config: G:\geek_guys_oldways\20251003_2.6.11.6-hermesX_b0.2\auto_flash_tool\HermesX_UPDATER\config.yaml
+[19:08:01] Config recorded preferred_file=HermesX_0.2.9_civ-alpha00003_firmware.bin, but selected firmware is HXB0.2.9_20260426_1652.bin
+[19:08:02] Initial serial port: COM43
+[19:08:02] Firmware flashing will start now. Keep USB connected and avoid interrupting the device.
+[19:08:03] ???瑕神????COM43 ...
+[19:08:03] Please keep the device connected over USB during recovery.
+[19:08:04] Warning: Deprecated: Choice 'default_reset' for option '--before' is deprecated. Use 'default-reset' instead.
+[19:08:04] Warning: Deprecated: Choice 'hard_reset' for option '--after' is deprecated. Use 'hard-reset' instead.
+[19:08:04] Warning: Deprecated: Command 'write_flash' is deprecated. Use 'write-flash' instead.
+[19:08:04] esptool v5.2.0
+[19:08:04] Serial port COM43:
+[19:08:04] Connecting...
+[19:08:05] Connected to ESP32-S3 on COM43:
+[19:08:05] Chip type:          ESP32-S3 (QFN56) (revision v0.2)
+[19:08:05] Features:           Wi-Fi, BT 5 (LE), Dual Core + LP Core, 240MHz, Embedded Flash 8MB (GD)
+[19:08:05] Crystal frequency:  40MHz
+[19:08:05] USB mode:           USB-Serial/JTAG
+[19:08:05] MAC:                ac:a7:04:05:43:74
+[19:08:05] 
+[19:08:05] Uploading stub flasher...
+[19:08:05] Running stub flasher...
+[19:08:07] Stub flasher running.
+[19:08:07] 
+[19:08:07] Configuring flash size...
+[19:08:07] Flash will be erased from 0x00010000 to 0x00275fff...
+[19:08:07] Compressed 2512768 bytes to 1549005...
+[19:08:07] 
+[19:08:07] Writing at 0x00010000 [                              ]   0.0% 0/1549005 bytes... 
+[19:08:07] 
+[19:08:07] Writing at 0x00019163 [                              ]   1.1% 16384/1549005 bytes... 
+[19:08:08] 
+[19:08:08] Writing at 0x0001ea02 [                              ]   2.1% 32768/1549005 bytes... 
+[19:08:08] 
+[19:08:08] Writing at 0x00023a8c [                              ]   3.2% 49152/1549005 bytes... 
+[19:08:08] 
+[19:08:08] Writing at 0x000287c1 [>                             ]   4.2% 65536/1549005 bytes... 
+[19:08:08] 
+[19:08:08] Writing at 0x0002d4dc [>                             ]   5.3% 81920/1549005 bytes... 
+[19:08:08] 
+[19:08:08] Writing at 0x00034842 [>                             ]   6.3% 98304/1549005 bytes... 
+[19:08:08] 
+[19:08:08] Writing at 0x0003dcf4 [=>                            ]   7.4% 114688/1549005 bytes... 
+[19:08:09] 
+[19:08:09] Writing at 0x00048fc8 [=>                            ]   8.5% 131072/1549005 bytes... 
+[19:08:09] 
+[19:08:09] Writing at 0x0005314c [=>                            ]   9.5% 147456/1549005 bytes... 
+[19:08:09] 
+[19:08:09] Writing at 0x000601cf [==>                           ]  10.6% 163840/1549005 bytes... 
+[19:08:10] 
+[19:08:10] Writing at 0x0006b162 [==>                           ]  11.6% 180224/1549005 bytes... 
+[19:08:10] 
+[19:08:10] Writing at 0x00075cef [==>                           ]  12.7% 196608/1549005 bytes... 
+[19:08:10] 
+[19:08:10] Writing at 0x0007d247 [===>                          ]  13.8% 212992/1549005 bytes... 
+[19:08:10] 
+[19:08:10] Writing at 0x00089b80 [===>                          ]  14.8% 229376/1549005 bytes... 
+[19:08:11] 
+[19:08:11] Writing at 0x0009a36c [===>                          ]  15.9% 245760/1549005 bytes... 
+[19:08:11] 
+[19:08:11] Writing at 0x000b0b25 [====>                         ]  16.9% 262144/1549005 bytes... 
+[19:08:12] 
+[19:08:12] Writing at 0x000c1e72 [====>                         ]  18.0% 278528/1549005 bytes... 
+[19:08:13] 
+[19:08:13] Writing at 0x000c7719 [====>                         ]  19.0% 294912/1549005 bytes... 
+[19:08:13] 
+[19:08:13] Writing at 0x000ccf8f [=====>                        ]  20.1% 311296/1549005 bytes... 
+[19:08:13] 
+[19:08:13] Writing at 0x000d2d27 [=====>                        ]  21.2% 327680/1549005 bytes... 
+[19:08:13] 
+[19:08:13] Writing at 0x000d8706 [=====>                        ]  22.2% 344064/1549005 bytes... 
+[19:08:13] 
+[19:08:13] Writing at 0x000dd9cb [=====>                        ]  23.3% 360448/1549005 bytes... 
+[19:08:13] 
+[19:08:13] Writing at 0x000e304f [======>                       ]  24.3% 376832/1549005 bytes... 
+[19:08:14] 
+[19:08:14] Writing at 0x000e89c3 [======>                       ]  25.4% 393216/1549005 bytes... 
+[19:08:14] 
+[19:08:14] Writing at 0x000ef4d2 [======>                       ]  26.4% 409600/1549005 bytes... 
+[19:08:14] 
+[19:08:14] Writing at 0x000f4d76 [=======>                      ]  27.5% 425984/1549005 bytes... 
+[19:08:14] 
+[19:08:14] Writing at 0x000fa06d [=======>                      ]  28.6% 442368/1549005 bytes... 
+[19:08:15] 
+[19:08:15] Writing at 0x000ff4c4 [=======>                      ]  29.6% 458752/1549005 bytes... 
+[19:08:15] 
+[19:08:15] Writing at 0x001050ad [========>                     ]  30.7% 475136/1549005 bytes... 
+[19:08:15] 
+[19:08:15] Writing at 0x0010a35c [========>                     ]  31.7% 491520/1549005 bytes... 
+[19:08:15] 
+[19:08:15] Writing at 0x0010f5c1 [========>                     ]  32.8% 507904/1549005 bytes... 
+[19:08:15] 
+[19:08:15] Writing at 0x001149ce [=========>                    ]  33.8% 524288/1549005 bytes... 
+[19:08:15] 
+[19:08:15] Writing at 0x0011a0fb [=========>                    ]  34.9% 540672/1549005 bytes... 
+[19:08:16] 
+[19:08:16] Writing at 0x0011fdfc [=========>                    ]  36.0% 557056/1549005 bytes... 
+[19:08:16] 
+[19:08:16] Writing at 0x0012570b [==========>                   ]  37.0% 573440/1549005 bytes... 
+[19:08:16] 
+[19:08:16] Writing at 0x0012b432 [==========>                   ]  38.1% 589824/1549005 bytes... 
+[19:08:16] 
+[19:08:16] Writing at 0x001312a1 [==========>                   ]  39.1% 606208/1549005 bytes... 
+[19:08:16] 
+[19:08:16] Writing at 0x0013735c [===========>                  ]  40.2% 622592/1549005 bytes... 
+[19:08:16] 
+[19:08:16] Writing at 0x0013d396 [===========>                  ]  41.3% 638976/1549005 bytes... 
+[19:08:17] 
+[19:08:17] Writing at 0x00142e3e [===========>                  ]  42.3% 655360/1549005 bytes... 
+[19:08:17] 
+[19:08:17] Writing at 0x0014904a [============>                 ]  43.4% 671744/1549005 bytes... 
+[19:08:17] 
+[19:08:17] Writing at 0x0014ee5a [============>                 ]  44.4% 688128/1549005 bytes... 
+[19:08:17] 
+[19:08:17] Writing at 0x0015498f [============>                 ]  45.5% 704512/1549005 bytes... 
+[19:08:17] 
+[19:08:17] Writing at 0x0015a667 [============>                 ]  46.5% 720896/1549005 bytes... 
+[19:08:17] 
+[19:08:17] Writing at 0x0015fe4f [=============>                ]  47.6% 737280/1549005 bytes... 
+[19:08:17] 
+[19:08:17] Writing at 0x001654a9 [=============>                ]  48.7% 753664/1549005 bytes... 
+[19:08:18] 
+[19:08:18] Writing at 0x0016ab7f [=============>                ]  49.7% 770048/1549005 bytes... 
+[19:08:18] 
+[19:08:18] Writing at 0x001704e2 [==============>               ]  50.8% 786432/1549005 bytes... 
+[19:08:18] 
+[19:08:18] Writing at 0x0017617a [==============>               ]  51.8% 802816/1549005 bytes... 
+[19:08:18] 
+[19:08:18] Writing at 0x0017be71 [==============>               ]  52.9% 819200/1549005 bytes... 
+[19:08:18] 
+[19:08:18] Writing at 0x00181983 [===============>              ]  53.9% 835584/1549005 bytes... 
+[19:08:18] 
+[19:08:18] Writing at 0x00187505 [===============>              ]  55.0% 851968/1549005 bytes... 
+[19:08:18] 
+[19:08:18] Writing at 0x0018c8a2 [===============>              ]  56.1% 868352/1549005 bytes... 
+[19:08:19] 
+[19:08:19] Writing at 0x00192408 [================>             ]  57.1% 884736/1549005 bytes... 
+[19:08:19] 
+[19:08:19] Writing at 0x00197431 [================>             ]  58.2% 901120/1549005 bytes... 
+[19:08:19] 
+[19:08:19] Writing at 0x0019c543 [================>             ]  59.2% 917504/1549005 bytes... 
+[19:08:19] 
+[19:08:19] Writing at 0x001a15a9 [=================>            ]  60.3% 933888/1549005 bytes... 
+[19:08:19] 
+[19:08:19] Writing at 0x001a6446 [=================>            ]  61.3% 950272/1549005 bytes... 
+[19:08:19] 
+[19:08:19] Writing at 0x001ab3fb [=================>            ]  62.4% 966656/1549005 bytes... 
+[19:08:19] 
+[19:08:19] Writing at 0x001b06de [==================>           ]  63.5% 983040/1549005 bytes... 
+[19:08:20] 
+[19:08:20] Writing at 0x001b55b9 [==================>           ]  64.5% 999424/1549005 bytes... 
+[19:08:20] 
+[19:08:20] Writing at 0x001baca0 [==================>           ]  65.6% 1015808/1549005 bytes... 
+[19:08:20] 
+[19:08:20] Writing at 0x001c02b7 [==================>           ]  66.6% 1032192/1549005 bytes... 
+[19:08:20] 
+[19:08:20] Writing at 0x001c5c66 [===================>          ]  67.7% 1048576/1549005 bytes... 
+[19:08:20] 
+[19:08:20] Writing at 0x001cafd8 [===================>          ]  68.8% 1064960/1549005 bytes... 
+[19:08:20] 
+[19:08:20] Writing at 0x001d001f [===================>          ]  69.8% 1081344/1549005 bytes... 
+[19:08:21] 
+[19:08:21] Writing at 0x001d4eb8 [====================>         ]  70.9% 1097728/1549005 bytes... 
+[19:08:21] 
+[19:08:21] Writing at 0x001d9d80 [====================>         ]  71.9% 1114112/1549005 bytes... 
+[19:08:21] 
+[19:08:21] Writing at 0x001dfce1 [====================>         ]  73.0% 1130496/1549005 bytes... 
+[19:08:21] 
+[19:08:21] Writing at 0x001e525a [=====================>        ]  74.0% 1146880/1549005 bytes... 
+[19:08:21] 
+[19:08:21] Writing at 0x001ea3e7 [=====================>        ]  75.1% 1163264/1549005 bytes... 
+[19:08:21] 
+[19:08:21] Writing at 0x001ef470 [=====================>        ]  76.2% 1179648/1549005 bytes... 
+[19:08:21] 
+[19:08:21] Writing at 0x001f4431 [======================>       ]  77.2% 1196032/1549005 bytes... 
+[19:08:21] 
+[19:08:21] Writing at 0x001f9552 [======================>       ]  78.3% 1212416/1549005 bytes... 
+[19:08:22] 
+[19:08:22] Writing at 0x001fe69e [======================>       ]  79.3% 1228800/1549005 bytes... 
+[19:08:22] 
+[19:08:22] Writing at 0x00203b1a [=======================>      ]  80.4% 1245184/1549005 bytes... 
+[19:08:22] 
+[19:08:22] Writing at 0x00208e1a [=======================>      ]  81.4% 1261568/1549005 bytes... 
+[19:08:22] 
+[19:08:22] Writing at 0x0020ee49 [=======================>      ]  82.5% 1277952/1549005 bytes... 
+[19:08:22] 
+[19:08:22] Writing at 0x0021434d [========================>     ]  83.6% 1294336/1549005 bytes... 
+[19:08:22] 
+[19:08:22] Writing at 0x0021a97c [========================>     ]  84.6% 1310720/1549005 bytes... 
+[19:08:23] 
+[19:08:23] Writing at 0x00222d09 [========================>     ]  85.7% 1327104/1549005 bytes... 
+[19:08:23] 
+[19:08:23] Writing at 0x0022a5c5 [=========================>    ]  86.7% 1343488/1549005 bytes... 
+[19:08:23] 
+[19:08:23] Writing at 0x00231ba5 [=========================>    ]  87.8% 1359872/1549005 bytes... 
+[19:08:23] 
+[19:08:23] Writing at 0x002372a6 [=========================>    ]  88.8% 1376256/1549005 bytes... 
+[19:08:23] 
+[19:08:23] Writing at 0x0023cfad [=========================>    ]  89.9% 1392640/1549005 bytes... 
+[19:08:23] 
+[19:08:23] Writing at 0x0024261d [==========================>   ]  91.0% 1409024/1549005 bytes... 
+[19:08:23] 
+[19:08:23] Writing at 0x00247c32 [==========================>   ]  92.0% 1425408/1549005 bytes... 
+[19:08:24] 
+[19:08:24] Writing at 0x0024d4cb [==========================>   ]  93.1% 1441792/1549005 bytes... 
+[19:08:24] 
+[19:08:24] Writing at 0x002544fa [===========================>  ]  94.1% 1458176/1549005 bytes... 
+[19:08:24] 
+[19:08:24] Writing at 0x0025ab85 [===========================>  ]  95.2% 1474560/1549005 bytes... 
+[19:08:24] 
+[19:08:24] Writing at 0x002618a2 [===========================>  ]  96.3% 1490944/1549005 bytes... 
+[19:08:24] 
+[19:08:24] Writing at 0x00266cb2 [============================> ]  97.3% 1507328/1549005 bytes... 
+[19:08:24] 
+[19:08:24] Writing at 0x0026c734 [============================> ]  98.4% 1523712/1549005 bytes... 
+[19:08:24] 
+[19:08:24] Writing at 0x00272305 [============================> ]  99.4% 1540096/1549005 bytes... 
+[19:08:25] 
+[19:08:25] Writing at 0x00275780 [==============================] 100.0% 1549005/1549005 bytes... 
+[19:08:25] Wrote 2512768 bytes (1549005 compressed) at 0x00010000 in 17.4 seconds (1157.0 kbit/s).
+[19:08:25] Verifying written data...
+[19:08:29] Hash of data verified.
+[19:08:29] 
+[19:08:29] Hard resetting via RTS pin...
+[19:08:31] Flash completed. Waiting 60 seconds before ready-check...
+[19:08:31] Do not disconnect the device while waiting for it to reboot and reconnect.
+[19:09:32] Serial port after flash: COM44
+[19:09:35] Connected to radio
+[19:09:35] Device ready.
+[19:09:39] Connected to radio
+[19:09:41] Connected to radio
+[19:09:41] canned_message.inputbroker_pin_a: 37
+[19:09:41] Completed getting preferences
+[19:09:41] Skipping unchanged field: canned_message.inputbroker_pin_a=37
+[19:09:44] Connected to radio
+[19:09:44] canned_message.inputbroker_pin_b: 26
+[19:09:44] Completed getting preferences
+[19:09:44] Skipping unchanged field: canned_message.inputbroker_pin_b=26
+[19:09:47] Connected to radio
+[19:09:47] canned_message.inputbroker_pin_press: 4
+[19:09:47] Completed getting preferences
+[19:09:47] Skipping unchanged field: canned_message.inputbroker_pin_press=4
+[19:09:50] Connected to radio
+[19:09:50] canned_message.inputbroker_event_cw: 17
+[19:09:50] Completed getting preferences
+[19:09:50] Skipping unchanged field: canned_message.inputbroker_event_cw=UP
+[19:09:53] Connected to radio
+[19:09:53] canned_message.inputbroker_event_ccw: 18
+[19:09:53] Completed getting preferences
+[19:09:53] Skipping unchanged field: canned_message.inputbroker_event_ccw=DOWN
+[19:09:56] Connected to radio
+[19:09:56] canned_message.inputbroker_event_press: 10
+[19:09:56] Completed getting preferences
+[19:09:56] Skipping unchanged field: canned_message.inputbroker_event_press=SELECT
+[19:09:59] Connected to radio
+[19:09:59] canned_message.enabled: True
+[19:09:59] Completed getting preferences
+[19:09:59] Skipping unchanged field: canned_message.enabled=true
+[19:10:02] Connected to radio
+[19:10:02] canned_message.rotary1_enabled: True
+[19:10:02] Completed getting preferences
+[19:10:02] Skipping unchanged field: canned_message.rotary1_enabled=true
+[19:10:04] Connected to radio
+[19:10:04] canned_message.allow_input_source: rotEnc1
+[19:10:04] Completed getting preferences
+[19:10:04] Skipping unchanged field: canned_message.allow_input_source=rotEnc1
+[19:10:08] Connected to radio
+[19:10:08] 
+[19:10:08] canned_plugin_message:這是HermesXB0.3.2_civ|@ab HermesX|HI !
+[19:10:08] Skipping unchanged canned message
+[19:10:11] Connected to radio
+[19:10:11] mqtt.address: mqtt.meshtastic.org
+[19:10:11] Completed getting preferences
+[19:10:11] Skipping unchanged field: mqtt.address=mqtt.meshtastic.org
+[19:10:14] Connected to radio
+[19:10:14] mqtt.username: meshdev
+[19:10:14] Completed getting preferences
+[19:10:14] Skipping unchanged field: mqtt.username=meshdev
+[19:10:17] Connected to radio
+[19:10:17] mqtt.password: large4cats
+[19:10:17] Completed getting preferences
+[19:10:17] Skipping unchanged field: mqtt.password=large4cats
+[19:10:20] Connected to radio
+[19:10:20] mqtt.encryption_enabled: True
+[19:10:20] Completed getting preferences
+[19:10:20] Skipping unchanged field: mqtt.encryptionEnabled=true
+[19:10:23] Connected to radio
+[19:10:23] mqtt.root: msh/TW
+[19:10:23] Completed getting preferences
+[19:10:23] Skipping unchanged field: mqtt.root=msh/TW
+[19:10:26] Connected to radio
+[19:10:26] mqtt.enabled: False
+[19:10:26] Completed getting preferences
+[19:10:26] Skipping unchanged field: mqtt.enabled=false
+[19:10:29] Connected to radio
+[19:10:29] mqtt.json_enabled: False
+[19:10:29] Completed getting preferences
+[19:10:29] Skipping unchanged field: mqtt.jsonEnabled=false
+[19:10:32] Connected to radio
+[19:10:32] mqtt.tls_enabled: False
+[19:10:32] Completed getting preferences
+[19:10:32] Skipping unchanged field: mqtt.tlsEnabled=false
+[19:10:35] Connected to radio
+[19:10:35] mqtt.proxy_to_client_enabled: False
+[19:10:35] Completed getting preferences
+[19:10:35] Skipping unchanged field: mqtt.proxyToClientEnabled=false
+[19:10:38] Connected to radio
+[19:10:38] mqtt.map_reporting_enabled: False
+[19:10:38] Completed getting preferences
+[19:10:38] Skipping unchanged field: mqtt.mapReportingEnabled=false
+[19:10:41] Connected to radio
+[19:10:41] lora.use_preset: True
+[19:10:41] Completed getting preferences
+[19:10:41] Skipping unchanged field: lora.usePreset=true
+[19:10:44] Connected to radio
+[19:10:44] lora.modem_preset: 4
+[19:10:44] Completed getting preferences
+[19:10:44] Skipping unchanged field: lora.modemPreset=MEDIUM_FAST
+[19:10:47] Connected to radio
+[19:10:47] lora.bandwidth: 250
+[19:10:47] Completed getting preferences
+[19:10:47] Skipping unchanged field: lora.bandwidth=250
+[19:10:50] Connected to radio
+[19:10:50] lora.spread_factor: 11
+[19:10:50] Completed getting preferences
+[19:10:50] Skipping unchanged field: lora.spreadFactor=11
+[19:10:53] Connected to radio
+[19:10:53] lora.coding_rate: 5
+[19:10:53] Completed getting preferences
+[19:10:53] Skipping unchanged field: lora.codingRate=5
+[19:10:56] Connected to radio
+[19:10:56] lora.region: 8
+[19:10:56] Completed getting preferences
+[19:10:56] Skipping unchanged field: lora.region=TW
+[19:10:59] Connected to radio
+[19:10:59] lora.hop_limit: 3
+[19:10:59] Completed getting preferences
+[19:10:59] Skipping unchanged field: lora.hopLimit=3
+[19:11:02] Connected to radio
+[19:11:02] lora.tx_enabled: True
+[19:11:02] Completed getting preferences
+[19:11:02] Skipping unchanged field: lora.txEnabled=true
+[19:11:05] Connected to radio
+[19:11:05] lora.tx_power: 27
+[19:11:05] Completed getting preferences
+[19:11:05] Skipping unchanged field: lora.txPower=27
+[19:11:08] Connected to radio
+[19:11:08] lora.channel_num: 1
+[19:11:08] Completed getting preferences
+[19:11:08] Skipping unchanged field: lora.channelNum=1
+[19:11:11] Connected to radio
+[19:11:11] lora.frequency_offset: 0.0
+[19:11:11] Completed getting preferences
+[19:11:11] Skipping unchanged field: lora.frequencyOffset=0.0
+[19:11:14] Connected to radio
+[19:11:14] lora.override_duty_cycle: False
+[19:11:14] Completed getting preferences
+[19:11:14] Skipping unchanged field: lora.overrideDutyCycle=false
+[19:11:17] Connected to radio
+[19:11:17] lora.sx126x_rx_boosted_gain: False
+[19:11:17] Completed getting preferences
+[19:11:17] Skipping unchanged field: lora.sx126xRxBoostedGain=false
+[19:11:20] Connected to radio
+[19:11:20] lora.override_frequency: 0.0
+[19:11:20] Completed getting preferences
+[19:11:20] Skipping unchanged field: lora.overrideFrequency=0.0
+[19:11:23] Connected to radio
+[19:11:23] lora.pa_fan_disabled: False
+[19:11:23] Completed getting preferences
+[19:11:23] Skipping unchanged field: lora.paFanDisabled=false
+[19:11:26] Connected to radio
+[19:11:26] lora.ignore_mqtt: False
+[19:11:26] Completed getting preferences
+[19:11:26] Skipping unchanged field: lora.ignoreMqtt=false
+[19:11:29] Connected to radio
+[19:11:29] lora.config_ok_to_mqtt: False
+[19:11:29] Completed getting preferences
+[19:11:29] Skipping unchanged field: lora.configOkToMqtt=false
+[19:11:32] Connected to radio
+[19:11:32] position.position_broadcast_secs: 60
+[19:11:32] Completed getting preferences
+[19:11:32] Skipping unchanged field: position.positionBroadcastSecs=60
+[19:11:35] Connected to radio
+[19:11:35] position.position_broadcast_smart_enabled: True
+[19:11:35] Completed getting preferences
+[19:11:35] Skipping unchanged field: position.positionBroadcastSmartEnabled=true
+[19:11:38] Connected to radio
+[19:11:38] position.gps_update_interval: 60
+[19:11:38] Completed getting preferences
+[19:11:38] Skipping unchanged field: position.gpsUpdateInterval=60
+[19:11:41] Connected to radio
+[19:11:41] position.position_flags: 811
+[19:11:41] Completed getting preferences
+[19:11:41] Skipping unchanged field: position.positionFlags=811
+[19:11:44] Connected to radio
+[19:11:44] position.broadcast_smart_minimum_distance: 100
+[19:11:44] Completed getting preferences
+[19:11:44] Skipping unchanged field: position.broadcastSmartMinimumDistance=100
+[19:11:47] Connected to radio
+[19:11:47] position.broadcast_smart_minimum_interval_secs: 30
+[19:11:47] Completed getting preferences
+[19:11:47] Skipping unchanged field: position.broadcastSmartMinimumIntervalSecs=30
+[19:11:50] Connected to radio
+[19:11:50] position.gps_mode: 1
+[19:11:50] Completed getting preferences
+[19:11:50] Skipping unchanged field: position.gpsMode=ENABLED
+[19:11:53] Connected to radio
+[19:11:53] position.fixed_position: False
+[19:11:53] Completed getting preferences
+[19:11:53] Skipping unchanged field: position.fixedPosition=false
+[19:11:56] Connected to radio
+[19:11:56] position.gps_enabled: False
+[19:11:56] Completed getting preferences
+[19:11:56] Skipping unchanged field: position.gpsEnabled=false
+[19:11:59] Connected to radio
+[19:11:59] position.gps_attempt_time: 0
+[19:11:59] Completed getting preferences
+[19:11:59] Skipping unchanged field: position.gpsAttemptTime=0
+[19:12:02] Connected to radio
+[19:12:02] position.rx_gpio: 0
+[19:12:02] Completed getting preferences
+[19:12:02] Skipping unchanged field: position.rxGpio=0
+[19:12:04] Connected to radio
+[19:12:04] position.tx_gpio: 0
+[19:12:04] Completed getting preferences
+[19:12:04] Skipping unchanged field: position.txGpio=0
+[19:12:07] Connected to radio
+[19:12:07] position.gps_en_gpio: 0
+[19:12:07] Completed getting preferences
+[19:12:07] Skipping unchanged field: position.gpsEnGpio=0
+[19:12:08] Diff precheck kept 8 of 58 commands.
+[19:12:08] Applying 8 meshtastic commands after the device becomes ready.
+[19:12:09] Applying reboot-sensitive batch 1 with 1 commands...
+[19:12:09] Command: meshtastic --ch-set-url https://meshtastic.org/e/#CjcSIIrA4R6zaST5Rl9xgSQV-pI7iuykDaeGdDOzkw6Z1-TeGgZNZXNoVFclAQAAACgBMAE6AggPCjYSIMtR3IlYKZeR84dOSiVHv7pllB_F4Rt1I0da72R31BxVGgpTaWduYWxUZXN0KAEwAToCCA8KNBIgy2jnf86fTpf_4AFAf-mCwbzRoxpCV0P90dqJo0-w_SYaCkVtZXJnZW5jeSEoAToCCCAKCRIBASgBOgIIDxIVCAEQBBj6ASALKAU4CEADSAFQG1gB
+[19:12:10] meshtastic --port COM44 --ch-set-url 'https://meshtastic.org/e/#CjcSIIrA4R6zaST5Rl9xgSQV-pI7iuykDaeGdDOzkw6Z1-TeGgZNZXNoVFclAQAAACgBMAE6AggPCjYSIMtR3IlYKZeR84dOSiVHv7pllB_F4Rt1I0da72R31BxVGgpTaWduYWxUZXN0KAEwAToCCA8KNBIgy2jnf86fTpf_4AFAf-mCwbzRoxpCV0P90dqJo0-w_SYaCkVtZXJnZW5jeSEoAToCCCAKCRIBASgBOgIIDxIVCAEQBBj6ASALKAU4CEADSAFQG1gB'
+[19:12:13] Connected to radio
+[19:12:13] Waiting 10 seconds for device reboot after batch 1...
+[19:12:24] Serial port after reboot batch: COM44
+[19:12:27] Connected to radio
+[19:12:27] Device ready.
+[19:12:28] Applying 7 normal meshtastic commands...
+[19:12:28] Command: meshtastic --ch-set psk default --ch-index 3
+[19:12:29] Command: meshtastic --ch-set uplink_enabled true --ch-index 3
+[19:12:29] Command: meshtastic --ch-set downlink_enabled false --ch-index 3
+[19:12:30] Command: meshtastic --ch-set channel_num 0 --ch-index 3
+[19:12:30] Command: meshtastic --ch-set id 0 --ch-index 3
+[19:12:31] Command: meshtastic --ch-set module_settings.position_precision 15 --ch-index 3
+[19:12:31] Command: meshtastic --ch-set module_settings.is_client_muted false --ch-index 3
+[19:12:32] meshtastic --port COM44 --ch-set psk default --ch-set uplink_enabled true --ch-set downlink_enabled false --ch-set channel_num 0 --ch-set id 0 --ch-set module_settings.position_precision 15 --ch-set module_settings.is_client_muted false --ch-index 3
+[19:12:34] Connected to radio
+[19:12:34] Set uplink_enabled to true
+[19:12:34] Set downlink_enabled to false
+[19:12:34] Set channel_num to 0
+[19:12:34] Set id to 0
+[19:12:34] Set module_settings.position_precision to 15
+[19:12:34] ChannelSettings does not have an attribute module_settings.is_client_muted.
+[19:12:34] Choices are...
+[19:12:34] channel_num
+[19:12:34] psk
+[19:12:34] name
+[19:12:34] id
+[19:12:34] uplink_enabled
+[19:12:34] downlink_enabled
+[19:12:34] module_settings:
+[19:12:34]     module_settings.is_muted
+[19:12:34]     module_settings.position_precision
+[19:12:34] Writing modified channels to device
+[19:12:35] Configuration applied. Rebooting device for final verification.
+[19:12:37] INFO file:node.py reboot line:620 Telling node to reboot in 10 seconds
+[19:12:37] Connected to radio
+[19:12:37] Waiting 10 seconds after config reboot...
+[19:12:50] Waiting for a serial port, retrying in 2 seconds...
+[19:12:52] Serial port after config reboot: COM44
+[19:12:58] Connected to radio
+[19:12:58] Device ready.
+[19:12:59] Verifying device settings, pass 1/2...
+[19:13:03] Connected to radio
+[19:13:03] Configuration verification passed.
+[19:13:04] 49 commands could not be confirmed from --info output.
+[19:13:04] Verifying canned message, pass 1/2...
+[19:13:08] Connected to radio
+[19:13:08] 
+[19:13:08] canned_plugin_message:這是HermesXB0.3.2_civ|@ab HermesX|HI !
+[19:13:08] Canned message verification passed.
+[19:13:08] === Meshtastic auto flash completed ===
+[19:13:09] Process finished. Review the log if you need to troubleshoot this device later.

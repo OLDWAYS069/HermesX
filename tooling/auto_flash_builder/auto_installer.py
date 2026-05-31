@@ -1,7 +1,7 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
-Meshtastic 自動刷寫與設定工具
-以 flash_and_config.ps1 的流程為基準實作 Python 版本。
+Meshtastic ?芸??瑕神?身摰極??
+隞?flash_and_config.ps1 ??蝔?箸?撖虫? Python ???
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import ctypes
 import importlib.util
 import json
 import logging
+import io
 import os
 import re
 import shlex
@@ -27,6 +28,24 @@ import serial.tools.list_ports
 
 
 LOGGER = logging.getLogger("meshtastic_auto_flash")
+
+
+class SafeConsoleHandler(logging.StreamHandler):
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            super().emit(record)
+        except UnicodeEncodeError:
+            try:
+                msg = self.format(record)
+                stream = self.stream
+                encoding = getattr(stream, "encoding", None) or "utf-8"
+                safe = msg.encode(encoding, errors="replace").decode(encoding, errors="replace")
+                stream.write(safe + self.terminator)
+                self.flush()
+            except Exception:
+                pass
+
+
 INTERNAL_HELPER_FLAG = "--internal-cli"
 LOG_LINE_DELAY_SECONDS = 0.5
 STARTUP_MUSIC_VOLUME = 0.2
@@ -40,6 +59,17 @@ HERMESX_FAILED_TONES = ((659, 80), (554, 100))
 WARNING_TONES = ((988, 120), (0, 80), (988, 120))
 STARTUP_MUSIC_PROCESS = None
 STARTUP_MUSIC_CONTROL_PATH = None
+
+
+def configure_stdio_for_unicode() -> None:
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is None:
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
 
 
 def normalize_exit_code(code: object) -> int:
@@ -443,7 +473,7 @@ def summarize_subprocess_output(output: str) -> str:
     return lines[-1]
 
 
-def pause_for_enter(message: str = "請按 Enter 繼續...") -> None:
+def pause_for_enter(message: str = "隢? Enter 蝜潛?...") -> None:
     print(message, flush=True)
     while True:
         try:
@@ -456,12 +486,12 @@ def pause_for_enter(message: str = "請按 Enter 繼續...") -> None:
 def notify_and_pause_on_subprocess_failure(raw: str, output: str) -> None:
     summary = summarize_subprocess_output(output)
     message_lines = [
-        "偵測到子程序 FAIL/Traceback，流程已暫停。",
-        f"命令：{raw}",
+        "A subprocess reported a failure or traceback.",
+        f"Command: {raw}",
     ]
     if summary:
-        message_lines.append(f"摘要：{summary}")
-    message_lines.append("請確認裝置狀態後按 Enter 繼續。")
+        message_lines.append(f"Summary: {summary}")
+    message_lines.append("Press Enter to continue.")
     notify_user_attention("\n".join(message_lines))
     pause_for_enter()
 
@@ -493,33 +523,33 @@ class MeshtasticAutoFlash:
         self.log_path = self._initialize_log()
 
     def _parse_arguments(self) -> argparse.Namespace:
-        parser = argparse.ArgumentParser(description="Meshtastic 自動刷寫和設定工具")
-        parser.add_argument("--firmware-path", default="", help="韌體檔案路徑")
-        parser.add_argument("--firmware-file-name", default="HermesX_0.2.8-beta0002-update.bin", help="韌體檔案名稱")
-        parser.add_argument("--config-path", default="", help="設定檔路徑，支援 YAML 或舊版 CLI.md")
-        parser.add_argument("--config-file-name", default="config.yaml", help="設定檔檔名")
-        parser.add_argument("--cli-config-path", default="", help="舊版 CLI 設定檔路徑")
-        parser.add_argument("--cli-config-file-name", default="CLI.md", help="舊版 CLI 設定檔檔名")
-        parser.add_argument("--export-config-yaml", default="", help="將現有 CLI.md 轉成 YAML 並輸出到指定路徑後結束")
-        parser.add_argument("--startup-music-path", default="", help="\u64ad\u653e\u555f\u52d5 MP3 \u8def\u5f91")
-        parser.add_argument("--post-flash-wait-seconds", type=int, default=60, help="刷寫後等待秒數")
-        parser.add_argument("--reboot-batch-size", type=int, default=2, help="重啟批次大小")
-        parser.add_argument("--reboot-wait-seconds", type=int, default=10, help="重啟等待秒數")
-        parser.add_argument("--reapply-max-passes", type=int, default=2, help="重新套用最大輪數")
-        parser.add_argument("--port-detect-timeout-seconds", type=int, default=60, help="序列埠檢測逾時秒數")
-        parser.add_argument("--port-detect-interval-seconds", type=int, default=2, help="序列埠檢測間隔秒數")
-        parser.add_argument("--ready-timeout-seconds", type=int, default=30, help="裝置就緒逾時秒數")
-        parser.add_argument("--ready-poll-seconds", type=int, default=2, help="裝置就緒輪詢秒數")
-        parser.add_argument("--ready-command-timeout-seconds", type=int, default=10, help="就緒檢查命令逾時秒數")
-        parser.add_argument("--ready-retry-count", type=int, default=2, help="就緒檢查重試次數")
-        parser.add_argument("--meshtastic-timeout-seconds", type=int, default=120, help="meshtastic CLI 逾時秒數")
-        parser.add_argument("--meshtastic-retry-count", type=int, default=3, help="meshtastic CLI 重試次數")
-        parser.add_argument("--meshtastic-retry-delay-seconds", type=int, default=2, help="meshtastic CLI ??????")
-        parser.add_argument("--log-path", default="", help="日誌檔路徑")
-        parser.add_argument("--reboot-after-config", action="store_true", default=True, help="設定後重啟")
-        parser.add_argument("--no-reboot-after-config", action="store_false", dest="reboot_after_config", help="設定後不重啟")
-        parser.add_argument("--post-config-reboot-wait-seconds", type=int, default=10, help="設定後重啟等待秒數")
-        parser.add_argument("--use-transaction", action="store_true", default=False, help="使用 begin/commit edit")
+        parser = argparse.ArgumentParser(description="Meshtastic auto flash and config tool")
+        parser.add_argument("--firmware-path", default="", help="Explicit firmware file path")
+        parser.add_argument("--firmware-file-name", default="HermesX_0.2.8-beta0002-update.bin", help="Recorded firmware file name")
+        parser.add_argument("--config-path", default="", help="Explicit config path or YAML generated from CLI.md")
+        parser.add_argument("--config-file-name", default="config.yaml", help="Config file name")
+        parser.add_argument("--cli-config-path", default="", help="Explicit CLI config path")
+        parser.add_argument("--cli-config-file-name", default="CLI.md", help="CLI config file name")
+        parser.add_argument("--export-config-yaml", default="", help="Write YAML converted from CLI.md to this path")
+        parser.add_argument("--startup-music-path", default="", help="Startup MP3 path")
+        parser.add_argument("--post-flash-wait-seconds", type=int, default=60, help="Seconds to wait after flashing")
+        parser.add_argument("--reboot-batch-size", type=int, default=2, help="Number of commands per reboot batch")
+        parser.add_argument("--reboot-wait-seconds", type=int, default=10, help="Seconds to wait after reboot")
+        parser.add_argument("--reapply-max-passes", type=int, default=2, help="Maximum verification/reapply passes")
+        parser.add_argument("--port-detect-timeout-seconds", type=int, default=60, help="Serial port detection timeout")
+        parser.add_argument("--port-detect-interval-seconds", type=int, default=2, help="Serial port detection poll interval")
+        parser.add_argument("--ready-timeout-seconds", type=int, default=30, help="Device ready-check timeout")
+        parser.add_argument("--ready-poll-seconds", type=int, default=2, help="Device ready-check poll interval")
+        parser.add_argument("--ready-command-timeout-seconds", type=int, default=10, help="Timeout for each ready-check command")
+        parser.add_argument("--ready-retry-count", type=int, default=2, help="Ready-check retries per port")
+        parser.add_argument("--meshtastic-timeout-seconds", type=int, default=120, help="meshtastic CLI timeout")
+        parser.add_argument("--meshtastic-retry-count", type=int, default=3, help="meshtastic CLI retry count")
+        parser.add_argument("--meshtastic-retry-delay-seconds", type=int, default=2, help="meshtastic CLI retry delay seconds")
+        parser.add_argument("--log-path", default="", help="Log file path")
+        parser.add_argument("--reboot-after-config", action="store_true", default=True, help="Reboot after applying config")
+        parser.add_argument("--no-reboot-after-config", action="store_false", dest="reboot_after_config", help="Do not reboot after applying config")
+        parser.add_argument("--post-config-reboot-wait-seconds", type=int, default=10, help="Seconds to wait after config reboot")
+        parser.add_argument("--use-transaction", action="store_true", default=False, help="Use begin/commit edit transaction")
         return parser.parse_args()
 
     def _initialize_log(self) -> Path:
@@ -530,7 +560,7 @@ class MeshtasticAutoFlash:
         LOGGER.setLevel(logging.INFO)
         LOGGER.handlers.clear()
         formatter = logging.Formatter("[%(asctime)s] %(message)s", datefmt="%H:%M:%S")
-        console = logging.StreamHandler(sys.stdout)
+        console = SafeConsoleHandler(sys.stdout)
         console.setFormatter(formatter)
         file_handler = logging.FileHandler(log_path, encoding="utf-8")
         file_handler.setFormatter(formatter)
@@ -565,7 +595,7 @@ class MeshtasticAutoFlash:
         try:
             self.print_text_with_duration(self.read_text_file_best_encoding(banner_path), 5.0)
         except Exception as exc:
-            self.log(f"讀取開場 ASCII 圖失敗：{exc}", delay_after=False)
+            self.log(f"霈????ASCII ?仃??{exc}", delay_after=False)
 
 
     def resolve_startup_music_path(self) -> Optional[Path]:
@@ -607,21 +637,15 @@ class MeshtasticAutoFlash:
                 stderr=subprocess.DEVNULL,
                 creationflags=creation_flags,
             )
-            self.log(f"已開始播放啟動音樂：{music_path.name}", delay_after=False)
+            self.log(f"Startup music launched: {music_path.name}", delay_after=False)
         except Exception as exc:
             STARTUP_MUSIC_PROCESS = None
-            self.log(f"啟動音樂播放失敗：{exc}", delay_after=False)
+            self.log(f"Startup music failed: {exc}", delay_after=False)
 
     @staticmethod
     def get_runtime_dir() -> Path:
         if getattr(sys, "frozen", False):
-            executable_dir = Path(sys.executable).resolve().parent
-            executable_name = executable_dir.name.lower()
-            if executable_name == "tool_windows" or executable_name.startswith("tool_windows"):
-                return executable_dir.parent
-            if executable_name == "tool_macos" or executable_name.startswith("tool_macos"):
-                return executable_dir.parent
-            return executable_dir
+            return Path(sys.executable).resolve().parent
         source_dir = Path(__file__).resolve().parent
         repo_root = MeshtasticAutoFlash._find_repo_root(source_dir)
         runtime_dir = repo_root / "auto_flash_tool"
@@ -658,40 +682,39 @@ class MeshtasticAutoFlash:
 
         target_dir = self.script_dir / "Target"
         if not target_dir.exists():
-            raise FileNotFoundError(f"Target 資料夾不存在: {target_dir}")
+            raise FileNotFoundError(f"Target 鞈?憭曆?摮: {target_dir}")
 
         matches = sorted(target_dir.glob("*.bin"), key=lambda item: item.stat().st_mtime, reverse=True)
         if not matches:
-            raise FileNotFoundError(f"Target 資料夾找不到任何 .bin: {target_dir}")
+            raise FileNotFoundError(f"Target 鞈?憭暹銝隞颱? .bin: {target_dir}")
 
         preferred_name = preferred_file_name.strip()
-        if preferred_name:
-            preferred_matches = [item for item in matches if item.name == preferred_name]
-            if preferred_matches:
-                self.log(f"設定檔指定韌體：{preferred_name}，將直接使用這個檔案。")
-                return preferred_matches[0].resolve()
+        if preferred_name and len(matches) > 1:
+            self.log(
+                f"preferred_file={preferred_name} is recorded only; firmware selection now always comes from Target, with a prompt when multiple .bin files exist."
+            )
 
         if len(matches) == 1:
             return matches[0].resolve()
 
-        self.log("Target 資料夾找到多個韌體檔案，請選擇：")
+        self.log("Multiple firmware files were found in Target. Please choose one:")
         for index, item in enumerate(matches, start=1):
             self.log(f"[{index}] {item.name}")
 
         while True:
-            choice = input(f"請選擇韌體檔案 (1-{len(matches)}): ").strip()
+            choice = input(f"Select firmware file (1-{len(matches)}): ").strip()
             if choice.isdigit():
                 selected_index = int(choice)
                 if 1 <= selected_index <= len(matches):
                     return matches[selected_index - 1].resolve()
-            print("輸入無效，請重新選擇。")
+            print("Invalid selection. Please try again.")
 
     def resolve_cli_config_path(self) -> Path:
         if self.args.cli_config_path:
             candidate = Path(self.args.cli_config_path).expanduser()
             if candidate.exists():
                 return candidate.resolve()
-            raise FileNotFoundError(f"找不到 CLI 設定檔：{candidate}")
+            raise FileNotFoundError(f"CLI config file not found: {candidate}")
         candidates = [
             self.script_dir / self.args.cli_config_file_name,
             self.repo_root / self.args.cli_config_file_name,
@@ -699,14 +722,16 @@ class MeshtasticAutoFlash:
         for candidate in candidates:
             if candidate.exists():
                 return candidate.resolve()
-        raise FileNotFoundError(f"找不到 CLI 設定檔，預期檔名為：{self.args.cli_config_file_name}")
+        raise FileNotFoundError(
+            f"CLI config file was not found in runtime locations: {self.args.cli_config_file_name}"
+        )
 
     def resolve_config_path(self) -> Path:
         if self.args.config_path:
             candidate = Path(self.args.config_path).expanduser()
             if candidate.exists():
                 return candidate.resolve()
-            raise FileNotFoundError(f"找不到設定檔：{candidate}")
+            raise FileNotFoundError(f"Config file not found: {candidate}")
         candidates = [
             self.script_dir / self.args.cli_config_file_name,
             self.repo_root / self.args.cli_config_file_name,
@@ -717,7 +742,7 @@ class MeshtasticAutoFlash:
             if candidate.exists():
                 return candidate.resolve()
         raise FileNotFoundError(
-            f"找不到設定檔，預期檔名為：{self.args.config_file_name} 或 {self.args.cli_config_file_name}"
+            f"Config file was not found in runtime locations: {self.args.config_file_name} or {self.args.cli_config_file_name}"
         )
 
     def resolve_cli_source_path_from_config(self, config_path: Path, config: dict) -> Optional[Path]:
@@ -814,7 +839,7 @@ class MeshtasticAutoFlash:
 
         data = yaml.safe_load(text) or {}
         if not isinstance(data, dict):
-            raise RuntimeError("YAML 設定檔的根節點必須是 object/map。")
+            raise RuntimeError("YAML config must deserialize to an object/map")
         return data
 
     def get_serial_ports(self) -> list:
@@ -823,9 +848,14 @@ class MeshtasticAutoFlash:
     def select_serial_port(self, preferred_port: Optional[str] = None) -> str:
         ports = self.get_serial_ports()
         if not ports:
-            raise RuntimeError("未偵測到任何序列埠。")
-        candidates = [
+            raise RuntimeError("No serial ports were detected")
+        non_legacy_ports = [
             port for port in ports
+            if (port.device or "").upper() != "COM1"
+            and "COMMUNICATIONS PORT" not in (port.description or "").upper()
+        ]
+        candidates = [
+            port for port in non_legacy_ports
             if "VID:PID=303A" in (port.hwid or "").upper()
             or "USB" in (port.description or "").upper()
             or "USB" in port.device.upper()
@@ -835,14 +865,25 @@ class MeshtasticAutoFlash:
         if len(candidates) == 1:
             return candidates[0].device
         if len(candidates) > 1:
-            self.log("偵測到多個 USB 序列埠：")
+            self.log("?菜葫?啣???USB 摨???")
             for index, port in enumerate(candidates):
                 self.log(f"[{index}] {port.device} ({port.description})")
-            self.log("將自動使用清單中的第一個序列埠；如需指定，請先調整連接設備。")
+            self.log("Multiple USB serial ports were detected; defaulting to the first candidate.")
             return candidates[0].device
+        if preferred_port and any(port.device == preferred_port for port in non_legacy_ports):
+            return preferred_port
+        if len(non_legacy_ports) == 1:
+            return non_legacy_ports[0].device
+        if len(non_legacy_ports) > 1:
+            return non_legacy_ports[0].device
+        if preferred_port and any(port.device == preferred_port for port in ports):
+            return preferred_port
         if len(ports) == 1:
-            return ports[0].device
-        raise RuntimeError("無法自動判斷要使用哪個序列埠。")
+            only_port = ports[0].device
+            if only_port.upper() == "COM1":
+                raise RuntimeError("Only legacy COM1 is available; waiting for the USB serial device")
+            return only_port
+        raise RuntimeError("Unable to determine which serial port to use")
 
     def wait_for_serial_port(self, preferred_port: Optional[str]) -> str:
         timeout = self.args.port_detect_timeout_seconds if self.args.port_detect_timeout_seconds > 0 else 60
@@ -853,14 +894,14 @@ class MeshtasticAutoFlash:
             try:
                 return self.select_serial_port(preferred_port)
             except RuntimeError as exc:
-                if "未偵測到任何序列埠" not in str(exc):
+                if "No serial ports were detected" not in str(exc) and "Only legacy COM1 is available" not in str(exc):
                     raise
                 if time.time() >= deadline:
-                    raise RuntimeError(f"等待 {timeout} 秒後仍未偵測到任何序列埠。") from exc
+                    raise RuntimeError(f"Timed out after {timeout} seconds waiting for a serial port") from exc
                 if not warning_played:
                     play_warning_prompt_audio()
                     warning_played = True
-                self.log(f"尚未偵測到序列埠，{poll} 秒後重試...")
+                self.log(f"Waiting for a serial port, retrying in {poll} seconds...")
                 time.sleep(poll)
 
     def wait_for_serial_port_with_user_reconnect(self, preferred_port: Optional[str], reason: str) -> str:
@@ -869,10 +910,10 @@ class MeshtasticAutoFlash:
                 return self.wait_for_serial_port(preferred_port)
             except RuntimeError as exc:
                 notify_user_attention(
-                    "注意：裝置連線需要人工處理。\n"
+                    "瘜冽?嚗?蝵桅???閬犖撌亥??n"
                     f"{reason}\n"
                     f"{exc}\n"
-                    "請重新插拔裝置後，按 Enter 繼續重試。"
+                    "Press Enter after reconnecting the device and serial cable."
                 )
                 try:
                     input()
@@ -881,9 +922,9 @@ class MeshtasticAutoFlash:
 
     def wait_for_operator_acknowledgement(self, reason: str) -> None:
         notify_user_attention(
-            "注意：設定寫入已暫停。\n"
+            "瘜冽?嚗身摰神?亙歇?怠??n"
             f"{reason}\n"
-            "請重新插拔裝置，確認系統已重新辨識後，按 Enter 繼續。"
+            "Press Enter after confirming the device state."
         )
         try:
             input()
@@ -896,23 +937,38 @@ class MeshtasticAutoFlash:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             bufsize=1,
         )
         output_lines: list[str] = []
         start = time.time()
+        arg_text = " ".join(str(arg).lower() for arg in args)
+        is_meshtastic_info = "meshtastic" in arg_text and "--info" in args
         while True:
             line = process.stdout.readline() if process.stdout else ""
             if line:
                 text = line.rstrip("\n")
                 output_lines.append(text)
                 self.log(text, delay_after=False)
+                if is_meshtastic_info and re.search(r"connected to radio", text, re.I):
+                    process.kill()
+                    try:
+                        process.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        pass
+                    return 0, "\n".join(output_lines)
             if process.poll() is not None:
                 break
             if timeout and (time.time() - start) > timeout:
                 process.kill()
-                raise subprocess.TimeoutExpired(args, timeout)
+                try:
+                    process.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    pass
+                partial_output = "\n".join(output_lines)
+                raise subprocess.TimeoutExpired(args, timeout, output=partial_output)
         return process.returncode, "\n".join(output_lines)
-
     @staticmethod
     def build_internal_tool_command(tool_name: str, tool_args: list[str]) -> list[str]:
         if getattr(sys, "frozen", False):
@@ -938,36 +994,39 @@ class MeshtasticAutoFlash:
                         timeout=cmd_timeout,
                     )
                     if code != 0 and requires_attention_for_subprocess_output(output):
-                        notify_and_pause_on_subprocess_failure(
-                            f"meshtastic --port {current_port} --timeout {cmd_timeout} --info",
-                            output,
-                        )
-                    if code == 0 and re.search(r"connected to radio", output, re.I):
-                        self.log("裝置已就緒。")
+                        summary = summarize_subprocess_output(output) or f"exit code {code}"
+                        self.log(f"Ready-check command failed transiently: {summary}", delay_after=False)
+                    if re.search(r"connected to radio", output or "", re.I):
+                        self.log("Device ready.")
                         return current_port
+                except subprocess.TimeoutExpired as exc:
+                    output = exc.output if isinstance(exc.output, str) else str(exc.output or "")
+                    if re.search(r"connected to radio", output or "", re.I):
+                        self.log("Device ready.")
+                        return current_port
+                    if requires_attention_for_subprocess_output(output):
+                        summary = summarize_subprocess_output(output) or "timeout"
+                        self.log(f"Ready-check command timed out or errored transiently: {summary}", delay_after=False)
                 except Exception as exc:
                     output = str(exc)
                     if requires_attention_for_subprocess_output(output):
-                        notify_and_pause_on_subprocess_failure(
-                            f"meshtastic --port {current_port} --timeout {cmd_timeout} --info",
-                            output,
-                        )
+                        self.log(f"Ready-check command raised transient exception: {output}", delay_after=False)
                 if time.time() < deadline:
-                    self.log(f"裝置尚未就緒，{poll} 秒後重試...")
+                    self.log(f"Device not ready yet, retrying in {poll} seconds...")
                     time.sleep(poll)
             if attempt < tries - 1:
                 play_warning_prompt_audio()
-                self.log(f"等待 {timeout} 秒後裝置仍未就緒，重新偵測序列埠...")
-                self.log("請手動重新開機裝置：按一下 RESET；如果沒有 RESET，請重新插拔 USB。")
-                self.log("等裝置重新出現在電腦上後，工具會自動繼續。")
+                self.log(f"Device still not ready after {timeout} seconds, re-detecting serial port...")
+                self.log("Please reboot the device manually: press RESET, or reconnect USB if RESET is unavailable.")
+                self.log("The tool will continue automatically after the device reappears.")
                 current_port = self.wait_for_serial_port(current_port)
-                self.log(f"重新連線後使用序列埠：{current_port}")
-        self.log(f"等待 {timeout} 秒後裝置仍未回應，將不再等待並繼續後續流程。")
+                self.log(f"Serial port after reconnect: {current_port}")
+        self.log(f"Device still unresponsive after {timeout} seconds; continuing without waiting further.")
         return current_port
 
     def invoke_esptool_flash(self, port: str, firmware: Path) -> None:
-        self.log(f"開始刷寫韌體到 {port} ...")
-        self.log("請確認裝置已進入可刷寫狀態，且 USB 連線穩定，不要在刷寫中拔除。")
+        self.log(f"???瑕神????{port} ...")
+        self.log("Please keep the device connected over USB during recovery.")
         code, _ = self.run_internal_tool(
             "esptool",
             [
@@ -987,7 +1046,7 @@ class MeshtasticAutoFlash:
             ],
         )
         if code != 0:
-            raise RuntimeError(f"esptool ??????????{code}")
+            raise RuntimeError(f"esptool failed with exit code {code}")
 
     @staticmethod
     def get_channels_block_from_text(text: str) -> list[str]:
@@ -1192,7 +1251,7 @@ class MeshtasticAutoFlash:
     def command_from_config_entry(entry: dict) -> MeshtasticCommand:
         command_type = str(entry.get("type") or "").strip()
         if not command_type:
-            raise RuntimeError("YAML commands 項目缺少 type。")
+            raise RuntimeError("YAML commands section is missing a type field")
         command = MeshtasticCommand(
             type=command_type,
             raw=str(entry.get("raw") or "").strip(),
@@ -1398,6 +1457,12 @@ class MeshtasticAutoFlash:
         return command.type == "SetField" and bool(command.field) and command.field.lower().startswith("lora.")
 
     @staticmethod
+    def test_serialized_command(command: MeshtasticCommand) -> bool:
+        if command.type == "SetCannedMessage":
+            return True
+        return command.type == "SetField" and bool(command.field) and command.field.lower().startswith("canned_message.")
+
+    @staticmethod
     def build_meshtastic_args(commands: list[MeshtasticCommand]) -> list[str]:
         args: list[str] = []
         channel_index = None
@@ -1420,22 +1485,91 @@ class MeshtasticAutoFlash:
             args.extend(["--ch-index", str(channel_index)])
         return args
 
+    def invoke_meshtastic_commands(self, port: str, commands: list[MeshtasticCommand]) -> str:
+        current_port = port
+        reboot_commands = [command for command in commands if self.test_reboot_command(command)]
+        remaining_commands = [command for command in commands if not self.test_reboot_command(command)]
+        serialized_commands = [command for command in remaining_commands if self.test_serialized_command(command)]
+        normal_commands = [command for command in remaining_commands if not self.test_serialized_command(command)]
+        batch_size = max(1, self.args.reboot_batch_size)
+
+        if reboot_commands:
+            for batch_index, start in enumerate(range(0, len(reboot_commands), batch_size), start=1):
+                batch = reboot_commands[start : start + batch_size]
+                self.log(f"Applying reboot-sensitive batch {batch_index} with {len(batch)} commands...")
+                for command in batch:
+                    self.log(f"Command: {command.raw}")
+                meshtastic_args = self.build_meshtastic_args(batch)
+                self.log(f"meshtastic --port {current_port} {' '.join(shlex.quote(arg) for arg in meshtastic_args)}")
+                current_port = self.invoke_meshtastic_with_retry(
+                    current_port,
+                    meshtastic_args,
+                    "\n".join(command.raw for command in batch),
+                    batch,
+                    True,
+                )
+                if start + batch_size < len(reboot_commands) or normal_commands:
+                    self.log(f"Waiting {self.args.reboot_wait_seconds} seconds for device reboot after batch {batch_index}...")
+                    time.sleep(max(0, self.args.reboot_wait_seconds))
+                    current_port = self.wait_for_serial_port(current_port)
+                    self.log(f"Serial port after reboot batch: {current_port}")
+                    current_port = self.wait_for_meshtastic_ready(current_port)
+
+        if serialized_commands:
+            self.log(f"Applying {len(serialized_commands)} serialized meshtastic commands...")
+            for command_index, command in enumerate(serialized_commands, start=1):
+                self.log(f"Applying serialized command {command_index}/{len(serialized_commands)}...")
+                self.log(f"Command: {command.raw}")
+                meshtastic_args = self.build_meshtastic_args([command])
+                self.log(f"meshtastic --port {current_port} {' '.join(shlex.quote(arg) for arg in meshtastic_args)}")
+                current_port = self.invoke_meshtastic_with_retry(
+                    current_port,
+                    meshtastic_args,
+                    command.raw,
+                    [command],
+                    True,
+                )
+                self.log(f"Waiting {self.args.reboot_wait_seconds} seconds after serialized command...")
+                time.sleep(max(0, self.args.reboot_wait_seconds))
+                current_port = self.wait_for_serial_port(current_port)
+                self.log(f"Serial port after serialized command: {current_port}")
+                current_port = self.wait_for_meshtastic_ready(current_port)
+
+        if normal_commands:
+            needs_transaction = self.args.use_transaction and any(command.type in {"SetField", "SetCannedMessage"} for command in normal_commands)
+            if needs_transaction:
+                self.log("Opening meshtastic edit transaction...")
+                current_port = self.invoke_meshtastic_with_retry(current_port, ["--begin-edit"], "meshtastic --begin-edit")
+            self.log(f"Applying {len(normal_commands)} normal meshtastic commands...")
+            for command in normal_commands:
+                self.log(f"Command: {command.raw}")
+            meshtastic_args = self.build_meshtastic_args(normal_commands)
+            self.log(f"meshtastic --port {current_port} {' '.join(shlex.quote(arg) for arg in meshtastic_args)}")
+            current_port = self.invoke_meshtastic_with_retry(
+                current_port,
+                meshtastic_args,
+                "\n".join(command.raw for command in normal_commands),
+                normal_commands,
+                True,
+            )
+            if needs_transaction:
+                self.log("Committing meshtastic edit transaction...")
+                current_port = self.invoke_meshtastic_with_retry(current_port, ["--commit-edit"], "meshtastic --commit-edit")
+        return current_port
+
     @staticmethod
     def convert_camel_to_snake(value: str) -> str:
         return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", value).lower() if value else value
 
     def get_field_ack_variants(self, field: str) -> list[str]:
-        parts = field.split(".")
-        if len(parts) <= 1:
-            return [field]
-        prefix = ".".join(parts[:-1]) + "."
-        last = parts[-1]
-        snake = self.convert_camel_to_snake(last)
-        variants = [field]
-        snake_field = prefix + snake
-        if snake_field != field:
-            variants.append(snake_field)
-        return sorted(set(variants))
+        parts = field.split('.')
+        variants = {field}
+        snake_parts = [self.convert_camel_to_snake(part) for part in parts]
+        variants.add('.'.join(snake_parts))
+        if len(parts) > 1:
+            variants.add('.'.join([*parts[:-1], self.convert_camel_to_snake(parts[-1])]))
+        normalized_variants = {self.normalize_info_path(variant) for variant in variants}
+        return sorted(variants | normalized_variants)
 
     def get_command_ack_patterns(self, command: MeshtasticCommand) -> list[str]:
         if command.type == "SetField" and command.field:
@@ -1447,13 +1581,13 @@ class MeshtasticAutoFlash:
     def test_output_for_commands(self, output: str, commands: list[MeshtasticCommand]) -> tuple[bool, list[str]]:
         missing: list[str] = []
         if not output:
-            return False, ["meshtastic CLI 沒有輸出任何內容"]
+            return False, ["meshtastic CLI returned no output"]
         if not re.search(r"connected to radio", output, re.I):
-            missing.append("缺少：Connected to radio")
+            missing.append("Missing expected output: Connected to radio")
         for command in commands:
             patterns = self.get_command_ack_patterns(command)
             if patterns and not any(re.search(pattern, output) for pattern in patterns):
-                missing.append(f"缺少命令確認訊息：{command.raw}")
+                missing.append(f"Missing command acknowledgement: {command.raw}")
         return len(missing) == 0, missing
 
     @staticmethod
@@ -1473,22 +1607,25 @@ class MeshtasticAutoFlash:
                     ["--port", current_port, "--timeout", str(self.args.meshtastic_timeout_seconds), *meshtastic_args],
                     timeout=self.args.meshtastic_timeout_seconds,
                 )
+            except subprocess.TimeoutExpired as exc:
+                code = 1
+                output = exc.output if isinstance(exc.output, str) else str(exc.output or "")
             except Exception as exc:
                 code, output = 1, str(exc)
             if code != 0 and requires_attention_for_subprocess_output(output):
                 notify_and_pause_on_subprocess_failure(raw, output)
-            if code == 0:
+            if code == 0 or re.search(r"connected to radio", output or "", re.I):
                 return output
             if attempt < self.args.meshtastic_retry_count:
                 delay = max(0, self.args.meshtastic_retry_delay_seconds)
                 if delay > 0:
-                    self.log(f"meshtastic ?????? {attempt}/{self.args.meshtastic_retry_count} ???{delay} ????...")
+                    self.log(f"meshtastic command failed {attempt}/{self.args.meshtastic_retry_count}; retrying in {delay} seconds...")
                     time.sleep(delay)
                 else:
-                    self.log(f"meshtastic ?????? {attempt}/{self.args.meshtastic_retry_count} ???????...")
+                    self.log(f"meshtastic command failed {attempt}/{self.args.meshtastic_retry_count}; retrying immediately...")
                 continue
-            raise RuntimeError(f"meshtastic 指令失敗：{raw}\n{output}")
-        raise RuntimeError(f"meshtastic 指令失敗：{raw}")
+            raise RuntimeError(f"meshtastic command failed: {raw}\n{output}")
+        raise RuntimeError(f"meshtastic command failed: {raw}")
 
     def invoke_meshtastic_with_retry(
         self,
@@ -1509,193 +1646,299 @@ class MeshtasticAutoFlash:
                         ["--port", current_port, "--timeout", str(self.args.meshtastic_timeout_seconds), *meshtastic_args],
                         timeout=self.args.meshtastic_timeout_seconds,
                     )
+                except subprocess.TimeoutExpired as exc:
+                    code = 1
+                    output = exc.output if isinstance(exc.output, str) else str(exc.output or "")
                 except Exception as exc:
                     code, output = 1, str(exc)
 
                 last_output = output
                 if code != 0 and requires_attention_for_subprocess_output(output):
                     notify_and_pause_on_subprocess_failure(raw, output)
-                success = code == 0
+
+                success = code == 0 or bool(re.search(r"connected to radio", output or "", re.I))
                 if success and require_ack:
                     success, missing = self.test_output_for_commands(output, expected_commands or [])
                     if not success and missing:
-                        self.log("缺少預期的 CLI 回應：\n" + "\n".join(missing))
+                        self.log("Missing expected meshtastic output:\n" + "\n".join(missing))
                 if success:
                     return current_port
+
                 manual_reconnect = self.test_manual_reconnect_required(output)
                 connection_issue = self.test_connection_issue(output)
                 if attempt < retry_count:
                     if manual_reconnect:
-                        self.log("序列埠開啟失敗，請檢查是否被其他程式占用，或重新插拔裝置。")
+                        self.log("The serial port requires manual reconnect before retrying.")
                         current_port = self.wait_for_serial_port_with_user_reconnect(
                             current_port,
-                            "系統目前無法重新開啟裝置序列埠。",
+                            "Reconnect the device, then continue the ready-check.",
                         )
-                        self.log(f"重新連線後使用序列埠：{current_port}")
+                        self.log(f"Port reconnected: {current_port}")
                         current_port = self.wait_for_meshtastic_ready(current_port)
                         continue
                     if connection_issue:
-                        self.log("偵測到序列連線異常，請等待裝置重新枚舉或手動重新插拔。")
+                        self.log("The device disconnected during configuration; waiting for it to come back.")
                         current_port = self.wait_for_serial_port_with_user_reconnect(
                             current_port,
-                            "設定寫入期間發生序列連線異常。",
+                            "Reconnect or reboot the device, then continue configuration.",
                         )
-                        self.log(f"重新連線後使用序列埠：{current_port}")
+                        self.log(f"Port reconnected: {current_port}")
                         current_port = self.wait_for_meshtastic_ready(current_port)
                         continue
-                    if self.args.meshtastic_retry_delay_seconds > 0:
-                        self.log(f"meshtastic 指令失敗（第 {attempt}/{retry_count} 次），{self.args.meshtastic_retry_delay_seconds} 秒後重試...")
-                        time.sleep(self.args.meshtastic_retry_delay_seconds)
+                    delay = max(0, self.args.meshtastic_retry_delay_seconds)
+                    if delay > 0:
+                        self.log(f"meshtastic command failed on attempt {attempt}/{retry_count}; retrying in {delay} seconds...")
+                        time.sleep(delay)
                     else:
-                        self.log(f"meshtastic 指令失敗（第 {attempt}/{retry_count} 次），立即重試...")
+                        self.log(f"meshtastic command failed on attempt {attempt}/{retry_count}; retrying immediately...")
                     continue
 
             self.wait_for_operator_acknowledgement(
-                "裝置多次無法寫入設定，流程不會結束。\n"
-                "我會在你重新插拔裝置後，繼續從目前步驟重試。"
+                "The device is still not ready after retries. Check power, cable, and reboot state before continuing."
             )
             current_port = self.wait_for_serial_port_with_user_reconnect(
                 current_port,
-                "請確認裝置已重新插拔並重新出現在系統中。",
+                "Press Enter after the device is ready and the serial port is available.",
             )
-            self.log(f"使用者介入後重新連線到序列埠：{current_port}")
+            self.log(f"Port reconnected: {current_port}")
             current_port = self.wait_for_meshtastic_ready(current_port)
             if last_output:
-                self.log("前一次失敗輸出摘要如下：")
+                self.log("Last meshtastic output:")
                 self.log(last_output, delay_after=False)
 
-    def invoke_meshtastic_commands(self, port: str, commands: list[MeshtasticCommand]) -> str:
-        reboot_commands = [command for command in commands if self.test_reboot_command(command)]
-        normal_commands = [command for command in commands if not self.test_reboot_command(command)]
-        current_port = port
-
-        if reboot_commands:
-            batch_size = self.args.reboot_batch_size if self.args.reboot_batch_size > 0 else 1
-            batch_index = 1
-            for start in range(0, len(reboot_commands), batch_size):
-                batch = reboot_commands[start : start + batch_size]
-                self.log(f"執行會觸發重開機的第 {batch_index} 批設定（共 {len(batch)} 筆）...")
-                for command in batch:
-                    self.log(f"排入命令：{command.raw}")
-                meshtastic_args = self.build_meshtastic_args(batch)
-                self.log(f"執行命令：meshtastic --port {current_port} {' '.join(shlex.quote(arg) for arg in meshtastic_args)}")
-                current_port = self.invoke_meshtastic_with_retry(current_port, meshtastic_args, "\n".join(command.raw for command in batch), batch, True)
-                batch_index += 1
-                if self.args.reboot_wait_seconds > 0:
-                    self.log(f"裝置可能正在重開機，等待 {self.args.reboot_wait_seconds} 秒後再檢查...")
-                    time.sleep(self.args.reboot_wait_seconds)
-                    current_port = self.wait_for_serial_port(current_port)
-                    self.log(f"重開機後使用序列埠：{current_port}")
-                    current_port = self.wait_for_meshtastic_ready(current_port)
-
-        if normal_commands:
-            needs_transaction = self.args.use_transaction and any(command.type in {"SetField", "SetCannedMessage"} for command in normal_commands)
-            if needs_transaction:
-                self.log("開啟設定交易模式...")
-                current_port = self.invoke_meshtastic_with_retry(current_port, ["--begin-edit"], "meshtastic --begin-edit")
-            self.log(f"執行不會觸發重開機的設定（共 {len(normal_commands)} 筆）...")
-            for command in normal_commands:
-                self.log(f"排入命令：{command.raw}")
-            meshtastic_args = self.build_meshtastic_args(normal_commands)
-            self.log(f"執行命令：meshtastic --port {current_port} {' '.join(shlex.quote(arg) for arg in meshtastic_args)}")
-            current_port = self.invoke_meshtastic_with_retry(current_port, meshtastic_args, "\n".join(command.raw for command in normal_commands), normal_commands, True)
-            if needs_transaction:
-                self.log("送出設定交易...")
-                current_port = self.invoke_meshtastic_with_retry(current_port, ["--commit-edit"], "meshtastic --commit-edit")
-
-        return current_port
-
-    def normalize_info_path(self, path: str) -> Optional[str]:
-        if not path:
-            return path
-        if path.startswith("Preferences."):
-            path = path[len("Preferences.") :]
-        if path.startswith("Module preferences."):
-            path = path[len("Module preferences.") :]
-        if path.startswith("cannedMessage."):
-            suffix = path[len("cannedMessage.") :]
-            parts = [self.convert_camel_to_snake(part) for part in suffix.split(".")]
-            path = "canned_message." + ".".join(parts)
-        return path
-
-    def convert_info_to_map(self, info_text: str) -> dict[str, str]:
-        info_map: dict[str, str] = {}
-        stack: list[tuple[int, str]] = []
-        for line in info_text.splitlines():
-            expanded = line.replace("\t", "  ")
-            match = re.match(r'^\s*"?([A-Za-z0-9_ ]+)"?\s*:\s*(.*)$', expanded)
-            if not match:
-                continue
-            indent = len(expanded) - len(expanded.lstrip())
-            if indent <= 1:
-                stack = []
-            key = match.group(1)
-            value = match.group(2).strip()
-            stack = [entry for entry in stack if entry[0] < indent]
-            normalized_value = value.strip().rstrip(",")
-            if normalized_value in {"", "{", "["}:
-                stack.append((indent, key))
-                continue
-            path_parts = [entry[1] for entry in stack if entry[1]]
-            path_parts.append(key)
-            full_path = self.normalize_info_path(".".join(path_parts))
-            normalized_value = normalized_value.strip('"')
-            if full_path:
-                info_map[full_path] = normalized_value
-        return info_map
-
     @staticmethod
-    def normalize_value(value: str) -> str:
-        normalized = value.strip().strip('"').rstrip(",").lower()
+    def normalize_info_value(value: Optional[str]) -> str:
+        normalized = "" if value is None else str(value).strip().strip('"').rstrip(",")
+        lowered = normalized.lower()
+        if lowered in {"true", "false"}:
+            return lowered
+        if lowered in {"on", "off"}:
+            return "true" if lowered == "on" else "false"
         try:
             return f"num:{float(normalized):.15g}"
         except ValueError:
             return normalized
 
+    @staticmethod
+    def values_match_for_field(field: Optional[str], actual: Optional[str], expected: Optional[str]) -> bool:
+        actual_normalized = MeshtasticAutoFlash.normalize_info_value(actual)
+        expected_normalized = MeshtasticAutoFlash.normalize_info_value(expected)
+        if actual_normalized == expected_normalized:
+            return True
+        normalized_field = MeshtasticAutoFlash.normalize_info_path(field or "")
+        enum_aliases = {
+            "lora.modem_preset": {
+                "num:4": "MEDIUM_FAST",
+            },
+            "lora.region": {
+                "num:8": "TW",
+            },
+            "position.gps_mode": {
+                "num:1": "ENABLED",
+            },
+            "canned_message.inputbroker_event_cw": {
+                "num:17": "UP",
+            },
+            "canned_message.inputbroker_event_ccw": {
+                "num:18": "DOWN",
+            },
+            "canned_message.inputbroker_event_press": {
+                "num:10": "SELECT",
+            },
+        }
+        aliases = enum_aliases.get(normalized_field)
+        if not aliases:
+            return False
+        expected_text = "" if expected is None else str(expected).strip()
+        actual_text = "" if actual is None else str(actual).strip()
+        return aliases.get(actual_normalized) == expected_text or aliases.get(expected_normalized) == actual_text or aliases.get(actual_text) == expected_text
+
+    def convert_info_to_map(self, output: str) -> dict[str, str]:
+        info_map: dict[str, str] = {}
+        stack: list[str] = []
+        for raw_line in (output or "").splitlines():
+            line = raw_line.rstrip()
+            if not line or re.match(r"(?i)^connected to radio$", line.strip()):
+                continue
+            indent = len(line) - len(line.lstrip())
+            level = indent // 2
+            stripped = line.strip().rstrip(',')
+            while len(stack) > level:
+                stack.pop()
+            match = re.match(r'^"?([A-Za-z0-9_ ]+)"?\s*:\s*(.*)$', stripped)
+            if not match:
+                continue
+            key = self.normalize_info_path(match.group(1).replace(' ', '_'))
+            value = match.group(2).strip()
+            if value in {"", "{", "["}:
+                stack.append(key)
+                continue
+            path = ".".join([*stack, key])
+            info_map[path] = self.normalize_info_value(value)
+        return info_map
+
+    @staticmethod
+    def normalize_info_path(path: str) -> str:
+        path = path.strip().strip('"')
+        if path.startswith("Preferences."):
+            path = path[len("Preferences."):]
+        if path.startswith("Module preferences."):
+            path = path[len("Module preferences."):]
+        if path.startswith("cannedMessage."):
+            path = "canned_message." + path[len("cannedMessage."):]
+        parts = [part.replace(' ', '_') for part in path.split('.') if part]
+        normalized_parts = [re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', part).lower() for part in parts]
+        return '.'.join(normalized_parts)
+
+    def get_info_channel_url(self, output: str) -> Optional[str]:
+        for line in (output or "").splitlines():
+            m = re.search(r'(?i)^primary channel url:\s*(\S+)', line.strip())
+            if m:
+                return m.group(1).strip()
+            m = re.search(r'(?i)^complete url[^:]*:\s*(\S+)', line.strip())
+            if m:
+                return m.group(1).strip()
+        return None
+
+    def get_expected_canned_message(self, commands: list[MeshtasticCommand]) -> Optional[str]:
+        messages = [command.message for command in commands if command.type == "SetCannedMessage" and command.message]
+        return messages[-1] if messages else None
+
+    def get_canned_message_from_device(self, port: str) -> str:
+        output = self.invoke_meshtastic_capture(port, ["--get-canned-message"], "meshtastic --get-canned-message")
+        match = re.search(r'(?im)^canned_plugin_message\s*:\s*(.+)$', output or "")
+        if match:
+            return match.group(1).strip().strip('"')
+        lines = [line.strip() for line in (output or "").splitlines() if line.strip() and not re.match(r'(?i)^connected to radio$', line.strip())]
+        return lines[-1] if lines else ""
+
+    def get_meshtastic_info(self, port: str) -> str:
+        return self.invoke_meshtastic_capture(port, ["--info"], "meshtastic --info")
+
+    def get_field_value_from_device(self, port: str, field: str) -> tuple[Optional[str], str]:
+        raw = f"meshtastic --get {field}"
+        output = ""
+        current_port = port
+        for attempt in range(2):
+            try:
+                output = self.invoke_meshtastic_capture(current_port, ["--get", field], raw)
+                break
+            except Exception as exc:
+                message = str(exc)
+                if attempt == 0 and self.test_connection_issue(message):
+                    self.log(f"Precheck read failed for {field}; waiting for device reconnect before retrying...")
+                    try:
+                        current_port = self.wait_for_serial_port(current_port)
+                        current_port = self.wait_for_meshtastic_ready(current_port)
+                    except Exception:
+                        pass
+                    continue
+                self.log(f"Precheck could not read {field}; treating it as changed.")
+                return None, current_port
+        if not output or re.search(r"timed out waiting for connection completion", output, re.I):
+            try:
+                current_port = self.wait_for_meshtastic_ready(current_port)
+            except Exception:
+                pass
+            try:
+                output = self.invoke_meshtastic_capture(current_port, ["--get", field], raw)
+            except Exception:
+                self.log(f"Precheck could not read {field} after ready-check retry; treating it as changed.")
+                return None, current_port
+        variants = [self.normalize_info_path(variant) for variant in self.get_field_ack_variants(field)]
+        fallback_value: Optional[str] = None
+        for raw_line in (output or "").splitlines():
+            line = raw_line.strip().rstrip(",")
+            if not line or re.match(r"(?i)^connected to radio$", line):
+                continue
+            match = re.match(r'^"?([A-Za-z0-9_. ]+)"?\s*:\s*(.*)$', line)
+            if match:
+                key = self.normalize_info_path(match.group(1).replace(" ", "_"))
+                value = self.normalize_info_value(match.group(2).strip())
+                if key in variants:
+                    return value, current_port
+                fallback_value = value
+        return fallback_value, current_port
+
+    def get_channel_url_command_if_mismatch(self, expected_channel_url: Optional[str], actual_channel_url: Optional[str]) -> Optional[MeshtasticCommand]:
+        expected = (expected_channel_url or "").strip()
+        actual = (actual_channel_url or "").strip()
+        if not expected:
+            return None
+        if not actual:
+            return None
+        if actual and (expected == actual or expected in actual or actual in expected):
+            return None
+        return MeshtasticCommand(type="SetChannelUrl", url=expected, raw=f"meshtastic --ch-set-url {expected}")
+
+    def get_actual_info_value(self, info_map: dict[str, str], field: str) -> Optional[str]:
+        for variant in self.get_field_ack_variants(field):
+            normalized_variant = self.normalize_info_path(variant)
+            if normalized_variant in info_map:
+                return info_map[normalized_variant]
+        return None
+
     def get_missing_commands(self, commands: list[MeshtasticCommand], info_map: dict[str, str]) -> tuple[list[MeshtasticCommand], list[MeshtasticCommand]]:
         missing: list[MeshtasticCommand] = []
         unverified: list[MeshtasticCommand] = []
         for command in commands:
-            if command.type != "SetField" or not command.field or command.value is None:
-                continue
-            if command.field not in info_map:
+            if command.type == "SetField" and command.field:
+                actual = self.get_actual_info_value(info_map, command.field)
+                if actual is None:
+                    unverified.append(command)
+                elif not self.values_match_for_field(command.field, actual, command.value):
+                    missing.append(command)
+            elif command.type == "AddChannelUrl":
                 unverified.append(command)
-                continue
-            expected = self.normalize_value(command.value)
-            actual = self.normalize_value(info_map[command.field])
-            if expected != actual:
-                missing.append(command)
         return missing, unverified
 
-    def get_info_channel_url(self, info_text: str) -> Optional[str]:
-        return self.get_preferred_channel_url(self.get_channel_urls_from_text(info_text))
+    def filter_commands_against_device(
+        self,
+        port: str,
+        commands: list[MeshtasticCommand],
+        expected_channel_url: Optional[str],
+    ) -> list[MeshtasticCommand]:
+        current_port = port
+        info_text = self.get_meshtastic_info(current_port)
+        actual_channel_url = self.get_info_channel_url(info_text)
+        actual_canned_message: Optional[str] = None
+        field_value_cache: dict[str, Optional[str]] = {}
+        filtered: list[MeshtasticCommand] = []
 
-    def get_channel_url_command_if_mismatch(self, expected_url: Optional[str], actual_url: Optional[str]) -> Optional[MeshtasticCommand]:
-        expected = self.normalize_channel_url(expected_url)
-        actual = self.normalize_channel_url(actual_url)
-        if expected and actual and expected != actual:
-            return MeshtasticCommand(type="SetChannelUrl", url=expected, raw=f"meshtastic --ch-set-url {expected}")
-        return None
+        for command in commands:
+            if command.type == "SetField" and command.field:
+                if command.field not in field_value_cache:
+                    actual_value, current_port = self.get_field_value_from_device(current_port, command.field)
+                    field_value_cache[command.field] = actual_value
+                actual = field_value_cache[command.field]
+                if self.values_match_for_field(command.field, actual, command.value):
+                    self.log(f"Skipping unchanged field: {command.field}={command.value}")
+                    continue
+                filtered.append(command)
+                continue
 
-    @staticmethod
-    def get_expected_canned_message(commands: list[MeshtasticCommand]) -> Optional[str]:
-        messages = [command.message for command in commands if command.type == "SetCannedMessage" and command.message]
-        return messages[-1] if messages else None
+            if command.type == "SetChannelUrl":
+                expected_url = (command.url or "").strip()
+                if expected_url and actual_channel_url and (expected_url == actual_channel_url or expected_url in actual_channel_url or actual_channel_url in expected_url):
+                    self.log("Skipping unchanged primary channel URL")
+                    continue
+                filtered.append(command)
+                continue
 
-    @staticmethod
-    def get_canned_message_from_output(output: str) -> Optional[str]:
-        match = re.search(r"(?im)^canned_plugin_message\s*:\s*(.+)$", output or "")
-        if match:
-            return match.group(1).strip()
-        lines = [line.strip() for line in (output or "").splitlines() if line.strip() and not re.match(r"(?i)^connected to radio$", line.strip())]
-        return lines[-1] if lines else None
+            if command.type == "SetCannedMessage":
+                if actual_canned_message is None:
+                    actual_canned_message = self.get_canned_message_from_device(current_port)
+                expected_message = (command.message or "").strip()
+                if expected_message == (actual_canned_message or ""):
+                    self.log("Skipping unchanged canned message")
+                    continue
+                filtered.append(command)
+                continue
 
-    def get_canned_message_from_device(self, port: str) -> Optional[str]:
-        output = self.invoke_meshtastic_capture(port, ["--get-canned-message"], "meshtastic --get-canned-message")
-        return self.get_canned_message_from_output(output)
+            filtered.append(command)
 
-    def get_meshtastic_info(self, port: str) -> str:
-        return self.invoke_meshtastic_capture(port, ["--info"], "meshtastic --info")
+        self.log(f"Diff precheck kept {len(filtered)} of {len(commands)} commands.")
+        return filtered
 
     def verify_device_settings(
         self,
@@ -1708,35 +1951,35 @@ class MeshtasticAutoFlash:
         current_port = port
         verified = False
         for current_pass in range(1, max_passes + 1):
-            self.log(f"開始驗證裝置設定（第 {current_pass}/{max_passes} 輪）...")
+            self.log(f"Verifying device settings, pass {current_pass}/{max_passes}...")
             info_text = self.get_meshtastic_info(current_port)
             info_map = self.convert_info_to_map(info_text)
             missing, unverified = self.get_missing_commands(commands, info_map)
             actual_channel_url = self.get_info_channel_url(info_text)
             channel_command = self.get_channel_url_command_if_mismatch(expected_channel_url, actual_channel_url)
             if not missing and not channel_command:
-                self.log("裝置設定驗證完成，內容一致。")
+                self.log("Configuration verification passed.")
                 if unverified:
-                    self.log(f"有 {len(unverified)} 筆設定不在 --info 中，已略過驗證。")
+                    self.log(f"{len(unverified)} commands could not be confirmed from --info output.")
                 verified = True
                 break
             for command in missing:
-                actual = info_map.get(command.field or "", "<info 中沒有此欄位>")
-                self.log(f"設定不一致：{command.raw}（預期={command.value}，實際={actual}）")
+                actual = info_map.get(command.field or "", "<missing from --info>")
+                self.log(f"Config mismatch: {command.raw}; expected {command.value}; actual {actual}")
             if channel_command:
-                self.log(f"偵測到 Channel URL 不一致，準備重套：{channel_command.raw}")
+                self.log(f"Channel URL mismatch: {channel_command.raw}")
             if unverified:
-                self.log(f"有 {len(unverified)} 筆設定不在 --info 中，已略過驗證。")
+                self.log(f"{len(unverified)} commands could not be confirmed from --info output.")
             reapply = list(missing)
-            if channel_command:
+            if channel_command and actual_channel_url:
                 reapply.append(channel_command)
                 reapply.extend(channel_default_commands)
             if reapply and current_pass < max_passes:
-                self.log(f"重新套用 {len(reapply)} 筆不一致設定...")
+                self.log(f"Reapplying {len(reapply)} commands before the next verification pass...")
                 current_port = self.invoke_meshtastic_commands(current_port, reapply)
                 time.sleep(2)
         if not verified:
-            raise RuntimeError(f"設定驗證失敗，已重試 {max_passes} 輪。")
+            raise RuntimeError(f"Configuration verification failed after {max_passes} passes")
         return current_port
 
     def verify_canned_message(self, port: str, commands: list[MeshtasticCommand]) -> str:
@@ -1746,27 +1989,18 @@ class MeshtasticAutoFlash:
         current_port = port
         max_passes = self.args.reapply_max_passes if self.args.reapply_max_passes > 0 else 1
         for current_pass in range(1, max_passes + 1):
-            self.log(f"開始驗證罐頭訊息（第 {current_pass}/{max_passes} 輪）...")
+            self.log(f"Verifying canned message, pass {current_pass}/{max_passes}...")
             actual = self.get_canned_message_from_device(current_port)
             if actual == expected:
-                self.log("罐頭訊息驗證完成，內容一致。")
+                self.log("Canned message verification passed.")
                 return current_port
-            self.log(f'罐頭訊息不一致：預期="{expected}"，實際="{actual or "<無內容>"}"')
+            self.log(f'Canned message mismatch: expected "{expected}"; actual "{actual or "<empty>"}"')
             if current_pass < max_passes:
                 command = MeshtasticCommand(type="SetCannedMessage", message=expected, raw=f"meshtastic --set-canned-message {expected}")
-                self.log("重新套用罐頭訊息...")
+                self.log("Reapplying canned message...")
                 current_port = self.invoke_meshtastic_with_retry(current_port, ["--set-canned-message", expected], command.raw, [command], True)
                 time.sleep(2)
-        raise RuntimeError(f"罐頭訊息驗證失敗，已重試 {max_passes} 輪。")
-
-    def ensure_dependencies(self) -> None:
-        for command in ("meshtastic",):
-            if not shutil.which(command):
-                raise RuntimeError(f"系統找不到 `{command}`，請先安裝並確認它在 PATH 中。")
-
-    @staticmethod
-    def build_pip_install_command(package: str) -> str:
-        return subprocess.list2cmdline([sys.executable, "-m", "pip", "install", package])
+        raise RuntimeError(f"Canned message verification failed after {max_passes} passes")
 
     def ensure_dependencies(self) -> None:
         package_names = {
@@ -1793,7 +2027,7 @@ class MeshtasticAutoFlash:
             cli_path = self.resolve_cli_config_path()
             output_path = Path(self.args.export_config_yaml).expanduser()
             self.export_cli_to_yaml(cli_path, output_path)
-            self.log(f"已輸出 YAML 設定檔：{output_path}")
+            self.log(f"Exported YAML config to {output_path}")
             return
 
         config_path = self.resolve_config_path()
@@ -1812,70 +2046,53 @@ class MeshtasticAutoFlash:
                 commands, expected_channel_url, channel_default_commands, config = self.load_runtime_config(config_path)
         commands = self.insert_channel_commands_after_url(commands, channel_default_commands)
         if not commands:
-            raise RuntimeError(f"?????????? meshtastic ?????{config_path}")
+            raise RuntimeError(f"No meshtastic commands were found in config: {config_path}")
 
         firmware_name = ((config.get("firmware") or {}).get("preferred_file") or "").strip()
         firmware_path = self.resolve_firmware_path(firmware_name)
-        self.log("=== Meshtastic 自動刷寫流程開始 ===")
-        self.log(f"本次使用韌體：{firmware_path}")
-        self.log(f"本次使用設定檔：{config_path}")
+        self.log("=== Meshtastic auto flash started ===")
+        self.log(f"Firmware: {firmware_path}")
+        self.log(f"Config: {config_path}")
         if firmware_name and firmware_name != firmware_path.name:
-            self.log(f"設定檔偏好的韌體名稱為 {firmware_name}，目前實際使用 {firmware_path.name}。")
+            self.log(f"Config recorded preferred_file={firmware_name}, but selected firmware is {firmware_path.name}")
 
         initial_port = self.select_serial_port()
-        self.log(f"目前使用序列埠：{initial_port}")
-        self.log("下一步將開始刷寫韌體，請不要拔掉 USB，也不要關閉其他需要的驅動程式。")
+        self.log(f"Initial serial port: {initial_port}")
+        self.log("Firmware flashing will start now. Keep USB connected and avoid interrupting the device.")
 
         self.invoke_esptool_flash(initial_port, firmware_path)
         play_warning_prompt_audio()
-        self.log(f"韌體刷寫完成，等待 {self.args.post_flash_wait_seconds} 秒讓裝置重新開機...")
-        self.log("等待裝置重新掛載期間，若系統有重新抓驅動或序列埠變更，屬於正常現象。")
+        self.log(f"Flash completed. Waiting {self.args.post_flash_wait_seconds} seconds before ready-check...")
+        self.log("Do not disconnect the device while waiting for it to reboot and reconnect.")
         time.sleep(max(0, self.args.post_flash_wait_seconds))
 
         port_after = self.wait_for_serial_port(initial_port)
-        self.log(f"重開機後偵測到序列埠：{port_after}")
+        self.log(f"Serial port after flash: {port_after}")
         port_after = self.wait_for_meshtastic_ready(port_after)
-        self.log(f"共解析出 {len(commands)} 筆設定命令，開始寫入裝置。")
-
-        port_after = self.invoke_meshtastic_commands(port_after, commands)
+        commands_to_apply = self.filter_commands_against_device(port_after, commands, expected_channel_url)
+        if commands_to_apply:
+            self.log(f"Applying {len(commands_to_apply)} meshtastic commands after the device becomes ready.")
+            port_after = self.invoke_meshtastic_commands(port_after, commands_to_apply)
+        else:
+            self.log("Device already matches config. Skipping meshtastic apply stage.")
 
         if self.args.reboot_after_config:
-            self.log("設定已寫入，準備重啟裝置並再次驗證。")
+            self.log("Configuration applied. Rebooting device for final verification.")
             port_after = self.invoke_meshtastic_with_retry(port_after, ["--reboot"], "meshtastic --reboot")
-            self.log(f"等待 {self.args.post_config_reboot_wait_seconds} 秒讓裝置完成重啟...")
+            self.log(f"Waiting {self.args.post_config_reboot_wait_seconds} seconds after config reboot...")
             time.sleep(max(0, self.args.post_config_reboot_wait_seconds))
             port_after = self.wait_for_serial_port(port_after)
-            self.log(f"設定後重啟序列埠：{port_after}")
+            self.log(f"Serial port after config reboot: {port_after}")
             port_after = self.wait_for_meshtastic_ready(port_after)
 
         port_after = self.verify_device_settings(port_after, commands, expected_channel_url, channel_default_commands)
         port_after = self.verify_canned_message(port_after, commands)
 
-        force_fields = [
-            ("canned_message.inputbroker_pin_a", "37"),
-            ("canned_message.inputbroker_pin_b", "26"),
-            ("canned_message.inputbroker_pin_press", "4"),
-            ("canned_message.inputbroker_event_cw", "UP"),
-            ("canned_message.inputbroker_event_ccw", "DOWN"),
-            ("canned_message.inputbroker_event_press", "SELECT"),
-            ("canned_message.enabled", "true"),
-            ("canned_message.rotary1_enabled", "true"),
-            ("canned_message.allow_input_source", "rotEnc1"),
-        ]
-        force_commands = [MeshtasticCommand(type="SetField", field=field, value=value, raw=f"meshtastic --set {field} {value}") for field, value in force_fields]
-        self.log("最後補寫 canned_message input broker 相關欄位。")
-        self.invoke_meshtastic_with_retry(
-            port_after,
-            self.build_meshtastic_args(force_commands),
-            " ".join(command.raw for command in force_commands),
-            force_commands,
-            True,
-        )
-        self.log("=== 自動刷寫與設定完成 ===")
-        self.log("若要分發給其他人使用，請搭配對應平台的打包輸出資料夾。")
-
+        self.log("=== Meshtastic auto flash completed ===")
+        self.log("Process finished. Review the log if you need to troubleshoot this device later.")
 
 def main() -> int:
+    configure_stdio_for_unicode()
     set_windows_console_green()
     helper_exit_code = try_run_internal_helper(sys.argv[1:])
     if helper_exit_code is not None:
@@ -1911,3 +2128,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+

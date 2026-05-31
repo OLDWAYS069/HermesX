@@ -12,7 +12,9 @@ $specPath = Join-Path $builderRoot "platform\shared\meshtastic_auto_flash.spec"
 $buildRoot = Join-Path $builderRoot "build\windows"
 $distRoot = Join-Path $builderRoot "dist\windows"
 $bundleRoot = Join-Path $distRoot "Meshtastic_Auto_Flash"
-$publishRoot = Join-Path $runtimeRoot "tool_windows"
+$publishRoot = Join-Path $runtimeRoot "HermesX_UPDATER"
+$publishExeName = "HermesX_UPDATER.exe"
+$publishZipPath = Join-Path $runtimeRoot "HermesX_UPDATER.zip"
 $audioSourceRoot = Join-Path $runtimeRoot "audio"
 $configSourcePath = Join-Path $runtimeRoot "config.yaml"
 $cliSourcePath = Join-Path $runtimeRoot "CLI.md"
@@ -29,7 +31,7 @@ function Copy-PublishPayload {
     }
 
     New-Item -ItemType Directory -Force -Path $DestinationRoot | Out-Null
-    Copy-Item (Join-Path $bundleRoot "Meshtastic_Auto_Flash.exe") (Join-Path $DestinationRoot "Meshtastic_Auto_Flash.exe") -Force
+    Copy-Item (Join-Path $bundleRoot "Meshtastic_Auto_Flash.exe") (Join-Path $DestinationRoot $publishExeName) -Force
     Copy-Item -Recurse -Force (Join-Path $bundleRoot "_internal") (Join-Path $DestinationRoot "_internal")
 
     if (Test-Path $audioSourceRoot) {
@@ -46,6 +48,21 @@ function Copy-PublishPayload {
     }
 }
 
+function New-PublishZip {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$ZipPath
+    )
+
+    if (Test-Path $ZipPath) {
+        Remove-Item -Force $ZipPath -ErrorAction Stop
+    }
+
+    Compress-Archive -Path $SourceRoot -DestinationPath $ZipPath -CompressionLevel Optimal -Force
+}
+
 function Test-PublishPayload {
     param(
         [Parameter(Mandatory = $true)]
@@ -53,10 +70,11 @@ function Test-PublishPayload {
     )
 
     $requiredPaths = @(
-        (Join-Path $DestinationRoot "Meshtastic_Auto_Flash.exe"),
+        (Join-Path $DestinationRoot $publishExeName),
         (Join-Path $DestinationRoot "_internal\meshtastic\util.py"),
         (Join-Path $DestinationRoot "_internal\requests\adapters.py"),
-        (Join-Path $DestinationRoot "_internal\certifi\cacert.pem")
+        (Join-Path $DestinationRoot "_internal\certifi\cacert.pem"),
+        (Join-Path $DestinationRoot "Target")
     )
 
     foreach ($requiredPath in $requiredPaths) {
@@ -85,5 +103,7 @@ if ($LASTEXITCODE -ne 0) {
 
 Copy-PublishPayload -DestinationRoot $publishRoot
 Test-PublishPayload -DestinationRoot $publishRoot
+New-PublishZip -SourceRoot $publishRoot -ZipPath $publishZipPath
 
 Write-Host "Windows bundle ready at: $publishRoot"
+Write-Host "Windows zip ready at: $publishZipPath"

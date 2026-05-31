@@ -1,0 +1,20 @@
+Metadata-Version: 2.4
+Name: winrt-runtime
+Version: 3.2.1
+Summary: Python projection of Windows Runtime (WinRT) APIs
+License-Expression: MIT
+Project-URL: Documentation, https://pywinrt.readthedocs.io
+Project-URL: Repository, https://github.com/pywinrt/pywinrt
+Project-URL: Changelog, https://github.com/pywinrt/pywinrt/blob/main/CHANGELOG.md
+Classifier: Operating System :: Microsoft :: Windows
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: Implementation :: CPython
+Classifier: Intended Audience :: Developers
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: typing_extensions>=4.12.2
+
+# winrt-runtime
+
+This package provides the PyWinRT runtime including the `winrt.system` module.
+
