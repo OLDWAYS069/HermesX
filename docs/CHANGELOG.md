@@ -2,6 +2,37 @@
 
 本文件為可對外發布版本的更新紀錄，整理 HermesX 韌體的重要功能更新、體驗調整與修正項目。
 
+## 2026-06-04
+
+### 新增
+
+- `設定 > UI設定` 新增新訊息提示開關，可控制 HermesX 新訊息大提示框是否顯示。
+
+### 調整
+
+- HermesX 新訊息 popup 改為大提示框格式，顯示 `NEW MSG`、來源短 ID、訊息摘要與 `查看 / 略過` 操作，並維持約 3 秒提示時間。
+- `MSG / Recent Send` 詳細訊息頁只放大正文內容；Recent Send 列表維持原本小字體與原本版面。
+- 詳細訊息正文支援自動換行與上下捲動，長訊息可像 TraceRoute 詳細內容一樣往下看。
+
+### 修正
+
+- 修正新訊息 popup 顯示時底層 TFT palette 色彩區域殘留，導致籃色或其他底層色塊卡在提示框中的問題。
+- 修正 popup 按下 `查看` 後固定開啟 Recent Send 最新索引、與實際 popup 訊息不一致的問題；現在會依 popup 綁定封包尋找對應訊息。
+- 修正 popup 查看路徑和 CannedMessage / Recent Send 輸入擁有權打架，導致進入詳細頁後滾動、返回或按鍵操作異常的問題。
+- 修正 `MSG / Recent Send` 詳細訊息頁按下 Press / Select 無法退出的問題；現在會回到 Recent Send 列表。
+- 修正詳細訊息頁中文與英文正文大小不一致的問題；中文 glyph 改依英文正文高度重採樣，不再硬套固定 1x / 2x。
+- 修正詳細訊息 payload 未依長度限制讀取的風險，改以 `payload.size` 安全複製並補上結尾字元。
+- 修正停留在 Recent Send 列表或詳細頁時仍可能被 Footer 快捷鍵或自動輪播帶走的問題。
+
+### 驗證
+
+- `git diff --check -- src/graphics/Screen.cpp docs/ISSUE_msg_popup_recent_send_2026-06-03.md` 通過。
+- `platformio run -e heltec-wireless-tracker -j 4` 編譯成功，CIV build 版本為 `HXB_C0.3.2_20260604_1946`。
+- 已依 `docs/AI_UPDATE_HANDOFF.md` 搬移並驗證韌體產物：
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.2_20260604_1946.bin`
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.2_20260604_1946.factory.bin`
+- 尚待實機最終確認 popup 查看操作、詳細訊息捲動與中英文字級一致性。
+
 ## 2026-06-01
 
 ### 新增

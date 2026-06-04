@@ -1,3 +1,17 @@
+## 2026-06-04
+- `設定 > UI設定` 新增新訊息提示開關，可控制 HermesX 新訊息大提示框是否顯示。
+- 新訊息 popup 改為大提示框格式，顯示 `NEW MSG`、來源短 ID、訊息摘要與 `查看 / 略過`，提示時間約 3 秒。
+- 修正新訊息 popup 顯示時底層 TFT palette 色彩區域殘留，導致籃色或其他底層色塊卡在提示框中的問題。
+- 修正 popup 按下 `查看` 後固定開啟 Recent Send 最新索引、與實際 popup 訊息不一致的問題；現在會依 popup 綁定封包尋找對應訊息。
+- 修正 popup 查看路徑和 CannedMessage / Recent Send 輸入擁有權打架，導致進入詳細頁後滾動、返回或按鍵操作異常的問題。
+- `MSG / Recent Send` 列表維持原本小字體與原本版面；只有詳細訊息頁正文放大。
+- 詳細訊息正文支援自動換行與上下捲動，長訊息可像 TraceRoute 詳細內容一樣往下看。
+- 修正詳細訊息頁按下 Press / Select 無法退出的問題；現在會回到 Recent Send 列表。
+- 修正詳細訊息頁中文與英文正文大小不一致的問題；中文 glyph 改依英文正文高度重採樣，不再硬套固定 1x / 2x。
+- `platformio run -e heltec-wireless-tracker -j 4` 編譯成功，CIV build 版本為 `HXB_C0.3.2_20260604_1946`。
+- 韌體產物已依 handoff 搬到 `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.2_20260604_1946.bin` 與 `.factory.bin`。
+- 尚待實機最終確認 popup 查看操作、詳細訊息捲動與中英文字級一致性。
+
 ## 2026-06-01
 - `ONLINE` / `GROUP` 節點 detail 的 `MSG` 改為 Screen-native 直接訊息鍵盤，不再跳到 CannedMessage composer；可用畫面鍵盤或實體鍵盤輸入並直接送出私訊。
 - `裝置管理 > 更新模式` dedicated update environment 第一層新增 `WiFi設定`，供 URL 更新與 WiFi 手動更新共用；`WiFi更新` 子頁改為只保留版本、連線狀態與開始更新。
