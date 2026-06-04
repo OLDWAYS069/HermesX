@@ -10,7 +10,6 @@ from typing import Optional
 from meshtastic.stream_interface import StreamInterface
 
 DEFAULT_TCP_PORT = 4403
-logger = logging.getLogger(__name__)
 
 class TCPInterface(StreamInterface):
     """Interface class for meshtastic devices over a TCP link"""
@@ -23,13 +22,11 @@ class TCPInterface(StreamInterface):
         connectNow: bool=True,
         portNumber: int=DEFAULT_TCP_PORT,
         noNodes:bool=False,
-        timeout: int = 300,
     ):
         """Constructor, opens a connection to a specified IP address/hostname
 
         Keyword Arguments:
             hostname {string} -- Hostname/IP address of the device to connect to
-            timeout -- How long to wait for replies (default: 300 seconds)
         """
 
         self.stream = None
@@ -44,22 +41,7 @@ class TCPInterface(StreamInterface):
         else:
             self.socket = None
 
-        super().__init__(debugOut=debugOut, noProto=noProto, connectNow=connectNow, noNodes=noNodes, timeout=timeout)
-
-    def __repr__(self):
-        rep = f"TCPInterface({self.hostname!r}"
-        if self.debugOut is not None:
-            rep += f", debugOut={self.debugOut!r}"
-        if self.noProto:
-            rep += ", noProto=True"
-        if self.socket is None:
-            rep += ", connectNow=False"
-        if self.portNumber != DEFAULT_TCP_PORT:
-            rep += f", portNumber={self.portNumber!r}"
-        if self.noNodes:
-            rep += ", noNodes=True"
-        rep += ")"
-        return rep
+        super().__init__(debugOut=debugOut, noProto=noProto, connectNow=connectNow, noNodes=noNodes)
 
     def _socket_shutdown(self) -> None:
         """Shutdown the socket.
@@ -70,13 +52,13 @@ class TCPInterface(StreamInterface):
 
     def myConnect(self) -> None:
         """Connect to socket"""
-        logger.debug(f"Connecting to {self.hostname}") # type: ignore[str-bytes-safe]
+        logging.debug(f"Connecting to {self.hostname}") # type: ignore[str-bytes-safe]
         server_address = (self.hostname, self.portNumber)
         self.socket = socket.create_connection(server_address)
 
     def close(self) -> None:
         """Close a connection to the device"""
-        logger.debug("Closing TCP stream")
+        logging.debug("Closing TCP stream")
         super().close()
         # Sometimes the socket read might be blocked in the reader thread.
         # Therefore we force the shutdown by closing the socket here
@@ -100,7 +82,7 @@ class TCPInterface(StreamInterface):
             # empty byte indicates a disconnected socket,
             # we need to handle it to avoid an infinite loop reading from null socket
             if data == b'':
-                logger.debug("dead socket, re-connecting")
+                logging.debug("dead socket, re-connecting")
                 # cleanup and reconnect socket without breaking reader thread
                 with contextlib.suppress(Exception):
                     self._socket_shutdown()

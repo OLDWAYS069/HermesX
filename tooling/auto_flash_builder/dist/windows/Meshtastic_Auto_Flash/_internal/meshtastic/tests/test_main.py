@@ -6,7 +6,6 @@ import os
 import platform
 import re
 import sys
-import tempfile
 from unittest.mock import mock_open, MagicMock, patch
 
 import pytest
@@ -19,7 +18,6 @@ from meshtastic.__main__ import (
     onNode,
     onReceive,
     tunnelMain,
-    set_missing_flags_false,
 )
 from meshtastic import mt_config
 
@@ -35,6 +33,7 @@ from ..tcp_interface import TCPInterface
 
 # from ..remote_hardware import onGPIOreceive
 # from ..config_pb2 import Config
+
 
 @pytest.mark.unit
 @pytest.mark.usefixtures("reset_mt_config")
@@ -455,37 +454,6 @@ def test_main_set_owner_short_to_bob(capsys):
         assert err == ""
         mo.assert_called()
 
-@pytest.mark.unit
-@pytest.mark.usefixtures("reset_mt_config")
-def test_main_set_is_unmessageable_to_true(capsys):
-    """Test --set-is-unmessageable true"""
-    sys.argv = ["", "--set-is-unmessageable", "true"]
-    mt_config.args = sys.argv
-
-    iface = MagicMock(autospec=SerialInterface)
-    with patch("meshtastic.serial_interface.SerialInterface", return_value=iface) as mo:
-        main()
-        out, err = capsys.readouterr()
-        assert re.search(r"Connected to radio", out, re.MULTILINE)
-        assert re.search(r"Setting device owner is_unmessageable to True", out, re.MULTILINE)
-        assert err == ""
-        mo.assert_called()
-
-@pytest.mark.unit
-@pytest.mark.usefixtures("reset_mt_config")
-def test_main_set_is_unmessagable_to_true(capsys):
-    """Test --set-is-unmessagable true"""
-    sys.argv = ["", "--set-is-unmessagable", "true"]
-    mt_config.args = sys.argv
-
-    iface = MagicMock(autospec=SerialInterface)
-    with patch("meshtastic.serial_interface.SerialInterface", return_value=iface) as mo:
-        main()
-        out, err = capsys.readouterr()
-        assert re.search(r"Connected to radio", out, re.MULTILINE)
-        assert re.search(r"Setting device owner is_unmessageable to True", out, re.MULTILINE)
-        assert err == ""
-        mo.assert_called()
 
 @pytest.mark.unit
 @pytest.mark.usefixtures("reset_mt_config")
@@ -526,44 +494,6 @@ def test_main_get_canned_messages(capsys, caplog, iface_with_nodes):
             assert err == ""
             mo.assert_called()
 
-@pytest.mark.unit
-@pytest.mark.usefixtures("reset_mt_config")
-def test_main_set_ringtone(capsys):
-    """Test --set-ringtone"""
-    sys.argv = ["", "--set-ringtone", "foo,bar"]
-    mt_config.args = sys.argv
-
-    iface = MagicMock(autospec=SerialInterface)
-    with patch("meshtastic.serial_interface.SerialInterface", return_value=iface) as mo:
-        main()
-        out, err = capsys.readouterr()
-        assert re.search(r"Connected to radio", out, re.MULTILINE)
-        assert re.search(r"Setting ringtone to foo,bar", out, re.MULTILINE)
-        assert err == ""
-        mo.assert_called()
-
-@pytest.mark.unit
-@pytest.mark.usefixtures("reset_mt_config")
-def test_main_get_ringtone(capsys, caplog, iface_with_nodes):
-    """Test --get-ringtone"""
-    sys.argv = ["", "--get-ringtone"]
-    mt_config.args = sys.argv
-
-    iface = iface_with_nodes
-    iface.devPath = "bar"
-
-    mocked_node = MagicMock(autospec=Node)
-    mocked_node.get_ringtone.return_value = "foo,bar"
-    iface.localNode = mocked_node
-
-    with caplog.at_level(logging.DEBUG):
-        with patch("meshtastic.serial_interface.SerialInterface", return_value=iface) as mo:
-            main()
-            out, err = capsys.readouterr()
-            assert re.search(r"Connected to radio", out, re.MULTILINE)
-            assert re.search(r"ringtone:foo,bar", out, re.MULTILINE)
-            assert err == ""
-            mo.assert_called()
 
 @pytest.mark.unit
 @pytest.mark.usefixtures("reset_mt_config")
@@ -758,11 +688,12 @@ def test_main_sendtext_with_invalid_channel_nine(caplog, capsys):
 
 @pytest.mark.unit
 @pytest.mark.usefixtures("reset_mt_config")
-@patch("meshtastic.serial_interface.SerialInterface._set_hupcl_with_termios")
+@patch("termios.tcsetattr")
+@patch("termios.tcgetattr")
 @patch("builtins.open", new_callable=mock_open, read_data="data")
 @patch("serial.Serial")
 @patch("meshtastic.util.findPorts", return_value=["/dev/ttyUSBfake"])
-def test_main_sendtext_with_dest(mock_findPorts, mock_serial, mocked_open, mock_hupcl, capsys, caplog, iface_with_nodes):
+def test_main_sendtext_with_dest(mock_findPorts, mock_serial, mocked_open, mock_get, mock_set, capsys, caplog, iface_with_nodes):
     """Test --sendtext with --dest"""
     sys.argv = ["", "--sendtext", "hello", "--dest", "foo"]
     mt_config.args = sys.argv
@@ -956,11 +887,12 @@ def test_main_seturl(capsys):
 
 @pytest.mark.unit
 @pytest.mark.usefixtures("reset_mt_config")
-@patch("meshtastic.serial_interface.SerialInterface._set_hupcl_with_termios")
+@patch("termios.tcsetattr")
+@patch("termios.tcgetattr")
 @patch("builtins.open", new_callable=mock_open, read_data="data")
 @patch("serial.Serial")
 @patch("meshtastic.util.findPorts", return_value=["/dev/ttyUSBfake"])
-def test_main_set_valid(mocked_findports, mocked_serial, mocked_open, mocked_hupcl, capsys):
+def test_main_set_valid(mocked_findports, mocked_serial, mocked_open, mocked_get, mocked_set, capsys):
     """Test --set with valid field"""
     sys.argv = ["", "--set", "network.wifi_ssid", "foo"]
     mt_config.args = sys.argv
@@ -980,11 +912,12 @@ def test_main_set_valid(mocked_findports, mocked_serial, mocked_open, mocked_hup
 
 @pytest.mark.unit
 @pytest.mark.usefixtures("reset_mt_config")
-@patch("meshtastic.serial_interface.SerialInterface._set_hupcl_with_termios")
+@patch("termios.tcsetattr")
+@patch("termios.tcgetattr")
 @patch("builtins.open", new_callable=mock_open, read_data="data")
 @patch("serial.Serial")
 @patch("meshtastic.util.findPorts", return_value=["/dev/ttyUSBfake"])
-def test_main_set_valid_wifi_psk(mocked_findports, mocked_serial, mocked_open, mocked_hupcl, capsys):
+def test_main_set_valid_wifi_psk(mocked_findports, mocked_serial, mocked_open, mocked_get, mocked_set, capsys):
     """Test --set with valid field"""
     sys.argv = ["", "--set", "network.wifi_psk", "123456789"]
     mt_config.args = sys.argv
@@ -1004,11 +937,12 @@ def test_main_set_valid_wifi_psk(mocked_findports, mocked_serial, mocked_open, m
 
 @pytest.mark.unit
 @pytest.mark.usefixtures("reset_mt_config")
-@patch("meshtastic.serial_interface.SerialInterface._set_hupcl_with_termios")
+@patch("termios.tcsetattr")
+@patch("termios.tcgetattr")
 @patch("builtins.open", new_callable=mock_open, read_data="data")
 @patch("serial.Serial")
 @patch("meshtastic.util.findPorts", return_value=["/dev/ttyUSBfake"])
-def test_main_set_invalid_wifi_psk(mocked_findports, mocked_serial, mocked_open, mocked_hupcl, capsys):
+def test_main_set_invalid_wifi_psk(mocked_findports, mocked_serial, mocked_open, mocked_get, mocked_set, capsys):
     """Test --set with an invalid value (psk must be 8 or more characters)"""
     sys.argv = ["", "--set", "network.wifi_psk", "1234567"]
     mt_config.args = sys.argv
@@ -1031,11 +965,12 @@ def test_main_set_invalid_wifi_psk(mocked_findports, mocked_serial, mocked_open,
 
 @pytest.mark.unit
 @pytest.mark.usefixtures("reset_mt_config")
-@patch("meshtastic.serial_interface.SerialInterface._set_hupcl_with_termios")
+@patch("termios.tcsetattr")
+@patch("termios.tcgetattr")
 @patch("builtins.open", new_callable=mock_open, read_data="data")
 @patch("serial.Serial")
 @patch("meshtastic.util.findPorts", return_value=["/dev/ttyUSBfake"])
-def test_main_set_valid_camel_case(mocked_findports, mocked_serial, mocked_open, mocked_hupcl, capsys):
+def test_main_set_valid_camel_case(mocked_findports, mocked_serial, mocked_open, mocked_get, mocked_set, capsys):
     """Test --set with valid field"""
     sys.argv = ["", "--set", "network.wifi_ssid", "foo"]
     mt_config.args = sys.argv
@@ -1056,11 +991,12 @@ def test_main_set_valid_camel_case(mocked_findports, mocked_serial, mocked_open,
 
 @pytest.mark.unit
 @pytest.mark.usefixtures("reset_mt_config")
-@patch("meshtastic.serial_interface.SerialInterface._set_hupcl_with_termios")
+@patch("termios.tcsetattr")
+@patch("termios.tcgetattr")
 @patch("builtins.open", new_callable=mock_open, read_data="data")
 @patch("serial.Serial")
 @patch("meshtastic.util.findPorts", return_value=["/dev/ttyUSBfake"])
-def test_main_set_with_invalid(mocked_findports, mocked_serial, mocked_open, mocked_hupcl, capsys):
+def test_main_set_with_invalid(mocked_findports, mocked_serial, mocked_open, mocked_get, mocked_set, capsys):
     """Test --set with invalid field"""
     sys.argv = ["", "--set", "foo", "foo"]
     mt_config.args = sys.argv
@@ -1081,11 +1017,12 @@ def test_main_set_with_invalid(mocked_findports, mocked_serial, mocked_open, moc
 # TODO: write some negative --configure tests
 @pytest.mark.unit
 @pytest.mark.usefixtures("reset_mt_config")
-@patch("meshtastic.serial_interface.SerialInterface._set_hupcl_with_termios")
+@patch("termios.tcsetattr")
+@patch("termios.tcgetattr")
 @patch("builtins.open", new_callable=mock_open, read_data="data")
 @patch("serial.Serial")
 @patch("meshtastic.util.findPorts", return_value=["/dev/ttyUSBfake"])
-def test_main_configure_with_snake_case(mocked_findports, mocked_serial, mocked_open, mocked_hupcl, capsys):
+def test_main_configure_with_snake_case(mocked_findports, mocked_serial, mocked_open, mocked_get, mocked_set, capsys):
     """Test --configure with valid file"""
     sys.argv = ["", "--configure", "example_config.yaml"]
     mt_config.args = sys.argv
@@ -1113,11 +1050,12 @@ def test_main_configure_with_snake_case(mocked_findports, mocked_serial, mocked_
 
 @pytest.mark.unit
 @pytest.mark.usefixtures("reset_mt_config")
-@patch("meshtastic.serial_interface.SerialInterface._set_hupcl_with_termios")
+@patch("termios.tcsetattr")
+@patch("termios.tcgetattr")
 @patch("builtins.open", new_callable=mock_open, read_data="data")
 @patch("serial.Serial")
 @patch("meshtastic.util.findPorts", return_value=["/dev/ttyUSBfake"])
-def test_main_configure_with_camel_case_keys(mocked_findports, mocked_serial, mocked_open, mocked_hupcl, capsys):
+def test_main_configure_with_camel_case_keys(mocked_findports, mocked_serial, mocked_open, mocked_get, mocked_set, capsys):
     """Test --configure with valid file"""
     sys.argv = ["", "--configure", "exampleConfig.yaml"]
     mt_config.args = sys.argv
@@ -1786,8 +1724,6 @@ def test_main_export_config(capsys):
         mo.getLongName.return_value = "foo"
         mo.getShortName.return_value = "oof"
         mo.localNode.getURL.return_value = "bar"
-        mo.getCannedMessage.return_value = "foo|bar"
-        mo.getRingtone.return_value = "24:d=32,o=5"
         mo.getMyNodeInfo().get.return_value = {
             "latitudeI": 1100000000,
             "longitudeI": 1200000000,
@@ -1802,8 +1738,7 @@ position_broadcast_smart: true
 fixed_position: true
 position_flags: 35"""
         export_config(mo)
-    out = export_config(mo)
-    err = ""
+    out, err = capsys.readouterr()
 
     # ensure we do not output this line
     assert not re.search(r"Connected to radio", out, re.MULTILINE)
@@ -1889,41 +1824,6 @@ position_flags: 35"""
 #        assert err == ""
 #        mo.assert_called()
 
-
-@pytest.mark.unit
-def test_set_missing_flags_false():
-    """Test set_missing_flags_false() function"""
-    config = {
-        "bluetooth": {
-            "enabled": True
-        },
-        "lora": {
-            "txEnabled": True
-        }
-    }
-
-    false_defaults = {
-        ("bluetooth", "enabled"),
-        ("lora", "sx126xRxBoostedGain"),
-        ("lora", "txEnabled"),
-        ("lora", "usePreset"),
-        ("position", "positionBroadcastSmartEnabled"),
-        ("security", "serialEnabled"),
-        ("mqtt", "encryptionEnabled"),
-    }
-
-    set_missing_flags_false(config, false_defaults)
-
-    # Preserved
-    assert config["bluetooth"]["enabled"] is True
-    assert config["lora"]["txEnabled"] is True
-
-    # Added
-    assert config["lora"]["usePreset"] is False
-    assert config["lora"]["sx126xRxBoostedGain"] is False
-    assert config["position"]["positionBroadcastSmartEnabled"] is False
-    assert config["security"]["serialEnabled"] is False
-    assert config["mqtt"]["encryptionEnabled"] is False
 
 @pytest.mark.unit
 @pytest.mark.usefixtures("reset_mt_config")
@@ -2714,16 +2614,16 @@ def test_tunnel_subnet_arg_with_no_devices(mock_platform_system, caplog, capsys)
         assert err == ""
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="on windows is no fcntl module")
 @pytest.mark.unit
 @pytest.mark.usefixtures("reset_mt_config")
 @patch("platform.system")
-@patch("meshtastic.serial_interface.SerialInterface._set_hupcl_with_termios")
+@patch("termios.tcsetattr")
+@patch("termios.tcgetattr")
 @patch("builtins.open", new_callable=mock_open, read_data="data")
 @patch("serial.Serial")
 @patch("meshtastic.util.findPorts", return_value=["/dev/ttyUSBfake"])
 def test_tunnel_tunnel_arg(
-    mocked_findPorts, mocked_serial, mocked_open, mock_hupcl, mock_platform_system, caplog, iface_with_nodes, capsys
+    mocked_findPorts, mocked_serial, mocked_open, mock_get, mock_set, mock_platform_system, caplog, iface_with_nodes, capsys
 ):
     """Test tunnel with tunnel arg (act like we are on a linux system)"""
 
@@ -2813,156 +2713,3 @@ def test_remove_ignored_node():
         main()
 
     mocked_node.removeIgnored.assert_called_once_with("!12345678")
-@pytest.mark.unit
-@pytest.mark.usefixtures("reset_mt_config")
-def test_main_set_owner_whitespace_only(capsys):
-    """Test --set-owner with whitespace-only name"""
-    sys.argv = ["", "--set-owner", "   "]
-    mt_config.args = sys.argv
-
-    with pytest.raises(SystemExit) as excinfo:
-        main()
-
-    out, _ = capsys.readouterr()
-    assert "ERROR: Long Name cannot be empty or contain only whitespace characters" in out
-    assert excinfo.value.code == 1
-
-
-@pytest.mark.unit
-@pytest.mark.usefixtures("reset_mt_config")
-def test_main_set_owner_empty_string(capsys):
-    """Test --set-owner with empty string"""
-    sys.argv = ["", "--set-owner", ""]
-    mt_config.args = sys.argv
-
-    with pytest.raises(SystemExit) as excinfo:
-        main()
-
-    out, _ = capsys.readouterr()
-    assert "ERROR: Long Name cannot be empty or contain only whitespace characters" in out
-    assert excinfo.value.code == 1
-
-
-@pytest.mark.unit
-@pytest.mark.usefixtures("reset_mt_config")
-def test_main_set_owner_short_whitespace_only(capsys):
-    """Test --set-owner-short with whitespace-only name"""
-    sys.argv = ["", "--set-owner-short", "   "]
-    mt_config.args = sys.argv
-
-    with pytest.raises(SystemExit) as excinfo:
-        main()
-
-    out, _ = capsys.readouterr()
-    assert "ERROR: Short Name cannot be empty or contain only whitespace characters" in out
-    assert excinfo.value.code == 1
-
-
-@pytest.mark.unit
-@pytest.mark.usefixtures("reset_mt_config")
-def test_main_set_owner_short_empty_string(capsys):
-    """Test --set-owner-short with empty string"""
-    sys.argv = ["", "--set-owner-short", ""]
-    mt_config.args = sys.argv
-
-    with pytest.raises(SystemExit) as excinfo:
-        main()
-
-    out, _ = capsys.readouterr()
-    assert "ERROR: Short Name cannot be empty or contain only whitespace characters" in out
-    assert excinfo.value.code == 1
-
-
-@pytest.mark.unit
-@pytest.mark.usefixtures("reset_mt_config")
-def test_main_set_ham_whitespace_only(capsys):
-    """Test --set-ham with whitespace-only name"""
-    sys.argv = ["", "--set-ham", "   "]
-    mt_config.args = sys.argv
-
-    with pytest.raises(SystemExit) as excinfo:
-        main()
-
-    out, _ = capsys.readouterr()
-    assert "ERROR: Ham radio callsign cannot be empty or contain only whitespace characters" in out
-    assert excinfo.value.code == 1
-
-
-@pytest.mark.unit
-@pytest.mark.usefixtures("reset_mt_config")
-def test_main_set_ham_empty_string(capsys):
-    """Test --set-ham with empty string"""
-    sys.argv = ["", "--set-ham", ""]
-    mt_config.args = sys.argv
-
-    with pytest.raises(SystemExit) as excinfo:
-        main()
-
-    out, _ = capsys.readouterr()
-    assert "ERROR: Ham radio callsign cannot be empty or contain only whitespace characters" in out
-    assert excinfo.value.code == 1
-
-
-# OTA-related tests
-@pytest.mark.unit
-@pytest.mark.usefixtures("reset_mt_config")
-def test_main_ota_update_file_not_found(capsys):
-    """Test --ota-update with non-existent file"""
-    sys.argv = [
-        "",
-        "--ota-update",
-        "/nonexistent/firmware.bin",
-        "--host",
-        "192.168.1.100",
-    ]
-    mt_config.args = sys.argv
-
-    with pytest.raises(SystemExit) as pytest_wrapped_e:
-        main()
-
-    assert pytest_wrapped_e.type == SystemExit
-    assert pytest_wrapped_e.value.code == 1
-
-
-@pytest.mark.unit
-@pytest.mark.usefixtures("reset_mt_config")
-@patch("meshtastic.ota.ESP32WiFiOTA")
-@patch("meshtastic.__main__.meshtastic.util.our_exit")
-def test_main_ota_update_retries(mock_our_exit, mock_ota_class, capsys):
-    """Test --ota-update retries on failure"""
-    # Create a temporary firmware file
-    with tempfile.NamedTemporaryFile(mode="wb", delete=False) as f:
-        f.write(b"fake firmware data")
-        firmware_file = f.name
-
-    try:
-        sys.argv = ["", "--ota-update", firmware_file, "--host", "192.168.1.100"]
-        mt_config.args = sys.argv
-
-        # Mock the OTA class to fail all 5 retries
-        mock_ota = MagicMock()
-        mock_ota_class.return_value = mock_ota
-        mock_ota.hash_bytes.return_value = b"\x00" * 32
-        mock_ota.hash_hex.return_value = "a" * 64
-        mock_ota.update.side_effect = Exception("Connection failed")
-
-        # Mock isinstance to return True
-        with patch("meshtastic.__main__.isinstance", return_value=True):
-            with patch("meshtastic.tcp_interface.TCPInterface") as mock_tcp:
-                mock_iface = MagicMock()
-                mock_iface.hostname = "192.168.1.100"
-                mock_iface.localNode = MagicMock(autospec=Node)
-                mock_tcp.return_value = mock_iface
-
-                with patch("time.sleep"):
-                    main()
-
-        # Should have exhausted all retries and called our_exit
-        # Note: our_exit might be called twice - once for TCP check, once for failure
-        assert mock_our_exit.call_count >= 1
-        # Check the last call was for OTA failure
-        last_call_args = mock_our_exit.call_args[0][0]
-        assert "OTA update failed" in last_call_args
-
-    finally:
-        os.unlink(firmware_file)

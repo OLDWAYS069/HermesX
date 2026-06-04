@@ -17,41 +17,6 @@ else:
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
-class _CompassMode:
-    ValueType = typing.NewType("ValueType", builtins.int)
-    V: typing_extensions.TypeAlias = ValueType
-
-class _CompassModeEnumTypeWrapper(google.protobuf.internal.enum_type_wrapper._EnumTypeWrapper[_CompassMode.ValueType], builtins.type):
-    DESCRIPTOR: google.protobuf.descriptor.EnumDescriptor
-    DYNAMIC: _CompassMode.ValueType  # 0
-    """
-    Compass with dynamic ring and heading
-    """
-    FIXED_RING: _CompassMode.ValueType  # 1
-    """
-    Compass with fixed ring and heading
-    """
-    FREEZE_HEADING: _CompassMode.ValueType  # 2
-    """
-    Compass with heading and freeze option
-    """
-
-class CompassMode(_CompassMode, metaclass=_CompassModeEnumTypeWrapper): ...
-
-DYNAMIC: CompassMode.ValueType  # 0
-"""
-Compass with dynamic ring and heading
-"""
-FIXED_RING: CompassMode.ValueType  # 1
-"""
-Compass with fixed ring and heading
-"""
-FREEZE_HEADING: CompassMode.ValueType  # 2
-"""
-Compass with heading and freeze option
-"""
-global___CompassMode = CompassMode
-
 class _Theme:
     ValueType = typing.NewType("ValueType", builtins.int)
     V: typing_extensions.TypeAlias = ValueType
@@ -161,18 +126,6 @@ class _LanguageEnumTypeWrapper(google.protobuf.internal.enum_type_wrapper._EnumT
     """
     Ukrainian
     """
-    BULGARIAN: _Language.ValueType  # 17
-    """
-    Bulgarian
-    """
-    CZECH: _Language.ValueType  # 18
-    """
-    Czech
-    """
-    DANISH: _Language.ValueType  # 19
-    """
-    Danish
-    """
     SIMPLIFIED_CHINESE: _Language.ValueType  # 30
     """
     Simplified Chinese (experimental)
@@ -255,18 +208,6 @@ UKRAINIAN: Language.ValueType  # 16
 """
 Ukrainian
 """
-BULGARIAN: Language.ValueType  # 17
-"""
-Bulgarian
-"""
-CZECH: Language.ValueType  # 18
-"""
-Czech
-"""
-DANISH: Language.ValueType  # 19
-"""
-Danish
-"""
 SIMPLIFIED_CHINESE: Language.ValueType  # 30
 """
 Simplified Chinese (experimental)
@@ -285,91 +226,6 @@ class DeviceUIConfig(google.protobuf.message.Message):
 
     DESCRIPTOR: google.protobuf.descriptor.Descriptor
 
-    class _GpsCoordinateFormat:
-        ValueType = typing.NewType("ValueType", builtins.int)
-        V: typing_extensions.TypeAlias = ValueType
-
-    class _GpsCoordinateFormatEnumTypeWrapper(google.protobuf.internal.enum_type_wrapper._EnumTypeWrapper[DeviceUIConfig._GpsCoordinateFormat.ValueType], builtins.type):
-        DESCRIPTOR: google.protobuf.descriptor.EnumDescriptor
-        DEC: DeviceUIConfig._GpsCoordinateFormat.ValueType  # 0
-        """
-        GPS coordinates are displayed in the normal decimal degrees format:
-        DD.DDDDDD DDD.DDDDDD
-        """
-        DMS: DeviceUIConfig._GpsCoordinateFormat.ValueType  # 1
-        """
-        GPS coordinates are displayed in the degrees minutes seconds format:
-        DD°MM'SS"C DDD°MM'SS"C, where C is the compass point representing the locations quadrant
-        """
-        UTM: DeviceUIConfig._GpsCoordinateFormat.ValueType  # 2
-        """
-        Universal Transverse Mercator format:
-        ZZB EEEEEE NNNNNNN, where Z is zone, B is band, E is easting, N is northing
-        """
-        MGRS: DeviceUIConfig._GpsCoordinateFormat.ValueType  # 3
-        """
-        Military Grid Reference System format:
-        ZZB CD EEEEE NNNNN, where Z is zone, B is band, C is the east 100k square, D is the north 100k square,
-        E is easting, N is northing
-        """
-        OLC: DeviceUIConfig._GpsCoordinateFormat.ValueType  # 4
-        """
-        Open Location Code (aka Plus Codes).
-        """
-        OSGR: DeviceUIConfig._GpsCoordinateFormat.ValueType  # 5
-        """
-        Ordnance Survey Grid Reference (the National Grid System of the UK).
-        Format: AB EEEEE NNNNN, where A is the east 100k square, B is the north 100k square,
-        E is the easting, N is the northing
-        """
-        MLS: DeviceUIConfig._GpsCoordinateFormat.ValueType  # 6
-        """
-        Maidenhead Locator System
-        Described here: https://en.wikipedia.org/wiki/Maidenhead_Locator_System
-        """
-
-    class GpsCoordinateFormat(_GpsCoordinateFormat, metaclass=_GpsCoordinateFormatEnumTypeWrapper):
-        """
-        How the GPS coordinates are displayed on the OLED screen.
-        """
-
-    DEC: DeviceUIConfig.GpsCoordinateFormat.ValueType  # 0
-    """
-    GPS coordinates are displayed in the normal decimal degrees format:
-    DD.DDDDDD DDD.DDDDDD
-    """
-    DMS: DeviceUIConfig.GpsCoordinateFormat.ValueType  # 1
-    """
-    GPS coordinates are displayed in the degrees minutes seconds format:
-    DD°MM'SS"C DDD°MM'SS"C, where C is the compass point representing the locations quadrant
-    """
-    UTM: DeviceUIConfig.GpsCoordinateFormat.ValueType  # 2
-    """
-    Universal Transverse Mercator format:
-    ZZB EEEEEE NNNNNNN, where Z is zone, B is band, E is easting, N is northing
-    """
-    MGRS: DeviceUIConfig.GpsCoordinateFormat.ValueType  # 3
-    """
-    Military Grid Reference System format:
-    ZZB CD EEEEE NNNNN, where Z is zone, B is band, C is the east 100k square, D is the north 100k square,
-    E is easting, N is northing
-    """
-    OLC: DeviceUIConfig.GpsCoordinateFormat.ValueType  # 4
-    """
-    Open Location Code (aka Plus Codes).
-    """
-    OSGR: DeviceUIConfig.GpsCoordinateFormat.ValueType  # 5
-    """
-    Ordnance Survey Grid Reference (the National Grid System of the UK).
-    Format: AB EEEEE NNNNN, where A is the east 100k square, B is the north 100k square,
-    E is the easting, N is the northing
-    """
-    MLS: DeviceUIConfig.GpsCoordinateFormat.ValueType  # 6
-    """
-    Maidenhead Locator System
-    Described here: https://en.wikipedia.org/wiki/Maidenhead_Locator_System
-    """
-
     VERSION_FIELD_NUMBER: builtins.int
     SCREEN_BRIGHTNESS_FIELD_NUMBER: builtins.int
     SCREEN_TIMEOUT_FIELD_NUMBER: builtins.int
@@ -385,10 +241,6 @@ class DeviceUIConfig(google.protobuf.message.Message):
     NODE_HIGHLIGHT_FIELD_NUMBER: builtins.int
     CALIBRATION_DATA_FIELD_NUMBER: builtins.int
     MAP_DATA_FIELD_NUMBER: builtins.int
-    COMPASS_MODE_FIELD_NUMBER: builtins.int
-    SCREEN_RGB_COLOR_FIELD_NUMBER: builtins.int
-    IS_CLOCKFACE_ANALOG_FIELD_NUMBER: builtins.int
-    GPS_FORMAT_FIELD_NUMBER: builtins.int
     version: builtins.int
     """
     A version integer used to invalidate saved files when we make incompatible changes.
@@ -424,24 +276,6 @@ class DeviceUIConfig(google.protobuf.message.Message):
     calibration_data: builtins.bytes
     """
     8 integers for screen calibration data
-    """
-    compass_mode: global___CompassMode.ValueType
-    """
-    Compass mode
-    """
-    screen_rgb_color: builtins.int
-    """
-    RGB color for BaseUI
-    0xRRGGBB format, e.g. 0xFF0000 for red
-    """
-    is_clockface_analog: builtins.bool
-    """
-    Clockface analog style
-    true for analog clockface, false for digital clockface
-    """
-    gps_format: global___DeviceUIConfig.GpsCoordinateFormat.ValueType
-    """
-    How the GPS coordinates are formatted on the OLED screen.
     """
     @property
     def node_filter(self) -> global___NodeFilter:
@@ -479,13 +313,9 @@ class DeviceUIConfig(google.protobuf.message.Message):
         node_highlight: global___NodeHighlight | None = ...,
         calibration_data: builtins.bytes = ...,
         map_data: global___Map | None = ...,
-        compass_mode: global___CompassMode.ValueType = ...,
-        screen_rgb_color: builtins.int = ...,
-        is_clockface_analog: builtins.bool = ...,
-        gps_format: global___DeviceUIConfig.GpsCoordinateFormat.ValueType = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["map_data", b"map_data", "node_filter", b"node_filter", "node_highlight", b"node_highlight"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["alert_enabled", b"alert_enabled", "banner_enabled", b"banner_enabled", "calibration_data", b"calibration_data", "compass_mode", b"compass_mode", "gps_format", b"gps_format", "is_clockface_analog", b"is_clockface_analog", "language", b"language", "map_data", b"map_data", "node_filter", b"node_filter", "node_highlight", b"node_highlight", "pin_code", b"pin_code", "ring_tone_id", b"ring_tone_id", "screen_brightness", b"screen_brightness", "screen_lock", b"screen_lock", "screen_rgb_color", b"screen_rgb_color", "screen_timeout", b"screen_timeout", "settings_lock", b"settings_lock", "theme", b"theme", "version", b"version"]) -> None: ...
+    def ClearField(self, field_name: typing.Literal["alert_enabled", b"alert_enabled", "banner_enabled", b"banner_enabled", "calibration_data", b"calibration_data", "language", b"language", "map_data", b"map_data", "node_filter", b"node_filter", "node_highlight", b"node_highlight", "pin_code", b"pin_code", "ring_tone_id", b"ring_tone_id", "screen_brightness", b"screen_brightness", "screen_lock", b"screen_lock", "screen_timeout", b"screen_timeout", "settings_lock", b"settings_lock", "theme", b"theme", "version", b"version"]) -> None: ...
 
 global___DeviceUIConfig = DeviceUIConfig
 

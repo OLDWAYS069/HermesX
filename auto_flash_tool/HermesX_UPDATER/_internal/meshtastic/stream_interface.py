@@ -17,26 +17,17 @@ START1 = 0x94
 START2 = 0xC3
 HEADER_LEN = 4
 MAX_TO_FROM_RADIO_SIZE = 512
-logger = logging.getLogger(__name__)
 
 
 class StreamInterface(MeshInterface):
     """Interface class for meshtastic devices over a stream link (serial, TCP, etc)"""
 
-    def __init__( # pylint: disable=R0917
-        self,
-        debugOut: Optional[io.TextIOWrapper] = None,
-        noProto: bool = False,
-        connectNow: bool = True,
-        noNodes: bool = False,
-        timeout: int = 300
-    ) -> None:
+    def __init__(self, debugOut: Optional[io.TextIOWrapper]=None, noProto: bool=False, connectNow: bool=True, noNodes: bool=False) -> None:
         """Constructor, opens a connection to self.stream
 
         Keyword Arguments:
             debugOut {stream} -- If a stream is provided, any debug serial output from the
                                  device will be emitted to that stream. (default: {None})
-            timeout -- How long to wait for replies (default: 300 seconds)
 
         Raises:
             Exception: [description]
@@ -57,7 +48,7 @@ class StreamInterface(MeshInterface):
         # FIXME, figure out why daemon=True causes reader thread to exit too early
         self._rxThread = threading.Thread(target=self.__reader, args=(), daemon=True, name="stream reader")
 
-        MeshInterface.__init__(self, debugOut=debugOut, noProto=noProto, noNodes=noNodes, timeout=timeout)
+        MeshInterface.__init__(self, debugOut=debugOut, noProto=noProto, noNodes=noNodes)
 
         # Start the reader thread after superclass constructor completes init
         if connectNow:
@@ -91,7 +82,7 @@ class StreamInterface(MeshInterface):
         """We override the superclass implementation to close our port"""
         MeshInterface._disconnected(self)
 
-        logger.debug("Closing our port")
+        logging.debug("Closing our port")
         # pylint: disable=E0203
         if not self.stream is None:
             # pylint: disable=E0203
@@ -120,17 +111,17 @@ class StreamInterface(MeshInterface):
 
     def _sendToRadioImpl(self, toRadio) -> None:
         """Send a ToRadio protobuf to the device"""
-        logger.debug(f"Sending: {stripnl(toRadio)}")
+        logging.debug(f"Sending: {stripnl(toRadio)}")
         b: bytes = toRadio.SerializeToString()
         bufLen: int = len(b)
         # We convert into a string, because the TCP code doesn't work with byte arrays
         header: bytes = bytes([START1, START2, (bufLen >> 8) & 0xFF, bufLen & 0xFF])
-        logger.debug(f"sending header:{header!r} b:{b!r}")
+        logging.debug(f"sending header:{header!r} b:{b!r}")
         self._writeBytes(header + b)
 
     def close(self) -> None:
         """Close a connection to the device"""
-        logger.debug("Closing stream")
+        logging.debug("Closing stream")
         MeshInterface.close(self)
         # pyserial cancel_read doesn't seem to work, therefore we ask the
         # reader thread to close things for us
@@ -157,18 +148,18 @@ class StreamInterface(MeshInterface):
 
     def __reader(self) -> None:
         """The reader thread that reads bytes from our stream"""
-        logger.debug("in __reader()")
+        logging.debug("in __reader()")
         empty = bytes()
 
         try:
             while not self._wantExit:
-                # logger.debug("reading character")
+                # logging.debug("reading character")
                 b: Optional[bytes] = self._readBytes(1)
-                # logger.debug("In reader loop")
-                # logger.debug(f"read returned {b}")
+                # logging.debug("In reader loop")
+                # logging.debug(f"read returned {b}")
                 if b is not None and len(cast(bytes, b)) > 0:
                     c: int = b[0]
-                    # logger.debug(f'c:{c}')
+                    # logging.debug(f'c:{c}')
                     ptr: int = len(self._rxBuf)
 
                     # Assume we want to append this byte, fixme use bytearray instead
@@ -185,7 +176,7 @@ class StreamInterface(MeshInterface):
                         if c != START2:
                             self._rxBuf = empty  # failed to find start2
                     elif ptr >= HEADER_LEN - 1:  # we've at least got a header
-                        # logger.debug('at least we received a header')
+                        # logging.debug('at least we received a header')
                         # big endian length follows header
                         packetlen = (self._rxBuf[2] << 8) + self._rxBuf[3]
 
@@ -201,32 +192,32 @@ class StreamInterface(MeshInterface):
                             try:
                                 self._handleFromRadio(self._rxBuf[HEADER_LEN:])
                             except Exception as ex:
-                                logger.error(
+                                logging.error(
                                     f"Error while handling message from radio {ex}"
                                 )
                                 traceback.print_exc()
                             self._rxBuf = empty
                 else:
-                    # logger.debug(f"timeout")
+                    # logging.debug(f"timeout")
                     pass
         except serial.SerialException as ex:
             if (
                 not self._wantExit
             ):  # We might intentionally get an exception during shutdown
-                logger.warning(
+                logging.warning(
                     f"Meshtastic serial port disconnected, disconnecting... {ex}"
                 )
         except OSError as ex:
             if (
                 not self._wantExit
             ):  # We might intentionally get an exception during shutdown
-                logger.error(
+                logging.error(
                     f"Unexpected OSError, terminating meshtastic reader... {ex}"
                 )
         except Exception as ex:
-            logger.error(
+            logging.error(
                 f"Unexpected exception, terminating meshtastic reader... {ex}"
             )
         finally:
-            logger.debug("reader is exiting")
+            logging.debug("reader is exiting")
             self._disconnected()

@@ -19,12 +19,17 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-import serial.tools.list_ports
+try:
+    import serial.tools.list_ports
+except ImportError:
+    serial = None
 
 
 LOGGER = logging.getLogger("meshtastic_auto_flash")
@@ -524,6 +529,12 @@ class MeshtasticAutoFlash:
 
     def _parse_arguments(self) -> argparse.Namespace:
         parser = argparse.ArgumentParser(description="Meshtastic auto flash and config tool")
+        parser.add_argument(
+            "--mode",
+            choices=("usb-flash", "wifi-update", "online-civ"),
+            default="",
+            help="Run USB flash/config, local WiFi update, or online CIV firmware update",
+        )
         parser.add_argument("--firmware-path", default="", help="Explicit firmware file path")
         parser.add_argument("--firmware-file-name", default="HermesX_0.2.8-beta0002-update.bin", help="Recorded firmware file name")
         parser.add_argument("--config-path", default="", help="Explicit config path or YAML generated from CLI.md")
@@ -531,6 +542,13 @@ class MeshtasticAutoFlash:
         parser.add_argument("--cli-config-path", default="", help="Explicit CLI config path")
         parser.add_argument("--cli-config-file-name", default="CLI.md", help="CLI config file name")
         parser.add_argument("--export-config-yaml", default="", help="Write YAML converted from CLI.md to this path")
+        parser.add_argument("--wifi-device-ip", default="", help="Device IP for HermesX WiFi update")
+        parser.add_argument("--wifi-upload-path", default="", help="Device OTA upload path")
+        parser.add_argument("--wifi-firmware-dir", default="", help="Directory to scan for WiFi update .bin files")
+        parser.add_argument("--wifi-filename-prefix", default="", help="Only auto-select .bin files with this prefix")
+        parser.add_argument("--online-civ-url", default="", help="Online CIV firmware page or direct download URL")
+        parser.add_argument("--online-civ-file-id", default="", help="Google Drive file id for online CIV firmware")
+        parser.add_argument("--online-civ-file-name", default="", help="File name to save for online CIV firmware")
         parser.add_argument("--startup-music-path", default="", help="Startup MP3 path")
         parser.add_argument("--post-flash-wait-seconds", type=int, default=60, help="Seconds to wait after flashing")
         parser.add_argument("--reboot-batch-size", type=int, default=2, help="Number of commands per reboot batch")
@@ -572,6 +590,36 @@ class MeshtasticAutoFlash:
         LOGGER.info(message)
         if delay_after and sys.stdout.isatty():
             time.sleep(LOG_LINE_DELAY_SECONDS)
+
+    def select_update_route(self) -> str:
+        if self.args.mode:
+            return self.args.mode
+        if not sys.stdin.isatty():
+            self.log("No interactive console was detected; defaulting to USB flash/config route.")
+            return "usb-flash"
+
+        self.log("請選擇更新線路：")
+        self.log("[1] USB 燒錄 + 設定")
+        self.log("[2] 本機 WiFi 更新")
+        self.log("[3] 線上抓取 CIV 韌體並更新")
+        choices = {
+            "1": "usb-flash",
+            "usb": "usb-flash",
+            "usb-flash": "usb-flash",
+            "2": "wifi-update",
+            "wifi": "wifi-update",
+            "wifi-update": "wifi-update",
+            "3": "online-civ",
+            "civ": "online-civ",
+            "online-civ": "online-civ",
+        }
+        while True:
+            choice = input("請輸入 1 / 2 / 3：").strip().lower()
+            mode = choices.get(choice)
+            if mode:
+                self.args.mode = mode
+                return mode
+            print("選項無效，請重新輸入。")
 
     @staticmethod
     def print_text_with_duration(text: str, duration_seconds: float) -> None:
@@ -709,6 +757,210 @@ class MeshtasticAutoFlash:
                     return matches[selected_index - 1].resolve()
             print("Invalid selection. Please try again.")
 
+    def get_handoff_update_config(self, config: dict) -> dict:
+        handoff = config.get("handoff_update") or config.get("wifi_update") or {}
+        if not isinstance(handoff, dict):
+            handoff = {}
+        default_firmware_dirs = [
+            self.script_dir / "Target",
+            self.repo_root / "auto_flash_tool" / "Target",
+        ]
+        configured_dir = str(handoff.get("firmware_dir") or "").strip()
+        firmware_dir = Path(configured_dir).expanduser() if configured_dir else None
+        if self.args.wifi_firmware_dir:
+            firmware_dir = Path(self.args.wifi_firmware_dir).expanduser()
+        if firmware_dir is None:
+            firmware_dir = next((item for item in default_firmware_dirs if item.exists()), default_firmware_dirs[0])
+
+        device_ip = self.args.wifi_device_ip or str(handoff.get("device_ip") or "192.168.43.21").strip()
+        upload_path = self.args.wifi_upload_path or str(handoff.get("upload_path") or "/upload-update-bin").strip()
+        filename_prefix = self.args.wifi_filename_prefix or str(handoff.get("filename_prefix") or "HXB_C0.3.2_").strip()
+        return {
+            "device_ip": device_ip,
+            "upload_path": upload_path if upload_path.startswith("/") else f"/{upload_path}",
+            "firmware_dir": firmware_dir,
+            "filename_prefix": filename_prefix,
+        }
+
+    def get_online_civ_config(self, config: dict, handoff: dict) -> dict:
+        online = config.get("online_civ_update") or config.get("online_civ") or {}
+        if not isinstance(online, dict):
+            online = {}
+        file_id = self.args.online_civ_file_id or str(online.get("google_drive_file_id") or "1NUmN9gYq04Vh2ABFy7Ed5BLc8HbnWBYw").strip()
+        file_name = self.args.online_civ_file_name or str(online.get("file_name") or "HXB_C0.3.2_20260529_1559.bin").strip()
+        url = self.args.online_civ_url or str(online.get("url") or "").strip()
+        if not file_id and url:
+            file_id_match = re.search(r"/file/d/([^/]+)", url)
+            if file_id_match:
+                file_id = file_id_match.group(1)
+        if file_id and "drive.google.com/file/d/" in url:
+            url = self.build_google_drive_download_url(file_id)
+        if not url and file_id:
+            url = self.build_google_drive_download_url(file_id)
+        target_dir = Path(handoff["firmware_dir"]).expanduser()
+        if not target_dir.is_absolute():
+            target_dir = (self.script_dir / target_dir).resolve()
+        return {
+            "url": url,
+            "file_id": file_id,
+            "file_name": file_name,
+            "target_dir": target_dir,
+        }
+
+    @staticmethod
+    def is_wifi_update_firmware(path: Path, filename_prefix: str = "") -> bool:
+        name = path.name
+        if path.suffix.lower() != ".bin":
+            return False
+        if ".factory." in name.lower() or name.lower().endswith(".factory.bin"):
+            return False
+        if filename_prefix and not name.startswith(filename_prefix):
+            return False
+        return True
+
+    def resolve_wifi_update_firmware(self, handoff: dict) -> Path:
+        if self.args.firmware_path:
+            candidate = Path(self.args.firmware_path).expanduser()
+            if candidate.exists() and self.is_wifi_update_firmware(candidate):
+                return candidate.resolve()
+            raise FileNotFoundError(f"WiFi update firmware not found or not an update .bin: {candidate}")
+
+        if self.args.mode == "wifi-update":
+            firmware_path = self.resolve_firmware_path()
+            if self.is_wifi_update_firmware(firmware_path):
+                return firmware_path
+            raise FileNotFoundError(f"Selected firmware is not a WiFi update .bin: {firmware_path}")
+
+        firmware_dir = Path(handoff["firmware_dir"]).expanduser()
+        filename_prefix = str(handoff.get("filename_prefix") or "")
+        if not firmware_dir.exists():
+            raise FileNotFoundError(f"WiFi update firmware directory not found: {firmware_dir}")
+        matches = [
+            item for item in firmware_dir.glob("*.bin")
+            if item.is_file() and self.is_wifi_update_firmware(item, filename_prefix)
+        ]
+        if not matches and filename_prefix:
+            matches = [
+                item for item in firmware_dir.glob("*.bin")
+                if item.is_file() and self.is_wifi_update_firmware(item)
+            ]
+        if not matches:
+            raise FileNotFoundError(f"No WiFi update .bin files were found in: {firmware_dir}")
+        return max(matches, key=lambda item: item.stat().st_mtime).resolve()
+
+    @staticmethod
+    def extract_google_drive_confirm_token(text: str) -> Optional[str]:
+        match = re.search(r"confirm=([0-9A-Za-z_-]+)", text)
+        if match:
+            return match.group(1)
+        return None
+
+    @staticmethod
+    def build_google_drive_download_url(file_id: str, confirm_token: Optional[str] = None) -> str:
+        url = f"https://drive.google.com/uc?export=download&id={file_id}"
+        if confirm_token:
+            url += f"&confirm={confirm_token}"
+        return url
+
+    def download_online_civ_firmware(self, config: dict, handoff: dict) -> Path:
+        online = self.get_online_civ_config(config, handoff)
+        if not online["url"]:
+            raise RuntimeError("Online CIV firmware URL is not configured")
+        target_dir = Path(online["target_dir"])
+        target_dir.mkdir(parents=True, exist_ok=True)
+        output_path = target_dir / str(online["file_name"])
+        headers = {"User-Agent": "HermesX-UPDATER/1.0"}
+        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor())
+
+        self.log(f"Downloading online CIV firmware: {online['url']}")
+        request = urllib.request.Request(str(online["url"]), headers=headers)
+        with opener.open(request, timeout=120) as response:
+            data = response.read()
+            content_type = response.headers.get("Content-Type", "")
+
+        if b"<html" in data[:2048].lower() or "text/html" in content_type.lower():
+            token = self.extract_google_drive_confirm_token(data.decode("utf-8", errors="ignore"))
+            file_id = str(online.get("file_id") or "")
+            if token and file_id:
+                confirm_url = self.build_google_drive_download_url(file_id, token)
+                self.log("Google Drive returned a confirmation page; retrying confirmed download.")
+                request = urllib.request.Request(confirm_url, headers=headers)
+                with opener.open(request, timeout=120) as response:
+                    data = response.read()
+
+        if b"<html" in data[:2048].lower():
+            raise RuntimeError("Online CIV download returned an HTML page instead of firmware. Check sharing permission.")
+
+        output_path.write_bytes(data)
+        if not self.is_wifi_update_firmware(output_path):
+            raise RuntimeError(f"Downloaded file is not a WiFi update .bin: {output_path}")
+        self.log(f"Online CIV firmware saved: {output_path}")
+        return output_path
+
+    @staticmethod
+    def get_file_identity(path: Path) -> tuple[str, int, int]:
+        stat = path.stat()
+        return (path.name, stat.st_size, stat.st_mtime_ns)
+
+    def upload_firmware_over_wifi(self, firmware_path: Path, handoff: dict) -> None:
+        device_ip = str(handoff["device_ip"]).strip()
+        upload_path = str(handoff["upload_path"]).strip()
+        if device_ip.startswith(("http://", "https://")):
+            url = f"{device_ip.rstrip('/')}{upload_path}"
+        else:
+            url = f"http://{device_ip}{upload_path}"
+        headers = {
+            "Expect": "",
+            "X-Hermes-Filename": firmware_path.name,
+            "Content-Type": "application/octet-stream",
+        }
+        self.log(f"WiFi update target: {url}")
+        self.log(f"WiFi update firmware: {firmware_path}")
+        self.log(f"X-Hermes-Filename: {firmware_path.name}")
+        data = firmware_path.read_bytes()
+        request = urllib.request.Request(url, data=data, headers=headers, method="PUT")
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                body = response.read(4096).decode("utf-8", errors="replace").strip()
+                self.log(f"WiFi update HTTP {response.status} {response.reason}")
+                if body:
+                    self.log(f"Device response: {body}")
+                if response.status >= 400:
+                    raise RuntimeError(f"WiFi update failed with HTTP {response.status}")
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace").strip()
+            detail = f": {body}" if body else ""
+            raise RuntimeError(f"WiFi update failed with HTTP {exc.code}{detail}") from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"WiFi update failed: {exc.reason}") from exc
+
+    def prompt_wifi_device_ip(self, handoff: dict) -> dict:
+        if self.args.wifi_device_ip:
+            return handoff
+        default_ip = str(handoff.get("device_ip") or "192.168.43.21").strip()
+        if not sys.stdin.isatty():
+            self.log(f"No interactive console was detected; using configured WiFi device IP: {default_ip}")
+            return handoff
+        entered = input(f"請輸入裝置 IP [{default_ip}]：").strip()
+        handoff["device_ip"] = entered or default_ip
+        return handoff
+
+    def run_handoff_wifi_update(self, config: dict) -> None:
+        handoff = self.get_handoff_update_config(config)
+        handoff = self.prompt_wifi_device_ip(handoff)
+        self.log("=== HermesX WiFi handoff update started ===")
+        if self.args.mode == "wifi-update":
+            firmware_path = self.resolve_wifi_update_firmware(handoff)
+            self.upload_firmware_over_wifi(firmware_path, handoff)
+            self.log("=== HermesX WiFi handoff update completed ===")
+            return
+        if self.args.mode == "online-civ":
+            firmware_path = self.download_online_civ_firmware(config, handoff)
+            self.upload_firmware_over_wifi(firmware_path, handoff)
+            self.log("=== HermesX online CIV update completed ===")
+            return
+        raise RuntimeError(f"Unsupported WiFi update mode: {self.args.mode}")
+
     def resolve_cli_config_path(self) -> Path:
         if self.args.cli_config_path:
             candidate = Path(self.args.cli_config_path).expanduser()
@@ -843,6 +1095,8 @@ class MeshtasticAutoFlash:
         return data
 
     def get_serial_ports(self) -> list:
+        if serial is None:
+            raise RuntimeError("pyserial is required for USB flash mode")
         return list(serial.tools.list_ports.comports())
 
     def select_serial_port(self, preferred_port: Optional[str] = None) -> str:
@@ -2002,13 +2256,18 @@ class MeshtasticAutoFlash:
                 time.sleep(2)
         raise RuntimeError(f"Canned message verification failed after {max_passes} passes")
 
-    def ensure_dependencies(self) -> None:
+    def ensure_dependencies(self, include_device_tools: bool = True) -> None:
         package_names = {
-            "meshtastic": "meshtastic",
-            "esptool": "esptool",
-            "serial": "pyserial",
             "yaml": "PyYAML",
         }
+        if include_device_tools:
+            package_names.update(
+                {
+                    "meshtastic": "meshtastic",
+                    "esptool": "esptool",
+                    "serial": "pyserial",
+                }
+            )
         missing = [package for module_name, package in package_names.items() if importlib.util.find_spec(module_name) is None]
         if not missing:
             return
@@ -2021,7 +2280,8 @@ class MeshtasticAutoFlash:
     def run(self) -> None:
         self.play_startup_music()
         self.print_startup_banner()
-        self.ensure_dependencies()
+        mode = self.select_update_route()
+        self.ensure_dependencies(include_device_tools=self.args.mode == "usb-flash")
 
         if self.args.export_config_yaml:
             cli_path = self.resolve_cli_config_path()
@@ -2032,6 +2292,11 @@ class MeshtasticAutoFlash:
 
         config_path = self.resolve_config_path()
         commands, expected_channel_url, channel_default_commands, config = self.load_runtime_config(config_path)
+        if mode in {"wifi-update", "online-civ"}:
+            self.log(f"Config: {config_path}")
+            self.run_handoff_wifi_update(config)
+            return
+
         if (
             not self.args.config_path
             and self.is_yaml_config(config_path)

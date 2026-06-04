@@ -5,6 +5,15 @@ source:
   generated_at_runtime: false
 firmware:
   preferred_file: "HermesX_0.2.9_civ-alpha00003_firmware.bin"
+handoff_update:
+  device_ip: "192.168.43.21"
+  upload_path: "/upload-update-bin"
+  firmware_dir: "Target"
+  filename_prefix: "HXB_C0.3.2_"
+online_civ_update:
+  google_drive_file_id: "1NUmN9gYq04Vh2ABFy7Ed5BLc8HbnWBYw"
+  file_name: "HXB_C0.3.2_20260529_1559.bin"
+  url: "https://drive.google.com/file/d/1NUmN9gYq04Vh2ABFy7Ed5BLc8HbnWBYw/view?usp=sharing"
 flash:
   chip: "esp32s3"
   baud: 115200

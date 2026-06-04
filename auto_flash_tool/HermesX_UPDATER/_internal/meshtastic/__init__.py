@@ -35,7 +35,6 @@ type of packet, you should subscribe to the full topic name.  If you want to see
 - `meshtastic.receive.data.portnum(packet)` (where portnum is an integer or well known PortNum enum)
 - `meshtastic.node.updated(node = NodeInfo)` - published when a node in the DB changes (appears, location changed, username changed, etc...)
 - `meshtastic.log.line(line)` - a raw unparsed log line from the radio
-- `meshtastic.clientNotification(notification, interface) - a ClientNotification sent from the radio
 
 We receive position, user, or data packets from the mesh.  You probably only care about `meshtastic.receive.data`.  The first argument for
 that publish will be the packet.  Text or binary data packets (from `sendData` or `sendText`) will both arrive this way.  If you print packet
@@ -129,7 +128,6 @@ NODELESS_WANT_CONFIG_ID = 69420
 
 publishingThread = DeferredExecution("publishing")
 
-logger = logging.getLogger(__name__)
 
 class ResponseHandler(NamedTuple):
     """A pending response callback, waiting for a response to one of our messages"""
@@ -161,31 +159,31 @@ def _onTextReceive(iface, asDict):
     #
     # Usually btw this problem is caused by apps sending binary data but setting the payload type to
     # text.
-    logger.debug(f"in _onTextReceive() asDict:{asDict}")
+    logging.debug(f"in _onTextReceive() asDict:{asDict}")
     try:
         asBytes = asDict["decoded"]["payload"]
         asDict["decoded"]["text"] = asBytes.decode("utf-8")
     except Exception as ex:
-        logger.error(f"Malformatted utf8 in text message: {ex}")
+        logging.error(f"Malformatted utf8 in text message: {ex}")
     _receiveInfoUpdate(iface, asDict)
 
 
 def _onPositionReceive(iface, asDict):
     """Special auto parsing for received messages"""
-    logger.debug(f"in _onPositionReceive() asDict:{asDict}")
+    logging.debug(f"in _onPositionReceive() asDict:{asDict}")
     if "decoded" in asDict:
         if "position" in asDict["decoded"] and "from" in asDict:
             p = asDict["decoded"]["position"]
-            logger.debug(f"p:{p}")
+            logging.debug(f"p:{p}")
             p = iface._fixupPosition(p)
-            logger.debug(f"after fixup p:{p}")
+            logging.debug(f"after fixup p:{p}")
             # update node DB as needed
             iface._getOrCreateByNum(asDict["from"])["position"] = p
 
 
 def _onNodeInfoReceive(iface, asDict):
     """Special auto parsing for received messages"""
-    logger.debug(f"in _onNodeInfoReceive() asDict:{asDict}")
+    logging.debug(f"in _onNodeInfoReceive() asDict:{asDict}")
     if "decoded" in asDict:
         if "user" in asDict["decoded"] and "from" in asDict:
             p = asDict["decoded"]["user"]
@@ -199,7 +197,7 @@ def _onNodeInfoReceive(iface, asDict):
 
 def _onTelemetryReceive(iface, asDict):
     """Automatically update device metrics on received packets"""
-    logger.debug(f"in _onTelemetryReceive() asDict:{asDict}")
+    logging.debug(f"in _onTelemetryReceive() asDict:{asDict}")
     if "from" not in asDict:
         return
 
@@ -223,7 +221,7 @@ def _onTelemetryReceive(iface, asDict):
     updateObj = telemetry.get(toUpdate)
     newMetrics = node.get(toUpdate, {})
     newMetrics.update(updateObj)
-    logger.debug(f"updating {toUpdate} metrics for {asDict['from']} to {newMetrics}")
+    logging.debug(f"updating {toUpdate} metrics for {asDict['from']} to {newMetrics}")
     node[toUpdate] = newMetrics
 
 def _receiveInfoUpdate(iface, asDict):
@@ -235,7 +233,7 @@ def _receiveInfoUpdate(iface, asDict):
 
 def _onAdminReceive(iface, asDict):
     """Special auto parsing for received messages"""
-    logger.debug(f"in _onAdminReceive() asDict:{asDict}")
+    logging.debug(f"in _onAdminReceive() asDict:{asDict}")
     if "decoded" in asDict and "from" in asDict and "admin" in asDict["decoded"]:
         adminMessage = asDict["decoded"]["admin"]["raw"]
         iface._getOrCreateByNum(asDict["from"])["adminSessionPassKey"] = adminMessage.session_passkey

@@ -48,3 +48,43 @@ For the most reliable distribution:
 - Prefer ASCII EXE and firmware filenames.
 - Keep `_internal/`, `Target/`, `config.yaml`, and `CLI.md` next to the EXE.
 - Avoid moving files out of the published folder.
+
+## WiFi Handoff Update Route
+
+The updater also has a HermesX handoff OTA route for firmware built by the main
+HermesX tree.
+
+Start normally to choose an update route:
+
+```powershell
+.\HermesX_UPDATER.exe
+```
+
+Routes:
+
+- `[1] USB 燒錄 + 設定`
+- `[2] 本機 WiFi 更新`
+- `[3] 線上抓取 CIV 韌體並更新`
+
+Local WiFi update uses the same firmware lookup behavior as the USB flasher:
+put `.bin` files in `Target/`, then choose the file when prompted.
+The updater asks for the device IP before uploading; press Enter to use the
+configured default.
+
+```powershell
+.\HermesX_UPDATER.exe --mode wifi-update
+```
+
+Online CIV update downloads the configured Google Drive firmware into `Target/`,
+then uploads it to `http://192.168.43.21/upload-update-bin` with the required
+`X-Hermes-Filename` header.
+
+```powershell
+.\HermesX_UPDATER.exe --mode online-civ
+```
+
+To skip the IP prompt:
+
+```powershell
+.\HermesX_UPDATER.exe --mode online-civ --wifi-device-ip 192.168.43.21
+```

@@ -1,5 +1,4 @@
 """Meshtastic unit tests for node.py"""
-# pylint: disable=C0302
 
 import logging
 import re
@@ -795,30 +794,6 @@ def test_writeConfig_with_no_radioConfig(capsys):
     assert err == ""
 
 
-@pytest.mark.unit
-@pytest.mark.usefixtures("reset_mt_config")
-def test_writeConfig_traffic_management():
-    """Test writeConfig with traffic_management module config."""
-    iface = MagicMock(autospec=SerialInterface)
-    anode = Node(iface, 123, noProto=True)
-    anode.moduleConfig.traffic_management.enabled = True
-    anode.moduleConfig.traffic_management.rate_limit_enabled = True
-
-    sent_admin = []
-
-    def capture_send(p, *args, **kwargs): # pylint: disable=W0613
-        sent_admin.append(p)
-
-    with patch.object(anode, "_sendAdmin", side_effect=capture_send):
-        anode.writeConfig("traffic_management")
-
-    assert len(sent_admin) == 1
-    assert sent_admin[0].HasField("set_module_config")
-    assert sent_admin[0].set_module_config.HasField("traffic_management")
-    assert sent_admin[0].set_module_config.traffic_management.enabled is True
-    assert sent_admin[0].set_module_config.traffic_management.rate_limit_enabled is True
-
-
 # TODO
 # @pytest.mark.unit
 # def test_writeConfig(caplog):
@@ -1279,7 +1254,8 @@ def test_requestChannels_non_localNode_starting_index(caplog):
 #        },
 #        'id': 1692918436,
 #        'hopLimit': 3,
-#        'priority': 'RELIABLE',
+#        'priority':
+#        'RELIABLE',
 #        'raw': 'fake',
 #        'fromId': '!9388f81c',
 #        'toId': '!9388f81c'
@@ -1502,112 +1478,6 @@ def test_remove_ignored(ignored):
 
     assert amesg.remove_ignored_node == 502009325
     iface.sendData.assert_called_once()
-
-
-@pytest.mark.unit
-def test_setOwner_whitespace_only_long_name(capsys):
-    """Test setOwner with whitespace-only long name"""
-    iface = MagicMock(autospec=MeshInterface)
-    anode = Node(iface, 123, noProto=True)
-
-    with pytest.raises(SystemExit) as excinfo:
-        anode.setOwner(long_name="   ")
-
-    out, _ = capsys.readouterr()
-    assert "ERROR: Long Name cannot be empty or contain only whitespace characters" in out
-    assert excinfo.value.code == 1
-
-
-@pytest.mark.unit
-def test_setOwner_empty_long_name(capsys):
-    """Test setOwner with empty long name"""
-    iface = MagicMock(autospec=MeshInterface)
-    anode = Node(iface, 123, noProto=True)
-
-    with pytest.raises(SystemExit) as excinfo:
-        anode.setOwner(long_name="")
-
-    out, _ = capsys.readouterr()
-    assert "ERROR: Long Name cannot be empty or contain only whitespace characters" in out
-    assert excinfo.value.code == 1
-
-
-@pytest.mark.unit
-def test_setOwner_whitespace_only_short_name(capsys):
-    """Test setOwner with whitespace-only short name"""
-    iface = MagicMock(autospec=MeshInterface)
-    anode = Node(iface, 123, noProto=True)
-
-    with pytest.raises(SystemExit) as excinfo:
-        anode.setOwner(short_name="   ")
-
-    out, _ = capsys.readouterr()
-    assert "ERROR: Short Name cannot be empty or contain only whitespace characters" in out
-    assert excinfo.value.code == 1
-
-
-@pytest.mark.unit
-def test_setOwner_empty_short_name(capsys):
-    """Test setOwner with empty short name"""
-    iface = MagicMock(autospec=MeshInterface)
-    anode = Node(iface, 123, noProto=True)
-
-    with pytest.raises(SystemExit) as excinfo:
-        anode.setOwner(short_name="")
-
-    out, _ = capsys.readouterr()
-    assert "ERROR: Short Name cannot be empty or contain only whitespace characters" in out
-    assert excinfo.value.code == 1
-
-
-@pytest.mark.unit
-def test_setOwner_valid_names(caplog):
-    """Test setOwner with valid names"""
-    iface = MagicMock(autospec=MeshInterface)
-    anode = Node(iface, 123, noProto=True)
-
-    with caplog.at_level(logging.DEBUG):
-        anode.setOwner(long_name="ValidName", short_name="VN")
-
-    # Should not raise any exceptions
-    # Note: When noProto=True, _sendAdmin is not called as the method returns early
-    assert re.search(r'p.set_owner.long_name:ValidName:', caplog.text, re.MULTILINE)
-    assert re.search(r'p.set_owner.short_name:VN:', caplog.text, re.MULTILINE)
-
-
-@pytest.mark.unit
-def test_start_ota_local_node():
-    """Test startOTA on local node"""
-    iface = MagicMock(autospec=MeshInterface)
-    anode = Node(iface, 1234567890, noProto=True)
-    # Set up as local node
-    iface.localNode = anode
-
-    amesg = admin_pb2.AdminMessage()
-    with patch("meshtastic.admin_pb2.AdminMessage", return_value=amesg):
-        with patch.object(anode, "_sendAdmin") as mock_send_admin:
-            test_hash = b"\x01\x02\x03" * 8  # 24 bytes hash
-            anode.startOTA(ota_mode=admin_pb2.OTAMode.OTA_WIFI, ota_file_hash=test_hash)
-
-            # Verify the OTA request was set correctly
-            assert amesg.ota_request.reboot_ota_mode == admin_pb2.OTAMode.OTA_WIFI
-            assert amesg.ota_request.ota_hash == test_hash
-            mock_send_admin.assert_called_once_with(amesg)
-
-
-@pytest.mark.unit
-def test_start_ota_remote_node_raises_error():
-    """Test startOTA on remote node raises ValueError"""
-    iface = MagicMock(autospec=MeshInterface)
-    local_node = Node(iface, 1234567890, noProto=True)
-    remote_node = Node(iface, 9876543210, noProto=True)
-    iface.localNode = local_node
-
-    test_hash = b"\x01\x02\x03" * 8
-    with pytest.raises(ValueError, match="startOTA only possible in local node"):
-        remote_node.startOTA(
-            ota_mode=admin_pb2.OTAMode.OTA_WIFI, ota_file_hash=test_hash
-        )
 
 
 # TODO

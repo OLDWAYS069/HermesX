@@ -26,11 +26,10 @@ from meshtastic.protobuf import portnums_pb2
 from meshtastic import mt_config
 from meshtastic.util import ipstr, readnet_u16
 
-logger = logging.getLogger(__name__)
 
 def onTunnelReceive(packet, interface):  # pylint: disable=W0613
     """Callback for received tunneled messages from mesh."""
-    logger.debug(f"in onTunnelReceive()")
+    logging.debug(f"in onTunnelReceive()")
     tunnelInstance = mt_config.tunnelInstance
     tunnelInstance.onReceive(packet)
 
@@ -93,7 +92,7 @@ class Tunnel:
         self.LOG_TRACE = 5
 
         # TODO: check if root?
-        logger.info(
+        logging.info(
             "Starting IP to mesh tunnel (you must be root for this *pre-alpha* "
             "feature to work).  Mesh members:"
         )
@@ -105,13 +104,13 @@ class Tunnel:
             for node in self.iface.nodes.values():
                 nodeId = node["user"]["id"]
                 ip = self._nodeNumToIp(node["num"])
-                logger.info(f"Node { nodeId } has IP address { ip }")
+                logging.info(f"Node { nodeId } has IP address { ip }")
 
-        logger.debug("creating TUN device with MTU=200")
+        logging.debug("creating TUN device with MTU=200")
         # FIXME - figure out real max MTU, it should be 240 - the overhead bytes for SubPacket and Data
         self.tun = None
         if self.iface.noProto:
-            logger.warning(
+            logging.warning(
                 f"Not creating a TapDevice() because it is disabled by noProto"
             )
         else:
@@ -121,11 +120,11 @@ class Tunnel:
 
         self._rxThread = None
         if self.iface.noProto:
-            logger.warning(
+            logging.warning(
                 f"Not starting TUN reader because it is disabled by noProto"
             )
         else:
-            logger.debug(f"starting TUN reader, our IP address is {myAddr}")
+            logging.debug(f"starting TUN reader, our IP address is {myAddr}")
             self._rxThread = threading.Thread(
                 target=self.__tunReader, args=(), daemon=True
             )
@@ -135,9 +134,9 @@ class Tunnel:
         """onReceive"""
         p = packet["decoded"]["payload"]
         if packet["from"] == self.iface.myInfo.my_node_num:
-            logger.debug("Ignoring message we sent")
+            logging.debug("Ignoring message we sent")
         else:
-            logger.debug(f"Received mesh tunnel message type={type(p)} len={len(p)}")
+            logging.debug(f"Received mesh tunnel message type={type(p)} len={len(p)}")
             # we don't really need to check for filtering here (sender should have checked),
             # but this provides useful debug printing on types of packets received
             if not self.iface.noProto:
@@ -153,7 +152,7 @@ class Tunnel:
         ignore = False  # Assume we will be forwarding the packet
         if protocol in self.protocolBlacklist:
             ignore = True
-            logger.log(
+            logging.log(
                 self.LOG_TRACE, f"Ignoring blacklisted protocol 0x{protocol:02x}"
             )
         elif protocol == 0x01:  # ICMP
@@ -161,7 +160,7 @@ class Tunnel:
             icmpCode = p[21]
             checksum = p[22:24]
             # pylint: disable=line-too-long
-            logger.debug(
+            logging.debug(
                 f"forwarding ICMP message src={ipstr(srcaddr)}, dest={ipstr(destAddr)}, type={icmpType}, code={icmpCode}, checksum={checksum}"
             )
             # reply to pings (swap src and dest but keep rest of packet unchanged)
@@ -172,19 +171,19 @@ class Tunnel:
             destport = readnet_u16(p, subheader + 2)
             if destport in self.udpBlacklist:
                 ignore = True
-                logger.log(self.LOG_TRACE, f"ignoring blacklisted UDP port {destport}")
+                logging.log(self.LOG_TRACE, f"ignoring blacklisted UDP port {destport}")
             else:
-                logger.debug(f"forwarding udp srcport={srcport}, destport={destport}")
+                logging.debug(f"forwarding udp srcport={srcport}, destport={destport}")
         elif protocol == 0x06:  # TCP
             srcport = readnet_u16(p, subheader)
             destport = readnet_u16(p, subheader + 2)
             if destport in self.tcpBlacklist:
                 ignore = True
-                logger.log(self.LOG_TRACE, f"ignoring blacklisted TCP port {destport}")
+                logging.log(self.LOG_TRACE, f"ignoring blacklisted TCP port {destport}")
             else:
-                logger.debug(f"forwarding tcp srcport={srcport}, destport={destport}")
+                logging.debug(f"forwarding tcp srcport={srcport}, destport={destport}")
         else:
-            logger.warning(
+            logging.warning(
                 f"forwarding unexpected protocol 0x{protocol:02x}, "
                 "src={ipstr(srcaddr)}, dest={ipstr(destAddr)}"
             )
@@ -193,10 +192,10 @@ class Tunnel:
 
     def __tunReader(self):
         tap = self.tun
-        logger.debug("TUN reader running")
+        logging.debug("TUN reader running")
         while True:
             p = tap.read()
-            # logger.debug(f"IP packet received on TUN interface, type={type(p)}")
+            # logging.debug(f"IP packet received on TUN interface, type={type(p)}")
             destAddr = p[16:20]
 
             if not self._shouldFilterPacket(p):
@@ -211,7 +210,7 @@ class Tunnel:
 
         for node in self.iface.nodes.values():
             nodeNum = node["num"] & 0xFFFF
-            # logger.debug(f"Considering nodenum 0x{nodeNum:x} for ipBits 0x{ipBits:x}")
+            # logging.debug(f"Considering nodenum 0x{nodeNum:x} for ipBits 0x{ipBits:x}")
             if (nodeNum) == ipBits:
                 return node["user"]["id"]
         return None
@@ -223,12 +222,12 @@ class Tunnel:
         """Forward the provided IP packet into the mesh"""
         nodeId = self._ipToNodeId(destAddr)
         if nodeId is not None:
-            logger.debug(
+            logging.debug(
                 f"Forwarding packet bytelen={len(p)} dest={ipstr(destAddr)}, destNode={nodeId}"
             )
             self.iface.sendData(p, nodeId, portnums_pb2.IP_TUNNEL_APP, wantAck=False)
         else:
-            logger.warning(
+            logging.warning(
                 f"Dropping packet because no node found for destIP={ipstr(destAddr)}"
             )
 

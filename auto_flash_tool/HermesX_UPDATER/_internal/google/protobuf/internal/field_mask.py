@@ -16,14 +16,14 @@ class FieldMask(object):
   __slots__ = ()
 
   def ToJsonString(self):
-    """Converts FieldMask to string according to ProtoJSON spec."""
+    """Converts FieldMask to string according to proto3 JSON spec."""
     camelcase_paths = []
     for path in self.paths:
       camelcase_paths.append(_SnakeCaseToCamelCase(path))
     return ','.join(camelcase_paths)
 
   def FromJsonString(self, value):
-    """Converts string to FieldMask according to ProtoJSON spec."""
+    """Converts string to FieldMask according to proto3 JSON spec."""
     if not isinstance(value, str):
       raise ValueError('FieldMask JSON value not a string: {!r}'.format(value))
     self.Clear()
@@ -100,7 +100,7 @@ def _IsValidPath(message_descriptor, path):
   for name in parts:
     field = message_descriptor.fields_by_name.get(name)
     if (field is None or
-        field.is_repeated or
+        field.label == FieldDescriptor.LABEL_REPEATED or
         field.type != FieldDescriptor.TYPE_MESSAGE):
       return False
     message_descriptor = field.message_type
@@ -271,7 +271,7 @@ def _MergeMessage(
           name, source_descriptor.full_name))
     if child:
       # Sub-paths are only allowed for singular message fields.
-      if (field.is_repeated or
+      if (field.label == FieldDescriptor.LABEL_REPEATED or
           field.cpp_type != FieldDescriptor.CPPTYPE_MESSAGE):
         raise ValueError('Error: Field {0} in message {1} is not a singular '
                          'message field and cannot have sub-fields.'.format(
@@ -281,7 +281,7 @@ def _MergeMessage(
             child, getattr(source, name), getattr(destination, name),
             replace_message, replace_repeated)
       continue
-    if field.is_repeated:
+    if field.label == FieldDescriptor.LABEL_REPEATED:
       if replace_repeated:
         destination.ClearField(_StrConvert(name))
       repeated_source = getattr(source, name)

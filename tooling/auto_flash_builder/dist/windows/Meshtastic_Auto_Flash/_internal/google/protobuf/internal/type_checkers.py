@@ -22,16 +22,16 @@ TYPE_TO_DESERIALIZE_METHOD: A dictionary with field types and deserialization
 
 __author__ = 'robinson@google.com (Will Robinson)'
 
-import numbers
 import struct
-import warnings
+import numbers
 
-from google.protobuf import descriptor
 from google.protobuf.internal import decoder
 from google.protobuf.internal import encoder
 from google.protobuf.internal import wire_format
+from google.protobuf import descriptor
 
 _FieldDescriptor = descriptor.FieldDescriptor
+
 
 def TruncateToFourByteFloat(original):
   return struct.unpack('<f', struct.pack('<f', original))[0]
@@ -113,21 +113,12 @@ class BoolValueChecker(object):
   """Type checker used for bool fields."""
 
   def CheckValue(self, proposed_value):
-    if not hasattr(proposed_value, '__index__'):
-      # Under NumPy 2.3, numpy.bool does not have an __index__ method.
-      if (type(proposed_value).__module__ == 'numpy' and
-          type(proposed_value).__name__ == 'bool'):
-        return bool(proposed_value)
-      message = ('%.1024r has type %s, but expected one of: %s' %
-                 (proposed_value, type(proposed_value), (bool, int)))
-      raise TypeError(message)
-
-    if (type(proposed_value).__module__ == 'numpy' and
+    if not hasattr(proposed_value, '__index__') or (
+        type(proposed_value).__module__ == 'numpy' and
         type(proposed_value).__name__ == 'ndarray'):
       message = ('%.1024r has type %s, but expected one of: %s' %
                  (proposed_value, type(proposed_value), (bool, int)))
       raise TypeError(message)
-
     return bool(proposed_value)
 
   def DefaultValue(self):
@@ -141,16 +132,6 @@ class IntValueChecker(object):
   """Checker used for integer fields.  Performs type-check and range check."""
 
   def CheckValue(self, proposed_value):
-    if type(proposed_value) == bool:
-      message = (
-          '%.1024r has type %s, but expected one of: (int).'
-          % (
-              proposed_value,
-              type(proposed_value),
-          )
-      )
-      raise TypeError(message)
-
     if not hasattr(proposed_value, '__index__') or (
         type(proposed_value).__module__ == 'numpy' and
         type(proposed_value).__name__ == 'ndarray'):
@@ -177,16 +158,6 @@ class EnumValueChecker(object):
     self._enum_type = enum_type
 
   def CheckValue(self, proposed_value):
-    if type(proposed_value) == bool:
-      message = (
-          '%.1024r has type %s, but expected one of: (int).'
-          % (
-              proposed_value,
-              type(proposed_value),
-          )
-      )
-      raise TypeError(message)
-
     if not isinstance(proposed_value, numbers.Integral):
       message = ('%.1024r has type %s, but expected one of: %s' %
                  (proposed_value, type(proposed_value), (int,)))

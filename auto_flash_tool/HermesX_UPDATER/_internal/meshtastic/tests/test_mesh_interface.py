@@ -525,28 +525,6 @@ def test_getMyNodeInfo():
     myinfo = iface.getMyNodeInfo()
     assert myinfo == anode
 
-@pytest.mark.unit
-@pytest.mark.usefixtures("reset_mt_config")
-def test_getCannedMessage():
-    """Test MeshInterface.getCannedMessage()"""
-    iface = MeshInterface(noProto=True)
-    node = MagicMock()
-    node.get_canned_message.return_value = "Hi|Bye|Yes"
-    iface.localNode = node
-    result = iface.getCannedMessage()
-    assert result == "Hi|Bye|Yes"
-
-
-@pytest.mark.unit
-@pytest.mark.usefixtures("reset_mt_config")
-def test_getRingtone():
-    """Test MeshInterface.getRingtone()"""
-    iface = MeshInterface(noProto=True)
-    node = MagicMock()
-    node.get_ringtone.return_value = "foo,bar"
-    iface.localNode = node
-    result = iface.getRingtone()
-    assert result == "foo,bar"
 
 @pytest.mark.unit
 @pytest.mark.usefixtures("reset_mt_config")
@@ -564,6 +542,7 @@ def test_generatePacketId(capsys):
         )
         assert err == ""
     assert pytest_wrapped_e.type == MeshInterface.MeshInterfaceError
+
 
 @pytest.mark.unit
 @pytest.mark.usefixtures("reset_mt_config")
@@ -672,21 +651,15 @@ def test_getOrCreateByNum(iface_with_nodes):
 @pytest.mark.unit
 def test_exit_with_exception(caplog):
     """Test __exit__()"""
+    iface = MeshInterface(noProto=True)
     with caplog.at_level(logging.ERROR):
-        try:
-            with MeshInterface(noProto=True):
-                raise ValueError("Something went wrong")
-        except:
-            assert re.search(
-                r"An exception of type <class \'ValueError\'> with value Something went wrong has occurred",
-                caplog.text,
-                re.MULTILINE,
-            )
-            assert re.search(
-                r"Traceback:\n.*in test_exit_with_exception\n {4}raise ValueError\(\"Something went wrong\"\)",
-                caplog.text,
-                re.MULTILINE
-            )
+        iface.__exit__("foo", "bar", "baz")
+        assert re.search(
+            r"An exception of type foo with value bar has occurred",
+            caplog.text,
+            re.MULTILINE,
+        )
+        assert re.search(r"Traceback: baz", caplog.text, re.MULTILINE)
 
 
 @pytest.mark.unit
