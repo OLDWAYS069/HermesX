@@ -1,3 +1,17 @@
+## 2026-06-01
+- `ONLINE` / `GROUP` 節點 detail 的 `MSG` 改為 Screen-native 直接訊息鍵盤，不再跳到 CannedMessage composer；可用畫面鍵盤或實體鍵盤輸入並直接送出私訊。
+- `裝置管理 > 更新模式` dedicated update environment 第一層新增 `WiFi設定`，供 URL 更新與 WiFi 手動更新共用；`WiFi更新` 子頁改為只保留版本、連線狀態與開始更新。
+- 主快捷頁新增獨立 `TraceRoute` 功能：進入後顯示類似 ONLINE 的節點列表，選取節點後可直接按 `開始TraceRoute`，並保留 MQTT-only 節點的 `LORA ONLY` 防呆。
+- TraceRoute 結果 popup 文案改為明確顯示 `本機收到: RSSI ... / SNR ...`、`去程訊號`、`回程訊號` 與每一跳 `訊號SNR`，避免誤解為 NodeDB 資訊或 per-hop RSSI。
+- 修正 ONLINE / TraceRoute 節點列表要求節點必須有 NodeInfo/User 的問題；現在只要 NodeDB 有 2 小時內的 last_heard，即使對方只傳過訊息也會用 Node ID 顯示。
+- 修正裝置尚未取得有效網路/GPS 時間時，收到對方 NodeInfo 會觸發綠色提示但 `last_heard` 仍為 0，導致 ONLINE / TraceRoute 看不到該節點的問題。
+- 修正 TraceRoute tile 與 TraceRoute 清單 / detail 的長文字可能換行超出框線的問題；長節點名稱現在只顯示框內第一行。
+- 修正 TraceRoute 在主快捷選單未被選取時可能顯示成 GROUP 縮寫的問題；未選取狀態固定顯示 `TR`。
+- 修正 ONLINE / GROUP detail 的 MSG 編輯器無法從畫面鍵盤退出、在小螢幕顯示超出，以及私訊固定走 primary channel 的問題；現在有 `EXIT` 鍵並使用目標節點記錄的 channel。
+- 修正 ONLINE / GROUP detail 的 MSG 畫面鍵盤文字未置中與 `EXIT` 後可能停在空白畫面的問題；MSG 現在沿用 Group PIN 設定頁的鍵盤繪製方式，退出後會強制重繪原 detail 頁。
+- `heltec-wireless-tracker` 編譯成功，CIV build 版本為 `HXB_C0.3.2_20260602_1411`。
+- 韌體產物已依 handoff 搬到 `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.2_20260602_1411.bin` 與 `.factory.bin`。
+
 ## 2026-05-29
 - 修正 CIV build 的 GROUP 節點清單永遠顯示 `沒有已配對節點`；GROUP Heartbeat 現在只要有 GROUP PIN，就會在非 EMAC 狀態下維持同組 presence。
 - 修正 `GROUP設定 > EMINFO設定 > EMINFO廣播` 切換後跳到黑底提示且無法退出的問題。

@@ -2,6 +2,35 @@
 
 本文件為可對外發布版本的更新紀錄，整理 HermesX 韌體的重要功能更新、體驗調整與修正項目。
 
+## 2026-06-01
+
+### 新增
+
+- 主快捷頁新增獨立 `TraceRoute` 功能頁；進入後顯示類似 ONLINE 的節點列表，選取節點後進入 TraceRoute 專用 detail，焦點預設停在 `開始TraceRoute`，可直接送出路由測試。
+- `裝置管理 > 更新模式` dedicated update environment 第一層新增 `WiFi設定`，讓 URL 更新檢查與 WiFi 手動更新共用同一份 WiFi 設定入口。
+
+### 調整
+
+- `ONLINE` / `GROUP` 節點 detail 的 `MSG` 改為 Screen-native 直接訊息鍵盤，不再跳到 CannedMessage composer；支援畫面鍵盤、實體鍵盤字元輸入、刪除與送出。
+- `WiFi更新` 子頁移除 `WiFi設定`，改為專注顯示目前版本、連線狀態與 `開始更新`。
+- TraceRoute 結果 popup 改用更清楚的訊號文案：最上方顯示 `本機收到: RSSI ... / SNR ...`，去程與回程每一跳顯示 `訊號SNR`。
+
+### 修正
+
+- 修正 ONLINE / TraceRoute 節點列表只顯示已收到 NodeInfo/User 的節點，導致對方已傳訊息但仍顯示「沒有在線節點」的問題；現在有最近 last_heard 的節點會以 Node ID fallback 顯示。
+- 修正裝置尚未取得有效網路/GPS 時間時，收到對方 NodeInfo 會觸發綠色提示但 `last_heard` 仍為 0，導致 ONLINE / TraceRoute 看不到該節點的問題。
+- 修正 TraceRoute tile 與 TraceRoute 清單 / detail 的長文字可能換行超出框線的問題；長節點名稱現在只顯示框內第一行。
+- 修正 TraceRoute 在主快捷選單未被選取時可能顯示成 GROUP 縮寫的問題；未選取狀態固定顯示 `TR`。
+- 修正 ONLINE / GROUP detail 的 MSG 編輯器無法從畫面鍵盤退出、在小螢幕顯示超出，以及私訊固定走 primary channel 的問題；現在有 `EXIT` 鍵並使用目標節點記錄的 channel。
+- 修正 ONLINE / GROUP detail 的 MSG 畫面鍵盤文字未置中與 `EXIT` 後可能停在空白畫面的問題；MSG 現在沿用 Group PIN 設定頁的鍵盤繪製方式，退出後會強制重繪原 detail 頁。
+
+### 驗證
+
+- `platformio run -e heltec-wireless-tracker` 編譯成功，CIV build 版本為 `HXB_C0.3.2_20260602_1411`。
+- 已依 `docs/AI_UPDATE_HANDOFF.md` 搬移韌體產物：
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.2_20260602_1411.bin`
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.2_20260602_1411.factory.bin`
+
 ## 2026-05-29
 
 ### 修正

@@ -280,6 +280,8 @@ class Screen : public concurrency::OSThread
     bool isRecentTextMessageDetailPageActive() const;
     bool isOnlineNodeListPageActive() const;
     bool isOnlineNodeDetailPageActive() const;
+    bool isTraceRouteNodeListPageActive() const;
+    bool isTraceRouteNodeDetailPageActive() const;
     bool isFinderNodeListPageActive() const;
     bool isFinderNodeDetailPageActive() const;
     bool isGroupNodeListPageActive() const;
@@ -303,6 +305,8 @@ class Screen : public concurrency::OSThread
     bool showHermesXMainPage();
     bool showOnlineNodeListPage();
     bool showOnlineNodeDetailPage();
+    bool showTraceRouteNodeListPage();
+    bool showTraceRouteNodeDetailPage();
     bool showFinderNodeListPage();
     bool showFinderNodeDetailPage();
     bool showGroupNodeListPage();
@@ -676,6 +680,8 @@ class Screen : public concurrency::OSThread
             uint8_t textMessage = 0xFF;
             uint8_t onlineList = 0xFF;
             uint8_t onlineDetail = 0xFF;
+            uint8_t traceRouteList = 0xFF;
+            uint8_t traceRouteDetail = 0xFF;
             uint8_t finderList = 0xFF;
             uint8_t finderDetail = 0xFF;
             uint8_t groupList = 0xFF;
@@ -740,6 +746,8 @@ class Screen : public concurrency::OSThread
     void drawHermesXShareChannel(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     static void drawOnlineNodeListFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     static void drawOnlineNodeDetailFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
+    static void drawTraceRouteNodeListFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
+    static void drawTraceRouteNodeDetailFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     static void drawFinderNodeListFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     static void drawFinderNodeDetailFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     static void drawGroupNodeListFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
@@ -750,11 +758,14 @@ class Screen : public concurrency::OSThread
     bool showFinderListPageSafely(bool fallbackToActionPage = true);
     bool handleOnlineNodeListInput(const InputEvent *event);
     bool handleOnlineNodeDetailInput(const InputEvent *event);
+    bool handleTraceRouteNodeListInput(const InputEvent *event);
+    bool handleTraceRouteNodeDetailInput(const InputEvent *event);
     bool handleFinderNodeListInput(const InputEvent *event);
     bool handleFinderNodeDetailInput(const InputEvent *event);
     bool handleGroupNodeListInput(const InputEvent *event);
     bool handleGroupNodeDetailInput(const InputEvent *event);
     bool handleTakModeInput(const InputEvent *event);
+    bool handleDirectMessageComposerInput(const InputEvent *event);
     bool handleIncomingNodePopupInput(const InputEvent *event);
     bool handleTextMessagePopupInput(const InputEvent *event);
     bool handleSetupDetailPopupInput(const InputEvent *event);
@@ -833,6 +844,10 @@ class Screen : public concurrency::OSThread
         UpdateApplyMenu,
         UpdateWifiSsidEdit,
         UpdateWifiPasswordEdit,
+        DeviceInfoMenu,
+        DeviceInfoShortNameEdit,
+        DeviceInfoLongNameEdit,
+        DeviceInfoBroadcastSelect,
         NodeDatabaseMenu,
         NodeDatabaseResetSelect,
         MqttMenu,
@@ -914,6 +929,7 @@ class Screen : public concurrency::OSThread
     uint8_t hermesSetupEditingSlot = 0;
     uint8_t hermesSetupChannelIndex = 0;
     bool hermesSetupWifiLowercase = false;
+    bool hermesSetupDeviceInfoLowercase = false;
     bool hermesSetupWifiEnabledDraft = false;
     bool hermesSetupWifiDirty = false;
     HermesPendingUpdateCheckAction hermesPendingUpdateCheckAction = HermesPendingUpdateCheckAction::None;
@@ -922,6 +938,7 @@ class Screen : public concurrency::OSThread
     String hermesSetupFrequencyDraft;
     String hermesSetupWifiSsidDraft;
     String hermesSetupWifiPasswordDraft;
+    String hermesSetupDeviceInfoDraft;
     String hermesSetupToast;
     uint32_t hermesSetupToastUntilMs = 0;
     float compassHeading;

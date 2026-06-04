@@ -189,6 +189,7 @@ bool isHermesDedicatedPageActive()
                       screen->isHermesXActionPageActive() ||
                       screen->isRecentTextMessagesPageActive() || screen->isRecentTextMessageDetailPageActive() ||
                       screen->isOnlineNodeListPageActive() || screen->isOnlineNodeDetailPageActive() ||
+                      screen->isTraceRouteNodeListPageActive() || screen->isTraceRouteNodeDetailPageActive() ||
                       screen->isFinderNodeListPageActive() || screen->isFinderNodeDetailPageActive() ||
                       screen->isGroupNodeListPageActive() || screen->isGroupNodeDetailPageActive() ||
                       screen->isTakModePageActive());
@@ -196,8 +197,7 @@ bool isHermesDedicatedPageActive()
 
 bool isHermesComposerAllowedPageActive()
 {
-    return screen && (screen->isRecentTextMessagesPageActive() || screen->isRecentTextMessageDetailPageActive() ||
-                      screen->isOnlineNodeListPageActive() || screen->isOnlineNodeDetailPageActive() ||
+    return screen && (screen->isOnlineNodeListPageActive() || screen->isOnlineNodeDetailPageActive() ||
                       screen->isFinderNodeListPageActive() || screen->isFinderNodeDetailPageActive() ||
                       screen->isGroupNodeListPageActive() || screen->isGroupNodeDetailPageActive());
 }

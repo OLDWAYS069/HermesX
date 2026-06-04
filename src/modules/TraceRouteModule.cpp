@@ -29,10 +29,10 @@ static void appendTraceRouteHop(String &out, NodeNum from, NodeNum to, int8_t sn
     out += formatTraceRouteNodeLabel(to);
     if (hasSnr && snrQdb != INT8_MIN) {
         char snrBuf[24];
-        snprintf(snrBuf, sizeof(snrBuf), "  SNR %.2f dB", static_cast<float>(snrQdb) / 4.0f);
+        snprintf(snrBuf, sizeof(snrBuf), "  訊號SNR %.2f dB", static_cast<float>(snrQdb) / 4.0f);
         out += snrBuf;
     } else {
-        out += "  SNR ?";
+        out += "  訊號SNR ?";
     }
     out += "\n";
 }
@@ -41,9 +41,9 @@ static String buildTraceRoutePopupBody(const meshtastic_MeshPacket &mp, const me
 {
     String body;
     char rxBuf[48];
-    snprintf(rxBuf, sizeof(rxBuf), "RX RSSI %d dBm / SNR %.2f dB\n\n", mp.rx_rssi, mp.rx_snr);
+    snprintf(rxBuf, sizeof(rxBuf), u8"本機收到: RSSI %d dBm / SNR %.2f dB\n\n", mp.rx_rssi, mp.rx_snr);
     body += rxBuf;
-    body += u8"去程\n";
+    body += u8"去程訊號\n";
 
     NodeNum previous = mp.to;
     for (uint8_t i = 0; i < r.route_count; ++i) {
@@ -59,7 +59,7 @@ static String buildTraceRoutePopupBody(const meshtastic_MeshPacket &mp, const me
 
     if (r.route_back_count > 0) {
         body += "\n";
-        body += u8"回程\n";
+        body += u8"回程訊號\n";
         previous = mp.from;
         for (uint8_t i = 0; i < r.route_back_count; ++i) {
             const bool hasSnr = i < r.snr_back_count;

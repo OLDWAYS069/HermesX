@@ -63,6 +63,7 @@ HermesX 的首頁以裝置端可讀性為主，顯示時間、日期、Role、�
 - `設定`
 - `MSG`
 - `ONLINE`
+- `TraceRoute`
 - `GROUP`
 - `尋人模組`
 
@@ -81,7 +82,7 @@ HermesX 內建多層快速設定，不需要每次都拿手機調整。
 - `儲存並重新開機`
 
 `UI設定` 可調整全域蜂鳴器、Hermes 狀態條、板載 RGB 燈、螢幕休眠、時區與旋鈕對調。  
-`裝置管理` 則集中 LoRa、GPS、MQTT、頻道設定、藍牙、電源管理、節點資料庫與更新模式。
+`裝置管理` 則集中裝置資訊、LoRa、GPS、MQTT、頻道設定、藍牙、電源管理、節點資料庫與更新模式。
 
 ### ==GROUP 與同組節點==
 
@@ -134,6 +135,8 @@ ONLINE detail 目前提供：
 
 如果節點是 MQTT 來源，TraceRoute 會顯示 `TraceRoute: --`，操作時提示 `LORA ONLY`，避免對 MQTT-only 節點送出不合理的 LoRa route request。
 
+主選單也提供獨立 `TraceRoute` 頁面。進入後會顯示類似 ONLINE 的節點列表，選取節點後會進入只針對 TraceRoute 操作的明細頁，焦點預設停在 `開始TraceRoute` 按鈕。
+
 ### ==MSG 與罐頭訊息==
 
 `MSG` 入口整合 HermesX 的裝置端訊息流程。  
@@ -181,11 +184,13 @@ HermesX C0.3.2 保留裝置端更新流程。
 
 更新模式支援：
 
+- `WiFi設定`
 - `檢查更新`
 - `手動更新`
 - `WiFi更新`
 - `USB更新`
 
+`WiFi設定` 位於更新模式第一層，供 URL 更新檢查與 WiFi 手動更新共用。
 WiFi / USB 手動更新頁會顯示目前版本、連線狀態、接收狀態、待更新版本、進度與錯誤資訊；更新進度以小螢幕友善的圓形進度呈現。
 
 ---

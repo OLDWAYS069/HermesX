@@ -1743,8 +1743,16 @@ void NodeDB::updateFrom(const meshtastic_MeshPacket &mp)
             return;
         }
 
-        if (mp.rx_time) // if the packet has a valid timestamp use it to update our last_heard
+        // ONLINE/TraceRoute should still consider a node recently heard even before
+        // the RTC has reached FromNet quality, where rx_time can legitimately be 0.
+        if (mp.rx_time) {
             info->last_heard = mp.rx_time;
+        } else {
+            const uint32_t now = getTime();
+            if (now) {
+                info->last_heard = now;
+            }
+        }
 
         if (mp.rx_snr)
             info->snr = mp.rx_snr; // keep the most recent SNR we received for this node.
