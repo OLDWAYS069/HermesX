@@ -5480,6 +5480,33 @@ static void drawScaledHanzi(OLEDDisplay &display, int16_t x, int16_t y, int glyp
     }
 }
 
+static uint8_t getRecentTextMessageBodyHanziPixelSize()
+{
+    return static_cast<uint8_t>(std::min<int>(18, std::max<int>(14, FONT_HEIGHT_MEDIUM - 3)));
+}
+
+static void drawSizedHanzi(OLEDDisplay &display, int16_t x, int16_t y, int glyphIndex, uint8_t targetSize)
+{
+    const uint8_t *glyph = graphics::HermesX_zh::glyphData(glyphIndex);
+    if (!glyph || targetSize == 0) {
+        return;
+    }
+
+    const OLEDDISPLAY_COLOR color = display.getColor();
+    for (uint8_t dy = 0; dy < targetSize; ++dy) {
+        const uint8_t srcRow = (static_cast<uint16_t>(dy) * graphics::HermesX_zh::GLYPH_HEIGHT) / targetSize;
+        for (uint8_t dx = 0; dx < targetSize; ++dx) {
+            const uint8_t srcCol = (static_cast<uint16_t>(dx) * graphics::HermesX_zh::GLYPH_WIDTH) / targetSize;
+            const int bitIndex = srcRow * graphics::HermesX_zh::GLYPH_STRIDE_BITS + srcCol;
+            const int byteIndex = bitIndex >> 3;
+            const int bitInByte = 7 - (bitIndex & 7);
+            if (((readHermesXGlyphByte(glyph + byteIndex) >> bitInByte) & 0x1u) != 0) {
+                display.setPixelColor(x + dx, y + dy, color);
+            }
+        }
+    }
+}
+
 static void drawLargeMixedLine(OLEDDisplay &display, int16_t x, int16_t y, int16_t maxWidth, const char *text, uint8_t hanziScale)
 {
     if (!text || maxWidth <= 0 || hanziScale == 0) {
@@ -5516,6 +5543,44 @@ static void drawLargeMixedLine(OLEDDisplay &display, int16_t x, int16_t y, int16
         }
         drawScaledHanzi(display, x, y, glyphIndex, hanziScale);
         x += glyphWidth;
+    }
+}
+
+static void drawSizedMixedLine(OLEDDisplay &display, int16_t x, int16_t y, int16_t maxWidth, const char *text, uint8_t hanziSize)
+{
+    if (!text || maxWidth <= 0 || hanziSize == 0) {
+        return;
+    }
+
+    const int16_t originX = x;
+    const char *cursor = text;
+    const char *end = cursor + std::strlen(text);
+    while (cursor < end) {
+        uint32_t cp = graphics::HermesX_zh::nextCodepoint(cursor, end);
+        if (cp == 0 || cp == '\n' || cp == '\r') {
+            continue;
+        }
+        if (cp >= 0x20u && cp < 0x7Fu) {
+            String asciiChar(static_cast<char>(cp));
+            const int glyphWidth = std::max<int>(1, display.getStringWidth(asciiChar));
+            if (x + glyphWidth > originX + maxWidth) {
+                break;
+            }
+            display.drawString(x, y, asciiChar);
+            x += glyphWidth;
+            continue;
+        }
+
+        int glyphIndex = graphics::HermesX_zh::locateCodepoint(cp);
+        if (glyphIndex < 0) {
+            graphics::HermesX_zh::incrementMissingGlyph();
+            glyphIndex = graphics::HermesX_zh::fallbackIndex();
+        }
+        if (x + hanziSize > originX + maxWidth) {
+            break;
+        }
+        drawSizedHanzi(display, x, y, glyphIndex, hanziSize);
+        x += hanziSize;
     }
 }
 
@@ -5655,7 +5720,8 @@ static void drawMixedSingleLineBounded(OLEDDisplay *display, int16_t x, int16_t 
 
 static void drawVisibleWrappedLines(OLEDDisplay *display, const std::vector<String> &lines, int16_t x, int16_t y, int16_t maxWidth,
                                     int16_t bodyH, int lineHeight, uint16_t scrollY,
-                                    int advanceX = graphics::HermesX_zh::GLYPH_WIDTH, uint8_t hanziScale = 1)
+                                    int advanceX = graphics::HermesX_zh::GLYPH_WIDTH, uint8_t hanziScale = 1,
+                                    uint8_t hanziTargetSize = 0)
 {
     if (!display || bodyH <= 0 || lineHeight <= 0) {
         return;
@@ -5677,7 +5743,9 @@ static void drawVisibleWrappedLines(OLEDDisplay *display, const std::vector<Stri
         if (drawY + lineHeight <= y) {
             continue;
         }
-        if (hanziScale > 1) {
+        if (hanziTargetSize > 0) {
+            drawSizedMixedLine(*display, x, drawY, maxWidth, lines[lineIndex].c_str(), hanziTargetSize);
+        } else if (hanziScale > 1) {
             drawLargeMixedLine(*display, x, drawY, maxWidth, lines[lineIndex].c_str(), hanziScale);
         } else {
             HermesX_zh::drawMixedBounded(*display, x, drawY, maxWidth, lines[lineIndex].c_str(), advanceX, lineHeight, nullptr);
@@ -6611,9 +6679,9 @@ static void drawTextMessageFrame(OLEDDisplay *display, OLEDDisplayUiState *state
     const int16_t bodyW = std::max<int16_t>(width - scrollbarW - 3, 12);
     const int16_t bodyH = std::max<int16_t>(height - bodyTop - 1, headerLineHeight);
     const int16_t bodyX = x;
-    const uint8_t bodyHanziScale = 2;
-    const int bodyAdvance = graphics::HermesX_zh::GLYPH_WIDTH * bodyHanziScale;
-    const int lineHeight = std::max<int>(FONT_HEIGHT_MEDIUM, graphics::HermesX_zh::GLYPH_HEIGHT * bodyHanziScale) + 2;
+    const uint8_t bodyHanziPixelSize = getRecentTextMessageBodyHanziPixelSize();
+    const int bodyAdvance = bodyHanziPixelSize;
+    const int lineHeight = std::max<int>(FONT_HEIGHT_MEDIUM, bodyHanziPixelSize) + 2;
 
     if (config.display.displaymode == meshtastic_Config_DisplayConfig_DisplayMode_INVERTED) {
         display->fillRect(x, y, width, dividerY - y);
@@ -6737,11 +6805,11 @@ static void drawTextMessageFrame(OLEDDisplay *display, OLEDDisplayUiState *state
                          y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - heart_height) / 2 + 2 + 5, heart_width, heart_height, heart);
     } else {
         drawVisibleWrappedLines(display, bodyLines, bodyX, bodyTop, bodyW, bodyH, lineHeight,
-                                gRecentTextMessageState.detailScrollY, bodyAdvance, bodyHanziScale);
+                                gRecentTextMessageState.detailScrollY, bodyAdvance, 1, bodyHanziPixelSize);
     }
 #else
     drawVisibleWrappedLines(display, bodyLines, bodyX, bodyTop, bodyW, bodyH, lineHeight,
-                            gRecentTextMessageState.detailScrollY, bodyAdvance, bodyHanziScale);
+                            gRecentTextMessageState.detailScrollY, bodyAdvance, 1, bodyHanziPixelSize);
 #endif
 
     if (gRecentTextMessageState.detailMaxScrollY > 0) {
@@ -20747,7 +20815,7 @@ bool Screen::handleRecentTextMessageDetailInput(const InputEvent *event)
     if (navDir != 0) {
         if (gRecentTextMessageState.detailMaxScrollY > 0) {
             const uint16_t kDetailScrollStep =
-                std::max<int>(FONT_HEIGHT_MEDIUM, graphics::HermesX_zh::GLYPH_HEIGHT * 2) + 2;
+                std::max<int>(FONT_HEIGHT_MEDIUM, getRecentTextMessageBodyHanziPixelSize()) + 2;
             const int nextScroll =
                 clamp<int>(static_cast<int>(gRecentTextMessageState.detailScrollY) + navDir * kDetailScrollStep, 0,
                            static_cast<int>(gRecentTextMessageState.detailMaxScrollY));

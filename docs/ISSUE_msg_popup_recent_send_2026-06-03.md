@@ -202,12 +202,29 @@ Select / Press 直接消耗，但詳細頁本身沒有可選操作，也沒有�
 
 MSG 詳細訊息頁的 Select / Press 與 Back / Cancel / Left / Right 都回到 Recent Send 列表；Up / Down / 旋鈕仍只負責正文捲動。
 
+### 18. 詳細訊息頁中文被放得比英文大很多
+
+**現象**
+
+MSG 詳細訊息頁英文大小正常，但中文變成明顯過大的方塊字，和英文比例不一致。
+
+**原因**
+
+詳細頁正文使用 `FONT_MEDIUM` 顯示英文，但中文一開始把 12x12 HermesX glyph 直接套用 2x 縮放，
+變成 24x24；改回 1x 後又只剩 12x12。兩者都沒有對齊英文正文的實際視覺高度。
+
+**修正**
+
+MSG 詳細訊息頁中文不再使用固定 1x / 2x；改以 `FONT_HEIGHT_MEDIUM` 推導中文目標像素高度，
+並用同一個目標尺寸做繪製、換行 advance 與捲動步進。
+
 ## 修正原則
 
 - 先恢復 Recent Send 列表原本的 `FONT_SMALL`、列高、列表位置與預覽長度。
 - 詳細頁標頭可維持原本尺寸，只放大訊息內文。
 - 詳細頁的換行計算、繪製尺寸與捲動步進必須使用同一套字型度量。
 - 若中文也要求真正放大，不能只切換 ASCII font；需要提供可放大的中文字型或縮放繪製方案。
+- 不可把 12x12 中文 glyph 直接 1x 或 2x 當作 `FONT_MEDIUM` 正文；中文目標尺寸必須跟英文正文視覺高度對齊。
 - Popup 的顯示封包與查看封包必須綁定，不可固定查看 Recent Send 索引 0。
 - Popup、TraceRoute popup、Recent Send 與 CannedMessage 必須有明確且單一的輸入擁有者。
 - MSG 列表與詳細頁都應排除 Footer 快捷鍵與自動輪播。
@@ -223,7 +240,7 @@ MSG 詳細訊息頁的 Select / Press 與 Back / Cancel / Left / Right 都回到
 - Popup 輸入處理順序改為配合 overlay 視覺層級，TraceRoute popup 優先於新訊息 popup。
 - TFT popup 繪製時會清除底層 palette zones；只有實際關閉 active popup 才要求 palette reset。
 - Recent Send 列表恢復原本小字體、列高、列表位置與摘要長度。
-- 詳細訊息頁只放大正文，中文使用 2 倍 12x12 glyph，與大字體 ASCII 共用換行度量。
+- 詳細訊息頁只放大正文，英文使用 `FONT_MEDIUM`；中文依英文正文高度重採樣，不再硬套固定 1x / 2x glyph。
 - 詳細訊息 payload 改為依照 `payload.size` 安全複製並補上結尾字元。
 - 詳細訊息捲動改為整行步進與整行最大捲動值，避免文字畫到標頭區域。
 - Recent Send 列表與詳細頁排除 Footer 快捷鍵與自動輪播。
@@ -231,4 +248,4 @@ MSG 詳細訊息頁的 Select / Press 與 Back / Cancel / Left / Right 都回到
 - 使用者正在查看 Recent Send 時，新訊息插入後會保留目前選取訊息、詳細訊息與捲動位置。
 
 `platformio run -e heltec-wireless-tracker -j 4` 已編譯成功，CIV build 版本為
-`HXB_C0.3.2_20260604_1433`。尚待實機驗證 popup、查看操作、詳細訊息捲動與 Press 返回列表行為。
+`HXB_C0.3.2_20260604_1736`。尚待實機驗證 popup、查看操作、詳細訊息捲動、Press 返回列表與詳細訊息中英文字級一致性。

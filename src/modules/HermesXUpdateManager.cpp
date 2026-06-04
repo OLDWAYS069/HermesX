@@ -575,7 +575,8 @@ bool HermesXUpdateManager::checkRemoteImage(const std::function<void()> &pump)
         versionOut = versionFromFilename;
         LOG_INFO("URL update filename version override: %s", versionOut.c_str());
     } else {
-        LOG_WARN("URL update filename parse failed, fallback version=%s", versionOut.c_str());
+        LOG_WARN("URL update filename parse failed, descriptor version=%s", versionOut.c_str());
+        return fail(u8"遠端檔名缺少 HXB 版本");
     }
 
     if (versionOut == currentVersion || versionOut == currentBuildVersion) {
