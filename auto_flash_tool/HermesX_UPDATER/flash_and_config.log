@@ -1,7 +1,9 @@
-==== 2026-06-01 18:20:40 ====
-[18:20:40] Startup music launched: startup.mp3
-[18:20:45] 請選擇更新線路：
-[18:20:46] [1] USB 燒錄 + 設定
-[18:20:46] [2] 本機 WiFi 更新
-[18:20:47] [3] 線上抓取 CIV 韌體並更新
-[18:20:53] Config: G:\geek_guys_oldways\20251003_2.6.11.6-hermesX_b0.2\auto_flash_tool\HermesX_UPDATER\CLI.md
+==== 2026-06-04 19:36:59 ====
+[19:36:59] Startup music launched: startup.mp3
+[19:37:05] 請選擇更新線路：
+[19:37:05] [1] USB 燒錄 + 設定
+[19:37:06] [2] 本機 WiFi 更新
+[19:37:06] [3] 線上抓取 CIV 韌體並更新
+[19:37:09] Config: G:\geek_guys_oldways\20251003_2.6.11.6-hermesX_b0.2\auto_flash_tool\HermesX_UPDATER\CLI.md
+[19:37:12] === HermesX WiFi handoff update started ===
+[19:37:13] Downloading online CIV firmware: https://drive.google.com/uc?export=download&id=1NUmN9gYq04Vh2ABFy7Ed5BLc8HbnWBYw
