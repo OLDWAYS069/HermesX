@@ -38,11 +38,12 @@ ONLINE 會從 NodeDB 中篩選節點。
 目前會排除：
 
 - 本機節點
-- 沒有 user 資料的節點
 - 從未聽到過的節點
 - 最後聽到時間超過 2 小時的節點
 
 符合條件的節點會依照 `last_heard` 排序，最近聽到的節點排在前面。
+如果對方尚未送出 NodeInfo / User 資料，但已經傳過訊息或其他封包，ONLINE 仍會用 Node ID 顯示該節點。
+如果裝置剛開機且還沒有網路/GPS 時間，收到封包時也會先用本機運行時間更新 `last_heard`，避免已收到 NodeInfo 但列表仍判定為從未聽到。
 
 這表示 ONLINE 看到的是「目前這台裝置記得、而且最近還有活動」的節點，不是伺服器名單，也不是手機 App 另外整理出來的清單。
 
@@ -83,7 +84,10 @@ ONLINE 會從 NodeDB 中篩選節點。
 
 `TraceRoute` 用來測試到該節點的 LoRa 路由。
 
-選取後，裝置會送出 TraceRoute request，並顯示：
+除了 ONLINE detail 內的 `TraceRoute` 列，主選單也有獨立 `TraceRoute` 頁面。
+獨立頁面會先顯示類似 ONLINE 的節點列表，點進節點後會進入只放 TraceRoute 動作的明細頁，游標預設停在 `開始TraceRoute`。
+
+選取 `TraceRoute` 或 `開始TraceRoute` 後，裝置會送出 TraceRoute request，並顯示：
 
 ```text
 SEND

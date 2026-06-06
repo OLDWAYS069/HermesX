@@ -2,6 +2,33 @@
 
 本文件為可對外發布版本的更新紀錄，整理 HermesX 韌體的重要功能更新、體驗調整與修正項目。
 
+## 2026-06-06
+
+### 同步
+
+- 同步 CIV 端近期 ONLINE / GROUP detail 改動到 GOV：節點 detail 的 `MSG` 改用裝置端鍵盤 composer，退出時會回到原 detail 並立即 redraw，避免空白畫面。
+- 同步 ONLINE / TraceRoute 修正：ONLINE 節點候選不再因缺少完整 user metadata 被過度排除；TraceRoute 結果 popup 只接受本機送出的對應 request，且 MQTT-only 節點維持 `LORA ONLY` 限制。
+- 同步 Recent Send / 新訊息 popup 修正：popup 以固定訊息項目為顯示目標，避免讀取期間被新訊息替換；detail 內文使用較大字級與可捲動版面，Recent Send 列表維持原本小字級。
+- 同步 WiFi 更新檔名解析修正，接受 `.factory.bin` 檔名時不會把待更新版本誤解析成 `.factory`。
+- 保留 GOV 版 EMAC / EM UI 行為，並將新增的 `docs/HermesX 2026v3.md` 轉成 GOV 功能邊界描述，避免沿用 CIV 關閉 EMAC 的文件內容。
+
+### 驗證
+
+- `git diff --check` 通過。
+- `platformio run -e heltec-wireless-tracker -j 4` 編譯成功，GOV build 版本為 `HXB_G0.3.2_20260606_0302`。
+
+## 2026-05-29
+
+### 修正
+
+- 同步 GROUP 節點清單修正：GOV 版既有 `GROUP presence` 現在只要設定 GROUP PIN 就會維持低頻廣播，不再被 `EMINFO廣播` 開關一起停掉，避免 `GROUP > 節點列表` 長期顯示「沒有已配對的節點」。
+- 同步尋人模式回應判定修正：收到同 GROUP 授權的 `POSITION: OK` ack 後，若 NodeDB 已有該節點有效座標，即使對方沒有立刻再送一包 `POSITION`，也會完成本次尋人 pulse 並保留在位置清單。
+- 確認 `GROUP設定 > EMINFO設定 > EMINFO廣播` GOV 版維持 inline feedback，不會再切進卡住的黑底 `HermesXAlert` 頁。
+
+### 驗證
+
+- `platformio run -e heltec-wireless-tracker` 編譯成功，GOV build 版本為 `HXB_G0.3.2_20260529_1604`。
+
 ## 2026-05-26
 
 ### 修正

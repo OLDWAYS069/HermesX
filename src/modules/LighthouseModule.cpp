@@ -899,9 +899,9 @@ bool LighthouseModule::tryFinishPositionPulseFromCandidates()
         return false;
     }
 
-    for (NodeNum candidate : lastPositionPulseCandidates) {
+    auto tryRecordResponder = [&](NodeNum candidate) -> bool {
         if (!isPositionPulseAuthorizedResponder(candidate)) {
-            continue;
+            return false;
         }
         bool alreadyRecorded = false;
         for (NodeNum responder : lastPositionPulseResponders) {
@@ -911,12 +911,12 @@ bool LighthouseModule::tryFinishPositionPulseFromCandidates()
             }
         }
         if (alreadyRecorded) {
-            continue;
+            return false;
         }
 
         meshtastic_NodeInfoLite *node = nodeDB->getMeshNode(candidate);
         if (!node || !nodeDB->hasValidPosition(node)) {
-            continue;
+            return false;
         }
 
         lastPositionPulseResponders.push_back(candidate);
@@ -924,6 +924,19 @@ bool LighthouseModule::tryFinishPositionPulseFromCandidates()
             finishPositionPulseRequest(PositionPulseUiResult::Success, candidate);
         }
         return true;
+    };
+
+    for (NodeNum candidate : lastPositionPulseCandidates) {
+        if (tryRecordResponder(candidate)) {
+            return true;
+        }
+    }
+
+    for (NodeNum candidate : lastPositionPulseAuthorizedResponders) {
+        if (tryRecordResponder(candidate)) {
+            HERMESX_LOG_INFO("Position pulse result success from authorized ack with cached position responder=0x%x", candidate);
+            return true;
+        }
     }
     return false;
 }

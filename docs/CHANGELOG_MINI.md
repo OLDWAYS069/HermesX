@@ -1,3 +1,13 @@
+## 2026-06-06
+- 同步 CIV 端 2026-06-04 之後的 ONLINE / GROUP detail、Direct MSG composer、TraceRoute、Recent Send popup、NodeDB 最近聽到判定與 WiFi 更新檔名修正到 GOV，並保留 GOV 版 EMAC / EM UI 行為。
+- `docs/HermesX 2026v3.md` 已轉成 GOV 版功能邊界，避免把 CIV 關閉 EMAC 的描述帶進 GOV 文件。
+- `heltec-wireless-tracker` 編譯成功，GOV build 版本為 `HXB_G0.3.2_20260606_0302`。
+
+## 2026-05-29
+- 同步 GROUP / 尋人模式修正：`GROUP presence` 不再跟著 `EMINFO廣播` 關閉而停止；尋人模式收到授權 ack 且 NodeDB 已有有效座標時會完成 pulse，避免清單被 timeout 清空。
+- 確認 `GROUP設定 > EMINFO設定 > EMINFO廣播` 維持設定頁 inline feedback，不會跳進卡住的黑底提示頁。
+- `heltec-wireless-tracker` 編譯成功，GOV build 版本為 `HXB_G0.3.2_20260529_1604`。
+
 ## 2026-05-26
 - 修正 BLE node-only config 仍重建 file manifest 的問題；手機只要求節點資訊時現在會跳過不必要的檔案系統掃描，避免停在 `SPI lock acquired for file manifest` 後 PANIC 重開機。
 - `heltec-wireless-tracker` 編譯成功，GOV 韌體產物已依 handoff 搬到 `/Users/oldways/Desktop/HermesX韌體/HXB_G0.3.2_20260526_2024.bin` 與 `.factory.bin`。

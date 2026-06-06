@@ -36,7 +36,7 @@ bool NodeInfoModule::handleReceivedProtobuf(const meshtastic_MeshPacket &mp, mes
     return false; // Let others look at this message also if they want
 }
 
-void NodeInfoModule::sendOurNodeInfo(NodeNum dest, bool wantReplies, uint8_t channel, bool _shorterTimeout)
+bool NodeInfoModule::sendOurNodeInfo(NodeNum dest, bool wantReplies, uint8_t channel, bool _shorterTimeout)
 {
     // cancel any not yet sent (now stale) position packets
     if (prevPacketId) // if we wrap around to zero, we'll simply fail to cancel in that rare case (no big deal)
@@ -61,7 +61,10 @@ void NodeInfoModule::sendOurNodeInfo(NodeNum dest, bool wantReplies, uint8_t cha
 
         service->sendToMesh(p);
         shorterTimeout = false;
+        return true;
     }
+    shorterTimeout = false;
+    return false;
 }
 
 meshtastic_MeshPacket *NodeInfoModule::allocReply()

@@ -24,7 +24,7 @@ class NodeInfoModule : public ProtobufModule<meshtastic_User>, private concurren
     /**
      * Send our NodeInfo into the mesh
      */
-    void sendOurNodeInfo(NodeNum dest = NODENUM_BROADCAST, bool wantReplies = false, uint8_t channel = 0,
+    bool sendOurNodeInfo(NodeNum dest = NODENUM_BROADCAST, bool wantReplies = false, uint8_t channel = 0,
                          bool _shorterTimeout = false);
 
   protected:

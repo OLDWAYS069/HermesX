@@ -171,6 +171,11 @@ bool isGroupFingerprintAllowed(uint32_t fingerprint)
     return lighthouseModule == nullptr || lighthouseModule->isEmergencyGroupFingerprintAllowed(fingerprint);
 }
 
+bool shouldBroadcastGroupPresence()
+{
+    return lighthouseModule && lighthouseModule->hasEmergencyGroupPin();
+}
+
 template <typename T> T clampValue(T value, T minValue, T maxValue)
 {
     return std::max(minValue, std::min(maxValue, value));
@@ -2491,7 +2496,7 @@ int32_t HermesXEmUiModule::runOnce()
 {
     const uint32_t now = millis();
     const uint32_t groupPresenceIntervalMs = kGroupPresenceIntervalSec * 1000UL;
-    if (emInfoBroadcastEnabled && lighthouseModule && lighthouseModule->hasEmergencyGroupPin() &&
+    if (shouldBroadcastGroupPresence() &&
         (lastGroupPresenceSentMs == 0 || static_cast<uint32_t>(now - lastGroupPresenceSentMs) >= groupPresenceIntervalMs)) {
         sendGroupPresenceNow();
     }
