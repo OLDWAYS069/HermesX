@@ -1,4 +1,6 @@
 ## 2026-06-18
+- 建立 `HermesX_C0.3.7` CIV 分支，顯示版號更新為 `HXB_C0.3.7`；`heltec-wireless-tracker` 編譯成功，CIV build 版本為 `HXB_C0.3.7_20260618_1807`。
+- 韌體產物已依 handoff 搬到 `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260618_1807.bin` 與 `.factory.bin`。
 - `功能` 子頁面新增可見的 `退出` 項目，選取後會回到主選單的 `功能` 入口，避免只能靠返回鍵離開子頁。
 - 主選單新增 `功能` 子頁面，將 `TAK MODE`、`MSG`、`ONLINE`、`TRACE`、`GROUP`、`尋人模組` 收進同一層功能頁；從 Home 短按進主選單仍預設停在第 6 項 `Home`。
 - 修正 `HEAP 保護模式` 只顯示提示、沒有真正停用高記憶體 UI 路徑的問題；低 heap 觸發後會立即釋放 Home/GPS direct neon buffer，並阻止保護期間重新配置。

@@ -4,6 +4,14 @@
 
 ## 2026-06-18
 
+### 發布
+
+- 建立 `HermesX_C0.3.7` CIV 分支，顯示版號更新為 `HXB_C0.3.7`。
+- `platformio run -e heltec-wireless-tracker` 編譯成功，CIV build 版本為 `HXB_C0.3.7_20260618_1807`。
+- 已依 `docs/AI_UPDATE_HANDOFF.md` 搬移並驗證韌體產物：
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260618_1807.bin`
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260618_1807.factory.bin`
+
 ### 修正
 
 - `功能` 子頁面新增可見的 `退出` 項目，選取後會回到主選單的 `功能` 入口，避免只能靠返回鍵離開子頁。

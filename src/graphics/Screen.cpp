@@ -15340,7 +15340,7 @@ static void drawHermesXBootHoldFrame(OLEDDisplay *display, OLEDDisplayUiState *s
         display->drawXbm(textX, textY, HERMESX_WORD_WIDTH, HERMESX_WORD_HEIGHT, hermesx_word_bits);
 
         // HermesX build tag in bottom-right corner.
-        const char *kHermesXBuildTag = "HXB_C0.3.2";
+        const char *kHermesXBuildTag = "HXB_C0.3.7";
         display->setFont(FONT_SMALL);
         display->setTextAlignment(TEXT_ALIGN_LEFT);
         const int16_t tagWidth = display->getStringWidth(kHermesXBuildTag);

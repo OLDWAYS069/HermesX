@@ -105,7 +105,7 @@ print("Using meshtastic platformio-custom.py, firmware version " + verObj["long"
 # - APP_HERMES_VERSION is the build-unique HermesX OTA comparison version
 # - APP_HERMES_VERSION_SHORT / APP_VERSION_DISPLAY remain the user-facing product version
 base_version = verObj["short"]
-display_short = "HXB_C0.3.2"
+display_short = "HXB_C0.3.7"
 build_stamp = datetime.now().strftime("%Y%m%d_%H%M")
 build_version = f"{display_short}_{build_stamp}"
 
