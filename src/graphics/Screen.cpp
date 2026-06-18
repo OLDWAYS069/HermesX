@@ -57,6 +57,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <time.h>
 // --- HermesX Remove TFT fast-path END
 #include "graphics/images.h"
+#include "input/RotaryEncoderInterruptImpl1.h"
 #include "input/ScanAndSelect.h"
 #include "input/TouchScreenImpl1.h"
 #include "Led.h"
@@ -869,9 +870,18 @@ static uint8_t *gDirectNeonClockCoreMask = nullptr;
 static uint8_t *gDirectGpsTitleFullMask = nullptr;
 static uint8_t *gDirectGpsTitleLayerMap = nullptr;
 static uint32_t gDirectNeonBufferGeneration = 0;
+static bool gLowMemoryProtectionActive = false;
+
+constexpr uint32_t kLowMemoryReminderFreeThreshold = 6 * 1024;
+constexpr uint32_t kLowMemoryReminderLargestThreshold = 4 * 1024;
+constexpr uint32_t kLowMemoryProtectionReleaseFreeThreshold = 12 * 1024;
+constexpr uint32_t kLowMemoryProtectionReleaseLargestThreshold = 8 * 1024;
 
 static bool shouldKeepDirectNeonBuffers()
 {
+    if (gLowMemoryProtectionActive) {
+        return false;
+    }
     return shouldShowHermesXHomeFrame() || shouldShowHermesXGpsFrame();
 }
 
@@ -917,6 +927,30 @@ static void freeDirectNeonBuffers()
     if (freedAny) {
         ++gDirectNeonBufferGeneration;
     }
+}
+
+static void activateLowMemoryProtection(uint32_t freeHeap, uint32_t largestBlock)
+{
+    if (gLowMemoryProtectionActive) {
+        return;
+    }
+    gLowMemoryProtectionActive = true;
+    freeDirectNeonBuffers();
+    LOG_WARN("[LowMemory] protection active free=%u largest=%u", freeHeap, largestBlock);
+}
+
+static bool releaseLowMemoryProtectionIfRecovered(uint32_t freeHeap, uint32_t largestBlock)
+{
+    if (!gLowMemoryProtectionActive) {
+        return false;
+    }
+    if (freeHeap < kLowMemoryProtectionReleaseFreeThreshold || largestBlock < kLowMemoryProtectionReleaseLargestThreshold) {
+        return false;
+    }
+    gLowMemoryProtectionActive = false;
+    invalidateDirectTftWakeCaches();
+    LOG_INFO("[LowMemory] protection released free=%u largest=%u", freeHeap, largestBlock);
+    return true;
 }
 
 static bool ensureDirectNeonBuffers()
@@ -1134,6 +1168,9 @@ static void drawHermesXHomeDog(OLEDDisplay *display, int16_t width, int16_t time
 
 static bool canUseDirectHermesXHomeClock(OLEDDisplay *display)
 {
+    if (gLowMemoryProtectionActive) {
+        return false;
+    }
     if (!supportsDirectTftClockRendering(display) || !display) {
         return false;
     }
@@ -7364,7 +7401,8 @@ void Screen::drawLowMemoryProtectionFrame(OLEDDisplay *display, OLEDDisplayUiSta
     const int16_t margin = 5;
     const int16_t bodyW = width - margin * 2;
     graphics::HermesX_zh::drawMixedBounded(*display, margin, 2, bodyW, u8"HEAP 保護模式", advance, 12, nullptr);
-    graphics::HermesX_zh::drawMixedBounded(*display, margin, 16, bodyW, u8"已停用HOME特效與選單", advance, 11, nullptr);
+    const char *modeLine = gLowMemoryProtectionActive ? u8"已停用HOME/GPS特效與選單" : u8"Heap 已恢復，可退出";
+    graphics::HermesX_zh::drawMixedBounded(*display, margin, 16, bodyW, modeLine, advance, 11, nullptr);
 
     char heapBuf[48];
     snprintf(heapBuf, sizeof(heapBuf), "Heap %lu/%lu", static_cast<unsigned long>(lowMemoryReminderTriggerFree),
@@ -8775,12 +8813,17 @@ constexpr size_t kSetupWifiPasswordMaxLen = 64;
 constexpr uint32_t kSetupNavMinIntervalMs = 80;
 constexpr uint32_t kSetupNavFlipGuardMs = 800;
 constexpr uint8_t kMainActionVisibleSlots = 3;
-constexpr uint8_t kMainActionCount = 13;
+constexpr uint8_t kMainActionIdCount = 15;
+constexpr uint8_t kMainActionPrimaryCount = 8;
+constexpr uint8_t kMainActionFeatureCount = 7;
 constexpr uint8_t kMainActionHomeIndex = 5;
+constexpr uint8_t kMainActionFeatureEntryIndex = 3;
+constexpr uint8_t kMainActionFeatureId = 13;
+constexpr uint8_t kMainActionFeatureExitId = 14;
+static const uint8_t kMainActionPrimaryOrder[kMainActionPrimaryCount] = {0, 1, 2, kMainActionFeatureId, 4, 5, 6, 7};
+static const uint8_t kMainActionFeatureOrder[kMainActionFeatureCount] = {3, 8, 9, 10, 11, 12, kMainActionFeatureExitId};
 constexpr uint32_t kStealthConfirmArmMs = 3000;
 constexpr uint32_t kStealthWakeMs = 1000;
-constexpr uint32_t kLowMemoryReminderFreeThreshold = 6 * 1024;
-constexpr uint32_t kLowMemoryReminderLargestThreshold = 4 * 1024;
 constexpr uint32_t kLowMemoryReminderSuppressMs = 5 * 60 * 1000;
 static const char *kSetupRootItems[] = {u8"返回", u8"GROUP設定", u8"UI設定", u8"裝置管理", u8"罐頭訊息",
                                         u8"儲存並重新開機"};
@@ -11677,12 +11720,13 @@ void Screen::drawHermesXMain(OLEDDisplay *display, OLEDDisplayUiState * /*state*
 
     const int16_t timeY = originY + (compactLayout ? 11 : 14);
     const int16_t customTimeMaxW = measurePattanakarnClockText("88:88:88");
-    const bool useCustomTimeFont = (contentW > 0) && (customTimeMaxW > 0) && (customTimeMaxW <= contentW);
+    const bool useCustomTimeFont =
+        !gLowMemoryProtectionActive && (contentW > 0) && (customTimeMaxW > 0) && (customTimeMaxW <= contentW);
     const bool useDirectTftClock = canUseDirectHermesXHomeClock(display);
     const uint16_t neonGlowOuterFg = TFTDisplay::rgb565(0x1A, 0x3F, 0xD6);
     const uint16_t neonGlowInnerFg = TFTDisplay::rgb565(0x4C, 0xD9, 0xFF);
     const uint16_t neonCoreFg = TFTDisplay::rgb565(0xFE, 0xFF, 0xFF);
-    if (!hasValidTime && !useDirectTftClock) {
+    if (!hasValidTime && !useDirectTftClock && !gLowMemoryProtectionActive) {
         drawHermesXHomeDog(display, width, timeY, compactLayout);
     } else if (useDirectTftClock) {
         // TFT home clock is rendered after ui->update() via direct color drawing.
@@ -12073,7 +12117,9 @@ void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*stat
     if (HermesXInterfaceModule::instance) {
         lampOn = HermesXInterfaceModule::instance->isEmergencyLampEnabled();
     }
-    if (hermesActionSelected < 0 || hermesActionSelected >= static_cast<int8_t>(kMainActionCount)) {
+    const uint8_t currentActionCount = hermesActionFeatureMenuActive ? kMainActionFeatureCount : kMainActionPrimaryCount;
+    const uint8_t *currentActionOrder = hermesActionFeatureMenuActive ? kMainActionFeatureOrder : kMainActionPrimaryOrder;
+    if (hermesActionSelected < 0 || hermesActionSelected >= static_cast<int8_t>(currentActionCount)) {
         hermesActionSelected = 0;
     }
 
@@ -12098,16 +12144,17 @@ void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*stat
         display->setColor(OLEDDISPLAY_COLOR::WHITE);
 #endif
 
-        static const char *kTileLabelExact[kMainActionCount] = {
+        static const char *kTileLabelExact[kMainActionIdCount] = {
             u8"潛行模式", u8"緊急照明燈", "GPS", u8"TAK MODE", u8"休眠", "Home", u8"頻道", u8"設定", "MSG", "ONLINE",
-            "TRACE", "GROUP", u8"尋人模組",
+            "TRACE", "GROUP", u8"尋人模組", u8"功能", u8"退出",
         };
-        static const char *kTileLabelCompact[kMainActionCount] = {
+        static const char *kTileLabelCompact[kMainActionIdCount] = {
             u8"潛行", u8"照明", "GPS", "TAK", u8"休眠", "Home", u8"頻道", u8"設定", "MSG", "ON", "TR", "GRP", u8"尋人",
+            u8"功能", u8"退出",
         };
         const bool compactLayout = (width < 180 || height < 100);
-        bool tileHasState[kMainActionCount] = {true, true, true, true, false, false, false, false, false, false, false, false, false};
-        bool tileState[kMainActionCount] = {stealthOn, lampOn, gpsOn, takOn, false, false, false, false, false, false, false, false, false};
+        bool tileHasState[kMainActionIdCount] = {true, true, true, true, false, false, false, false, false, false, false, false, false, false, false};
+        bool tileState[kMainActionIdCount] = {stealthOn, lampOn, gpsOn, takOn, false, false, false, false, false, false, false, false, false, false, false};
         tileHasState[8] = hasRecentMessages;
         tileState[8] = recentUnread;
         tileHasState[9] = (gOnlineNodeState.count > 0);
@@ -12389,6 +12436,22 @@ void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*stat
                     drawFinderRadarIconShape(display, cx, cy + 1, 10, true);
                     break;
                 }
+                case 13: { // 功能（小圖）
+                    display->drawRect(cx - 10, cy - 9, 7, 7);
+                    display->drawRect(cx + 3, cy - 9, 7, 7);
+                    display->drawRect(cx - 10, cy + 4, 7, 7);
+                    display->drawRect(cx + 3, cy + 4, 7, 7);
+                    break;
+                }
+                case 14: { // 退出（小圖）
+                    display->drawLine(cx - 9, cy, cx + 8, cy);
+                    display->drawLine(cx - 9, cy, cx - 2, cy - 7);
+                    display->drawLine(cx - 9, cy, cx - 2, cy + 7);
+                    display->drawLine(cx + 3, cy - 9, cx + 9, cy - 9);
+                    display->drawLine(cx + 9, cy - 9, cx + 9, cy + 9);
+                    display->drawLine(cx + 9, cy + 9, cx + 3, cy + 9);
+                    break;
+                }
                 default:
                     break;
                 }
@@ -12655,6 +12718,36 @@ void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*stat
                 drawFinderRadarIconShape(display, cx, iy + ih / 2, radarR, false);
                 break;
             }
+            case 13: { // 功能
+                const int16_t cell = std::max<int16_t>(10, std::min<int16_t>(base / 3 + 6, 20));
+                const int16_t gap = std::max<int16_t>(4, cell / 3);
+                const int16_t gridW = cell * 2 + gap;
+                const int16_t gridH = cell * 2 + gap;
+                const int16_t gx = cx - gridW / 2;
+                const int16_t gy = iy + (ih - gridH) / 2;
+                display->drawRect(gx, gy, cell, cell);
+                display->drawRect(gx + cell + gap, gy, cell, cell);
+                display->drawRect(gx, gy + cell + gap, cell, cell);
+                display->drawRect(gx + cell + gap, gy + cell + gap, cell, cell);
+                display->drawLine(gx + cell / 2, gy + cell / 2, gx + cell + gap + cell / 2, gy + cell / 2);
+                display->drawLine(gx + cell / 2, gy + cell / 2, gx + cell / 2, gy + cell + gap + cell / 2);
+                break;
+            }
+            case 14: { // 退出
+                const int16_t arrowW = std::max<int16_t>(24, base / 2 + 16);
+                const int16_t arrowX = cx - arrowW / 3;
+                const int16_t arrowY = iy + ih / 2;
+                display->drawLine(arrowX - arrowW / 2, arrowY, arrowX + arrowW / 2, arrowY);
+                display->drawLine(arrowX - arrowW / 2, arrowY, arrowX - arrowW / 2 + 9, arrowY - 9);
+                display->drawLine(arrowX - arrowW / 2, arrowY, arrowX - arrowW / 2 + 9, arrowY + 9);
+                const int16_t doorX = arrowX + arrowW / 3;
+                const int16_t doorY = arrowY - std::max<int16_t>(14, base / 3);
+                const int16_t doorW = std::max<int16_t>(16, base / 3);
+                const int16_t doorH = std::max<int16_t>(28, base / 2 + 8);
+                display->drawRect(doorX, doorY, doorW, doorH);
+                display->drawLine(doorX + doorW - 4, arrowY, doorX + doorW - 2, arrowY);
+                break;
+            }
             default:
                 break;
             }
@@ -12721,15 +12814,20 @@ void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*stat
 
         auto wrapActionIndex = [&](int index) -> int {
             while (index < 0) {
-                index += kMainActionCount;
+                index += currentActionCount;
             }
-            return index % kMainActionCount;
+            return index % currentActionCount;
         };
 
         const int actionSlots[kMainActionVisibleSlots] = {
             wrapActionIndex(hermesActionSelected - 1),
             hermesActionSelected,
             wrapActionIndex(hermesActionSelected + 1),
+        };
+        const uint8_t actionIds[kMainActionVisibleSlots] = {
+            currentActionOrder[actionSlots[0]],
+            currentActionOrder[actionSlots[1]],
+            currentActionOrder[actionSlots[2]],
         };
 
         const int16_t outerPad = compactLayout ? 2 : 6;
@@ -12786,14 +12884,14 @@ void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*stat
         display->drawRect(leftCardX, sideY, sideDrawW, sideH);
         display->drawRect(rightCardX, sideY, sideDrawW, sideH);
 
-        drawActionGlyph(actionSlots[0], leftCardX, sideY, sideDrawW, sideH, false);
-        drawActionLabel(actionSlots[0], leftCardX, sideY, sideDrawW, sideH, false, kTileLabelCompact[actionSlots[0]]);
+        drawActionGlyph(actionIds[0], leftCardX, sideY, sideDrawW, sideH, false);
+        drawActionLabel(actionIds[0], leftCardX, sideY, sideDrawW, sideH, false, kTileLabelCompact[actionIds[0]]);
 
-        drawActionGlyph(actionSlots[1], centerX, centerY, centerW, centerH, true);
-        drawActionLabel(actionSlots[1], centerX, centerY, centerW, centerH, true, kTileLabelExact[actionSlots[1]]);
+        drawActionGlyph(actionIds[1], centerX, centerY, centerW, centerH, true);
+        drawActionLabel(actionIds[1], centerX, centerY, centerW, centerH, true, kTileLabelExact[actionIds[1]]);
 
-        drawActionGlyph(actionSlots[2], rightCardX, sideY, sideDrawW, sideH, false);
-        drawActionLabel(actionSlots[2], rightCardX, sideY, sideDrawW, sideH, false, kTileLabelCompact[actionSlots[2]]);
+        drawActionGlyph(actionIds[2], rightCardX, sideY, sideDrawW, sideH, false);
+        drawActionLabel(actionIds[2], rightCardX, sideY, sideDrawW, sideH, false, kTileLabelCompact[actionIds[2]]);
 
         const int16_t midY = height / 2;
         const int16_t arrowInset = compactLayout ? 3 : 6;
@@ -15556,10 +15654,20 @@ int32_t Screen::runOnce()
         }
     }
 
-    if (!lowMemoryReminderVisible && showingNormalScreen && screenOn && millis() >= lowMemoryReminderSuppressUntilMs) {
+    if (showingNormalScreen && screenOn) {
         const uint32_t freeHeap = memGet.getFreeHeap();
         const uint32_t largest = memGet.getLargestFreeBlock();
-        if (freeHeap < kLowMemoryReminderFreeThreshold || largest < kLowMemoryReminderLargestThreshold) {
+        if (releaseLowMemoryProtectionIfRecovered(freeHeap, largest)) {
+            lowMemoryReminderTriggerFree = freeHeap;
+            lowMemoryReminderTriggerLargest = largest;
+            snprintf(lowMemoryProtectionStatus, sizeof(lowMemoryProtectionStatus), u8"Heap 已恢復");
+            setFastFramerate();
+        }
+        const bool lowMemoryDanger = freeHeap < kLowMemoryReminderFreeThreshold || largest < kLowMemoryReminderLargestThreshold;
+        if (lowMemoryDanger) {
+            activateLowMemoryProtection(freeHeap, largest);
+        }
+        if (!lowMemoryReminderVisible && millis() >= lowMemoryReminderSuppressUntilMs && lowMemoryDanger) {
             lowMemoryReminderVisible = true;
             lowMemoryReminderSelected = 0;
             lowMemoryReminderTriggerFree = freeHeap;
@@ -17500,6 +17608,17 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
         gTraceRouteNodeState.detailCursor = kTraceRouteDetailActionRow;
         return showTraceRouteNodeListPage();
     };
+    auto returnToPrimaryFeatureEntry = [&]() {
+        hermesActionFeatureMenuActive = false;
+        hermesActionSelected = kMainActionFeatureEntryIndex;
+        hermesActionLastNavAtMs = 0;
+        hermesActionLastNavDir = 0;
+    };
+    const uint8_t currentActionCount = hermesActionFeatureMenuActive ? kMainActionFeatureCount : kMainActionPrimaryCount;
+    const uint8_t *currentActionOrder = hermesActionFeatureMenuActive ? kMainActionFeatureOrder : kMainActionPrimaryOrder;
+    if (hermesActionSelected < 0 || hermesActionSelected >= static_cast<int8_t>(currentActionCount)) {
+        hermesActionSelected = 0;
+    }
 
     if (hermesActionStealthConfirmVisible) {
         bool yesArmed = true;
@@ -17544,6 +17663,11 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
     }
 
     if (isCancel) {
+        if (hermesActionFeatureMenuActive) {
+            returnToPrimaryFeatureEntry();
+            setFastFramerate();
+            return true;
+        }
         showNextFrame();
         setFastFramerate();
         return true;
@@ -17553,9 +17677,9 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
         int selected = hermesActionSelected;
         selected += navDir;
         while (selected < 0) {
-            selected += kMainActionCount;
+            selected += currentActionCount;
         }
-        selected %= kMainActionCount;
+        selected %= currentActionCount;
         hermesActionSelected = selected;
         setFastFramerate();
         return true;
@@ -17565,7 +17689,15 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesActionSelected == 0) {
+    const uint8_t selectedAction = currentActionOrder[hermesActionSelected];
+    if (selectedAction == kMainActionFeatureId) {
+        hermesActionFeatureMenuActive = true;
+        hermesActionSelected = 0;
+        hermesActionLastNavAtMs = 0;
+        hermesActionLastNavDir = 0;
+    } else if (selectedAction == kMainActionFeatureExitId) {
+        returnToPrimaryFeatureEntry();
+    } else if (selectedAction == 0) {
         bool needsReboot = false;
         if (!isStealthModeActive()) {
             if (isTakModeActive()) {
@@ -17585,12 +17717,12 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
                 rebootAtMsec = millis() + 1500;
             }
         }
-    } else if (hermesActionSelected == 1) {
+    } else if (selectedAction == 1) {
         if (HermesXInterfaceModule::instance) {
             const bool next = !HermesXInterfaceModule::instance->isEmergencyLampEnabled();
             HermesXInterfaceModule::instance->setEmergencyLampEnabled(next);
         }
-    } else if (hermesActionSelected == 2) {
+    } else if (selectedAction == 2) {
         if (ui && framesetInfo.positions.settings < framesetInfo.frameCount) {
 #if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
     defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
@@ -17609,33 +17741,33 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
         } else if (screen) {
             screen->print("GPS page unavailable\n");
         }
-    } else if (hermesActionSelected == 3) {
+    } else if (selectedAction == 3) {
         if (screen && !screen->showTakModePage()) {
             screen->print("TAK page unavailable\n");
         } else if (!screen && ui && framesetInfo.positions.takMode < framesetInfo.frameCount) {
             ui->switchToFrame(framesetInfo.positions.takMode);
         }
-    } else if (hermesActionSelected == 4) {
+    } else if (selectedAction == 4) {
         if (screen) {
             screen->print("Sleeping...\n");
         }
         runPreDeepSleepHook(SleepPreHookParams{BUTTON_LONGPRESS_MS});
         ::doDeepSleep(Default::getConfiguredOrDefaultMs(config.power.sds_secs), false, false);
-    } else if (hermesActionSelected == 5) {
+    } else if (selectedAction == 5) {
         openHermesMainFrame();
-    } else if (hermesActionSelected == 6) {
+    } else if (selectedAction == 6) {
         openHermesShareFrame();
-    } else if (hermesActionSelected == 7) {
+    } else if (selectedAction == 7) {
         openHermesFastSetupRoot();
-    } else if (hermesActionSelected == 8) {
+    } else if (selectedAction == 8) {
         openRecentTextMessageList();
-    } else if (hermesActionSelected == 9) {
+    } else if (selectedAction == 9) {
         hermesFinderUiMode = HermesFinderUiMode::None;
         openOnlineNodeList();
-    } else if (hermesActionSelected == 10) {
+    } else if (selectedAction == 10) {
         hermesFinderUiMode = HermesFinderUiMode::None;
         openTraceRouteNodeList();
-    } else if (hermesActionSelected == 11) {
+    } else if (selectedAction == 11) {
         gGroupNodeState.menuCursor = 1;
         gGroupNodeState.nodeListVisible = false;
         gGroupNodeState.listCursor = 0;
@@ -17643,7 +17775,7 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
         gGroupNodeState.detailCursor = 0;
         hermesSetupReturnToGroupMenu = false;
         showGroupNodeListPage();
-    } else if (hermesActionSelected == 12) {
+    } else if (selectedAction == 12) {
         hermesFinderUiMode = HermesFinderUiMode::Menu;
         hermesFinderMenuSelected = 1;
         showFinderListPageSafely(true);
@@ -17716,6 +17848,9 @@ bool Screen::handleLowMemoryReminderInput(const InputEvent *event)
         snprintf(lowMemoryProtectionStatus, sizeof(lowMemoryProtectionStatus), u8"已清除 %d 筆節點", removed);
         lowMemoryReminderTriggerFree = memGet.getFreeHeap();
         lowMemoryReminderTriggerLargest = memGet.getLargestFreeBlock();
+        if (releaseLowMemoryProtectionIfRecovered(lowMemoryReminderTriggerFree, lowMemoryReminderTriggerLargest)) {
+            snprintf(lowMemoryProtectionStatus, sizeof(lowMemoryProtectionStatus), u8"已清除 %d 筆，Heap恢復", removed);
+        }
         LOG_WARN("[LowMemory] protection cleared NodeDB removed=%d free=%u largest=%u", removed, lowMemoryReminderTriggerFree,
                  lowMemoryReminderTriggerLargest);
     } else {
@@ -19861,6 +19996,9 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                     swapEnabled ? meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN
                                 : meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP;
                 saveSetupSegments(SEGMENT_MODULECONFIG);
+                if (rotaryEncoderInterruptImpl1) {
+                    rotaryEncoderInterruptImpl1->applyConfiguredEvents();
+                }
                 hermesSetupToast = swapEnabled ? u8"旋鈕對調已啟用" : u8"旋鈕對調已關閉";
                 hermesSetupToastUntilMs = millis() + 1500;
                 resetMenu(HermesFastSetupPage::UiMenu);
@@ -22237,7 +22375,8 @@ int Screen::handleInputEvent(const InputEvent *event)
             const auto runState = cannedMessageModule->getRunState();
             const bool cannedInactive =
                 (runState == CANNED_MESSAGE_RUN_STATE_DISABLED || runState == CANNED_MESSAGE_RUN_STATE_INACTIVE);
-            const bool wantsHomeCannedOpen = isRotary && cannedInactive && (isCw || isCcw || hasRotaryFallback);
+            const bool wantsHomeCannedOpen =
+                !gLowMemoryProtectionActive && isRotary && cannedInactive && (isCw || isCcw || hasRotaryFallback);
             if (wantsHomeCannedOpen && cannedMessageModule->openMenu()) {
                 setFastFramerate();
                 return 0;
@@ -22590,6 +22729,9 @@ bool Screen::shouldShowHermesXMenuFooter(uint8_t frameIndex) const
     (void)frameIndex;
     return false;
 #else
+    if (gLowMemoryProtectionActive) {
+        return false;
+    }
     if (!showingNormalScreen || !ui) {
         return false;
     }
@@ -22639,12 +22781,16 @@ bool Screen::showHermesXActionPage()
 #if defined(HERMESX_TEST_DISABLE_HERMES_PAGES)
     return false;
 #else
+    if (gLowMemoryProtectionActive) {
+        return false;
+    }
     if (!showingNormalScreen || !ui) {
         return false;
     }
     if (framesetInfo.positions.mainAction >= framesetInfo.frameCount) {
         return false;
     }
+    hermesActionFeatureMenuActive = false;
     hermesActionSelected = kMainActionHomeIndex;
     hermesActionLastNavAtMs = 0;
     hermesActionLastNavDir = 0;

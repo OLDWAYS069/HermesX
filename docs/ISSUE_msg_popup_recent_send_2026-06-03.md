@@ -248,4 +248,4 @@ MSG 詳細訊息頁中文不再使用固定 1x / 2x；改以 `FONT_HEIGHT_MEDIUM
 - 使用者正在查看 Recent Send 時，新訊息插入後會保留目前選取訊息、詳細訊息與捲動位置。
 
 `platformio run -e heltec-wireless-tracker -j 4` 已編譯成功，CIV build 版本為
-`HXB_C0.3.2_20260604_1736`。尚待實機驗證 popup、查看操作、詳細訊息捲動、Press 返回列表與詳細訊息中英文字級一致性。
+`HXB_C0.3.2_20260604_1433`。尚待實機驗證 popup、查看操作、詳細訊息捲動與 Press 返回列表行為。

@@ -6,6 +6,15 @@
 
 RotaryEncoderInterruptImpl1 *rotaryEncoderInterruptImpl1;
 
+namespace
+{
+bool isHermesXRotaryDirectionSwapped(char configuredCw, char configuredCcw)
+{
+    return configuredCw == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP) &&
+           configuredCcw == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
+}
+} // namespace
+
 RotaryEncoderInterruptImpl1::RotaryEncoderInterruptImpl1() : RotaryEncoderInterruptBase("rotEnc1")
 {
 #ifdef ARCH_ESP32
@@ -39,13 +48,33 @@ bool RotaryEncoderInterruptImpl1::init()
         (configuredPress == eventNone)
             ? static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT)
             : configuredPress;
+    const bool directionSwapped = isHermesXRotaryDirectionSwapped(configuredCw, configuredCcw);
 
     // moduleConfig.canned_message.ext_notification_module_output
     RotaryEncoderInterruptBase::init(pinA, pinB, pinPress, eventCw, eventCcw, eventPressed,
                                      RotaryEncoderInterruptImpl1::handleIntA, RotaryEncoderInterruptImpl1::handleIntB,
-                                     RotaryEncoderInterruptImpl1::handleIntPressed);
+                                     RotaryEncoderInterruptImpl1::handleIntPressed, directionSwapped);
     inputBroker->registerSource(this);
     return true;
+}
+
+void RotaryEncoderInterruptImpl1::applyConfiguredEvents()
+{
+    const char configuredCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
+    const char configuredCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
+    const char configuredPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
+    const char eventNone = static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_NONE);
+    const char eventCw =
+        (configuredCw == eventNone) ? static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN)
+                                    : configuredCw;
+    const char eventCcw =
+        (configuredCcw == eventNone) ? static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP)
+                                     : configuredCcw;
+    const char eventPressed =
+        (configuredPress == eventNone)
+            ? static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT)
+            : configuredPress;
+    setEventMapping(eventCw, eventCcw, eventPressed, isHermesXRotaryDirectionSwapped(configuredCw, configuredCcw));
 }
 
 void RotaryEncoderInterruptImpl1::handleIntA()

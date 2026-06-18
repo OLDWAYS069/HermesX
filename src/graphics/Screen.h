@@ -898,6 +898,7 @@ class Screen : public concurrency::OSThread
     int8_t hermesSetupLastNavDir = 0;
     uint32_t hermesUpdateIntroStartedAtMs = 0;
     int8_t hermesActionSelected = 0;
+    bool hermesActionFeatureMenuActive = false;
     uint32_t hermesActionLastNavAtMs = 0;
     int8_t hermesActionLastNavDir = 0;
     bool hermesSetupReturnToGroupMenu = false;
@@ -916,7 +917,7 @@ class Screen : public concurrency::OSThread
     bool hermesFinderPulseSendingVisible = false;
     uint32_t hermesFinderPulseSendingShownAtMs = 0;
     bool lowMemoryReminderVisible = false;
-    uint8_t lowMemoryReminderSelected = 1; // 0=later, 1=go clean
+    uint8_t lowMemoryReminderSelected = 0; // 0=exit, 1=clean nodes
     uint32_t lowMemoryReminderSuppressUntilMs = 0;
     uint32_t lowMemoryReminderTriggerFree = 0;
     uint32_t lowMemoryReminderTriggerLargest = 0;
