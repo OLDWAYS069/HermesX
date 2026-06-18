@@ -1,7 +1,7 @@
 # MSG Popup / Recent Send 已知問題
 
-日期：2026-06-03
-狀態：程式碼已修正並完成編譯，尚未實機驗證
+日期：2026-06-03  
+狀態：程式碼已修正並完成編譯，尚未實機驗證  
 範圍：`src/graphics/Screen.cpp`、`src/modules/CannedMessageModule.cpp`、TFT 色彩區域與 HermesX 中文字型
 
 ## 正確需求邊界
@@ -247,4 +247,5 @@ MSG 詳細訊息頁中文不再使用固定 1x / 2x；改以 `FONT_HEIGHT_MEDIUM
 - 實體 Press 在列表頁會依照目前游標執行返回或開啟訊息；詳細頁 Press / Select 會回到 Recent Send 列表。
 - 使用者正在查看 Recent Send 時，新訊息插入後會保留目前選取訊息、詳細訊息與捲動位置。
 
-此檢查表來自 CIV popup 修正同步；GOV 版同步後仍需重新編譯與實機驗證 popup、查看操作、詳細訊息捲動、Press 返回列表與詳細訊息中英文字級一致性。
+`platformio run -e heltec-wireless-tracker` 已編譯成功，GOV build 版本為
+`HXB_G0.3.7_20260619_0133`。尚待實機驗證 popup、查看操作、詳細訊息捲動與 Press 返回列表行為。

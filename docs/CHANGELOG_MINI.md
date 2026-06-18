@@ -1,3 +1,10 @@
+## 2026-06-19
+- 建立 `HermesX_G0.3.7` GOV 分支，顯示版號更新為 `HXB_G0.3.7`，保留 GOV 版 EMAC / EM UI / Lighthouse 行為。
+- 同步 CIV C0.3.7 的共享 UI/Input 修正：主選單新增 `功能` 子頁，收納 `TAK MODE`、`MSG`、`ONLINE`、`TRACE`、`GROUP`、`尋人模組`，並提供可見的 `退出` 項目。
+- 同步 HEAP 保護模式與旋鈕方向對調修正；低 heap 時會停用較重的 Home/GPS direct UI 路徑，旋鈕對調設定會即時套用到 rotary driver。
+- `heltec-wireless-tracker` 編譯成功，GOV build 版本為 `HXB_G0.3.7_20260619_0133`。
+- 韌體產物已依 handoff 搬到 `/Users/oldways/Desktop/HermesX韌體/HXB_G0.3.7_20260619_0133.bin` 與 `.factory.bin`。
+
 ## 2026-06-06
 - 同步 CIV 端 2026-06-04 之後的 ONLINE / GROUP detail、Direct MSG composer、TraceRoute、Recent Send popup、NodeDB 最近聽到判定與 WiFi 更新檔名修正到 GOV，並保留 GOV 版 EMAC / EM UI 行為。
 - `docs/HermesX 2026v3.md` 已轉成 GOV 版功能邊界，避免把 CIV 關閉 EMAC 的描述帶進 GOV 文件。

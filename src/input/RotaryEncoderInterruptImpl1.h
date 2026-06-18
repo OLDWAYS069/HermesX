@@ -16,6 +16,7 @@ class RotaryEncoderInterruptImpl1 : public RotaryEncoderInterruptBase
   public:
     RotaryEncoderInterruptImpl1();
     bool init();
+    void applyConfiguredEvents();
     static void handleIntA();
     static void handleIntB();
     static void handleIntPressed();

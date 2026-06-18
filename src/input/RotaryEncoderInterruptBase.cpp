@@ -17,7 +17,7 @@ RotaryEncoderInterruptBase::RotaryEncoderInterruptBase(const char *name) : concu
 void RotaryEncoderInterruptBase::init(
     uint8_t pinA, uint8_t pinB, uint8_t pinPress, char eventCw, char eventCcw, char eventPressed,
     //    std::function<void(void)> onIntA, std::function<void(void)> onIntB, std::function<void(void)> onIntPress) :
-    void (*onIntA)(), void (*onIntB)(), void (*onIntPress)())
+    void (*onIntA)(), void (*onIntB)(), void (*onIntPress)(), bool directionSwapped)
 {
     this->_pinA = pinA;
     this->_pinB = pinB;
@@ -25,9 +25,7 @@ void RotaryEncoderInterruptBase::init(
     this->_onIntA = onIntA;
     this->_onIntB = onIntB;
     this->_onIntPress = onIntPress;
-    this->_eventCw = eventCw;
-    this->_eventCcw = eventCcw;
-    this->_eventPressed = eventPressed;
+    setEventMapping(eventCw, eventCcw, eventPressed, directionSwapped);
 
     pinMode(pinPress, INPUT_PULLUP);
     pinMode(this->_pinA, INPUT_PULLUP);
@@ -39,7 +37,17 @@ void RotaryEncoderInterruptBase::init(
     this->rotaryLevelB = digitalRead(this->_pinB);
     this->lastRotaryState = ((this->rotaryLevelA == HIGH) ? 1 : 0) << 1 | ((this->rotaryLevelB == HIGH) ? 1 : 0);
     this->rotaryStep = 0;
-    LOG_INFO("Rotary initialized (%d, %d, %d)", this->_pinA, this->_pinB, pinPress);
+    LOG_INFO("Rotary initialized (%d, %d, %d) swapped=%d", this->_pinA, this->_pinB, pinPress,
+             this->_directionSwapped ? 1 : 0);
+}
+
+void RotaryEncoderInterruptBase::setEventMapping(char eventCw, char eventCcw, char eventPressed, bool directionSwapped)
+{
+    this->_eventCw = eventCw;
+    this->_eventCcw = eventCcw;
+    this->_eventPressed = eventPressed;
+    this->_directionSwapped = directionSwapped;
+    this->rotaryStep = 0;
 }
 
 void RotaryEncoderInterruptBase::attachInterrupts()
@@ -98,10 +106,10 @@ int32_t RotaryEncoderInterruptBase::runOnce()
         e.inputEvent = this->_eventPressed;
     } else if (this->action == ROTARY_ACTION_CW) {
         LOG_DEBUG("Rotary event CW");
-        e.inputEvent = this->_eventCw;
+        e.inputEvent = this->_directionSwapped ? this->_eventCcw : this->_eventCw;
     } else if (this->action == ROTARY_ACTION_CCW) {
         LOG_DEBUG("Rotary event CCW");
-        e.inputEvent = this->_eventCcw;
+        e.inputEvent = this->_directionSwapped ? this->_eventCw : this->_eventCcw;
     }
 
     if (e.inputEvent != meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_NONE) {

@@ -2,6 +2,22 @@
 
 本文件為可對外發布版本的更新紀錄，整理 HermesX 韌體的重要功能更新、體驗調整與修正項目。
 
+## 2026-06-19
+
+### 同步
+
+- 建立 `HermesX_G0.3.7` GOV 分支，顯示版號更新為 `HXB_G0.3.7`，保留 GOV 版 EMAC / EM UI / Lighthouse 行為。
+- 同步 CIV C0.3.7 的共享 UI/Input 修正：主選單新增 `功能` 子頁，收納 `TAK MODE`、`MSG`、`ONLINE`、`TRACE`、`GROUP`、`尋人模組`，並提供可見的 `退出` 項目。
+- 同步 HEAP 保護模式與旋鈕方向對調修正；低 heap 時會停用較重的 Home/GPS direct UI 路徑，旋鈕對調設定會即時套用到 rotary driver。
+
+### 驗證
+
+- `git diff --check` 通過。
+- `platformio run -e heltec-wireless-tracker` 編譯成功，GOV build 版本為 `HXB_G0.3.7_20260619_0133`。
+- 已依 `docs/AI_UPDATE_HANDOFF.md` 搬移韌體產物：
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_G0.3.7_20260619_0133.bin`
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_G0.3.7_20260619_0133.factory.bin`
+
 ## 2026-06-06
 
 ### 同步

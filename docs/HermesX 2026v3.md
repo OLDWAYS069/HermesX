@@ -26,7 +26,7 @@ title: HermesX 2026v3
 > 在沒有網路或行動訊號的時候，HermesX 讓 LoRa 裝置仍能「看得見、操得到、傳得出去」。
 
 **HermesX** 是基於 [Meshtastic](https://github.com/meshtastic/Meshtastic-device) 的客製化韌體分支，主要開發與驗證目標是 `heltec-wireless-tracker`。
-目前這份文件對應 `HermesX_G0.3.2` 的 `GOV` 版：由 `HermesX_0.2.9` 功能基底升版，保留 EMAC / EM UI、GROUP、尋人模組、ONLINE、TAK MODE、Fast Setup 與更新模式。
+目前這份文件對應 `HermesX_G0.3.7` 的 `GOV` 版：由 `HermesX_G0.3.2` 升版，保留 EMAC / EM UI、GROUP、尋人模組、ONLINE、TAK MODE、Fast Setup 與更新模式。
 
 :::warning
 `GOV` 版保留本機 EMAC 進入、遠端 `ACTIVATE: EMAC`、`@EmergencyActive`、`STATUS: LOST` 與 Lighthouse sleep 控制。
@@ -56,16 +56,21 @@ HermesX 的首頁以裝置端可讀性為主，顯示時間、日期、Role、�
 - `潛行模式`
 - `緊急照明燈`
 - `GPS`
-- `TAK MODE`
+- `功能`
 - `休眠`
 - `Home`
 - `頻道`
 - `設定`
+
+`功能` 子頁面包含：
+
+- `TAK MODE`
 - `MSG`
 - `ONLINE`
 - `TraceRoute`
 - `GROUP`
 - `尋人模組`
+- `退出`
 
 從 Home 短按進入主選單時，焦點會停在 `Home`，避免誤觸第一個高風險功能。
 
@@ -86,7 +91,7 @@ HermesX 內建多層快速設定，不需要每次都拿手機調整。
 
 ### ==GROUP 與同組節點==
 
-`GROUP` 是 HermesX G0.3.2 裡最重要的任務分組概念。
+`GROUP` 是 HermesX G0.3.7 裡最重要的任務分組概念。
 主選單進入 `GROUP` 後會先看到：
 
 - `GROUP設定`
@@ -172,7 +177,7 @@ Recent Send、訊息 detail 與 canned message 編輯流程已經和 HermesX 專
 
 ### ==更新模式==
 
-HermesX G0.3.2 保留裝置端更新流程。
+HermesX G0.3.7 保留裝置端更新流程。
 
 從：
 
@@ -197,7 +202,7 @@ WiFi / USB 手動更新頁會顯示目前版本、連線狀態、接收狀態、
 
 ## GOV 版功能邊界
 
-`HermesX_G0.3.2` 是 GOV 版，因此功能邊界如下：
+`HermesX_G0.3.7` 是 GOV 版，因此功能邊界如下：
 
 | 功能 | GOV 狀態 |
 |------|----------|
@@ -230,10 +235,10 @@ platformio run -e heltec-wireless-tracker
 - `.pio/build/heltec-wireless-tracker/firmware.bin`
 - `.pio/build/heltec-wireless-tracker/firmware.factory.bin`
 
-HermesX 顯示版號目前使用 `HXB_G0.3.2`；OTA / 韌體檔名會帶有建置時間，例如：
+HermesX 顯示版號目前使用 `HXB_G0.3.7`；OTA / 韌體檔名會帶有建置時間，例如：
 
 ```text
-HXB_G0.3.2_YYYYMMDD_HHMM
+HXB_G0.3.7_YYYYMMDD_HHMM
 ```
 
 ---
