@@ -56,6 +56,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <math.h>
 #include <time.h>
 // --- HermesX Remove TFT fast-path END
+#if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
+    defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
+#include "graphics/hermes_photo_boot_anim_160x80_color.h"
+#endif
 #include "graphics/images.h"
 #include "input/RotaryEncoderInterruptImpl1.h"
 #include "input/ScanAndSelect.h"
@@ -13305,7 +13309,7 @@ static void drawSetupUpdateTransitionPage(OLEDDisplay *display,
 
     const uint32_t elapsed = startedAtMs == 0 ? 0 : millis() - startedAtMs;
     const uint32_t phase = elapsed % kSetupUpdateIntroMs;
-    const int progress = std::min<int>(100, static_cast<int>((elapsed * 100U) / kSetupUpdateIntroMs));
+    const uint32_t clampedElapsed = std::min<uint32_t>(elapsed, kSetupUpdateIntroMs);
     const bool compactLayout = height <= 80;
     const int16_t lineH = FONT_HEIGHT_SMALL + 2;
     const int16_t barX = compactLayout ? 12 : 22;
@@ -13344,7 +13348,7 @@ static void drawSetupUpdateTransitionPage(OLEDDisplay *display,
 
     display->drawRect(barX, barY, barW, barH);
     const int16_t innerW = barW - 2;
-    const int16_t fillW = (innerW * progress) / 100;
+    const int16_t fillW = static_cast<int16_t>((static_cast<uint32_t>(innerW) * clampedElapsed) / kSetupUpdateIntroMs);
     if (fillW > 0) {
         display->fillRect(barX + 1, barY + 1, fillW, barH - 2);
     }
@@ -14847,7 +14851,36 @@ void Screen::handleSetOn(bool on, FrameCallback einkScreensaver)
 static FrameCallback bootScreenFrames[1];
 static bool bootScreenForceLogo = false;
 static bool bootScreenShowHermesWelcome = false;
+static bool showingBootScreen = true;
+static uint32_t bootScreenStartMs = 0;
+static bool hermesXBootWelcomeActive = false;
+static uint32_t hermesXBootWelcomeStartedAtMs = 0;
+static uint32_t hermesXBootWelcomeUntilMs = 0;
+static bool hermesXBootWelcomeDirectLogged = false;
+static bool hermesXBootHoldDirectLogged = false;
+static bool hermesXBootFrameWelcomeLogged = false;
+static bool hermesXBootFramePendingLogged = false;
+static bool hermesXBootHoldProgressLogged = false;
+static bool hermesXBootHoldRevealCompleteLogged = false;
+static int8_t hermesXBootHoldProgressLogBucket = -1;
+static constexpr uint32_t kHermesXBootWelcomeAnimMs = 3000;
+static constexpr uint32_t kHermesXBootWelcomeFinalHoldMs = 1200;
+static constexpr uint32_t kHermesXBootWelcomeTotalMs = kHermesXBootWelcomeAnimMs + kHermesXBootWelcomeFinalHoldMs;
+static constexpr uint32_t kHermesXBootWelcomeMaxStepMs = 50;
+static uint32_t hermesXBootWelcomeAnimElapsedMs = 0;
+static uint32_t hermesXBootWelcomeLastRenderAtMs = 0;
+#if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
+    defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
+static constexpr bool kHermesXBootAnimTftDirect = true;
+#else
+static constexpr bool kHermesXBootAnimTftDirect = false;
+#endif
 static void drawHermesXBootHoldFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
+#if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
+    defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
+static void renderDirectHermesPhotoBootFrame(TFTDisplay *tft, int16_t width, int16_t height, uint32_t elapsedMs);
+static void playDirectHermesPhotoBootWelcomeBlocking(TFTDisplay *tft, int16_t width, int16_t height);
+#endif
 
 void Screen::setup()
 {
@@ -14889,12 +14922,16 @@ void Screen::setup()
     // Set the utf8 conversion function
     dispdev->setFontTableLookupFunction(customFontTableLookup);
 
-    const bool showHermesWelcome =
 #if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS)
-        HermesXPowerGuard::guardEnabled() && !HermesXPowerGuard::bootHoldPending() && !HermesXPowerGuard::wokeFromSleep();
+    const bool hermesGuardEnabled = HermesXPowerGuard::guardEnabled();
+    const bool hermesBootHoldPending = HermesXPowerGuard::bootHoldPending();
+    const bool hermesWokeFromSleep = HermesXPowerGuard::wokeFromSleep();
 #else
-        false;
+    const bool hermesGuardEnabled = false;
+    const bool hermesBootHoldPending = false;
+    const bool hermesWokeFromSleep = false;
 #endif
+    const bool showHermesWelcome = hermesGuardEnabled && !hermesBootHoldPending;
 
 #ifdef USERPREFS_OEM_TEXT
     logo_timeout *= 2; // Double the time if we have a custom logo
@@ -14904,18 +14941,48 @@ void Screen::setup()
     logo_timeout = 3000;
 #endif
     bootScreenShowHermesWelcome = showHermesWelcome;
+    hermesXBootWelcomeActive = showHermesWelcome;
+    hermesXBootWelcomeStartedAtMs = 0;
+    hermesXBootWelcomeUntilMs = 0;
+    hermesXBootWelcomeAnimElapsedMs = 0;
+    hermesXBootWelcomeLastRenderAtMs = 0;
+    hermesXBootWelcomeDirectLogged = false;
+    hermesXBootHoldDirectLogged = false;
+    hermesXBootFrameWelcomeLogged = false;
+    hermesXBootFramePendingLogged = false;
+    hermesXBootHoldProgressLogged = false;
+    hermesXBootHoldRevealCompleteLogged = false;
+    hermesXBootHoldProgressLogBucket = -1;
+    LOG_INFO("[HermesBootAnim] setup guard=%d pending=%d woke=%d show=%d display=%dx%d timer_deferred=%d",
+             hermesGuardEnabled ? 1 : 0, hermesBootHoldPending ? 1 : 0, hermesWokeFromSleep ? 1 : 0,
+             showHermesWelcome ? 1 : 0, displayWidth, displayHeight, showHermesWelcome ? 1 : 0);
 
     // Add frames.
     EINK_ADD_FRAMEFLAG(dispdev, DEMAND_FAST);
     bootScreenFrames[0] = [this](OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y) -> void {
 #if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS)
         if (bootScreenShowHermesWelcome) {
+            if (!hermesXBootFrameWelcomeLogged) {
+                hermesXBootFrameWelcomeLogged = true;
+                LOG_INFO("[HermesBootAnim] boot callback welcome show=1 tft=%d", kHermesXBootAnimTftDirect ? 1 : 0);
+            }
+#if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
+    defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
+            display->setColor(OLEDDISPLAY_COLOR::BLACK);
+            display->fillRect(x, y, display->width(), display->height());
+            display->setColor(OLEDDISPLAY_COLOR::WHITE);
+#else
             drawHermesXBootHoldFrame(display, state, x, y);
+#endif
             return;
         }
 #endif
 #if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS)
         if (HermesXPowerGuard::guardEnabled() && HermesXPowerGuard::bootHoldPending()) {
+            if (!hermesXBootFramePendingLogged) {
+                hermesXBootFramePendingLogged = true;
+                LOG_INFO("[HermesBootAnim] boot callback pending hold dots");
+            }
             static const char *const kBootHoldDots[] = {".", "..", "...", "...."};
             const uint8_t phase = static_cast<uint8_t>((millis() / 500) % 4);
             drawFrameText(display, state, x, y, kBootHoldDots[phase]);
@@ -14933,7 +15000,16 @@ void Screen::setup()
             drawIconScreen(region, display, state, x, y);
         }
     };
-    alertFrames[0] = showHermesWelcome ? drawHermesXBootHoldFrame : bootScreenFrames[0];
+    if (showHermesWelcome) {
+#if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
+    defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
+        alertFrames[0] = bootScreenFrames[0];
+#else
+        alertFrames[0] = drawHermesXBootHoldFrame;
+#endif
+    } else {
+        alertFrames[0] = bootScreenFrames[0];
+    }
     ui->setFrames(alertFrames, 1);
     // No overlays.
     ui->setOverlays(nullptr, 0);
@@ -14943,10 +15019,6 @@ void Screen::setup()
 
     // Set up a log buffer with 3 lines, 32 chars each.
     dispdev->setLogBuffer(3, 32);
-
-    if (showHermesWelcome) {
-        startBootHoldReveal(1000);
-    }
 
 #ifdef SCREEN_MIRROR
     dispdev->mirrorScreen();
@@ -14976,12 +15048,51 @@ void Screen::setup()
     // Turn on the display.
     handleSetOn(true);
 
+#if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS)
+#if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
+    defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
+    bool hermesWelcomePlayedBlocking = false;
+    if (bootScreenShowHermesWelcome) {
+        auto *tft = static_cast<TFTDisplay *>(dispdev);
+        LOG_INFO("[HermesBootAnim] setup direct blocking welcome start");
+        playDirectHermesPhotoBootWelcomeBlocking(tft, dispdev->getWidth(), dispdev->getHeight());
+        LOG_INFO("[HermesBootAnim] setup direct blocking welcome done; defer meshtastic logo");
+        hermesWelcomePlayedBlocking = true;
+        hermesXBootWelcomeActive = false;
+        hermesXBootWelcomeStartedAtMs = 0;
+        hermesXBootWelcomeUntilMs = 0;
+        hermesXBootWelcomeAnimElapsedMs = 0;
+        hermesXBootWelcomeLastRenderAtMs = 0;
+        bootScreenShowHermesWelcome = false;
+        bootScreenStartMs = millis();
+        bootScreenForceLogo = true;
+        showingBootScreen = true;
+        showingNormalScreen = false;
+        setFrameImmediateDraw(bootScreenFrames);
+        setInterval(0);
+        runASAP = true;
+    }
+#endif
+#endif
+
+    const bool skipInitialUiUpdateForHermesWelcome =
+#if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS) &&                                      \
+    (defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) ||              \
+     defined(ST7789_CS) || defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS))
+        bootScreenShowHermesWelcome || hermesWelcomePlayedBlocking;
+#else
+        false;
+#endif
+    LOG_INFO("[HermesBootAnim] setup skip_initial_ui=%d", skipInitialUiUpdateForHermesWelcome ? 1 : 0);
+
     // On some ssd1306 clones, the first draw command is discarded, so draw it
     // twice initially. Skip this for EINK Displays to save a few seconds during boot
-    ui->update();
+    if (!skipInitialUiUpdateForHermesWelcome) {
+        ui->update();
 #ifndef USE_EINK
-    ui->update();
+        ui->update();
 #endif
+    }
     serialSinceMsec = millis();
 
 #if ARCH_PORTDUINO && !HAS_TFT
@@ -15080,6 +15191,7 @@ static bool pendingNormalFrames = false;
 static bool hermesXBootHoldActive = false;
 static bool hermesXBootHoldReveal = false;
 static bool hermesXBootHoldAlertStarted = false;
+static uint32_t hermesXBootHoldRevealStartedAtMs = 0;
 static uint32_t hermesXBootHoldRevealUntilMs = 0;
 static uint32_t hermesXBootHoldHeldMs = 0;
 static uint32_t hermesXBootHoldLongMs = 1;
@@ -15087,8 +15199,6 @@ static bool hermesXBootHoldBootScreenPending = false;
 static uint32_t hermesXBootHoldBootScreenAtMs = 0;
 static uint32_t hermesFinderTftFullRepaintUntilMs = 0;
 
-static bool showingBootScreen = true;
-static uint32_t bootScreenStartMs = 0;
 #ifdef USERPREFS_OEM_TEXT
 static bool showingOEMBootScreen = true;
 #endif
@@ -15110,6 +15220,12 @@ static float clamp01(float v)
     if (v > 1.0f)
         return 1.0f;
     return v;
+}
+
+static float easeInOut01(float v)
+{
+    const float t = clamp01(v);
+    return t * t * (3.0f - (2.0f * t));
 }
 
 static int16_t lerpI16(int16_t a, int16_t b, float t)
@@ -15168,27 +15284,193 @@ static void drawBootHoldPartialLine(OLEDDisplay *display, int16_t x0, int16_t y0
     }
 }
 
+#if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
+    defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
+static void drawDirectHermesPhotoBootAnimFrame(TFTDisplay *tft, int16_t width, int16_t height, uint8_t frameIndex)
+{
+    if (!tft || width <= 0 || height <= 0) {
+        return;
+    }
+    if (frameIndex >= HERMES_PHOTO_BOOT_ANIM_FRAMES) {
+        frameIndex = HERMES_PHOTO_BOOT_ANIM_FRAMES - 1;
+    }
+
+    static uint16_t row[HERMES_PHOTO_BOOT_ANIM_WIDTH];
+    const int16_t drawX = static_cast<int16_t>((width - HERMES_PHOTO_BOOT_ANIM_WIDTH) / 2);
+    const int16_t drawY = static_cast<int16_t>((height - HERMES_PHOTO_BOOT_ANIM_HEIGHT) / 2);
+    const size_t frameOffset = static_cast<size_t>(frameIndex) * HERMES_PHOTO_BOOT_ANIM_WIDTH * HERMES_PHOTO_BOOT_ANIM_HEIGHT;
+    for (int16_t yy = 0; yy < HERMES_PHOTO_BOOT_ANIM_HEIGHT; ++yy) {
+        for (int16_t xx = 0; xx < HERMES_PHOTO_BOOT_ANIM_WIDTH; ++xx) {
+            row[xx] = pgm_read_word(&hermes_photo_boot_anim_160x80[frameOffset + (yy * HERMES_PHOTO_BOOT_ANIM_WIDTH) + xx]);
+        }
+        tft->writeRow565(drawX, static_cast<int16_t>(drawY + yy), row, HERMES_PHOTO_BOOT_ANIM_WIDTH);
+    }
+}
+
+static void drawDirectBootHoldLine(TFTDisplay *tft, int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint16_t color)
+{
+    tft->drawLine565(x0, y0, x1, y1, color);
+    tft->drawLine565(x0, static_cast<int16_t>(y0 + 1), x1, static_cast<int16_t>(y1 + 1), color);
+}
+
+static void drawDirectBootHoldPartialLine(TFTDisplay *tft,
+                                          int16_t x0,
+                                          int16_t y0,
+                                          int16_t x1,
+                                          int16_t y1,
+                                          float t,
+                                          uint16_t color)
+{
+    const int16_t ex = lerpI16(x0, x1, t);
+    const int16_t ey = lerpI16(y0, y1, t);
+    drawDirectBootHoldLine(tft, x0, y0, ex, ey, color);
+}
+
+static void drawDirectBootHoldDot(TFTDisplay *tft, int16_t x, int16_t y, uint16_t color)
+{
+    tft->fillCircle565(x, y, 2, color);
+}
+
+static void renderDirectHermesPhotoBootVectorFrame(TFTDisplay *tft, int16_t width, int16_t height, uint32_t elapsedMs)
+{
+    if (!tft || width <= 0 || height <= 0) {
+        return;
+    }
+
+    constexpr uint32_t kBootAnimMs = 3000;
+    constexpr uint32_t kBootLogoDotsMs = 650;
+    constexpr uint32_t kBootLogoLineMs = 1450;
+    constexpr uint32_t kBootLogoLineEndMs = kBootLogoDotsMs + kBootLogoLineMs;
+    const uint32_t clampedMs = elapsedMs > kBootAnimMs ? kBootAnimMs : elapsedMs;
+
+    tft->fillRect565(0, 0, width, height, TFTDisplay::rgb565(0x00, 0x00, 0x00));
+    if (clampedMs >= kBootLogoLineEndMs) {
+        drawDirectHermesPhotoBootAnimFrame(tft, width, height, HERMES_PHOTO_BOOT_ANIM_FRAMES - 1);
+        return;
+    }
+
+    const int16_t drawX = static_cast<int16_t>((width - HERMES_PHOTO_BOOT_ANIM_WIDTH) / 2);
+    const int16_t drawY = static_cast<int16_t>((height - HERMES_PHOTO_BOOT_ANIM_HEIGHT) / 2);
+    struct DirectPt {
+        int16_t x;
+        int16_t y;
+    };
+    static const DirectPt kPts[] = {
+        {153, 40}, // right
+        {80, 4},   // top
+        {8, 40},   // left
+        {80, 77},  // bottom
+    };
+    static const uint8_t kNodeOrder[] = {2, 1, 0, 3};
+    static const uint8_t kEdges[][2] = {
+        {2, 1}, // left -> top
+        {1, 0}, // top -> right
+        {2, 3}, // left -> bottom
+    };
+    const uint16_t lineColor = TFTDisplay::rgb565(0xff, 0xff, 0xf0);
+
+    const uint32_t nodeStepMs = kBootLogoDotsMs / (sizeof(kNodeOrder) / sizeof(kNodeOrder[0]));
+    bool nodeVisible[sizeof(kPts) / sizeof(kPts[0])] = {false};
+    for (size_t i = 0; i < sizeof(kNodeOrder) / sizeof(kNodeOrder[0]); ++i) {
+        if (clampedMs >= i * nodeStepMs) {
+            nodeVisible[kNodeOrder[i]] = true;
+        }
+    }
+
+    if (clampedMs > kBootLogoDotsMs) {
+        const float progress =
+            easeInOut01(static_cast<float>(clampedMs - kBootLogoDotsMs) / static_cast<float>(kBootLogoLineMs));
+        float totalLength = 0.0f;
+        float lengths[sizeof(kEdges) / sizeof(kEdges[0])];
+        for (size_t i = 0; i < sizeof(kEdges) / sizeof(kEdges[0]); ++i) {
+            const DirectPt &a = kPts[kEdges[i][0]];
+            const DirectPt &b = kPts[kEdges[i][1]];
+            lengths[i] = edgeLength(a.x, a.y, b.x, b.y);
+            totalLength += lengths[i];
+        }
+
+        float remaining = progress * totalLength;
+        for (size_t i = 0; i < sizeof(kEdges) / sizeof(kEdges[0]); ++i) {
+            const uint8_t aIndex = kEdges[i][0];
+            const uint8_t bIndex = kEdges[i][1];
+            const DirectPt &a = kPts[aIndex];
+            const DirectPt &b = kPts[bIndex];
+            if (remaining >= lengths[i]) {
+                drawDirectBootHoldLine(tft, static_cast<int16_t>(drawX + a.x), static_cast<int16_t>(drawY + a.y),
+                                       static_cast<int16_t>(drawX + b.x), static_cast<int16_t>(drawY + b.y), lineColor);
+                nodeVisible[aIndex] = true;
+                nodeVisible[bIndex] = true;
+                remaining -= lengths[i];
+            } else if (remaining > 0.0f) {
+                const float partialT = lengths[i] > 0.0f ? remaining / lengths[i] : 1.0f;
+                drawDirectBootHoldPartialLine(tft, static_cast<int16_t>(drawX + a.x), static_cast<int16_t>(drawY + a.y),
+                                              static_cast<int16_t>(drawX + b.x), static_cast<int16_t>(drawY + b.y), partialT,
+                                              lineColor);
+                nodeVisible[aIndex] = true;
+                remaining = 0.0f;
+            }
+        }
+    }
+
+    for (size_t i = 0; i < sizeof(kPts) / sizeof(kPts[0]); ++i) {
+        if (nodeVisible[i]) {
+            drawDirectBootHoldDot(tft, static_cast<int16_t>(drawX + kPts[i].x), static_cast<int16_t>(drawY + kPts[i].y),
+                                  lineColor);
+        }
+    }
+}
+
+static void renderDirectHermesPhotoBootFrame(TFTDisplay *tft, int16_t width, int16_t height, uint32_t elapsedMs)
+{
+    if (!tft || width <= 0 || height <= 0) {
+        return;
+    }
+
+    renderDirectHermesPhotoBootVectorFrame(tft, width, height, elapsedMs);
+}
+
+static void renderDirectHermesPhotoBootProgressFrame(TFTDisplay *tft, int16_t width, int16_t height, uint32_t heldMs, uint32_t longPressMs)
+{
+    constexpr uint32_t kBootAnimMs = 3000;
+    const uint32_t mappedMs = longPressMs > 0 ? static_cast<uint32_t>((static_cast<uint64_t>(heldMs) * kBootAnimMs) / longPressMs) : heldMs;
+    renderDirectHermesPhotoBootFrame(tft, width, height, mappedMs);
+}
+
+static void playDirectHermesPhotoBootWelcomeBlocking(TFTDisplay *tft, int16_t width, int16_t height)
+{
+    if (!tft || width <= 0 || height <= 0) {
+        return;
+    }
+
+    constexpr uint32_t kFrameStepMs = 1000U / 60U;
+    uint32_t elapsedMs = 0;
+    while (elapsedMs < kHermesXBootWelcomeTotalMs) {
+        renderDirectHermesPhotoBootFrame(tft, width, height, elapsedMs);
+        delay(kFrameStepMs);
+        elapsedMs = std::min<uint32_t>(kHermesXBootWelcomeTotalMs, elapsedMs + kFrameStepMs);
+    }
+    renderDirectHermesPhotoBootFrame(tft, width, height, kHermesXBootWelcomeTotalMs);
+}
+#endif
+
 static void drawHermesXBootHoldFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
 {
     (void)state;
     if (!display)
         return;
 
-    // Normalized points (0..1) aligned to the latest reference mock.
+    // Normalized points (0..1) aligned to the photo/video boot logo reference.
     static const BootHoldPoint kPoints[] = {
-        {1.00f, 0.38f}, // extension start (forced to right edge below)
-        {0.90f, 0.38f}, // right node
+        {1.00f, 0.38f}, // unused legacy extension point
+        {0.90f, 0.40f}, // right node
         {0.50f, 0.08f}, // top node
         {0.07f, 0.40f}, // left node
-        {0.20f, 0.72f}, // left-bottom node
         {0.50f, 0.80f}, // bottom node
     };
     static const BootHoldEdge kEdges[] = {
-        {0, 1}, // draw from right to left
-        {1, 2},
-        {2, 3},
-        {3, 4},
-        {4, 5},
+        {3, 2}, // left -> top
+        {2, 1}, // top -> right
+        {3, 4}, // left -> bottom
     };
     static const bool kNodeEnabled[] = {
         false, // extension has no node dot
@@ -15213,7 +15495,7 @@ static void drawHermesXBootHoldFrame(OLEDDisplay *display, OLEDDisplayUiState *s
         pts[i].y = y + margin + static_cast<int16_t>(kPoints[i].ny * drawH);
     }
 
-    // Center the main shape (nodes 1..N) within the display, then pin the extension to the right edge.
+    // Center the main shape (nodes 1..N) within the display.
     int16_t minX = pts[1].x;
     int16_t maxX = pts[1].x;
     int16_t minY = pts[1].y;
@@ -15238,12 +15520,29 @@ static void drawHermesXBootHoldFrame(OLEDDisplay *display, OLEDDisplayUiState *s
         pts[i].x = clampI16(static_cast<int16_t>(pts[i].x + dx), clampLoX, clampHiX);
         pts[i].y = clampI16(static_cast<int16_t>(pts[i].y + dy), clampLoY, clampHiY);
     }
-    pts[0].x = x + display->width() - 1;
-    pts[0].y = pts[1].y;
+    const uint32_t now = millis();
+    uint32_t revealElapsedMs = 0;
+    if (hermesXBootHoldReveal) {
+        revealElapsedMs = (now >= hermesXBootHoldRevealStartedAtMs) ? (now - hermesXBootHoldRevealStartedAtMs) : 0;
+    }
+
+    constexpr uint32_t kBootLogoDotsMs = 650;
+    constexpr uint32_t kBootLogoLineMs = 1450;
+    const uint32_t lineStartMs = kBootLogoDotsMs;
+    const uint32_t lineEndMs = kBootLogoDotsMs + kBootLogoLineMs;
+    const bool showFinalLogo = hermesXBootHoldReveal && (revealElapsedMs >= lineEndMs);
+
+    if (showFinalLogo) {
+        display->setFont(FONT_LARGE);
+        display->setTextAlignment(TEXT_ALIGN_CENTER);
+        display->drawString(x + (display->width() / 2), y + ((display->height() - FONT_HEIGHT_LARGE) / 2), "Hermes");
+        return;
+    }
 
     float progress = 0.0f;
     if (hermesXBootHoldReveal) {
-        progress = 1.0f;
+        const uint32_t lineElapsedMs = revealElapsedMs > lineStartMs ? (revealElapsedMs - lineStartMs) : 0;
+        progress = easeInOut01(static_cast<float>(lineElapsedMs) / static_cast<float>(kBootLogoLineMs));
     } else if (hermesXBootHoldLongMs > 0) {
         progress = clamp01(static_cast<float>(hermesXBootHoldHeldMs) / static_cast<float>(hermesXBootHoldLongMs));
     }
@@ -15306,7 +15605,7 @@ static void drawHermesXBootHoldFrame(OLEDDisplay *display, OLEDDisplayUiState *s
 
         for (int i = 0; i < fullSegments; ++i) {
             const BootHoldSegment &seg = segments[i];
-            const uint8_t thickness = (seg.startNode == 0) ? 1 : 2;
+            const uint8_t thickness = 2;
             drawLineThick(display, seg.x0, seg.y0, seg.x1, seg.y1, thickness);
             nodeVisible[seg.startNode] = true;
             if (seg.endsAtNode) {
@@ -15317,9 +15616,17 @@ static void drawHermesXBootHoldFrame(OLEDDisplay *display, OLEDDisplayUiState *s
         if (partialT > 0.0f && fullSegments < segmentCount) {
             const BootHoldSegment &seg = segments[fullSegments];
             nodeVisible[seg.startNode] = true;
-            const uint8_t thickness = (seg.startNode == 0) ? 1 : 2;
-            drawBootHoldPartialLine(display, seg.x0, seg.y0, seg.x1, seg.y1, partialT, thickness,
-                                    !hermesXBootHoldReveal);
+            drawBootHoldPartialLine(display, seg.x0, seg.y0, seg.x1, seg.y1, partialT, 2, !hermesXBootHoldReveal);
+        }
+    }
+
+    if (hermesXBootHoldReveal) {
+        static const uint8_t kRevealNodeOrder[] = {3, 2, 1, 4};
+        constexpr uint32_t kNodeStepMs = 150;
+        for (size_t i = 0; i < (sizeof(kRevealNodeOrder) / sizeof(kRevealNodeOrder[0])); ++i) {
+            if (revealElapsedMs >= (i * kNodeStepMs)) {
+                nodeVisible[kRevealNodeOrder[i]] = true;
+            }
         }
     }
 
@@ -15329,25 +15636,6 @@ static void drawHermesXBootHoldFrame(OLEDDisplay *display, OLEDDisplayUiState *s
         }
     }
 
-    // Ensure the right node dot appears once any progress is visible.
-    if ((progress > 0.0f) && kNodeEnabled[1]) {
-        display->drawCircle(pts[1].x, pts[1].y, 2);
-    }
-
-    if (hermesXBootHoldReveal) {
-        const int16_t textX = x + (display->width() - HERMESX_WORD_WIDTH) / 2;
-        const int16_t textY = y + (display->height() - HERMESX_WORD_HEIGHT) / 2;
-        display->drawXbm(textX, textY, HERMESX_WORD_WIDTH, HERMESX_WORD_HEIGHT, hermesx_word_bits);
-
-        // HermesX build tag in bottom-right corner.
-        const char *kHermesXBuildTag = "HXB_C0.3.7";
-        display->setFont(FONT_SMALL);
-        display->setTextAlignment(TEXT_ALIGN_LEFT);
-        const int16_t tagWidth = display->getStringWidth(kHermesXBuildTag);
-        const int16_t tagX = x + display->width() - tagWidth - 2;
-        const int16_t tagY = y + display->height() - FONT_HEIGHT_SMALL - 2;
-        display->drawString(tagX, tagY, kHermesXBuildTag);
-    }
 }
 
 int32_t Screen::runOnce()
@@ -15377,7 +15665,7 @@ int32_t Screen::runOnce()
     }
 
     const bool gatePending = HermesXPowerGuard::guardEnabled() && HermesXPowerGuard::bootHoldPending();
-    const bool deferNormalFrames = gatePending || (nodeDB == nullptr) || hermesXBootHoldActive;
+    const bool deferNormalFrames = gatePending || (nodeDB == nullptr) || hermesXBootHoldActive || hermesXBootWelcomeActive;
 
     if (!stealthRestoreChecked && !deferNormalFrames) {
         logStealthStateProbe("pre-check");
@@ -15535,25 +15823,31 @@ int32_t Screen::runOnce()
         }
     }
 
-    if (hermesXBootHoldBootScreenPending && hermesXBootHoldBootScreenAtMs != 0 &&
-        millis() >= hermesXBootHoldBootScreenAtMs) {
+    if (hermesXBootHoldBootScreenPending && hermesXBootHoldBootScreenAtMs != 0 && millis() >= hermesXBootHoldBootScreenAtMs &&
+        nodeDB != nullptr) {
+        LOG_INFO("[HermesBootAnim] boothold pending boot screen resolved nodeDB=1");
         hermesXBootHoldBootScreenPending = false;
         hermesXBootHoldBootScreenAtMs = 0;
         hermesXBootHoldActive = false;
         hermesXBootHoldReveal = false;
+        hermesXBootHoldRevealStartedAtMs = 0;
         hermesXBootHoldRevealUntilMs = 0;
         hermesXBootHoldAlertStarted = false;
         hermesXBootHoldHeldMs = 0;
         hermesXBootHoldLongMs = 1;
-        bootScreenStartMs = millis();
-        showingBootScreen = true;
-        bootScreenForceLogo = true;
+        hermesXBootWelcomeActive = false;
+        hermesXBootWelcomeStartedAtMs = 0;
+        hermesXBootWelcomeUntilMs = 0;
+        hermesXBootWelcomeAnimElapsedMs = 0;
+        hermesXBootWelcomeLastRenderAtMs = 0;
+        showingBootScreen = false;
+        bootScreenForceLogo = false;
         bootScreenShowHermesWelcome = false;
 #ifdef USERPREFS_OEM_TEXT
-        showingOEMBootScreen = true;
+        showingOEMBootScreen = false;
 #endif
         showingNormalScreen = false;
-        setFrameImmediateDraw(bootScreenFrames);
+        pendingNormalFrames = true;
     }
 
     if (!deferNormalFrames && pendingNormalFrames) {
@@ -15713,10 +16007,80 @@ int32_t Screen::runOnce()
 
     if (hermesXBootHoldActive && hermesXBootHoldReveal && hermesXBootHoldRevealUntilMs != 0 &&
         millis() >= hermesXBootHoldRevealUntilMs) {
-        hermesXBootHoldRevealUntilMs = 0;
         hermesXBootHoldBootScreenPending = true;
         hermesXBootHoldBootScreenAtMs = millis();
+        if (!hermesXBootHoldRevealCompleteLogged) {
+            hermesXBootHoldRevealCompleteLogged = true;
+            LOG_INFO("[HermesBootAnim] boothold reveal complete wait_nodeDB=%d", nodeDB == nullptr ? 1 : 0);
+        }
     }
+#if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
+    defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
+    if (hermesXBootWelcomeActive) {
+        auto *tft = static_cast<TFTDisplay *>(dispdev);
+        const uint32_t now = millis();
+        if (hermesXBootWelcomeStartedAtMs == 0) {
+            hermesXBootWelcomeStartedAtMs = now;
+            hermesXBootWelcomeUntilMs = now + kHermesXBootWelcomeTotalMs;
+            hermesXBootWelcomeAnimElapsedMs = 0;
+            hermesXBootWelcomeLastRenderAtMs = now;
+            LOG_INFO("[HermesBootAnim] auto welcome timer start start=%u until=%u anim=%u hold=%u max_step=%u",
+                     static_cast<unsigned>(hermesXBootWelcomeStartedAtMs), static_cast<unsigned>(hermesXBootWelcomeUntilMs),
+                     static_cast<unsigned>(kHermesXBootWelcomeAnimMs), static_cast<unsigned>(kHermesXBootWelcomeFinalHoldMs),
+                     static_cast<unsigned>(kHermesXBootWelcomeMaxStepMs));
+        } else {
+            const uint32_t rawDelta = now >= hermesXBootWelcomeLastRenderAtMs ? (now - hermesXBootWelcomeLastRenderAtMs) : 0;
+            const uint32_t cappedDelta = rawDelta > kHermesXBootWelcomeMaxStepMs ? kHermesXBootWelcomeMaxStepMs : rawDelta;
+            hermesXBootWelcomeAnimElapsedMs =
+                std::min<uint32_t>(kHermesXBootWelcomeTotalMs, hermesXBootWelcomeAnimElapsedMs + cappedDelta);
+            hermesXBootWelcomeLastRenderAtMs = now;
+        }
+        setFastFramerate();
+        if (!hermesXBootWelcomeDirectLogged) {
+            hermesXBootWelcomeDirectLogged = true;
+            LOG_INFO("[HermesBootAnim] direct auto render start elapsed=%u fps=%u", static_cast<unsigned>(hermesXBootWelcomeAnimElapsedMs),
+                     static_cast<unsigned>(targetFramerate));
+        }
+        renderDirectHermesPhotoBootFrame(tft, dispdev->getWidth(), dispdev->getHeight(), hermesXBootWelcomeAnimElapsedMs);
+        if (hermesXBootWelcomeAnimElapsedMs >= kHermesXBootWelcomeTotalMs) {
+            const uint32_t realElapsedMs =
+                now >= hermesXBootWelcomeStartedAtMs ? (now - hermesXBootWelcomeStartedAtMs) : hermesXBootWelcomeAnimElapsedMs;
+            LOG_INFO("[HermesBootAnim] auto welcome done elapsed=%u real=%u -> meshtastic logo",
+                     static_cast<unsigned>(hermesXBootWelcomeAnimElapsedMs), static_cast<unsigned>(realElapsedMs));
+            hermesXBootWelcomeActive = false;
+            hermesXBootWelcomeStartedAtMs = 0;
+            hermesXBootWelcomeUntilMs = 0;
+            hermesXBootWelcomeAnimElapsedMs = 0;
+            hermesXBootWelcomeLastRenderAtMs = 0;
+            bootScreenShowHermesWelcome = false;
+            bootScreenStartMs = millis();
+            bootScreenForceLogo = true;
+            showingBootScreen = true;
+            showingNormalScreen = false;
+            setFrameImmediateDraw(bootScreenFrames);
+            setFastFramerate();
+        }
+        return (1000 / targetFramerate);
+    }
+    if (hermesXBootHoldActive) {
+        auto *tft = static_cast<TFTDisplay *>(dispdev);
+        const uint32_t now = millis();
+        if (!hermesXBootHoldDirectLogged) {
+            hermesXBootHoldDirectLogged = true;
+            LOG_INFO("[HermesBootAnim] direct boothold render start reveal=%d held=%u long=%u fps=%u",
+                     hermesXBootHoldReveal ? 1 : 0, static_cast<unsigned>(hermesXBootHoldHeldMs),
+                     static_cast<unsigned>(hermesXBootHoldLongMs), static_cast<unsigned>(targetFramerate));
+        }
+        if (hermesXBootHoldReveal) {
+            const uint32_t elapsedMs = now >= hermesXBootHoldRevealStartedAtMs ? (now - hermesXBootHoldRevealStartedAtMs) : 0;
+            renderDirectHermesPhotoBootFrame(tft, dispdev->getWidth(), dispdev->getHeight(), elapsedMs);
+        } else {
+            renderDirectHermesPhotoBootProgressFrame(tft, dispdev->getWidth(), dispdev->getHeight(), hermesXBootHoldHeldMs,
+                                                     hermesXBootHoldLongMs);
+        }
+        return (1000 / targetFramerate);
+    }
+#endif
 
     bool skipUiUpdate = false;
 
@@ -16284,13 +16648,24 @@ int32_t Screen::runOnce()
 
 void Screen::setBootHoldProgress(uint32_t heldMs, uint32_t longPressMs)
 {
+    const uint32_t effectiveLongMs = longPressMs ? longPressMs : 1;
+    const uint32_t rawBucket = (heldMs >= effectiveLongMs) ? 4 : ((heldMs * 4) / effectiveLongMs);
+    const int8_t progressBucket = static_cast<int8_t>(rawBucket > 4 ? 4 : rawBucket);
+    if (!hermesXBootHoldProgressLogged || progressBucket != hermesXBootHoldProgressLogBucket) {
+        hermesXBootHoldProgressLogged = true;
+        hermesXBootHoldProgressLogBucket = progressBucket;
+        LOG_INFO("[HermesBootAnim] boothold progress held=%u long=%u bucket=%d", static_cast<unsigned>(heldMs),
+                 static_cast<unsigned>(effectiveLongMs), static_cast<int>(progressBucket));
+    }
     hermesXBootHoldActive = true;
     hermesXBootHoldReveal = false;
+    hermesXBootHoldRevealStartedAtMs = 0;
     hermesXBootHoldRevealUntilMs = 0;
     hermesXBootHoldHeldMs = heldMs;
-    hermesXBootHoldLongMs = longPressMs ? longPressMs : 1;
+    hermesXBootHoldLongMs = effectiveLongMs;
     if (!hermesXBootHoldAlertStarted) {
         hermesXBootHoldAlertStarted = true;
+        LOG_INFO("[HermesBootAnim] boothold start alert callback");
         startAlert(drawHermesXBootHoldFrame);
     }
     setFastFramerate();
@@ -16349,22 +16724,71 @@ bool Screen::consumeEmergencyConfirmCancelRequest()
 
 void Screen::startBootHoldReveal(uint32_t revealMs)
 {
+    LOG_INFO("[HermesBootAnim] boothold reveal start duration=%u", static_cast<unsigned>(revealMs ? revealMs : 1));
     hermesXBootHoldActive = true;
     hermesXBootHoldReveal = true;
+    hermesXBootHoldDirectLogged = false;
+    hermesXBootHoldRevealCompleteLogged = false;
     hermesXBootHoldHeldMs = hermesXBootHoldLongMs;
     const uint32_t duration = revealMs ? revealMs : 1;
-    hermesXBootHoldRevealUntilMs = millis() + duration;
+    hermesXBootHoldRevealStartedAtMs = millis();
+    hermesXBootHoldRevealUntilMs = hermesXBootHoldRevealStartedAtMs + duration;
+#if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
+    defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
+    hermesXBootHoldAlertStarted = true;
+#else
     if (!hermesXBootHoldAlertStarted) {
         hermesXBootHoldAlertStarted = true;
         startAlert(drawHermesXBootHoldFrame);
     }
+#endif
+    setFastFramerate();
+}
+
+void Screen::finishBootHoldToBootLogo()
+{
+    LOG_INFO("[HermesBootAnim] finish boothold -> meshtastic logo");
+    hermesXBootHoldActive = false;
+    hermesXBootHoldReveal = false;
+    hermesXBootHoldRevealStartedAtMs = 0;
+    hermesXBootHoldRevealUntilMs = 0;
+    hermesXBootHoldBootScreenPending = false;
+    hermesXBootHoldBootScreenAtMs = 0;
+    hermesXBootHoldAlertStarted = false;
+    hermesXBootHoldHeldMs = 0;
+    hermesXBootHoldLongMs = 1;
+    hermesXBootWelcomeActive = false;
+    hermesXBootWelcomeStartedAtMs = 0;
+    hermesXBootWelcomeUntilMs = 0;
+    hermesXBootWelcomeAnimElapsedMs = 0;
+    hermesXBootWelcomeLastRenderAtMs = 0;
+    hermesXBootWelcomeDirectLogged = false;
+    hermesXBootHoldDirectLogged = false;
+    hermesXBootFrameWelcomeLogged = false;
+    hermesXBootFramePendingLogged = false;
+    hermesXBootHoldProgressLogged = false;
+    hermesXBootHoldRevealCompleteLogged = false;
+    hermesXBootHoldProgressLogBucket = -1;
+    bootScreenStartMs = millis();
+    showingBootScreen = true;
+    bootScreenForceLogo = true;
+    bootScreenShowHermesWelcome = false;
+#ifdef USERPREFS_OEM_TEXT
+    showingOEMBootScreen = true;
+#endif
+    showingNormalScreen = false;
+    setFrameImmediateDraw(bootScreenFrames);
     setFastFramerate();
 }
 
 void Screen::resetBootHoldProgress()
 {
+    LOG_INFO("[HermesBootAnim] boothold reset progress");
     hermesXBootHoldActive = true;
     hermesXBootHoldReveal = false;
+    hermesXBootHoldDirectLogged = false;
+    hermesXBootHoldRevealCompleteLogged = false;
+    hermesXBootHoldRevealStartedAtMs = 0;
     hermesXBootHoldRevealUntilMs = 0;
     hermesXBootHoldHeldMs = 0;
     hermesXBootHoldLongMs = hermesXBootHoldLongMs ? hermesXBootHoldLongMs : 1;
@@ -17056,7 +17480,7 @@ void Screen::handleShowNextFrame()
 }
 
 #ifndef SCREEN_TRANSITION_FRAMERATE
-#define SCREEN_TRANSITION_FRAMERATE 30 // fps
+#define SCREEN_TRANSITION_FRAMERATE 60 // fps
 #endif
 
 void Screen::setFastFramerate()

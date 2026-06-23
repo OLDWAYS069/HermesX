@@ -467,7 +467,7 @@ static void hermesXEnforceBootHoldGate()
                 LOG_INFO("BootHold gate: long press committed (%" PRIu32 " ms)", heldMs);
                 HermesXPowerGuard::markBootHoldCommitted();
                 if (screen && screenSetupDone) {
-                    screen->startBootHoldReveal(1000);
+                    screen->finishBootHoldToBootLogo();
                     revealStarted = true;
                 }
                 ButtonThread::requireReleaseBeforeLongPress();

@@ -2,9 +2,7 @@
 
 #include <GpioLogic.h>
 #include <OLEDDisplay.h>
-#if defined(HERMESX_TFT_FASTPATH)
 #include <cstdint>
-#endif
 
 /**
  * An adapter class that allows using the LovyanGFX library as if it was an OLEDDisplay implementation.
@@ -73,6 +71,8 @@ class TFTDisplay : public OLEDDisplay
     void addColorPaletteZone(const ColorZone &zone);
     void fillRect565(int16_t x, int16_t y, int16_t width, int16_t height, uint16_t color);
     void drawPixel565(int16_t x, int16_t y, uint16_t color);
+    void drawLine565(int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint16_t color);
+    void fillCircle565(int16_t x, int16_t y, int16_t radius, uint16_t color);
     void overlayBufferForeground565();
     void overlayBufferForegroundRect565(int16_t x, int16_t y, int16_t width, int16_t height);
 
@@ -84,10 +84,8 @@ class TFTDisplay : public OLEDDisplay
      */
     static GpioPin *backlightEnable;
 
-#if defined(HERMESX_TFT_FASTPATH)
     bool writeRow565(int16_t x, int16_t y, const uint16_t *row565, int len);
     uint16_t mapColor(uint32_t logicalColor) const;
-#endif
 
   private:
     // Neon-heavy screens (Home clock / GPS poster) need more stacked palette bands.

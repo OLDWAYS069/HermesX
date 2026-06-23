@@ -1135,6 +1135,21 @@ void TFTDisplay::drawPixel565(int16_t x, int16_t y, uint16_t color)
     tft->drawPixel(x, y, color);
 }
 
+void TFTDisplay::drawLine565(int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint16_t color)
+{
+    concurrency::LockGuard g(spiLock);
+    tft->drawLine(x0, y0, x1, y1, color);
+}
+
+void TFTDisplay::fillCircle565(int16_t x, int16_t y, int16_t radius, uint16_t color)
+{
+    if (radius <= 0) {
+        return;
+    }
+    concurrency::LockGuard g(spiLock);
+    tft->fillCircle(x, y, radius, color);
+}
+
 void TFTDisplay::overlayBufferForeground565()
 {
     overlayBufferForegroundRect565(0, 0, displayWidth, displayHeight);
@@ -1322,8 +1337,6 @@ void TFTDisplay::setDetected(uint8_t detected)
     (void)detected;
 }
 
-// --- HermesX TFT fast-path START
-#if defined(HERMESX_TFT_FASTPATH)
 bool TFTDisplay::writeRow565(int16_t x, int16_t y, const uint16_t *row565, int len)
 {
     if (len <= 0)
@@ -1365,12 +1378,12 @@ bool TFTDisplay::writeRow565(int16_t x, int16_t y, const uint16_t *row565, int l
 #if defined(RAK14014)
     tft->startWrite();
     tft->setAddrWindow(drawX, y, drawX + static_cast<int16_t>(remaining) - 1, y);
-    tft->pushPixels(const_cast<uint16_t *>(source), static_cast<uint32_t>(remaining));
+    tft->pushPixels(source, static_cast<int32_t>(remaining), true);
     tft->endWrite();
 #else
     tft->startWrite();
     tft->setWindow(drawX, y, drawX + static_cast<int16_t>(remaining) - 1, y);
-    tft->writePixels(source, static_cast<int32_t>(remaining), false);
+    tft->writePixels(source, static_cast<int32_t>(remaining), true);
     tft->endWrite();
 #endif
     return true;
@@ -1395,8 +1408,6 @@ uint16_t TFTDisplay::mapColor(uint32_t logicalColor) const
     uint8_t b = static_cast<uint8_t>(logicalColor & 0xFFu);
     return COLOR565(r, g, b);
 }
-#endif
-// --- HermesX TFT fast-path END
 
 // Connect to the display
 bool TFTDisplay::connect()

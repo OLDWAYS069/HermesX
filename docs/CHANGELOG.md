@@ -2,6 +2,32 @@
 
 本文件為可對外發布版本的更新紀錄，整理 HermesX 韌體的重要功能更新、體驗調整與修正項目。
 
+## 2026-06-22
+
+### 調整
+
+- 開機 Hermes 歡迎畫面改為新 neon logo 流程：四個節點依序出現，冷白紅藍外框線延伸完成後，淡入由參考圖轉出的黃色光暈 `Hermes` logo。
+- Heltec Wireless Tracker BootHold 改走 RGB565 direct-draw：長按期間依序顯示四點、以即時計算端點平滑延伸線條，最後顯示黃色光暈 Hermes，並保留完成後進入原本 Meshtastic boot logo 的流程。
+- Hermes BootHold TFT 線段不再用 15 張 keyframe 跳格播放，線條階段改用 runtime vector drawing；最後 Hermes 字樣仍使用由參考圖轉出的 RGB565 bitmap，避免字樣比例與顏色再次偏離。
+- 冷開機、系統重開機與非 BootHold 開機的 Hermes welcome boot screen 強制走同一套 TFT direct renderer，自動以時間播放四點、線段、Hermes 動畫；BootHold gate 則仍由長按進度推動同一套動畫。
+- 自動 Hermes welcome 改為獨立狀態機 `hermesXBootWelcomeActive`，不再共用 BootHold gate 的 `hermesXBootHoldActive` / nodeDB 收尾流程；自動 welcome 期間跳過 setup 初始 `ui->update()`，避免白/藍閃與舊 UI frame 蓋掉 direct 動畫。
+- 開機動畫路徑新增 `[HermesBootAnim]` 診斷 Log，會輸出 setup 判斷、TFT direct renderer 入口、BootHold progress/reveal/finish，以及切回 Meshtastic boot logo 的時間點，方便比對實機序列埠與畫面差異。
+- 依實機 Log 修正自動 Hermes welcome 的計時起點：`Screen::setup()` 只先畫第 0 幀，3 秒動畫改到 `Screen::runOnce()` 第一次進入 TFT direct renderer 時才開始，避免主程式初始化期間消耗動畫時間造成冷開機線段跳格。
+- 自動 Hermes welcome 完成 3 秒動畫後保留最終 Hermes 畫面 1.2 秒再切回 Meshtastic boot logo，避免排程延後時最後一幀尚未完整顯示就被切走。
+- 自動 Hermes welcome 改用 render-driven elapsed：每次實際畫面重繪最多只推進 50ms 動畫時間，避免開機初始化阻塞時直接從空白跳到線段完成或 Hermes 字樣。
+- 自動 Hermes welcome 改為在 `Screen::setup()` 內先完成 TFT direct blocking playback，播完再進入後續模組初始化，避免 WS2812B startup animation 啟動時讓 Hermes 動畫中途停頓。
+- 修正 blocking welcome 播完後同一輪 `Screen::setup()` 立即執行初始 `ui->update()`，造成 Meshtastic boot logo 疊到 Hermes 最終字樣上的閃爍。
+- Heltec Wireless Tracker / V1.0 variant 的 `SCREEN_TRANSITION_FRAMERATE` 從 3fps 提高到 60fps，讓 Hermes welcome direct renderer、BootHold 與更新模式進入/退出 transition 不再被板級設定強制降到 3fps。
+- HermesX 更新模式進入/退出 transition bar 改為依 elapsed 直接計算像素填充，減少進出更新模式時的跳格感。
+- 修正 `TFTDisplay::writeRow565()` 寫入 RGB565 frame array 時未啟用 LovyanGFX byte swap，造成實機黃色 Hermes 顯示成藍紫色的問題。
+
+### 驗證
+
+- `platformio run -e heltec-wireless-tracker` 編譯成功，CIV build 版本為 `HXB_C0.3.7_20260623_1943`。
+- 已依 `docs/AI_UPDATE_HANDOFF.md` 搬移並驗證韌體產物：
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260623_1943.bin`
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260623_1943.factory.bin`
+
 ## 2026-06-18
 
 ### 發布

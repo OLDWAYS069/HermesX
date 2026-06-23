@@ -25,7 +25,7 @@
 #define TFT_WIDTH DISPLAY_HEIGHT
 #define TFT_OFFSET_X 26
 #define TFT_OFFSET_Y -1
-#define SCREEN_TRANSITION_FRAMERATE 3 // fps
+#define SCREEN_TRANSITION_FRAMERATE 60 // fps
 #define DISPLAY_FORCE_SMALL_FONTS
 
 // pin 3 is Vext on v1.1 - HIGH enables LDO for Vext rail which goes to:

@@ -324,6 +324,7 @@ class Screen : public concurrency::OSThread
 
     void setBootHoldProgress(uint32_t heldMs, uint32_t longPressMs);
     void startBootHoldReveal(uint32_t revealMs);
+    void finishBootHoldToBootLogo();
     void resetBootHoldProgress();
 
     void startFirmwareUpdateScreen()
