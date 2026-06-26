@@ -874,9 +874,14 @@ void handleUpdateUploadRaw(HTTPRequest *req, HTTPResponse *res)
                 res->printf("<p>%s</p>", errorOut.c_str());
                 return;
             }
-            if (hasVersionHint) {
-                versionOut = versionFromFilename;
+            if (!hasVersionHint) {
+                LOG_WARN("Update Upload Raw - missing HXB version filename hint: %s", hintedFilename.c_str());
+                updateManager.failStreamUpdate(u8"更新檔名缺少 HXB 版本", false);
+                res->setStatusCode(400);
+                res->println("<p>更新檔名缺少 HXB 版本</p>");
+                return;
             }
+            versionOut = versionFromFilename;
             if (!updateManager.beginStreamUpdate(expectedBytes, versionOut, projectNameOut)) {
                 const String startError =
                     updateManager.getLastError().isEmpty() ? String(u8"無法開始 OTA 更新") : updateManager.getLastError();
@@ -943,7 +948,7 @@ void handleUpdateInfo(HTTPRequest *req, HTTPResponse *res)
 
     res->printf(
         "{\"hermesx_update\":true,\"device\":\"HermesX\",\"version\":\"%s\",\"ip\":\"%s\",\"ssid\":\"%s\",\"uploadPath\":\"%s\"}\n",
-        optstr(APP_VERSION), ip.c_str(), ssid, kUpdateUploadRawPath);
+        optstr(APP_HERMES_VERSION), ip.c_str(), ssid, kUpdateUploadRawPath);
 }
 
 void handleReport(HTTPRequest *req, HTTPResponse *res)

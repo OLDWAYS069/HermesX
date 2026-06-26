@@ -1,3 +1,26 @@
+## 2026-06-23
+- `TAK` / `TAK Tracker` 角色自動啟用「智慧功率」：進入時暫存原本 LoRa `tx_power`，先使用設定上限發送，再依 ACK、RSSI/SNR 與逾時在最低/最高 dBm 邊界內保守調整；離開 TAK 類角色時還原原本功率設定。
+- 智慧功率在 TAK 類角色下會取樣所有 remote LoRa RX，包括 `Portnum=300` / EMHB 這類 `WantAck=0` broadcast；連續強訊號 broadcast 也能保守觸發降功率，不再只靠 ACK 流量調整。
+- 智慧功率啟用時，Home frame 會切換成「智慧功率」儀表頁，顯示目前 LoRa 功率、最近 SNR/RSSI、RX 時間，以及 heard 到的 GROUP 裝置數。
+- 智慧功率儀表頁針對 Heltec Wireless Tracker 窄螢幕重排：GROUP 框改為固定高度，RX 時間移到訊號資訊區，避免文字與框線重疊。
+- `TAKMODE設定` 新增 `智慧功率低` / `智慧功率高`，可直接調整智慧功率最低與最高 dBm；此功能與 `聲光靜默` 分離。
+- 修正手動 WiFi / USB 更新檔缺少 `HXB...` 檔名 metadata 時，更新模式把 ESP app descriptor 的版本字串顯示成待更新版本的問題。
+- `/upload-update-bin`、USB/XModem 串流與本機 `/update/firmware.bin` 檢查現在都必須從檔名 hint 解析出 `HXB..._YYYYMMDD_HHMM`；缺少時會明確顯示 `更新檔名缺少 HXB 版本`，不再 fallback 到 `esp_app_desc_t.version`。
+- 修正 `HXB_C0.3.7_YYYYMMDD_HHMM.bin` 這類版本前綴本身含底線的合法檔名被誤判為缺少 HXB 版本的問題；解析規則改以最後兩個底線切出日期與時間。
+- `/update-info` 回報版本改用 `APP_HERMES_VERSION`，讓更新工具看到的裝置版本與 HermesX OTA 檔名規則一致。
+- DirectHome neon buffer 配置失敗時改為 10 秒節流記錄，且智慧功率 Home 不再先嘗試配置舊 Home overlay buffer，避免 monitor 被重複 WARN 洗版。
+- Heap 保護模式改為連續低水位 3 秒後才觸發，避免 TFT/BLE/Radio 瞬間 heap 碎片低點造成保護頁反覆彈出。
+- 智慧功率 Home 啟用時會主動釋放既有 Home/GPS direct neon buffer，避免從舊 Home 進入 TAK 後仍保留高記憶體 UI 緩衝而誤觸 Heap 保護模式。
+- 智慧功率無 remote RX/ACK 回饋的補功率等待由 120 秒縮短為約 45 秒，讓附近節點離線或斷開後更快回升發射功率。
+- 智慧功率不再處理本機 LOCAL EMHB 心跳；GROUP presence inactive 心跳最小間隔改為 60 秒，降低 phone queue / packet history 壓力。
+- 智慧功率 Home 顯示條件改為只跟隨 runtime `SmartPower ON` 狀態，不再只因角色值是 TAK / TAK Tracker 就提前出現。
+- TAK MODE 退出時會同步還原 role defaults 並保存 config / nodedb / devicestate；舊狀態若已把 TAK 誤存為原本 role，會防呆回 `Client`。
+- 智慧功率 Home 補看 TAK MODE runtime 狀態，TAK MODE ON 後會立刻顯示，退出時同步刷新 SmartPower OFF。
+- 智慧功率收訊記錄放寬為 TAK 類 role 也會更新 UI 訊號狀態，避免 monitor 已有 `rxRSSI` 但 UI 仍顯示 `RSSI --`；新增 `SmartPower signal ...` DEBUG。
+- 智慧功率 Home 的螢幕右上角新增橫向小電池圖示，位置在 GROUP 視窗上方，沿用 HermesX Home 電池圖示樣式。
+- `platformio run -e heltec-wireless-tracker -j 1` 編譯成功，CIV build 版本為 `HXB_C0.3.7_20260625_1830`。
+- 韌體產物已依 handoff 搬到 `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260625_1830.bin` 與 `.factory.bin`。
+
 ## 2026-06-22
 - 開機 Hermes 歡迎畫面改為新 neon logo 流程：四個節點依序出現，冷白紅藍外框線延伸完成後淡入黃色光暈 `Hermes` logo。
 - Heltec Wireless Tracker BootHold 改走 RGB565 direct-draw：長按期間依序顯示四點、以 runtime vector drawing 平滑延伸線條，最後顯示黃色光暈 Hermes，並保留完成後進入原本 Meshtastic boot logo 的流程。

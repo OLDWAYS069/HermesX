@@ -288,6 +288,7 @@ class Screen : public concurrency::OSThread
     bool isGroupNodeDetailPageActive() const;
     bool isTakModePageActive() const;
     bool isHermesInputOverlayActive() const;
+    bool shouldBlockPowerHoldForTraceRouteInput() const;
     bool isFinderPulseConfirmVisible() const { return hermesFinderPulseConfirmVisible; }
     bool isFinderPulseSendingVisible() const { return hermesFinderPulseSendingVisible; }
     uint8_t getFinderPulseConfirmSelected() const { return hermesFinderPulseConfirmSelected; }
@@ -307,6 +308,12 @@ class Screen : public concurrency::OSThread
     bool showOnlineNodeDetailPage();
     bool showTraceRouteNodeListPage();
     bool showTraceRouteNodeDetailPage();
+    bool shouldUseTraceRouteBindQuickLongPress() const;
+    bool shouldUseTraceRouteBoundQuickLongPress() const;
+    bool handleTraceRouteBindLongPress();
+    bool handleTraceRouteBoundLongPress();
+    void completeDeferredTraceRouteBindShortPress();
+    void completeDeferredTraceRouteBoundShortPress();
     bool showFinderNodeListPage();
     bool showFinderNodeDetailPage();
     bool showGroupNodeListPage();

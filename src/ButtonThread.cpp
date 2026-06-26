@@ -55,6 +55,7 @@ static bool isLongPressSuppressedNow();
 static constexpr uint32_t kResumeGraceMs = 1200;
 static constexpr uint32_t kReleaseDebounceMs = 80;
 static constexpr uint32_t kRotaryLongPressDelayMs = 1000;
+static constexpr uint32_t kTraceRouteBindLongPressMs = 1000;
 static constexpr uint32_t kEmergencyPendingMs = 3000;
 static constexpr uint32_t kEmergencyPendingBeepMs = 1000;
 // 罐頭訊息選單：長按約 1 秒退出
@@ -546,6 +547,26 @@ int32_t ButtonThread::runOnce()
             if (isEmUiBlockingButtonActions()) {
                 break;
             }
+            if (screen && screen->handleTraceRouteBindLongPress()) {
+                if (auto *interfaceModule = HermesXInterfaceModule::instance) {
+                    interfaceModule->stopPowerHoldAnimation(false);
+                }
+                s_longGateArmed = false;
+                s_longEventPending = false;
+                s_longStartMillis = 0;
+                s_longPressFromAlt = false;
+                break;
+            }
+            if (screen && screen->handleTraceRouteBoundLongPress()) {
+                if (auto *interfaceModule = HermesXInterfaceModule::instance) {
+                    interfaceModule->stopPowerHoldAnimation(false);
+                }
+                s_longGateArmed = false;
+                s_longEventPending = false;
+                s_longStartMillis = 0;
+                s_longPressFromAlt = false;
+                break;
+            }
             // 長按約 1 秒可退出罐頭訊息選單，不進入關機流程
             if (cannedMessageModule && cannedMessageModule->getRunState() != CANNED_MESSAGE_RUN_STATE_INACTIVE &&
                 s_exitCannedHold && (millis() - s_exitCannedStartMs >= 1000)) {
@@ -1035,6 +1056,44 @@ void ButtonThread::updatePowerHoldAnimation()
     }
 
 #if !MESHTASTIC_EXCLUDE_HERMESX
+    static bool s_traceRouteInputPressActive = false;
+    static bool s_traceRouteBindLongHandled = false;
+    if (screen && screen->shouldBlockPowerHoldForTraceRouteInput()) {
+        if (anyPressed) {
+            s_traceRouteInputPressActive = true;
+            if (!s_traceRouteBindLongHandled && pressedMs >= kTraceRouteBindLongPressMs &&
+                screen->shouldUseTraceRouteBindQuickLongPress()) {
+                if (screen->handleTraceRouteBindLongPress()) {
+                    s_traceRouteBindLongHandled = true;
+                }
+            } else if (!s_traceRouteBindLongHandled && pressedMs >= kTraceRouteBindLongPressMs &&
+                       screen->shouldUseTraceRouteBoundQuickLongPress()) {
+                if (screen->handleTraceRouteBoundLongPress()) {
+                    s_traceRouteBindLongHandled = true;
+                }
+            }
+        } else if (s_traceRouteInputPressActive) {
+            s_traceRouteInputPressActive = false;
+            s_traceRouteBindLongHandled = false;
+            screen->completeDeferredTraceRouteBindShortPress();
+            screen->completeDeferredTraceRouteBoundShortPress();
+        }
+        if (holdAnimationActive || holdAnimationStarted) {
+            holdAnimationActive = false;
+            holdAnimationStarted = false;
+            holdAnimationLastMs = 0;
+            s_holdPressStartMs = 0;
+            if (interfaceReady) {
+                interfaceModule->stopPowerHoldAnimation(false);
+            }
+        } else {
+            s_holdPressStartMs = 0;
+        }
+        return;
+    }
+    s_traceRouteInputPressActive = false;
+    s_traceRouteBindLongHandled = false;
+
     if (altPressedMs >= pressedMs && altPressedMs > 0) {
         holdDurationMs += kRotaryLongPressDelayMs;
     }

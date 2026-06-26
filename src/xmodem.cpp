@@ -176,8 +176,14 @@ void XModemAdapter::handlePacket(meshtastic_XModem xmodemPacket)
                                             static_cast<uint16_t>(expectedBytes & 0xFFFFu));
                 emitDiagnostic("Xmodem about to open write");
                 if (isUpdateFirmwareReceive) {
-                    const String streamVersion = versionFromFilename.length() > 0 ? versionFromFilename : String("USB");
-                    if (HermesXUpdateManager::instance().beginStreamUpdate(expectedBytes, streamVersion, "HermesX")) {
+                    if (versionFromFilename.isEmpty()) {
+                        HermesXUpdateManager::instance().failStreamUpdate(u8"更新檔名缺少 HXB 版本", false);
+                        emitDiagnostic("Xmodem update filename missing HXB version");
+                        sendControl(meshtastic_XModem_Control_NAK);
+                        isReceiving = false;
+                        break;
+                    }
+                    if (HermesXUpdateManager::instance().beginStreamUpdate(expectedBytes, versionFromFilename, "HermesX")) {
                         hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId::XmodemOpenWriteOk,
                                                     static_cast<uint16_t>(expectedBytes & 0xFFFFu));
                         emitDiagnostic("Xmodem ota stream begin ok");

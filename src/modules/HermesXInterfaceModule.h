@@ -108,6 +108,14 @@ public:
     void startEmergencySiren(float freq, uint32_t duration_ms);
     void stopEmergencySiren();
     void restoreBuzzerOutput();
+    int8_t getSmartPowerMinDbm();
+    int8_t getSmartPowerMaxDbm();
+    bool isSmartPowerActive() const;
+    int8_t getSmartPowerCurrentDbm() const;
+    bool getSmartPowerLastSignal(float &snr, int32_t &rssi, uint32_t &ageMs) const;
+    void syncSmartPowerRoleNow();
+    void cycleSmartPowerMinDbm();
+    void cycleSmartPowerMaxDbm();
 
     // 集中式 LED 控制 API（後續逐步遷移）
     void startLEDAnimation(LEDAnimation anim);
@@ -192,6 +200,14 @@ private:
     void restoreUiLedBrightnessPreference();
     void setUserLedBrightness(uint8_t brightness);
     bool audioAllowed() const;
+    void restoreSmartPowerPreference();
+    void updateSmartPowerRole(uint32_t now);
+    void recordSmartPowerSignal(const meshtastic_MeshPacket &packet, bool ackSuccess);
+    void recordSmartPowerFailure(uint32_t now, const char *reason);
+    void applySmartPowerDbm(int8_t target, const char *reason);
+    void raiseSmartPower(uint8_t steps, const char *reason, uint32_t now);
+    void lowerSmartPower(uint8_t steps, const char *reason, uint32_t now);
+    void clampSmartPowerBounds();
 
     void drawFace(const char* face, uint16_t color);
     void updateFace();
@@ -307,6 +323,22 @@ private:
     bool outputsDisabled = false;
     bool emergencyLampEnabled = false;
     bool emergencyModeLampActive = false;
+    bool smartPowerPrefsLoaded = false;
+    bool smartPowerActive = false;
+    bool smartPowerSavedUserPowerValid = false;
+    int8_t smartPowerMinDbm = 14;
+    int8_t smartPowerMaxDbm = 22;
+    int8_t smartPowerCurrentDbm = 0;
+    int8_t smartPowerSavedUserPower = 0;
+    uint8_t smartPowerStrongStreak = 0;
+    uint8_t smartPowerWeakStreak = 0;
+    uint8_t smartPowerSuccessStreak = 0;
+    uint32_t smartPowerLastAdjustMs = 0;
+    uint32_t smartPowerLastSignalMs = 0;
+    bool smartPowerHasLastSignal = false;
+    float smartPowerLastSnr = 0.0f;
+    int32_t smartPowerLastRssi = 0;
+    meshtastic_Config_DeviceConfig_Role smartPowerLastRole = meshtastic_Config_DeviceConfig_Role_CLIENT;
 
     LedTheme currentTheme {
         .colorSendPrimary = 0xFFFFFF,

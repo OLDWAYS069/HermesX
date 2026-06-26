@@ -85,9 +85,18 @@ ONLINE 會從 NodeDB 中篩選節點。
 `TraceRoute` 用來測試到該節點的 LoRa 路由。
 
 除了 ONLINE detail 內的 `TraceRoute` 列，主選單也有獨立 `TraceRoute` 頁面。
-獨立頁面會先顯示類似 ONLINE 的節點列表，點進節點後會進入只放 TraceRoute 動作的明細頁，游標預設停在 `開始TraceRoute`。
+獨立頁面會先顯示：
 
-選取 `TraceRoute` 或 `開始TraceRoute` 後，裝置會送出 TraceRoute request，並顯示：
+- `綁定節點`
+- `TraceRoute`
+
+進入 `綁定節點` 後會顯示與 ONLINE 相同判斷邏輯的在線節點列表。短按節點會顯示該節點的 `LongName`、`role`、`最近一次聽到`；在節點上長按旋鈕 1 秒會跳出 `是否綁定？` 確認框，可選 `是` / `否`。一次可以綁定多個在線節點。
+
+進入 `TraceRoute` 後只顯示已綁定的節點。短按已綁定節點會直接送出 TraceRoute request，並沿用既有 TraceRoute popup 顯示結果；長按已綁定節點 1 秒會解除綁定。
+
+完整獨立頁操作請見 `docs/TraceRoute.md`。
+
+從 ONLINE detail 選取 `TraceRoute`，或從獨立 TraceRoute 頁短按已綁定節點後，裝置會送出 TraceRoute request，並顯示：
 
 ```text
 SEND

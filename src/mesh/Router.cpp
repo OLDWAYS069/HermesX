@@ -282,24 +282,35 @@ ErrorCode Router::send(meshtastic_MeshPacket *p)
     // If the packet is not yet encrypted, do so now
     if (p->which_payload_variant == meshtastic_MeshPacket_decoded_tag) {
         ChannelIndex chIndex = p->channel; // keep as a local because we are about to change it
-        if (p->via_mqtt || !isFromUs(p))
+        const bool needDecodedCopyForMqtt = moduleConfig.mqtt.enabled && isFromUs(p) && mqtt;
+        meshtastic_MeshPacket *p_decoded = nullptr;
+        if (p->via_mqtt || !isFromUs(p) || needDecodedCopyForMqtt)
             logHeapSnapshot("Router::send before decoded allocCopy");
-        meshtastic_MeshPacket *p_decoded = packetPool.allocCopy(*p);
+        if (needDecodedCopyForMqtt) {
+            if (hasHeapHeadroomForCriticalAlloc("Router::send decoded MQTT copy")) {
+                p_decoded = packetPool.tryAllocCopy(*p);
+            }
+            if (!p_decoded) {
+                LOG_WARN("Skip MQTT onSend decoded copy under low heap");
+            }
+        }
 
         auto encodeResult = perhapsEncode(p);
         if (encodeResult != meshtastic_Routing_Error_NONE) {
-            packetPool.release(p_decoded);
+            if (p_decoded)
+                packetPool.release(p_decoded);
             p->channel = 0; // Reset the channel to 0, so we don't use the failing hash again
             abortSendAndNak(encodeResult, p);
             return encodeResult; // FIXME - this isn't a valid ErrorCode
         }
 #if !MESHTASTIC_EXCLUDE_MQTT
         // Only publish to MQTT if we're the original transmitter of the packet
-        if (moduleConfig.mqtt.enabled && isFromUs(p) && mqtt) {
+        if (p_decoded) {
             mqtt->onSend(*p, *p_decoded, chIndex);
         }
 #endif
-        packetPool.release(p_decoded);
+        if (p_decoded)
+            packetPool.release(p_decoded);
     }
 
 #if HAS_UDP_MULTICAST
@@ -627,7 +638,18 @@ void Router::handleReceived(meshtastic_MeshPacket *p, RxSource src)
     // Also, we should set the time from the ISR and it should have msec level resolution
     p->rx_time = getValidTime(RTCQualityFromNet); // store the arrival timestamp for the phone
     // Store a copy of encrypted packet for MQTT
-    meshtastic_MeshPacket *p_encrypted = packetPool.allocCopy(*p);
+    meshtastic_MeshPacket *p_encrypted = nullptr;
+#if !MESHTASTIC_EXCLUDE_MQTT
+    const bool needEncryptedCopyForMqtt = moduleConfig.mqtt.enabled && mqtt;
+    if (needEncryptedCopyForMqtt) {
+        if (hasHeapHeadroomForCriticalAlloc("Router::handleReceived encrypted MQTT copy")) {
+            p_encrypted = packetPool.tryAllocCopy(*p);
+        }
+        if (!p_encrypted) {
+            LOG_WARN("Skip received MQTT uplink copy under low heap");
+        }
+    }
+#endif
 
     // Take those raw bytes and convert them back into a well structured protobuf we can understand
     auto decodedState = perhapsDecode(p);
@@ -679,17 +701,18 @@ void Router::handleReceived(meshtastic_MeshPacket *p, RxSource src)
 #if !MESHTASTIC_EXCLUDE_MQTT
         // Mark as pki_encrypted if it is not yet decoded and MQTT encryption is also enabled, hash matches and it's a DM not to
         // us (because we would be able to decrypt it)
-        if (decodedState == DecodeState::DECODE_FAILURE && moduleConfig.mqtt.encryption_enabled && p->channel == 0x00 &&
+        if (p_encrypted && decodedState == DecodeState::DECODE_FAILURE && moduleConfig.mqtt.encryption_enabled && p->channel == 0x00 &&
             !isBroadcast(p->to) && !isToUs(p))
             p_encrypted->pki_encrypted = true;
         // After potentially altering it, publish received message to MQTT if we're not the original transmitter of the packet
-        if ((decodedState == DecodeState::DECODE_SUCCESS || p_encrypted->pki_encrypted) && moduleConfig.mqtt.enabled &&
+        if (p_encrypted && (decodedState == DecodeState::DECODE_SUCCESS || p_encrypted->pki_encrypted) && moduleConfig.mqtt.enabled &&
             !isFromUs(p) && mqtt)
             mqtt->onSend(*p_encrypted, *p, p->channel);
 #endif
     }
 
-    packetPool.release(p_encrypted); // Release the encrypted packet
+    if (p_encrypted)
+        packetPool.release(p_encrypted); // Release the encrypted packet
 }
 
 void Router::perhapsHandleReceived(meshtastic_MeshPacket *p)

@@ -446,7 +446,10 @@ bool MQTT::isConnectedDirectly()
 bool MQTT::publish(const char *topic, const char *payload, bool retained)
 {
     if (moduleConfig.mqtt.proxy_to_client_enabled) {
-        meshtastic_MqttClientProxyMessage *msg = mqttClientProxyMessagePool.allocZeroed();
+        if (!hasHeapHeadroomForCriticalAlloc("MQTT proxy text publish")) {
+            return false;
+        }
+        meshtastic_MqttClientProxyMessage *msg = mqttClientProxyMessagePool.tryAllocZeroed();
         if (!msg) {
             LOG_ERROR("MQTT client proxy alloc failed for text publish");
             return false;
@@ -483,7 +486,10 @@ bool MQTT::publish(const char *topic, const uint8_t *payload, size_t length, boo
 {
     if (moduleConfig.mqtt.proxy_to_client_enabled) {
         logHeapSnapshot("MQTT proxy binary publish before alloc");
-        meshtastic_MqttClientProxyMessage *msg = mqttClientProxyMessagePool.allocZeroed();
+        if (!hasHeapHeadroomForCriticalAlloc("MQTT proxy binary publish")) {
+            return false;
+        }
+        meshtastic_MqttClientProxyMessage *msg = mqttClientProxyMessagePool.tryAllocZeroed();
         if (!msg) {
             LOG_ERROR("MQTT client proxy alloc failed for binary publish");
             return false;

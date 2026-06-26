@@ -30,6 +30,7 @@
 #include "freertos/task.h"
 #include <Arduino.h>
 #include <cstring>
+#include <inttypes.h>
 #include "RedirectablePrint.h"
 #include "DebugConfiguration.h"
 #include "meshtastic/portnums.pb.h"
@@ -140,6 +141,15 @@ constexpr uint32_t kPowerHoldFadeDurationMs = 1200;
 constexpr uint32_t kPowerHoldRedColor = 0xFF0000;
 constexpr uint8_t kPersistedUiLedBrightnessValues[] = {0, 30, 60, 120, 200};
 constexpr const char *kHermesUiLedBrightnessFile = "/prefs/hermesx_ui_led_brightness.txt";
+constexpr int8_t kSmartPowerDefaultMinDbm = 14;
+constexpr int8_t kSmartPowerDefaultMaxDbm = 22;
+constexpr int8_t kSmartPowerAbsoluteMinDbm = 2;
+constexpr int8_t kSmartPowerAbsoluteMaxDbm = 30;
+constexpr uint32_t kSmartPowerAdjustCooldownMs = 30000;
+constexpr uint32_t kSmartPowerNoSignalRaiseMs = 45000;
+constexpr const char *kHermesSmartPowerMinFile = "/prefs/hermesx_smart_power_min_dbm.txt";
+constexpr const char *kHermesSmartPowerMaxFile = "/prefs/hermesx_smart_power_max_dbm.txt";
+constexpr int8_t kSmartPowerOptions[] = {2, 5, 8, 10, 12, 14, 16, 18, 20, 22, 24, 27, 30};
 // 放慢逐格進度的視覺速度，但邏輯門檻仍在原本的 holdDuration。
 // 視覺完成時間 = holdDuration * kPowerHoldVisualStretch，達門檻或關機時會直接鎖紅。
 constexpr float kPowerHoldVisualStretch = 1.0f;
@@ -219,6 +229,85 @@ bool loadHermesUiLedBrightness(uint8_t &brightness)
     HERMESX_LOG_INFO("Status LED load unavailable: FSCom disabled");
     return false;
 #endif
+}
+
+int8_t clampSmartPowerDbm(int value)
+{
+    if (value < kSmartPowerAbsoluteMinDbm) {
+        return kSmartPowerAbsoluteMinDbm;
+    }
+    if (value > kSmartPowerAbsoluteMaxDbm) {
+        return kSmartPowerAbsoluteMaxDbm;
+    }
+    return static_cast<int8_t>(value);
+}
+
+bool saveHermesSmartPowerValue(const char *path, int8_t value)
+{
+#ifdef FSCom
+    concurrency::LockGuard guard(spiLock);
+    ensureHermesPrefsDir();
+    if (FSCom.exists(path)) {
+        FSCom.remove(path);
+    }
+    auto f = FSCom.open(path, FILE_O_WRITE);
+    if (!f) {
+        HERMESX_LOG_WARN("SmartPower save open failed: path=%s value=%d", path, static_cast<int>(value));
+        return false;
+    }
+    f.print(static_cast<int>(value));
+    f.flush();
+    f.close();
+    return true;
+#else
+    (void)path;
+    (void)value;
+    return false;
+#endif
+}
+
+bool loadHermesSmartPowerValue(const char *path, int8_t &value)
+{
+#ifdef FSCom
+    concurrency::LockGuard guard(spiLock);
+    if (!FSCom.exists(path)) {
+        return false;
+    }
+    auto f = FSCom.open(path, FILE_O_READ);
+    if (!f) {
+        HERMESX_LOG_WARN("SmartPower load open failed: path=%s", path);
+        return false;
+    }
+    const String raw = f.readStringUntil('\n');
+    f.close();
+    const long parsed = raw.toInt();
+    if (parsed < kSmartPowerAbsoluteMinDbm || parsed > kSmartPowerAbsoluteMaxDbm) {
+        HERMESX_LOG_WARN("SmartPower load invalid: path=%s raw=%s parsed=%ld", path, raw.c_str(), parsed);
+        return false;
+    }
+    value = static_cast<int8_t>(parsed);
+    return true;
+#else
+    (void)path;
+    (void)value;
+    return false;
+#endif
+}
+
+int8_t cycleSmartPowerOption(int8_t current)
+{
+    const size_t count = sizeof(kSmartPowerOptions) / sizeof(kSmartPowerOptions[0]);
+    for (size_t i = 0; i < count; ++i) {
+        if (current <= kSmartPowerOptions[i]) {
+            return kSmartPowerOptions[(i + 1) % count];
+        }
+    }
+    return kSmartPowerOptions[0];
+}
+
+bool isTakSmartPowerRole(meshtastic_Config_DeviceConfig_Role role)
+{
+    return role == meshtastic_Config_DeviceConfig_Role_TAK || role == meshtastic_Config_DeviceConfig_Role_TAK_TRACKER;
 }
 
 } // namespace
@@ -949,6 +1038,7 @@ HermesXInterfaceModule::HermesXInterfaceModule()
 void HermesXInterfaceModule::setup()
 {
     restoreUiLedBrightnessPreference();
+    restoreSmartPowerPreference();
     applyUserLedBrightness();
     HERMESX_LOG_INFO("Status LED setup restore: brightness=%u muted=%d restore=%u startup=%d", static_cast<unsigned>(ledUserBrightness),
                      userOutputsMuted ? 1 : 0, static_cast<unsigned>(ledUserBrightnessRestore),
@@ -960,6 +1050,7 @@ void HermesXInterfaceModule::setup()
         rgb.show();
     }
     applyRoleOutputPolicy();
+    updateSmartPowerRole(millis());
 }
 
 void HermesXInterfaceModule::applyRoleOutputPolicy()
@@ -978,6 +1069,248 @@ void HermesXInterfaceModule::applyRoleOutputPolicy()
             stopTone();
         }
     }
+}
+
+void HermesXInterfaceModule::restoreSmartPowerPreference()
+{
+    if (smartPowerPrefsLoaded) {
+        return;
+    }
+    smartPowerPrefsLoaded = true;
+    int8_t loadedMin = kSmartPowerDefaultMinDbm;
+    int8_t loadedMax = kSmartPowerDefaultMaxDbm;
+    loadHermesSmartPowerValue(kHermesSmartPowerMinFile, loadedMin);
+    loadHermesSmartPowerValue(kHermesSmartPowerMaxFile, loadedMax);
+    smartPowerMinDbm = clampSmartPowerDbm(loadedMin);
+    smartPowerMaxDbm = clampSmartPowerDbm(loadedMax);
+    clampSmartPowerBounds();
+    HERMESX_LOG_INFO("SmartPower prefs: min=%d max=%d", static_cast<int>(smartPowerMinDbm),
+                     static_cast<int>(smartPowerMaxDbm));
+}
+
+void HermesXInterfaceModule::clampSmartPowerBounds()
+{
+    smartPowerMinDbm = clampSmartPowerDbm(smartPowerMinDbm);
+    smartPowerMaxDbm = clampSmartPowerDbm(smartPowerMaxDbm);
+    if (smartPowerMinDbm > smartPowerMaxDbm) {
+        smartPowerMaxDbm = smartPowerMinDbm;
+    }
+}
+
+int8_t HermesXInterfaceModule::getSmartPowerMinDbm()
+{
+    restoreSmartPowerPreference();
+    return smartPowerMinDbm;
+}
+
+int8_t HermesXInterfaceModule::getSmartPowerMaxDbm()
+{
+    restoreSmartPowerPreference();
+    return smartPowerMaxDbm;
+}
+
+bool HermesXInterfaceModule::isSmartPowerActive() const
+{
+    return smartPowerActive;
+}
+
+int8_t HermesXInterfaceModule::getSmartPowerCurrentDbm() const
+{
+    return smartPowerActive ? smartPowerCurrentDbm : config.lora.tx_power;
+}
+
+bool HermesXInterfaceModule::getSmartPowerLastSignal(float &snr, int32_t &rssi, uint32_t &ageMs) const
+{
+    if (!smartPowerHasLastSignal || smartPowerLastSignalMs == 0) {
+        return false;
+    }
+    snr = smartPowerLastSnr;
+    rssi = smartPowerLastRssi;
+    const uint32_t now = millis();
+    ageMs = now >= smartPowerLastSignalMs ? (now - smartPowerLastSignalMs) : 0;
+    return true;
+}
+
+void HermesXInterfaceModule::syncSmartPowerRoleNow()
+{
+    updateSmartPowerRole(millis());
+}
+
+void HermesXInterfaceModule::cycleSmartPowerMinDbm()
+{
+    restoreSmartPowerPreference();
+    smartPowerMinDbm = cycleSmartPowerOption(smartPowerMinDbm);
+    if (smartPowerMinDbm > smartPowerMaxDbm) {
+        smartPowerMaxDbm = smartPowerMinDbm;
+        saveHermesSmartPowerValue(kHermesSmartPowerMaxFile, smartPowerMaxDbm);
+    }
+    saveHermesSmartPowerValue(kHermesSmartPowerMinFile, smartPowerMinDbm);
+    if (smartPowerActive && smartPowerCurrentDbm < smartPowerMinDbm) {
+        applySmartPowerDbm(smartPowerMinDbm, "min changed");
+    }
+}
+
+void HermesXInterfaceModule::cycleSmartPowerMaxDbm()
+{
+    restoreSmartPowerPreference();
+    smartPowerMaxDbm = cycleSmartPowerOption(smartPowerMaxDbm);
+    if (smartPowerMaxDbm < smartPowerMinDbm) {
+        smartPowerMinDbm = smartPowerMaxDbm;
+        saveHermesSmartPowerValue(kHermesSmartPowerMinFile, smartPowerMinDbm);
+    }
+    saveHermesSmartPowerValue(kHermesSmartPowerMaxFile, smartPowerMaxDbm);
+    if (smartPowerActive && smartPowerCurrentDbm > smartPowerMaxDbm) {
+        applySmartPowerDbm(smartPowerMaxDbm, "max changed");
+    }
+}
+
+void HermesXInterfaceModule::applySmartPowerDbm(int8_t target, const char *reason)
+{
+    restoreSmartPowerPreference();
+    clampSmartPowerBounds();
+    target = std::max<int8_t>(smartPowerMinDbm, std::min<int8_t>(smartPowerMaxDbm, target));
+    if (config.lora.tx_power == target && smartPowerCurrentDbm == target) {
+        return;
+    }
+
+    config.lora.tx_power = target;
+    smartPowerCurrentDbm = target;
+    smartPowerLastAdjustMs = millis();
+    if (service) {
+        service->configChanged.notifyObservers(NULL);
+    }
+    HERMESX_LOG_INFO("SmartPower set tx_power=%d reason=%s", static_cast<int>(target), reason ? reason : "-");
+}
+
+void HermesXInterfaceModule::raiseSmartPower(uint8_t steps, const char *reason, uint32_t now)
+{
+    if (!smartPowerActive || now - smartPowerLastAdjustMs < kSmartPowerAdjustCooldownMs) {
+        return;
+    }
+    const int nextCandidate = static_cast<int>(smartPowerCurrentDbm) + static_cast<int>(steps);
+    const int8_t next = static_cast<int8_t>(std::min<int>(smartPowerMaxDbm, nextCandidate));
+    if (next != smartPowerCurrentDbm) {
+        applySmartPowerDbm(next, reason);
+    }
+}
+
+void HermesXInterfaceModule::lowerSmartPower(uint8_t steps, const char *reason, uint32_t now)
+{
+    if (!smartPowerActive || now - smartPowerLastAdjustMs < kSmartPowerAdjustCooldownMs) {
+        return;
+    }
+    const int nextCandidate = static_cast<int>(smartPowerCurrentDbm) - static_cast<int>(steps);
+    const int8_t next = static_cast<int8_t>(std::max<int>(smartPowerMinDbm, nextCandidate));
+    if (next != smartPowerCurrentDbm) {
+        applySmartPowerDbm(next, reason);
+    }
+}
+
+void HermesXInterfaceModule::updateSmartPowerRole(uint32_t now)
+{
+    restoreSmartPowerPreference();
+    const auto role = config.device.role;
+    const bool shouldEnable = isTakSmartPowerRole(role);
+
+    if (shouldEnable && !smartPowerActive) {
+        smartPowerSavedUserPower = config.lora.tx_power;
+        smartPowerSavedUserPowerValid = true;
+        smartPowerActive = true;
+        smartPowerStrongStreak = 0;
+        smartPowerWeakStreak = 0;
+        smartPowerSuccessStreak = 0;
+        smartPowerLastSignalMs = now;
+        smartPowerLastAdjustMs = 0;
+        smartPowerCurrentDbm = smartPowerMaxDbm;
+        applySmartPowerDbm(smartPowerMaxDbm, "TAK enter");
+        HERMESX_LOG_INFO("SmartPower ON role=%d saved=%d min=%d max=%d", static_cast<int>(role),
+                         static_cast<int>(smartPowerSavedUserPower), static_cast<int>(smartPowerMinDbm),
+                         static_cast<int>(smartPowerMaxDbm));
+    } else if (!shouldEnable && smartPowerActive) {
+        const int8_t restorePower = smartPowerSavedUserPowerValid ? smartPowerSavedUserPower : 0;
+        smartPowerActive = false;
+        smartPowerSavedUserPowerValid = false;
+        config.lora.tx_power = restorePower;
+        smartPowerCurrentDbm = restorePower;
+        if (service) {
+            service->configChanged.notifyObservers(NULL);
+        }
+        HERMESX_LOG_INFO("SmartPower OFF role=%d restore=%d", static_cast<int>(role), static_cast<int>(restorePower));
+    } else if (smartPowerActive) {
+        clampSmartPowerBounds();
+        if (smartPowerCurrentDbm < smartPowerMinDbm) {
+            applySmartPowerDbm(smartPowerMinDbm, "bounds");
+        } else if (smartPowerCurrentDbm > smartPowerMaxDbm) {
+            applySmartPowerDbm(smartPowerMaxDbm, "bounds");
+        } else if (smartPowerLastSignalMs && now - smartPowerLastSignalMs > kSmartPowerNoSignalRaiseMs) {
+            raiseSmartPower(2, "no signal", now);
+            smartPowerLastSignalMs = now;
+        }
+    }
+
+    smartPowerLastRole = role;
+}
+
+void HermesXInterfaceModule::recordSmartPowerSignal(const meshtastic_MeshPacket &packet, bool ackSuccess)
+{
+    if ((!smartPowerActive && !isTakSmartPowerRole(config.device.role)) || isFromUs(&packet)) {
+        return;
+    }
+    const uint32_t now = millis();
+    smartPowerLastSignalMs = now;
+    if (ackSuccess) {
+        smartPowerSuccessStreak++;
+    }
+
+    const bool hasSignal = packet.rx_rssi != 0 || packet.rx_snr != 0.0f;
+    if (!hasSignal) {
+        return;
+    }
+    smartPowerHasLastSignal = true;
+    smartPowerLastSnr = packet.rx_snr;
+    smartPowerLastRssi = packet.rx_rssi;
+    HERMESX_LOG_DEBUG("SmartPower signal rssi=%" PRId32 " snr=%.2f ack=%d port=%d", smartPowerLastRssi,
+                      static_cast<double>(smartPowerLastSnr), ackSuccess ? 1 : 0,
+                      static_cast<int>(packet.decoded.portnum));
+
+    const bool strong = packet.rx_snr >= 8.0f || packet.rx_rssi > -85;
+    const bool weak = packet.rx_snr < 1.0f || packet.rx_rssi < -115;
+    if (weak) {
+        smartPowerWeakStreak++;
+        smartPowerStrongStreak = 0;
+        smartPowerSuccessStreak = 0;
+        if (smartPowerWeakStreak >= 2) {
+            raiseSmartPower(2, "weak signal", now);
+            smartPowerWeakStreak = 0;
+        }
+    } else if (strong) {
+        smartPowerStrongStreak++;
+        smartPowerWeakStreak = 0;
+        const bool ackBackedStrong = smartPowerStrongStreak >= 4 && smartPowerSuccessStreak >= 2;
+        const bool rxBackedStrong = smartPowerStrongStreak >= 8;
+        if (ackBackedStrong || rxBackedStrong) {
+            const int8_t before = smartPowerCurrentDbm;
+            lowerSmartPower(1, ackBackedStrong ? "strong ACK signal" : "strong RX signal", now);
+            if (smartPowerCurrentDbm != before) {
+                smartPowerStrongStreak = 0;
+                smartPowerSuccessStreak = 0;
+            }
+        }
+    } else {
+        smartPowerStrongStreak = 0;
+        smartPowerWeakStreak = 0;
+    }
+}
+
+void HermesXInterfaceModule::recordSmartPowerFailure(uint32_t now, const char *reason)
+{
+    if (!smartPowerActive) {
+        return;
+    }
+    smartPowerStrongStreak = 0;
+    smartPowerWeakStreak = 0;
+    smartPowerSuccessStreak = 0;
+    raiseSmartPower(2, reason, now);
 }
 
 
@@ -1532,10 +1865,22 @@ void HermesXInterfaceModule::playTone(float freq, uint32_t duration_ms) {
 
 bool HermesXInterfaceModule::wantPacket(const meshtastic_MeshPacket *p)
 {
-    // ?��? Routing 封�???Text Message 封�??��?�?
-    return p->decoded.portnum == meshtastic_PortNum_ROUTING_APP ||
-       p->decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP ||
-       p->decoded.portnum == meshtastic_PortNum_NODEINFO_APP;
+    if (!p) {
+        return false;
+    }
+
+    const bool feedbackPacket = p->decoded.portnum == meshtastic_PortNum_ROUTING_APP ||
+                                p->decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP ||
+                                p->decoded.portnum == meshtastic_PortNum_NODEINFO_APP;
+    if (feedbackPacket) {
+        return true;
+    }
+
+    if (isFromUs(p)) {
+        return false;
+    }
+
+    return smartPowerActive || isTakSmartPowerRole(config.device.role);
 }
 
 ProcessMessage HermesXInterfaceModule::handleReceived(const meshtastic_MeshPacket &packet)
@@ -1563,6 +1908,7 @@ ProcessMessage HermesXInterfaceModule::handleReceived(const meshtastic_MeshPacke
                 if (ours) {
                     playSendFailedFeedback();
                     waitingForAck = false;
+                    recordSmartPowerFailure(millis(), "routing NAK");
                     HERMESX_LOG_WARN("Routing NAK error=%d req_id=0x%08x id=%u from=%x to=%x",
                         decoded.error_reason,
                         packet.decoded.request_id,
@@ -1581,6 +1927,7 @@ ProcessMessage HermesXInterfaceModule::handleReceived(const meshtastic_MeshPacke
                     waitingForAck = false;
                     pendingSuccessFeedback = true;
                     successFeedbackTime = millis() + 300;
+                    recordSmartPowerSignal(packet, true);
                     HERMESX_LOG_INFO("Routing ACK req_id=0x%08x id=%u", packet.decoded.request_id, packet.id);
                 } else {
                     HERMESX_LOG_DEBUG("Ignore routing ACK req_id=0x%08x (expect=0x%08x)", packet.decoded.request_id,
@@ -1593,6 +1940,9 @@ ProcessMessage HermesXInterfaceModule::handleReceived(const meshtastic_MeshPacke
     }
 
     const bool fromUs = isFromUs(&packet);
+    if (!fromUs) {
+        recordSmartPowerSignal(packet, false);
+    }
 
     if (packet.decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP) {
         if (fromUs) {
@@ -1637,6 +1987,7 @@ int32_t HermesXInterfaceModule::runOnce() {
     uint32_t now = millis();
 
     applyRoleOutputPolicy();
+    updateSmartPowerRole(now);
     if (hermesXEmUiModule) {
         hermesXEmUiModule->tickSiren(now);
     }
@@ -1752,6 +2103,7 @@ int32_t HermesXInterfaceModule::runOnce() {
         waitingForAck = false;
         ackReceived = false;
         playSendFailedFeedback();
+        recordSmartPowerFailure(now, "ACK timeout");
         HERMESX_LOG_WARN("ACK Timeout: Delivery failed");
     }
 

@@ -880,6 +880,8 @@ constexpr uint32_t kLowMemoryReminderFreeThreshold = 6 * 1024;
 constexpr uint32_t kLowMemoryReminderLargestThreshold = 4 * 1024;
 constexpr uint32_t kLowMemoryProtectionReleaseFreeThreshold = 12 * 1024;
 constexpr uint32_t kLowMemoryProtectionReleaseLargestThreshold = 8 * 1024;
+constexpr uint32_t kLowMemoryDangerConfirmMs = 3000;
+static uint32_t gLowMemoryDangerSinceMs = 0;
 
 static bool shouldKeepDirectNeonBuffers()
 {
@@ -943,6 +945,31 @@ static void activateLowMemoryProtection(uint32_t freeHeap, uint32_t largestBlock
     LOG_WARN("[LowMemory] protection active free=%u largest=%u", freeHeap, largestBlock);
 }
 
+static bool confirmLowMemoryDanger(bool lowMemoryDanger, uint32_t now)
+{
+    static uint32_t lastPendingLogMs = 0;
+
+    if (!lowMemoryDanger) {
+        gLowMemoryDangerSinceMs = 0;
+        lastPendingLogMs = 0;
+        return false;
+    }
+    if (gLowMemoryProtectionActive) {
+        return true;
+    }
+    if (gLowMemoryDangerSinceMs == 0) {
+        gLowMemoryDangerSinceMs = now;
+        lastPendingLogMs = now;
+        LOG_DEBUG("[LowMemory] danger pending");
+        return false;
+    }
+    if (now - lastPendingLogMs >= 1000U) {
+        lastPendingLogMs = now;
+        LOG_DEBUG("[LowMemory] danger pending %lums", static_cast<unsigned long>(now - gLowMemoryDangerSinceMs));
+    }
+    return now - gLowMemoryDangerSinceMs >= kLowMemoryDangerConfirmMs;
+}
+
 static bool releaseLowMemoryProtectionIfRecovered(uint32_t freeHeap, uint32_t largestBlock)
 {
     if (!gLowMemoryProtectionActive) {
@@ -952,6 +979,7 @@ static bool releaseLowMemoryProtectionIfRecovered(uint32_t freeHeap, uint32_t la
         return false;
     }
     gLowMemoryProtectionActive = false;
+    gLowMemoryDangerSinceMs = 0;
     invalidateDirectTftWakeCaches();
     LOG_INFO("[LowMemory] protection released free=%u largest=%u", freeHeap, largestBlock);
     return true;
@@ -959,6 +987,8 @@ static bool releaseLowMemoryProtectionIfRecovered(uint32_t freeHeap, uint32_t la
 
 static bool ensureDirectNeonBuffers()
 {
+    static uint32_t lastAllocFailureLogMs = 0;
+
     if (!shouldKeepDirectNeonBuffers()) {
         freeDirectNeonBuffers();
         return false;
@@ -991,13 +1021,19 @@ static bool ensureDirectNeonBuffers()
 
     if (!gDirectNeonClockGlyphCache || !gDirectNeonSharedComposedLayerMap || !gDirectNeonClockPreviousComposedLayerMap ||
         !gDirectNeonClockFullMask || !gDirectNeonClockCoreMask || !gDirectGpsTitleFullMask || !gDirectGpsTitleLayerMap) {
-        LOG_WARN("[DirectHome] direct neon buffer alloc failed glyph=%u shared=%u prev=%u mask=%u gpsTitle=%u",
-                 gDirectNeonClockGlyphCache ? 1 : 0, gDirectNeonSharedComposedLayerMap ? 1 : 0,
-                 gDirectNeonClockPreviousComposedLayerMap ? 1 : 0, (gDirectNeonClockFullMask && gDirectNeonClockCoreMask) ? 1 : 0,
-                 (gDirectGpsTitleFullMask && gDirectGpsTitleLayerMap) ? 1 : 0);
+        const uint32_t now = millis();
+        if (lastAllocFailureLogMs == 0 || now - lastAllocFailureLogMs >= 10000U) {
+            lastAllocFailureLogMs = now;
+            LOG_WARN("[DirectHome] direct neon buffer alloc failed glyph=%u shared=%u prev=%u mask=%u gpsTitle=%u",
+                     gDirectNeonClockGlyphCache ? 1 : 0, gDirectNeonSharedComposedLayerMap ? 1 : 0,
+                     gDirectNeonClockPreviousComposedLayerMap ? 1 : 0,
+                     (gDirectNeonClockFullMask && gDirectNeonClockCoreMask) ? 1 : 0,
+                     (gDirectGpsTitleFullMask && gDirectGpsTitleLayerMap) ? 1 : 0);
+        }
         freeDirectNeonBuffers();
         return false;
     }
+    lastAllocFailureLogMs = 0;
     return true;
 }
 
@@ -1789,7 +1825,8 @@ static void renderDirectHomeDog(TFTDisplay *tft,
                                 int16_t displayH,
                                 int16_t originY,
                                 uint16_t dogFrame,
-                                uint8_t dogPose)
+                                uint8_t dogPose,
+                                bool mqttHomeActive)
 {
     if (!tft) {
         return;
@@ -1992,7 +2029,8 @@ static void renderDirectHomeDog(TFTDisplay *tft,
     const int16_t textX = dogX + kDogDrawW + 6;
     const int16_t textY = regionY + std::max<int16_t>(0, (regionH - FONT_HEIGHT_SMALL) / 2);
     const int16_t textW = std::max<int16_t>(0, regionW - kDogDrawW - 8);
-    HermesX_zh::drawMixedBounded(*tft, textX, textY, textW, u8"請連接手機", HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
+    const char *statusText = mqttHomeActive ? u8"MQTT開啟中" : u8"請連接手機";
+    HermesX_zh::drawMixedBounded(*tft, textX, textY, textW, statusText, HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
     if (textW > 0) {
         tft->overlayBufferForegroundRect565(textX, textY, textW, FONT_HEIGHT_SMALL + 2);
     }
@@ -4339,6 +4377,7 @@ struct RecentTextMessageState {
 static RecentTextMessageState gRecentTextMessageState;
 
 static constexpr uint16_t kOnlineNodeCapacity = 250;
+static constexpr uint8_t kTraceRouteBoundNodeCapacity = 16;
 
 struct OnlineNodeState {
     uint16_t order[kOnlineNodeCapacity]{};
@@ -4349,6 +4388,35 @@ struct OnlineNodeState {
 };
 static OnlineNodeState gOnlineNodeState;
 static OnlineNodeState gTraceRouteNodeState;
+
+enum class TraceRouteUiMode : uint8_t {
+    Menu,
+    BindOnline,
+    BoundRoutes,
+};
+
+struct TraceRouteBoundState {
+    NodeNum nodes[kTraceRouteBoundNodeCapacity]{};
+    uint8_t count = 0;
+    uint8_t menuCursor = 1;
+    uint8_t bindCursor = 0;
+    uint8_t bindSelectedIndex = 0;
+    uint8_t boundCursor = 0;
+    uint8_t boundSelectedIndex = 0;
+    bool confirmVisible = false;
+    uint8_t confirmSelected = 1;
+    NodeNum confirmNode = 0;
+    bool deferredShortVisible = false;
+    uint8_t deferredShortCursor = 0;
+    NodeNum deferredShortNode = 0;
+    bool deferredRouteVisible = false;
+    uint8_t deferredRouteCursor = 0;
+    NodeNum deferredRouteNode = 0;
+};
+static TraceRouteUiMode gTraceRouteUiMode = TraceRouteUiMode::Menu;
+static TraceRouteBoundState gTraceRouteBoundState;
+static const char *getSetupRoleLabel(meshtastic_Config_DeviceConfig_Role role);
+static String formatOnlineNodeSeenAgo(const meshtastic_NodeInfoLite &node);
 
 struct FinderNodeState {
     uint16_t order[kOnlineNodeCapacity]{};
@@ -4607,6 +4675,9 @@ static void showSetupDetailPopup(const char *title, const String &body)
     fastUntilMs = millis() + 1200;
 }
 
+static void drawTraceRoutePopupOverlay(OLEDDisplay *display, OLEDDisplayUiState *state);
+static void drawSetupDetailPopupOverlay(OLEDDisplay *display, OLEDDisplayUiState *state);
+
 static void startTraceRoutePending(NodeNum destNode, uint32_t requestId)
 {
     gTraceRouteRequestState.destNode = destNode;
@@ -4815,6 +4886,89 @@ static const meshtastic_NodeInfoLite *getTraceRouteNodeAt(uint8_t index)
     return &nodeDB->meshNodes->at(gTraceRouteNodeState.order[index]);
 }
 
+static meshtastic_NodeInfoLite *getNodeByNum(NodeNum nodeNum)
+{
+    return nodeDB ? nodeDB->getMeshNode(nodeNum) : nullptr;
+}
+
+static bool isTraceRouteNodeBound(NodeNum nodeNum)
+{
+    if (nodeNum == 0) {
+        return false;
+    }
+    for (uint8_t i = 0; i < gTraceRouteBoundState.count; ++i) {
+        if (gTraceRouteBoundState.nodes[i] == nodeNum) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool bindTraceRouteNode(NodeNum nodeNum)
+{
+    if (nodeNum == 0 || isTraceRouteNodeBound(nodeNum) ||
+        gTraceRouteBoundState.count >= kTraceRouteBoundNodeCapacity) {
+        return false;
+    }
+    gTraceRouteBoundState.nodes[gTraceRouteBoundState.count++] = nodeNum;
+    return true;
+}
+
+static bool unbindTraceRouteNodeAt(uint8_t index)
+{
+    if (index >= gTraceRouteBoundState.count) {
+        return false;
+    }
+    for (uint8_t i = index; i + 1 < gTraceRouteBoundState.count; ++i) {
+        gTraceRouteBoundState.nodes[i] = gTraceRouteBoundState.nodes[i + 1];
+    }
+    gTraceRouteBoundState.nodes[gTraceRouteBoundState.count - 1] = 0;
+    --gTraceRouteBoundState.count;
+    if (gTraceRouteBoundState.boundCursor > gTraceRouteBoundState.count) {
+        gTraceRouteBoundState.boundCursor = gTraceRouteBoundState.count;
+    }
+    if (gTraceRouteBoundState.count == 0) {
+        gTraceRouteBoundState.boundSelectedIndex = 0;
+    } else if (gTraceRouteBoundState.boundSelectedIndex >= gTraceRouteBoundState.count) {
+        gTraceRouteBoundState.boundSelectedIndex = gTraceRouteBoundState.count - 1;
+    }
+    return true;
+}
+
+static void compactTraceRouteBoundNodes()
+{
+    uint8_t write = 0;
+    for (uint8_t read = 0; read < gTraceRouteBoundState.count; ++read) {
+        const NodeNum nodeNum = gTraceRouteBoundState.nodes[read];
+        const meshtastic_NodeInfoLite *node = getNodeByNum(nodeNum);
+        if (!node || !isOnlineNodeCandidate(*node)) {
+            continue;
+        }
+        gTraceRouteBoundState.nodes[write++] = nodeNum;
+    }
+    for (uint8_t i = write; i < gTraceRouteBoundState.count; ++i) {
+        gTraceRouteBoundState.nodes[i] = 0;
+    }
+    gTraceRouteBoundState.count = write;
+    if (gTraceRouteBoundState.boundCursor > gTraceRouteBoundState.count) {
+        gTraceRouteBoundState.boundCursor = gTraceRouteBoundState.count;
+    }
+    if (gTraceRouteBoundState.count == 0) {
+        gTraceRouteBoundState.boundSelectedIndex = 0;
+    } else if (gTraceRouteBoundState.boundSelectedIndex >= gTraceRouteBoundState.count) {
+        gTraceRouteBoundState.boundSelectedIndex = gTraceRouteBoundState.count - 1;
+    }
+}
+
+static const meshtastic_NodeInfoLite *getBoundTraceRouteNodeAt(uint8_t index)
+{
+    compactTraceRouteBoundNodes();
+    if (index >= gTraceRouteBoundState.count) {
+        return nullptr;
+    }
+    return getNodeByNum(gTraceRouteBoundState.nodes[index]);
+}
+
 static const meshtastic_NodeInfoLite *getSelectedOnlineNode()
 {
     rebuildOnlineNodeOrder();
@@ -4826,11 +4980,102 @@ static const meshtastic_NodeInfoLite *getSelectedOnlineNode()
 
 static const meshtastic_NodeInfoLite *getSelectedTraceRouteNode()
 {
+    if (gTraceRouteUiMode == TraceRouteUiMode::BoundRoutes) {
+        if (gTraceRouteBoundState.boundSelectedIndex >= gTraceRouteBoundState.count) {
+            return nullptr;
+        }
+        return getBoundTraceRouteNodeAt(gTraceRouteBoundState.boundSelectedIndex);
+    }
     rebuildTraceRouteNodeOrder();
-    if (gTraceRouteNodeState.selectedIndex >= gTraceRouteNodeState.count) {
+    if (gTraceRouteBoundState.bindSelectedIndex >= gTraceRouteNodeState.count) {
         return nullptr;
     }
-    return getTraceRouteNodeAt(gTraceRouteNodeState.selectedIndex);
+    return getTraceRouteNodeAt(gTraceRouteBoundState.bindSelectedIndex);
+}
+
+static String buildTraceRouteNodeInfoBody(const meshtastic_NodeInfoLite &node)
+{
+    String body = String("LongName: ") + (node.user.long_name[0] ? String(node.user.long_name) : String("--"));
+    body += "\nrole: ";
+    body += (node.has_user ? getSetupRoleLabel(node.user.role) : "--");
+    body += "\n";
+    body += String(u8"最近一次聽到: ") + formatOnlineNodeSeenAgo(node);
+    return body;
+}
+
+static void cancelDeferredTraceRouteBindShortPress()
+{
+    gTraceRouteBoundState.deferredShortVisible = false;
+    gTraceRouteBoundState.deferredShortCursor = 0;
+    gTraceRouteBoundState.deferredShortNode = 0;
+}
+
+static void cancelDeferredTraceRouteBoundShortPress()
+{
+    gTraceRouteBoundState.deferredRouteVisible = false;
+    gTraceRouteBoundState.deferredRouteCursor = 0;
+    gTraceRouteBoundState.deferredRouteNode = 0;
+}
+
+static bool showTraceRouteBindInfoForSelectedNode()
+{
+    gTraceRouteBoundState.bindSelectedIndex = gTraceRouteBoundState.bindCursor - 1;
+    const meshtastic_NodeInfoLite *node = getSelectedTraceRouteNode();
+    if (!node) {
+        LOG_WARN("[Screen] TraceRoute bind short info missing node cursor=%u count=%u",
+                 static_cast<unsigned>(gTraceRouteBoundState.bindCursor), static_cast<unsigned>(gTraceRouteNodeState.count));
+        return false;
+    }
+
+    LOG_INFO("[Screen] TraceRoute bind short info node=%08lx cursor=%u",
+             static_cast<unsigned long>(node->num), static_cast<unsigned>(gTraceRouteBoundState.bindCursor));
+    showSetupDetailPopup("TraceRoute", buildTraceRouteNodeInfoBody(*node));
+    return true;
+}
+
+static void deferTraceRouteBindShortPressForSelectedNode()
+{
+    if (gTraceRouteUiMode != TraceRouteUiMode::BindOnline || gTraceRouteBoundState.bindCursor == 0) {
+        cancelDeferredTraceRouteBindShortPress();
+        return;
+    }
+
+    gTraceRouteBoundState.bindSelectedIndex = gTraceRouteBoundState.bindCursor - 1;
+    const meshtastic_NodeInfoLite *node = getSelectedTraceRouteNode();
+    if (!node) {
+        cancelDeferredTraceRouteBindShortPress();
+        LOG_WARN("[Screen] TraceRoute bind deferred short missing node cursor=%u count=%u",
+                 static_cast<unsigned>(gTraceRouteBoundState.bindCursor), static_cast<unsigned>(gTraceRouteNodeState.count));
+        return;
+    }
+
+    gTraceRouteBoundState.deferredShortVisible = true;
+    gTraceRouteBoundState.deferredShortCursor = gTraceRouteBoundState.bindCursor;
+    gTraceRouteBoundState.deferredShortNode = node->num;
+    LOG_INFO("[Screen] TraceRoute bind defer short node=%08lx cursor=%u",
+             static_cast<unsigned long>(node->num), static_cast<unsigned>(gTraceRouteBoundState.bindCursor));
+}
+
+static void openTraceRouteBindConfirmForSelectedNode()
+{
+    cancelDeferredTraceRouteBindShortPress();
+    if (gTraceRouteUiMode != TraceRouteUiMode::BindOnline || gTraceRouteBoundState.bindCursor == 0) {
+        return;
+    }
+
+    gTraceRouteBoundState.bindSelectedIndex = gTraceRouteBoundState.bindCursor - 1;
+    const meshtastic_NodeInfoLite *node = getSelectedTraceRouteNode();
+    if (!node) {
+        LOG_WARN("[Screen] TraceRoute bind confirm missing node cursor=%u count=%u",
+                 static_cast<unsigned>(gTraceRouteBoundState.bindCursor), static_cast<unsigned>(gTraceRouteNodeState.count));
+        return;
+    }
+
+    gTraceRouteBoundState.confirmNode = node->num;
+    gTraceRouteBoundState.confirmSelected = 1;
+    gTraceRouteBoundState.confirmVisible = true;
+    LOG_INFO("[Screen] TraceRoute bind confirm node=%08lx cursor=%u",
+             static_cast<unsigned long>(node->num), static_cast<unsigned>(gTraceRouteBoundState.bindCursor));
 }
 
 static float getFinderNodeDistanceScore(const meshtastic_NodeInfoLite &node)
@@ -5047,6 +5292,84 @@ static bool sendOnlineNodeTraceRoute(NodeNum nodeNum)
     return true;
 }
 
+static bool sendTraceRouteForSelectedBoundNode()
+{
+    if (gTraceRouteUiMode != TraceRouteUiMode::BoundRoutes || gTraceRouteBoundState.boundCursor == 0) {
+        return false;
+    }
+    compactTraceRouteBoundNodes();
+    if (gTraceRouteBoundState.boundCursor == 0 || gTraceRouteBoundState.boundCursor > gTraceRouteBoundState.count) {
+        return false;
+    }
+
+    gTraceRouteBoundState.boundSelectedIndex = gTraceRouteBoundState.boundCursor - 1;
+    const meshtastic_NodeInfoLite *node = getSelectedTraceRouteNode();
+    if (!node) {
+        LOG_WARN("[Screen] TraceRoute bound short missing node cursor=%u count=%u",
+                 static_cast<unsigned>(gTraceRouteBoundState.boundCursor), static_cast<unsigned>(gTraceRouteBoundState.count));
+        return false;
+    }
+    if (node->via_mqtt) {
+        if (HermesXInterfaceModule::instance) {
+            HermesXInterfaceModule::instance->playNackFail();
+        }
+        showTraceRoutePopup("TraceRoute", "LORA ONLY");
+    } else {
+        sendOnlineNodeTraceRoute(node->num);
+    }
+    return true;
+}
+
+static void deferTraceRouteBoundShortPressForSelectedNode()
+{
+    if (gTraceRouteUiMode != TraceRouteUiMode::BoundRoutes || gTraceRouteBoundState.boundCursor == 0) {
+        cancelDeferredTraceRouteBoundShortPress();
+        return;
+    }
+    compactTraceRouteBoundNodes();
+    if (gTraceRouteBoundState.boundCursor == 0 || gTraceRouteBoundState.boundCursor > gTraceRouteBoundState.count) {
+        cancelDeferredTraceRouteBoundShortPress();
+        return;
+    }
+
+    gTraceRouteBoundState.boundSelectedIndex = gTraceRouteBoundState.boundCursor - 1;
+    const meshtastic_NodeInfoLite *node = getSelectedTraceRouteNode();
+    if (!node) {
+        cancelDeferredTraceRouteBoundShortPress();
+        LOG_WARN("[Screen] TraceRoute bound deferred short missing node cursor=%u count=%u",
+                 static_cast<unsigned>(gTraceRouteBoundState.boundCursor), static_cast<unsigned>(gTraceRouteBoundState.count));
+        return;
+    }
+
+    gTraceRouteBoundState.deferredRouteVisible = true;
+    gTraceRouteBoundState.deferredRouteCursor = gTraceRouteBoundState.boundCursor;
+    gTraceRouteBoundState.deferredRouteNode = node->num;
+    LOG_INFO("[Screen] TraceRoute bound defer short node=%08lx cursor=%u",
+             static_cast<unsigned long>(node->num), static_cast<unsigned>(gTraceRouteBoundState.boundCursor));
+}
+
+static bool unbindSelectedTraceRouteBoundNode()
+{
+    cancelDeferredTraceRouteBoundShortPress();
+    if (gTraceRouteUiMode != TraceRouteUiMode::BoundRoutes || gTraceRouteBoundState.boundCursor == 0) {
+        return false;
+    }
+    compactTraceRouteBoundNodes();
+    if (gTraceRouteBoundState.boundCursor == 0 || gTraceRouteBoundState.boundCursor > gTraceRouteBoundState.count) {
+        return false;
+    }
+
+    const uint8_t removeIndex = gTraceRouteBoundState.boundCursor - 1;
+    const NodeNum nodeNum = gTraceRouteBoundState.nodes[removeIndex];
+    if (!unbindTraceRouteNodeAt(removeIndex)) {
+        return false;
+    }
+    LOG_INFO("[Screen] TraceRoute bound unbind node=%08lx cursor=%u",
+             static_cast<unsigned long>(nodeNum), static_cast<unsigned>(gTraceRouteBoundState.boundCursor));
+    showTraceRoutePopup("TraceRoute", u8"已解除綁定");
+    return true;
+}
+
 static String getOnlineNodeDisplayName(const meshtastic_NodeInfoLite &node)
 {
     if (node.user.short_name[0] != '\0') {
@@ -5175,8 +5498,6 @@ static String formatOnlineNodeSeenAgo(const meshtastic_NodeInfoLite &node)
 static constexpr uint8_t kOnlineDetailBackRow = 0;
 static constexpr uint8_t kOnlineDetailMessageRow = 1;
 static constexpr uint8_t kOnlineDetailTraceRouteRow = 2;
-static constexpr uint8_t kTraceRouteDetailBackRow = 0;
-static constexpr uint8_t kTraceRouteDetailActionRow = 1;
 
 static uint8_t buildOnlineNodeDetailRows(const meshtastic_NodeInfoLite &node, bool finderMode, String *rows, uint8_t maxRows)
 {
@@ -6383,6 +6704,23 @@ void Screen::drawTraceRouteNodeListFrame(OLEDDisplay *display, OLEDDisplayUiStat
 
     const int16_t width = std::max<int16_t>(display->getWidth() - x, 1);
     drawMixedSingleLineBounded(display, x, y, width - 2, "TraceRoute", FONT_HEIGHT_SMALL);
+
+    if (gTraceRouteUiMode == TraceRouteUiMode::Menu) {
+        const char *items[] = {u8"返回", u8"綁定節點", "TraceRoute"};
+        const int16_t rowH = FONT_HEIGHT_SMALL + 4;
+        const int16_t listTop = y + FONT_HEIGHT_SMALL + 6;
+        for (uint8_t i = 0; i < 3; ++i) {
+            const int16_t rowY = listTop + i * rowH;
+            if (gTraceRouteBoundState.menuCursor == i) {
+                display->drawRect(x, rowY - 1, width - 2, rowH);
+            }
+            drawMixedSingleLineBounded(display, x + 2, rowY, width - 4, items[i], rowH);
+        }
+        drawSetupDetailPopupOverlay(display, state);
+        drawTraceRoutePopupOverlay(display, state);
+        return;
+    }
+
     rebuildTraceRouteNodeOrder();
 
     const int16_t rowH = FONT_HEIGHT_SMALL + 3;
@@ -6397,8 +6735,8 @@ void Screen::drawTraceRouteNodeListFrame(OLEDDisplay *display, OLEDDisplayUiStat
 
     const uint8_t totalRows = gTraceRouteNodeState.count + 1;
     uint8_t startCursor = 0;
-    if (gTraceRouteNodeState.listCursor >= static_cast<uint8_t>(visibleRows)) {
-        startCursor = gTraceRouteNodeState.listCursor - static_cast<uint8_t>(visibleRows) + 1;
+    if (gTraceRouteBoundState.bindCursor >= static_cast<uint8_t>(visibleRows)) {
+        startCursor = gTraceRouteBoundState.bindCursor - static_cast<uint8_t>(visibleRows) + 1;
     }
 
     for (int8_t row = 0; row < visibleRows; ++row) {
@@ -6408,7 +6746,7 @@ void Screen::drawTraceRouteNodeListFrame(OLEDDisplay *display, OLEDDisplayUiStat
         }
 
         const int16_t rowY = listTop + row * rowH;
-        if (cursorIndex == gTraceRouteNodeState.listCursor) {
+        if (cursorIndex == gTraceRouteBoundState.bindCursor) {
             display->drawRect(x, rowY - 1, width - 2, rowH);
         }
 
@@ -6422,7 +6760,7 @@ void Screen::drawTraceRouteNodeListFrame(OLEDDisplay *display, OLEDDisplayUiStat
             continue;
         }
 
-        String routeState = node->via_mqtt ? "--" : "LoRa";
+        String routeState = isTraceRouteNodeBound(node->num) ? String(u8"已綁") : String("");
         const int16_t stateW = display->getStringWidth(routeState);
         const int16_t stateX = x + width - stateW - 2;
         display->drawString(stateX, rowY, routeState);
@@ -6435,6 +6773,36 @@ void Screen::drawTraceRouteNodeListFrame(OLEDDisplay *display, OLEDDisplayUiStat
     if (gTraceRouteNodeState.count == 0 && visibleRows > 1) {
         drawMixedSingleLineBounded(display, x + 2, listTop + rowH, width - 4, u8"沒有在線節點", rowH);
     }
+
+    if (gTraceRouteBoundState.confirmVisible) {
+#if defined(USE_EINK)
+        display->setColor(EINK_WHITE);
+#else
+        display->setColor(OLEDDISPLAY_COLOR::BLACK);
+#endif
+        const int16_t boxW = std::min<int16_t>(width - 12, 116);
+        const int16_t boxH = 42;
+        const int16_t boxX = x + (width - boxW) / 2;
+        const int16_t boxY = y + (display->getHeight() - boxH) / 2;
+        display->fillRect(boxX, boxY, boxW, boxH);
+#if defined(USE_EINK)
+        display->setColor(EINK_BLACK);
+#else
+        display->setColor(OLEDDISPLAY_COLOR::WHITE);
+#endif
+        display->drawRect(boxX, boxY, boxW, boxH);
+        drawMixedSingleLineBounded(display, boxX + 6, boxY + 5, boxW - 12, u8"是否綁定？", FONT_HEIGHT_SMALL + 2);
+        const int16_t optionY = boxY + 24;
+        if (gTraceRouteBoundState.confirmSelected == 0) {
+            display->drawRect(boxX + 10, optionY - 1, 36, FONT_HEIGHT_SMALL + 4);
+        } else {
+            display->drawRect(boxX + boxW - 46, optionY - 1, 36, FONT_HEIGHT_SMALL + 4);
+        }
+        drawMixedSingleLineBounded(display, boxX + 20, optionY, 22, u8"是", FONT_HEIGHT_SMALL + 2);
+        drawMixedSingleLineBounded(display, boxX + boxW - 36, optionY, 22, u8"否", FONT_HEIGHT_SMALL + 2);
+    }
+    drawSetupDetailPopupOverlay(display, state);
+    drawTraceRoutePopupOverlay(display, state);
 }
 
 void Screen::drawTraceRouteNodeDetailFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
@@ -6444,22 +6812,7 @@ void Screen::drawTraceRouteNodeDetailFrame(OLEDDisplay *display, OLEDDisplayUiSt
     display->setFont(FONT_SMALL);
     const int16_t width = std::max<int16_t>(display->getWidth() - x, 1);
     drawMixedSingleLineBounded(display, x, y, width - 2, "TraceRoute", FONT_HEIGHT_SMALL);
-
-    const meshtastic_NodeInfoLite *node = getSelectedTraceRouteNode();
-    if (!node) {
-        display->drawString(x + 2, y + FONT_HEIGHT_SMALL + 4, "No node");
-        return;
-    }
-
-    String targetLine = String(u8"目標: ") + getOnlineNodeDisplayName(*node) + " " + getOnlineNodeShortId(*node);
-    String actionLine = node->via_mqtt ? String("TraceRoute: --") : String(u8"開始TraceRoute");
-    String statusLine = node->via_mqtt ? String("LoRa: --") : String("LoRa: OK");
-    String rows[] = {u8"返回", actionLine, targetLine, statusLine};
-    const uint8_t rowCount = sizeof(rows) / sizeof(rows[0]);
-
-    if (gTraceRouteNodeState.detailCursor >= rowCount) {
-        gTraceRouteNodeState.detailCursor = rowCount - 1;
-    }
+    compactTraceRouteBoundNodes();
 
     const int16_t rowH = FONT_HEIGHT_SMALL + 3;
     const int16_t listTop = y + FONT_HEIGHT_SMALL + 2;
@@ -6470,22 +6823,44 @@ void Screen::drawTraceRouteNodeDetailFrame(OLEDDisplay *display, OLEDDisplayUiSt
     if (visibleRows > 4) {
         visibleRows = 4;
     }
+
+    const uint8_t totalRows = gTraceRouteBoundState.count + 1;
     uint8_t startCursor = 0;
-    if (gTraceRouteNodeState.detailCursor >= static_cast<uint8_t>(visibleRows)) {
-        startCursor = gTraceRouteNodeState.detailCursor - static_cast<uint8_t>(visibleRows) + 1;
+    if (gTraceRouteBoundState.boundCursor >= static_cast<uint8_t>(visibleRows)) {
+        startCursor = gTraceRouteBoundState.boundCursor - static_cast<uint8_t>(visibleRows) + 1;
     }
 
     for (int8_t row = 0; row < visibleRows; ++row) {
         const uint8_t rowIndex = startCursor + row;
-        if (rowIndex >= rowCount) {
+        if (rowIndex >= totalRows) {
             break;
         }
         const int16_t rowY = listTop + row * rowH;
-        if (rowIndex == gTraceRouteNodeState.detailCursor) {
+        if (rowIndex == gTraceRouteBoundState.boundCursor) {
             display->drawRect(x, rowY - 1, width - 2, rowH);
         }
-        drawMixedSingleLineBounded(display, x + 2, rowY, width - 4, rows[rowIndex].c_str(), rowH);
+        if (rowIndex == 0) {
+            drawMixedSingleLineBounded(display, x + 2, rowY, width - 4, u8"返回", rowH);
+            continue;
+        }
+        const meshtastic_NodeInfoLite *node = getBoundTraceRouteNodeAt(rowIndex - 1);
+        if (!node) {
+            continue;
+        }
+        String routeState = node->via_mqtt ? "--" : "TR";
+        const int16_t stateW = display->getStringWidth(routeState);
+        const int16_t stateX = x + width - stateW - 2;
+        display->drawString(stateX, rowY, routeState);
+        String line = getOnlineNodeDisplayName(*node) + " " + getOnlineNodeShortId(*node);
+        const int16_t textWidth = stateX - x - 4;
+        drawMixedSingleLineBounded(display, x + 2, rowY, textWidth > 0 ? textWidth : width - 4, line.c_str(), rowH);
     }
+
+    if (gTraceRouteBoundState.count == 0 && visibleRows > 1) {
+        drawMixedSingleLineBounded(display, x + 2, listTop + rowH, width - 4, u8"尚未綁定節點", rowH);
+    }
+    drawSetupDetailPopupOverlay(display, state);
+    drawTraceRoutePopupOverlay(display, state);
 }
 
 void Screen::drawFinderNodeDetailFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
@@ -8949,7 +9324,7 @@ static const uint32_t kTakSmartIntervalOptions[] = {15, 30, 60, 120};
 static const char *kTakSmartIntervalLabels[] = {"15s", "30s", "60s", "120s"};
 static const uint8_t kTakSmartIntervalCount = sizeof(kTakSmartIntervalOptions) / sizeof(kTakSmartIntervalOptions[0]);
 static constexpr uint8_t kTakPopupRowCount = 5;
-static constexpr uint8_t kTakSettingsRowCount = 9;
+static constexpr uint8_t kTakSettingsRowCount = 11;
 
 static const uint32_t kSetupMqttMapPublishOptions[] = {3600, 7200, 10800, 21600, 43200, 86400};
 static const uint8_t kSetupMqttMapPublishCount =
@@ -9251,11 +9626,29 @@ static void cycleTakOption(uint32_t &value, const uint32_t *options, uint8_t cou
     value = options[(index + 1) % count];
 }
 
+static int8_t getTakSmartPowerMinDbm()
+{
+    return HermesXInterfaceModule::instance ? HermesXInterfaceModule::instance->getSmartPowerMinDbm() : 14;
+}
+
+static int8_t getTakSmartPowerMaxDbm()
+{
+    return HermesXInterfaceModule::instance ? HermesXInterfaceModule::instance->getSmartPowerMaxDbm() : 22;
+}
+
+static bool isTakModeActive();
+
+static bool isSmartPowerHomeActive()
+{
+    return isTakModeActive() || (HermesXInterfaceModule::instance && HermesXInterfaceModule::instance->isSmartPowerActive());
+}
+
 static bool shouldShowHermesXHomeFrame()
 {
     return config.device.role == meshtastic_Config_DeviceConfig_Role_CLIENT ||
            config.device.role == meshtastic_Config_DeviceConfig_Role_CLIENT_MUTE ||
-           config.device.role == meshtastic_Config_DeviceConfig_Role_CLIENT_HIDDEN;
+           config.device.role == meshtastic_Config_DeviceConfig_Role_CLIENT_HIDDEN ||
+           isSmartPowerHomeActive();
 }
 
 static bool shouldShowHermesXGpsFrame()
@@ -9885,6 +10278,16 @@ static bool isStealthModeActive()
 static bool isTakModeActive()
 {
     return gTakRuntimeState.active;
+}
+
+static bool isTakDeviceRole(meshtastic_Config_DeviceConfig_Role role)
+{
+    return role == meshtastic_Config_DeviceConfig_Role_TAK || role == meshtastic_Config_DeviceConfig_Role_TAK_TRACKER;
+}
+
+static meshtastic_Config_DeviceConfig_Role sanitizeTakPreviousRole(meshtastic_Config_DeviceConfig_Role role)
+{
+    return isTakDeviceRole(role) ? meshtastic_Config_DeviceConfig_Role_CLIENT : role;
 }
 
 static bool isValidStealthRetainedState(const StealthRetainedState &state)
@@ -10579,7 +10982,7 @@ static bool enableTakMode()
 
     gTakRuntimeState = TakRuntimeState{};
     gTakRuntimeState.active = true;
-    gTakRuntimeState.previousRole = config.device.role;
+    gTakRuntimeState.previousRole = sanitizeTakPreviousRole(config.device.role);
     gTakRuntimeState.ledHeartbeatDisabled = config.device.led_heartbeat_disabled;
     gTakRuntimeState.nodeInfoBroadcastSecs = config.device.node_info_broadcast_secs;
     gTakRuntimeState.gpsUpdateIntervalSecs = config.position.gps_update_interval;
@@ -10600,6 +11003,9 @@ static bool enableTakMode()
     }
 
     applyTakModeSettings();
+    if (HermesXInterfaceModule::instance) {
+        HermesXInterfaceModule::instance->syncSmartPowerRoleNow();
+    }
     syncRetainedTakState();
     persistTakStateToFile();
     return true;
@@ -10621,7 +11027,11 @@ static bool restoreTakModeAfterBoot()
 
     gTakRuntimeState = gTakRetainedState.state;
     gTakRuntimeState.active = true;
+    gTakRuntimeState.previousRole = sanitizeTakPreviousRole(gTakRuntimeState.previousRole);
     const bool changed = applyTakModeSettings();
+    if (HermesXInterfaceModule::instance) {
+        HermesXInterfaceModule::instance->syncSmartPowerRoleNow();
+    }
     syncRetainedTakState();
     persistTakStateToFile();
     return changed;
@@ -10650,7 +11060,8 @@ static bool disableTakMode()
         gTakRuntimeState.quietOutputsApplied = false;
     }
 
-    config.device.role = gTakRuntimeState.previousRole;
+    const auto restoredRole = sanitizeTakPreviousRole(gTakRuntimeState.previousRole);
+    config.device.role = restoredRole;
     config.device.node_info_broadcast_secs = gTakRuntimeState.nodeInfoBroadcastSecs;
     config.position.gps_update_interval = gTakRuntimeState.gpsUpdateIntervalSecs;
     config.position.position_broadcast_smart_enabled = gTakRuntimeState.positionBroadcastSmartEnabled;
@@ -10664,6 +11075,17 @@ static bool disableTakMode()
         HermesXInterfaceModule::instance->applyRoleOutputPolicy();
         HermesXInterfaceModule::instance->restoreBuzzerOutput();
     }
+    if (nodeDB) {
+        nodeDB->installRoleDefaults(restoredRole);
+        nodeDB->saveToDisk(SEGMENT_CONFIG | SEGMENT_NODEDATABASE | SEGMENT_DEVICESTATE);
+    }
+    if (service) {
+        service->configChanged.notifyObservers(NULL);
+    }
+    if (HermesXInterfaceModule::instance) {
+        HermesXInterfaceModule::instance->syncSmartPowerRoleNow();
+    }
+    LOG_INFO("[HermesX] TAK MODE restored role=%d", static_cast<int>(restoredRole));
 
     clearPersistedTakStateFile();
     clearRetainedTakState();
@@ -11633,10 +12055,14 @@ void Screen::drawTakModeFrame(OLEDDisplay *display, OLEDDisplayUiState *state, i
                        getTakOptionLabel(gTakModeProfile.smartMinimumIntervalSecs, kTakSmartIntervalOptions,
                                          kTakSmartIntervalLabels, kTakSmartIntervalCount);
             case 6:
-                return String(u8"聲光靜默: ") + (gTakModeProfile.quietOutputs ? "ON" : "OFF");
+                return String(u8"智慧功率低: ") + String(static_cast<int>(getTakSmartPowerMinDbm())) + "dBm";
             case 7:
-                return String("EMUI: ") + (gTakModeProfile.allowEmUi ? "ON" : "OFF");
+                return String(u8"智慧功率高: ") + String(static_cast<int>(getTakSmartPowerMaxDbm())) + "dBm";
             case 8:
+                return String(u8"聲光靜默: ") + (gTakModeProfile.quietOutputs ? "ON" : "OFF");
+            case 9:
+                return String("EMUI: ") + (gTakModeProfile.allowEmUi ? "ON" : "OFF");
+            case 10:
                 return String(u8"尋人模組: ") + (gTakModeProfile.allowFinder ? "ON" : "OFF");
             default:
                 return "";
@@ -11661,10 +12087,123 @@ void Screen::drawTakModeFrame(OLEDDisplay *display, OLEDDisplayUiState *state, i
     }
 }
 
+static void drawSmartPowerHomeFrame(OLEDDisplay *display, int16_t x, int16_t y)
+{
+    if (!display) {
+        return;
+    }
+
+    const int16_t width = display->getWidth();
+    const int16_t height = display->getHeight();
+    const bool portraitLayout = width < height && width <= 160;
+    const bool compactLayout = (width < 200 || height < 120);
+
+#if defined(USE_EINK)
+    display->setColor(EINK_WHITE);
+#else
+    display->setColor(OLEDDISPLAY_COLOR::BLACK);
+#endif
+    display->fillRect(0, 0, width, height);
+#if defined(USE_EINK)
+    display->setColor(EINK_BLACK);
+#else
+    display->setColor(OLEDDISPLAY_COLOR::WHITE);
+#endif
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+
+    int8_t currentDbm = config.lora.tx_power;
+    float snr = 0.0f;
+    int32_t rssi = 0;
+    uint32_t signalAgeMs = 0;
+    bool hasSignal = false;
+    if (HermesXInterfaceModule::instance) {
+        currentDbm = HermesXInterfaceModule::instance->getSmartPowerCurrentDbm();
+        hasSignal = HermesXInterfaceModule::instance->getSmartPowerLastSignal(snr, rssi, signalAgeMs);
+    }
+    const int groupCount = std::max<int>(0, getGroupNodeCount());
+    bool hasBattery = false;
+    int batteryVoltageMv = 0;
+    uint8_t batteryPercent = 0;
+    getHermesXHomeBatteryState(hasBattery, batteryVoltageMv, batteryPercent);
+    (void)batteryVoltageMv;
+
+    const int16_t pad = portraitLayout ? 6 : (compactLayout ? 4 : 8);
+    const int16_t titleY = y + (portraitLayout ? 2 : (compactLayout ? 1 : 3));
+    const int16_t titleH = compactLayout ? 12 : 16;
+    graphics::HermesX_zh::drawMixedBounded(*display, x + pad, titleY, width - (pad * 2), u8"智慧功率",
+                                           graphics::HermesX_zh::GLYPH_WIDTH, titleH, nullptr);
+    if (hasBattery) {
+        const int16_t iconW = portraitLayout ? 24 : 20;
+        const int16_t iconH = 12;
+        const int16_t iconX = width - pad - iconW;
+        const int16_t iconY = titleY;
+        drawHermesXBatteryIconHorizontal(display, iconX, iconY, iconW, iconH, batteryPercent);
+    }
+
+    const int16_t groupW = portraitLayout ? (width - pad * 2) : (compactLayout ? 48 : 66);
+    const int16_t groupH = portraitLayout ? 64 : std::min<int16_t>(height - (compactLayout ? 30 : 42), compactLayout ? 68 : 82);
+    const int16_t groupX = portraitLayout ? (x + pad) : (width - groupW - pad);
+    const int16_t groupY = portraitLayout ? (height - groupH - pad) : ((height - groupH) / 2 + (compactLayout ? 8 : 10));
+    display->drawRect(groupX, groupY, groupW, groupH);
+    display->setFont(FONT_SMALL);
+    display->setTextAlignment(TEXT_ALIGN_CENTER);
+    display->drawString(groupX + groupW / 2, groupY + 4, "GROUP");
+    display->setFont((!compactLayout && groupCount < 100) ? FONT_LARGE : FONT_MEDIUM);
+    char groupBuf[8];
+    snprintf(groupBuf, sizeof(groupBuf), "%d", groupCount);
+    const int16_t groupNumberH = compactLayout ? FONT_HEIGHT_MEDIUM : FONT_HEIGHT_LARGE;
+    const int16_t groupHeaderH = 18;
+    const int16_t groupNumberY = groupY + groupHeaderH + std::max<int16_t>(0, (groupH - groupHeaderH - groupNumberH) / 2);
+    display->drawString(groupX + groupW / 2, groupNumberY, groupBuf);
+
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+    const int16_t leftX = x + pad;
+    const int16_t leftW = portraitLayout ? (width - pad * 2) : std::max<int16_t>(40, groupX - leftX - pad);
+    display->setFont(FONT_SMALL);
+    char snrBuf[24];
+    char powerBuf[24];
+    char rssiBuf[24];
+    char ageBuf[24];
+    snprintf(powerBuf, sizeof(powerBuf), "dBm %d", static_cast<int>(currentDbm));
+    if (hasSignal) {
+        snprintf(snrBuf, sizeof(snrBuf), "SNR %.1f", static_cast<double>(snr));
+        if (rssi != 0) {
+            snprintf(rssiBuf, sizeof(rssiBuf), "RSSI %" PRId32, rssi);
+        } else {
+            snprintf(rssiBuf, sizeof(rssiBuf), "RSSI --");
+        }
+        if (signalAgeMs < 1000U) {
+            snprintf(ageBuf, sizeof(ageBuf), "RX now");
+        } else {
+            snprintf(ageBuf, sizeof(ageBuf), "RX %lus", static_cast<unsigned long>(signalAgeMs / 1000U));
+        }
+    } else {
+        snprintf(snrBuf, sizeof(snrBuf), "SNR --");
+        snprintf(rssiBuf, sizeof(rssiBuf), "RSSI --");
+        snprintf(ageBuf, sizeof(ageBuf), "RX wait");
+    }
+
+    const int16_t metricsTop = titleY + titleH + (portraitLayout ? 8 : (compactLayout ? 4 : 8));
+    const int16_t metricsBottom = portraitLayout ? (groupY - pad) : (height - pad);
+    const int16_t metricsH = std::max<int16_t>(FONT_HEIGHT_SMALL * 4, metricsBottom - metricsTop);
+    const int16_t rowStep = std::max<int16_t>(FONT_HEIGHT_SMALL, metricsH / 4);
+    display->drawStringMaxWidth(leftX, metricsTop, leftW, snrBuf);
+    display->drawStringMaxWidth(leftX, metricsTop + rowStep, leftW, powerBuf);
+    display->drawStringMaxWidth(leftX, metricsTop + rowStep * 2, leftW, rssiBuf);
+    display->drawStringMaxWidth(leftX, metricsTop + rowStep * 3, leftW, ageBuf);
+
+    display->setColor(WHITE);
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+}
+
 void Screen::drawHermesXMain(OLEDDisplay *display, OLEDDisplayUiState * /*state*/, int16_t x, int16_t y)
 {
     if (lowMemoryReminderVisible) {
         drawLowMemoryProtectionFrame(display, nullptr);
+        return;
+    }
+    if (isSmartPowerHomeActive()) {
+        drawSmartPowerHomeFrame(display, x, y);
         return;
     }
 
@@ -15958,10 +16497,11 @@ int32_t Screen::runOnce()
             setFastFramerate();
         }
         const bool lowMemoryDanger = freeHeap < kLowMemoryReminderFreeThreshold || largest < kLowMemoryReminderLargestThreshold;
-        if (lowMemoryDanger) {
+        const bool confirmedLowMemoryDanger = confirmLowMemoryDanger(lowMemoryDanger, millis());
+        if (confirmedLowMemoryDanger) {
             activateLowMemoryProtection(freeHeap, largest);
         }
-        if (!lowMemoryReminderVisible && millis() >= lowMemoryReminderSuppressUntilMs && lowMemoryDanger) {
+        if (!lowMemoryReminderVisible && millis() >= lowMemoryReminderSuppressUntilMs && confirmedLowMemoryDanger) {
             lowMemoryReminderVisible = true;
             lowMemoryReminderSelected = 0;
             lowMemoryReminderTriggerFree = freeHeap;
@@ -16086,9 +16626,10 @@ int32_t Screen::runOnce()
 
 #if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
     defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
-    const bool directNeonBuffersReady = ensureDirectNeonBuffers();
+    bool directNeonBuffersReady = false;
     bool renderDirectHomeClock = false;
     bool renderDirectHomeDogOverlay = false;
+    bool directHomeMqttActive = false;
     bool forceDirectHomeClockRedraw = false;
     uint16_t directHomeDogFrame = 0xFFFF;
     char directHomeTimeBuf[16];
@@ -16132,6 +16673,12 @@ int32_t Screen::runOnce()
     const bool onFixedMainFrame = showingNormalScreen && ui->getUiState()->frameState == FIXED &&
                                   framesetInfo.positions.main < framesetInfo.frameCount &&
                                   ui->getUiState()->currentFrame == framesetInfo.positions.main;
+    const bool smartPowerHomeActive = onFixedMainFrame && isSmartPowerHomeActive();
+    if (smartPowerHomeActive) {
+        freeDirectNeonBuffers();
+    } else {
+        directNeonBuffersReady = ensureDirectNeonBuffers();
+    }
     const bool onFixedGpsFrame = showingNormalScreen && ui->getUiState()->frameState == FIXED &&
                                  framesetInfo.positions.settings < framesetInfo.frameCount &&
                                  ui->getUiState()->currentFrame == framesetInfo.positions.settings;
@@ -16156,7 +16703,7 @@ int32_t Screen::runOnce()
     }
     const bool emergencyUiActive =
         HermesXInterfaceModule::instance && HermesXInterfaceModule::instance->isEmergencyUiActive();
-    if (directNeonBuffersReady && onFixedMainFrame && canUseDirectHermesXHomeClock(dispdev) && !incomingTextPopupActive &&
+    if (directNeonBuffersReady && onFixedMainFrame && !smartPowerHomeActive && canUseDirectHermesXHomeClock(dispdev) && !incomingTextPopupActive &&
         !incomingNodePopupActive && !hermesEmergencyConfirmVisible && !emergencyUiActive && !lowMemoryReminderVisible) {
         const bool enteringDirectHomeOverlay = !gDirectHomeClockWasVisible && !gDirectHomeDogWasVisible;
 
@@ -16164,9 +16711,10 @@ int32_t Screen::runOnce()
         homeDateBuf[0] = '\0';
         const bool directHomeHasValidTime =
             formatHermesXHomeTimeDate(directHomeTimeBuf, sizeof(directHomeTimeBuf), homeDateBuf, sizeof(homeDateBuf));
-        renderDirectHomeClock = directHomeHasValidTime;
-        renderDirectHomeDogOverlay = !directHomeHasValidTime;
-        directHomeDogFrame = static_cast<uint16_t>(millis() / 110U);
+        directHomeMqttActive = moduleConfig.mqtt.enabled;
+        renderDirectHomeClock = directHomeHasValidTime && !directHomeMqttActive;
+        renderDirectHomeDogOverlay = directHomeMqttActive || !directHomeHasValidTime;
+        directHomeDogFrame = directHomeMqttActive ? 0 : static_cast<uint16_t>(millis() / 110U);
 
         bool hasBattery = false;
         int batteryVoltageMv = 0;
@@ -16201,7 +16749,7 @@ int32_t Screen::runOnce()
             logDirectHomeNeonSummary("DirectHome state update");
         }
 
-        if (targetFramerate < DIRECT_HOME_CLOCK_FRAMERATE) {
+        if (!directHomeMqttActive && targetFramerate < DIRECT_HOME_CLOCK_FRAMERATE) {
             targetFramerate = DIRECT_HOME_CLOCK_FRAMERATE;
             ui->setTargetFPS(targetFramerate);
         }
@@ -16505,7 +17053,13 @@ int32_t Screen::runOnce()
             gHermesXDirectHomeUiCache.lastDogFrame != directHomeDogFrame ||
             gHermesXDirectHomeUiCache.lastDogPose != gDirectHomeDogPose) {
             const bool repaintDogBackground = repaintDirectHomeClockMeshRegion(tft, dispdev->getWidth(), dispdev->getHeight(), 0);
-            renderDirectHomeDog(tft, dispdev->getWidth(), dispdev->getHeight(), 0, directHomeDogFrame, gDirectHomeDogPose);
+            renderDirectHomeDog(tft,
+                                dispdev->getWidth(),
+                                dispdev->getHeight(),
+                                0,
+                                directHomeDogFrame,
+                                gDirectHomeDogPose,
+                                directHomeMqttActive);
             gHermesXDirectHomeUiCache.lastDogValid = true;
             gHermesXDirectHomeUiCache.lastDogFrame = directHomeDogFrame;
             gHermesXDirectHomeUiCache.lastDogPose = gDirectHomeDogPose;
@@ -18027,9 +18581,15 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
     };
     auto openTraceRouteNodeList = [&]() {
         rebuildTraceRouteNodeOrder();
-        gTraceRouteNodeState.listCursor = 0;
-        gTraceRouteNodeState.selectedIndex = 0;
-        gTraceRouteNodeState.detailCursor = kTraceRouteDetailActionRow;
+        gTraceRouteUiMode = TraceRouteUiMode::Menu;
+        gTraceRouteBoundState.menuCursor = 1;
+        gTraceRouteBoundState.confirmVisible = false;
+        gTraceRouteBoundState.confirmNode = 0;
+        gTraceRouteBoundState.confirmSelected = 1;
+        gTraceRouteBoundState.bindCursor = 0;
+        gTraceRouteBoundState.bindSelectedIndex = 0;
+        gTraceRouteBoundState.boundCursor = 0;
+        gTraceRouteBoundState.boundSelectedIndex = 0;
         return showTraceRouteNodeListPage();
     };
     auto returnToPrimaryFeatureEntry = [&]() {
@@ -21732,8 +22292,6 @@ bool Screen::handleTraceRouteNodeListInput(const InputEvent *event)
         return false;
     }
 
-    rebuildTraceRouteNodeOrder();
-
     const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
     const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
     const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
@@ -21775,39 +22333,127 @@ bool Screen::handleTraceRouteNodeListInput(const InputEvent *event)
         navDir = 1;
     }
 
+    if (gTraceRouteBoundState.confirmVisible) {
+        if (navDir != 0 || isLeft || isRight || isUp || isDown || isCw || isCcw) {
+            gTraceRouteBoundState.confirmSelected = (gTraceRouteBoundState.confirmSelected == 0) ? 1 : 0;
+            setFastFramerate();
+            return true;
+        }
+        if (isCancel) {
+            cancelDeferredTraceRouteBindShortPress();
+            gTraceRouteBoundState.confirmVisible = false;
+            gTraceRouteBoundState.confirmNode = 0;
+            gTraceRouteBoundState.confirmSelected = 1;
+            setFastFramerate();
+            return true;
+        }
+        if (isSelect || isPress) {
+            const bool confirmBind = gTraceRouteBoundState.confirmSelected == 0;
+            const NodeNum nodeNum = gTraceRouteBoundState.confirmNode;
+            gTraceRouteBoundState.confirmVisible = false;
+            gTraceRouteBoundState.confirmNode = 0;
+            gTraceRouteBoundState.confirmSelected = 1;
+            if (confirmBind) {
+                const bool bound = bindTraceRouteNode(nodeNum);
+                showTraceRoutePopup("TraceRoute", bound ? u8"已綁定" : u8"已存在或已滿");
+            }
+            setFastFramerate();
+            return true;
+        }
+        return true;
+    }
+
+    if (gTraceRouteUiMode == TraceRouteUiMode::Menu) {
+        if (navDir != 0) {
+            cancelDeferredTraceRouteBindShortPress();
+            int nextCursor = static_cast<int>(gTraceRouteBoundState.menuCursor) + navDir;
+            if (nextCursor < 0) {
+                nextCursor = 0;
+            } else if (nextCursor > 2) {
+                nextCursor = 2;
+            }
+            gTraceRouteBoundState.menuCursor = static_cast<uint8_t>(nextCursor);
+            setFastFramerate();
+            return true;
+        }
+        if (isSelect || isPress) {
+            cancelDeferredTraceRouteBindShortPress();
+            if (gTraceRouteBoundState.menuCursor == 0) {
+                showHermesXActionPage();
+            } else if (gTraceRouteBoundState.menuCursor == 1) {
+                gTraceRouteUiMode = TraceRouteUiMode::BindOnline;
+                rebuildTraceRouteNodeOrder();
+                gTraceRouteBoundState.bindCursor = gTraceRouteNodeState.count > 0 ? 1 : 0;
+                gTraceRouteBoundState.bindSelectedIndex = 0;
+                LOG_INFO("[Screen] TraceRoute menu -> bind count=%u cursor=%u",
+                         static_cast<unsigned>(gTraceRouteNodeState.count),
+                         static_cast<unsigned>(gTraceRouteBoundState.bindCursor));
+            } else {
+                gTraceRouteUiMode = TraceRouteUiMode::BoundRoutes;
+                compactTraceRouteBoundNodes();
+                gTraceRouteBoundState.boundCursor = 0;
+                gTraceRouteBoundState.boundSelectedIndex = 0;
+                showTraceRouteNodeDetailPage();
+            }
+            setFastFramerate();
+            return true;
+        }
+        if (isCancel) {
+            cancelDeferredTraceRouteBindShortPress();
+            showHermesXActionPage();
+            setFastFramerate();
+            return true;
+        }
+        return false;
+    }
+
+    rebuildTraceRouteNodeOrder();
     const int totalEntries = static_cast<int>(gTraceRouteNodeState.count) + 1;
+    if (gTraceRouteBoundState.bindCursor >= totalEntries) {
+        gTraceRouteBoundState.bindCursor = totalEntries > 1 ? 1 : 0;
+        gTraceRouteBoundState.bindSelectedIndex = 0;
+    }
     if (navDir != 0) {
-        int nextCursor = static_cast<int>(gTraceRouteNodeState.listCursor) + navDir;
+        cancelDeferredTraceRouteBindShortPress();
+        int nextCursor = static_cast<int>(gTraceRouteBoundState.bindCursor) + navDir;
         if (nextCursor < 0) {
             nextCursor = 0;
         } else if (nextCursor >= totalEntries) {
             nextCursor = totalEntries - 1;
         }
 
-        if (nextCursor != gTraceRouteNodeState.listCursor) {
-            gTraceRouteNodeState.listCursor = static_cast<uint8_t>(nextCursor);
+        if (nextCursor != gTraceRouteBoundState.bindCursor) {
+            gTraceRouteBoundState.bindCursor = static_cast<uint8_t>(nextCursor);
             if (nextCursor > 0) {
-                gTraceRouteNodeState.selectedIndex = static_cast<uint8_t>(nextCursor - 1);
+                gTraceRouteBoundState.bindSelectedIndex = static_cast<uint8_t>(nextCursor - 1);
             }
+            LOG_INFO("[Screen] TraceRoute bind nav dir=%d cursor=%u selected=%u count=%u", navDir,
+                     static_cast<unsigned>(gTraceRouteBoundState.bindCursor),
+                     static_cast<unsigned>(gTraceRouteBoundState.bindSelectedIndex),
+                     static_cast<unsigned>(gTraceRouteNodeState.count));
             setFastFramerate();
         }
         return true;
     }
 
     if (isSelect || isPress) {
-        if (gTraceRouteNodeState.listCursor == 0) {
-            showHermesXActionPage();
+        cancelDeferredTraceRouteBindShortPress();
+        if (gTraceRouteBoundState.bindCursor == 0) {
+            gTraceRouteUiMode = TraceRouteUiMode::Menu;
         } else {
-            gTraceRouteNodeState.selectedIndex = gTraceRouteNodeState.listCursor - 1;
-            gTraceRouteNodeState.detailCursor = kTraceRouteDetailActionRow;
-            showTraceRouteNodeDetailPage();
+            if (isRotary) {
+                deferTraceRouteBindShortPressForSelectedNode();
+            } else if (showTraceRouteBindInfoForSelectedNode()) {
+                requestImmediateRedraw();
+            }
         }
         setFastFramerate();
         return true;
     }
 
     if (isCancel) {
-        showHermesXActionPage();
+        cancelDeferredTraceRouteBindShortPress();
+        gTraceRouteUiMode = TraceRouteUiMode::Menu;
         setFastFramerate();
         return true;
     }
@@ -21825,17 +22471,8 @@ bool Screen::handleTraceRouteNodeDetailInput(const InputEvent *event)
         return false;
     }
 
-    const meshtastic_NodeInfoLite *node = getSelectedTraceRouteNode();
-    if (!node) {
-        showTraceRouteNodeListPage();
-        setFastFramerate();
-        return true;
-    }
-
-    const uint8_t rowCount = 4;
-    if (gTraceRouteNodeState.detailCursor >= rowCount) {
-        gTraceRouteNodeState.detailCursor = rowCount - 1;
-    }
+    gTraceRouteUiMode = TraceRouteUiMode::BoundRoutes;
+    compactTraceRouteBoundNodes();
 
     const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
     const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
@@ -21878,31 +22515,35 @@ bool Screen::handleTraceRouteNodeDetailInput(const InputEvent *event)
         navDir = 1;
     }
 
+    const int totalEntries = static_cast<int>(gTraceRouteBoundState.count) + 1;
     if (navDir != 0) {
-        int nextCursor = static_cast<int>(gTraceRouteNodeState.detailCursor) + navDir;
+        cancelDeferredTraceRouteBoundShortPress();
+        int nextCursor = static_cast<int>(gTraceRouteBoundState.boundCursor) + navDir;
         if (nextCursor < 0) {
             nextCursor = 0;
-        } else if (nextCursor >= rowCount) {
-            nextCursor = rowCount - 1;
+        } else if (nextCursor >= totalEntries) {
+            nextCursor = totalEntries - 1;
         }
-        if (nextCursor != gTraceRouteNodeState.detailCursor) {
-            gTraceRouteNodeState.detailCursor = static_cast<uint8_t>(nextCursor);
+        if (nextCursor != gTraceRouteBoundState.boundCursor) {
+            gTraceRouteBoundState.boundCursor = static_cast<uint8_t>(nextCursor);
+            if (nextCursor > 0) {
+                gTraceRouteBoundState.boundSelectedIndex = static_cast<uint8_t>(nextCursor - 1);
+            }
             setFastFramerate();
         }
         return true;
     }
 
     if (isSelect || isPress) {
-        if (gTraceRouteNodeState.detailCursor == kTraceRouteDetailBackRow) {
+        cancelDeferredTraceRouteBoundShortPress();
+        if (gTraceRouteBoundState.boundCursor == 0) {
+            gTraceRouteUiMode = TraceRouteUiMode::Menu;
             showTraceRouteNodeListPage();
-        } else if (gTraceRouteNodeState.detailCursor == kTraceRouteDetailActionRow) {
-            if (node->via_mqtt) {
-                if (HermesXInterfaceModule::instance) {
-                    HermesXInterfaceModule::instance->playNackFail();
-                }
-                showTraceRoutePopup("TraceRoute", "LORA ONLY");
+        } else {
+            if (isRotary) {
+                deferTraceRouteBoundShortPressForSelectedNode();
             } else {
-                sendOnlineNodeTraceRoute(node->num);
+                sendTraceRouteForSelectedBoundNode();
             }
         }
         setFastFramerate();
@@ -21910,12 +22551,129 @@ bool Screen::handleTraceRouteNodeDetailInput(const InputEvent *event)
     }
 
     if (isCancel || isLeft || isRight) {
+        cancelDeferredTraceRouteBoundShortPress();
+        gTraceRouteUiMode = TraceRouteUiMode::Menu;
         showTraceRouteNodeListPage();
         setFastFramerate();
         return true;
     }
 
     return false;
+}
+
+bool Screen::handleTraceRouteBindLongPress()
+{
+    if (!showingNormalScreen || !ui || !isTraceRouteNodeListPageActive() ||
+        gTraceRouteUiMode != TraceRouteUiMode::BindOnline || gTraceRouteBoundState.confirmVisible ||
+        gTraceRouteBoundState.bindCursor == 0) {
+        LOG_DEBUG("[Screen] TraceRoute bind long ignored normal=%u ui=%u active=%u mode=%u confirm=%u cursor=%u",
+                  showingNormalScreen ? 1 : 0, ui ? 1 : 0, isTraceRouteNodeListPageActive() ? 1 : 0,
+                  static_cast<unsigned>(gTraceRouteUiMode), gTraceRouteBoundState.confirmVisible ? 1 : 0,
+                  static_cast<unsigned>(gTraceRouteBoundState.bindCursor));
+        return false;
+    }
+    openTraceRouteBindConfirmForSelectedNode();
+    setFastFramerate();
+    requestImmediateRedraw();
+    return true;
+}
+
+bool Screen::shouldUseTraceRouteBindQuickLongPress() const
+{
+    return showingNormalScreen && ui && isTraceRouteNodeListPageActive() &&
+           gTraceRouteUiMode == TraceRouteUiMode::BindOnline && !gTraceRouteBoundState.confirmVisible &&
+           gTraceRouteBoundState.bindCursor != 0;
+}
+
+bool Screen::shouldUseTraceRouteBoundQuickLongPress() const
+{
+    return showingNormalScreen && ui && isTraceRouteNodeDetailPageActive() &&
+           gTraceRouteUiMode == TraceRouteUiMode::BoundRoutes && gTraceRouteBoundState.boundCursor != 0 &&
+           gTraceRouteBoundState.count > 0;
+}
+
+bool Screen::handleTraceRouteBoundLongPress()
+{
+    if (!shouldUseTraceRouteBoundQuickLongPress()) {
+        return false;
+    }
+    if (!unbindSelectedTraceRouteBoundNode()) {
+        return false;
+    }
+    setFastFramerate();
+    requestImmediateRedraw();
+    return true;
+}
+
+void Screen::completeDeferredTraceRouteBindShortPress()
+{
+    if (!gTraceRouteBoundState.deferredShortVisible) {
+        return;
+    }
+
+    const uint8_t deferredCursor = gTraceRouteBoundState.deferredShortCursor;
+    const NodeNum deferredNode = gTraceRouteBoundState.deferredShortNode;
+    cancelDeferredTraceRouteBindShortPress();
+
+    if (!showingNormalScreen || !ui || !isTraceRouteNodeListPageActive() ||
+        gTraceRouteUiMode != TraceRouteUiMode::BindOnline || gTraceRouteBoundState.confirmVisible ||
+        deferredCursor == 0 || deferredNode == 0) {
+        return;
+    }
+
+    rebuildTraceRouteNodeOrder();
+    if (deferredCursor > gTraceRouteNodeState.count) {
+        return;
+    }
+
+    gTraceRouteBoundState.bindCursor = deferredCursor;
+    gTraceRouteBoundState.bindSelectedIndex = deferredCursor - 1;
+    const meshtastic_NodeInfoLite *node = getSelectedTraceRouteNode();
+    if (!node || node->num != deferredNode) {
+        LOG_WARN("[Screen] TraceRoute bind deferred short stale node=%08lx cursor=%u",
+                 static_cast<unsigned long>(deferredNode), static_cast<unsigned>(deferredCursor));
+        return;
+    }
+
+    if (showTraceRouteBindInfoForSelectedNode()) {
+        setFastFramerate();
+        requestImmediateRedraw();
+    }
+}
+
+void Screen::completeDeferredTraceRouteBoundShortPress()
+{
+    if (!gTraceRouteBoundState.deferredRouteVisible) {
+        return;
+    }
+
+    const uint8_t deferredCursor = gTraceRouteBoundState.deferredRouteCursor;
+    const NodeNum deferredNode = gTraceRouteBoundState.deferredRouteNode;
+    cancelDeferredTraceRouteBoundShortPress();
+
+    if (!showingNormalScreen || !ui || !isTraceRouteNodeDetailPageActive() ||
+        gTraceRouteUiMode != TraceRouteUiMode::BoundRoutes || deferredCursor == 0 || deferredNode == 0) {
+        return;
+    }
+
+    compactTraceRouteBoundNodes();
+    if (deferredCursor > gTraceRouteBoundState.count) {
+        return;
+    }
+
+    gTraceRouteBoundState.boundCursor = deferredCursor;
+    gTraceRouteBoundState.boundSelectedIndex = deferredCursor - 1;
+    const meshtastic_NodeInfoLite *node = getSelectedTraceRouteNode();
+    if (!node || node->num != deferredNode) {
+        LOG_WARN("[Screen] TraceRoute bound deferred short stale node=%08lx cursor=%u",
+                 static_cast<unsigned long>(deferredNode), static_cast<unsigned>(deferredCursor));
+        return;
+    }
+
+    if (sendTraceRouteForSelectedBoundNode()) {
+        setFastFramerate();
+        requestImmediateRedraw();
+    }
 }
 
 bool Screen::handleDirectMessageComposerInput(const InputEvent *event)
@@ -22632,12 +23390,22 @@ bool Screen::handleTakModeInput(const InputEvent *event)
             cycleTakOption(gTakModeProfile.smartMinimumIntervalSecs, kTakSmartIntervalOptions, kTakSmartIntervalCount);
             break;
         case 6:
-            gTakModeProfile.quietOutputs = !gTakModeProfile.quietOutputs;
+            if (HermesXInterfaceModule::instance) {
+                HermesXInterfaceModule::instance->cycleSmartPowerMinDbm();
+            }
             break;
         case 7:
-            gTakModeProfile.allowEmUi = !gTakModeProfile.allowEmUi;
+            if (HermesXInterfaceModule::instance) {
+                HermesXInterfaceModule::instance->cycleSmartPowerMaxDbm();
+            }
             break;
         case 8:
+            gTakModeProfile.quietOutputs = !gTakModeProfile.quietOutputs;
+            break;
+        case 9:
+            gTakModeProfile.allowEmUi = !gTakModeProfile.allowEmUi;
+            break;
+        case 10:
             gTakModeProfile.allowFinder = !gTakModeProfile.allowFinder;
             break;
         default:
@@ -23122,6 +23890,14 @@ bool Screen::isHermesInputOverlayActive() const
     return hermesUpdateModalActive || lowMemoryReminderVisible || hermesEmergencyConfirmVisible ||
            hermesFinderPulseConfirmVisible || hermesFinderPulseSendingVisible || isIncomingTextPopupActive() ||
            isIncomingNodePopupActive() || isTraceRoutePopupVisible() || isSetupDetailPopupVisible();
+}
+
+bool Screen::shouldBlockPowerHoldForTraceRouteInput() const
+{
+    if (!showingNormalScreen || !ui) {
+        return false;
+    }
+    return isTraceRouteNodeListPageActive() || isTraceRouteNodeDetailPageActive();
 }
 
 uint8_t Screen::getCurrentFrameIndexForDebug() const

@@ -10,7 +10,7 @@ class OLEDDisplay;
 namespace graphics::HermesX_zh
 {
 
-constexpr std::size_t GLYPH_COUNT = 5129;
+constexpr std::size_t GLYPH_COUNT = 5154;
 constexpr std::uint8_t GLYPH_WIDTH = 12;
 constexpr std::uint8_t GLYPH_HEIGHT = 12;
 constexpr std::uint8_t GLYPH_STRIDE_BITS = 12;

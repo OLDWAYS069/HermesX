@@ -46,6 +46,23 @@ template <class T> class Allocator
         return p;
     }
 
+    /// Best-effort allocation helpers for low-memory paths that must drop work instead of panicking.
+    T *tryAllocZeroed(TickType_t maxWait = 0)
+    {
+        T *p = alloc(maxWait);
+        if (p)
+            memset(p, 0, sizeof(T));
+        return p;
+    }
+
+    T *tryAllocCopy(const T &src, TickType_t maxWait = 0)
+    {
+        T *p = alloc(maxWait);
+        if (p)
+            *p = src;
+        return p;
+    }
+
     /// Variations of the above methods that return std::unique_ptr instead of raw pointers.
     using UniqueAllocation = std::unique_ptr<T, const std::function<void(T *)> &>;
     /// Return a queable object which has been prefilled with zeros.
@@ -91,8 +108,8 @@ template <class T> class MemoryDynamic : public Allocator<T>
     // Alloc some storage
     virtual T *alloc(TickType_t maxWait) override
     {
+        (void)maxWait;
         T *p = (T *)malloc(sizeof(T));
-        assert(p);
         return p;
     }
 };

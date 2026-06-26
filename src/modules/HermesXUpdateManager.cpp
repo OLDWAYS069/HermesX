@@ -213,9 +213,9 @@ bool HermesXUpdateManager::parseHermesVersionFromFilename(const String &filename
         if (!candidate.startsWith("HXB")) {
             continue;
         }
-        const int firstUnderscore = candidate.indexOf('_');
-        const int secondUnderscore = firstUnderscore >= 0 ? candidate.indexOf('_', firstUnderscore + 1) : -1;
-        if (firstUnderscore <= 3 || secondUnderscore <= firstUnderscore + 1) {
+        const int secondUnderscore = candidate.lastIndexOf('_');
+        const int firstUnderscore = secondUnderscore > 0 ? candidate.lastIndexOf('_', secondUnderscore - 1) : -1;
+        if (firstUnderscore < 3 || secondUnderscore <= firstUnderscore + 1) {
             continue;
         }
         const String displayVersion = candidate.substring(0, firstUnderscore);
@@ -901,10 +901,14 @@ bool HermesXUpdateManager::loadImageInfo(bool updateStateOnFailure)
         return fail(errorOut, updateStateOnFailure);
     }
 
+    const String storedFilename = readStoredUpdateFilename();
     String versionFromFilename;
     String displayFromFilename;
-    if (parseHermesVersionFromFilename(readStoredUpdateFilename(), versionFromFilename, &displayFromFilename)) {
+    if (parseHermesVersionFromFilename(storedFilename, versionFromFilename, &displayFromFilename)) {
         versionOut = versionFromFilename;
+    } else {
+        LOG_WARN("HermesXUpdate: local update filename lacks HXB version: %s", storedFilename.c_str());
+        return fail(u8"更新檔名缺少 HXB 版本", updateStateOnFailure);
     }
 
 #if defined(ARCH_ESP32)

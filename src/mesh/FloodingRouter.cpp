@@ -70,7 +70,15 @@ void FloodingRouter::perhapsRebroadcast(const meshtastic_MeshPacket *p)
         if (p->id != 0) {
             if (isRebroadcaster()) {
                 logHeapSnapshot("FloodingRouter before rebroadcast allocCopy");
-                meshtastic_MeshPacket *tosend = packetPool.allocCopy(*p); // keep a copy because we will be sending it
+                if (!hasHeapHeadroomForCriticalAlloc("FloodingRouter rebroadcast allocCopy")) {
+                    LOG_WARN("Drop rebroadcast under low heap");
+                    return;
+                }
+                meshtastic_MeshPacket *tosend = packetPool.tryAllocCopy(*p); // keep a copy because we will be sending it
+                if (!tosend) {
+                    LOG_ERROR("FloodingRouter rebroadcast allocCopy failed");
+                    return;
+                }
 
                 tosend->hop_limit--; // bump down the hop count
 #if USERPREFS_EVENT_MODE

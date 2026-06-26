@@ -175,6 +175,8 @@ bool shouldBroadcastGroupPresence()
     return lighthouseModule && lighthouseModule->hasEmergencyGroupPin();
 }
 
+constexpr uint32_t kInactiveGroupPresenceHeartbeatMinMs = 60000;
+
 template <typename T> T clampValue(T value, T minValue, T maxValue)
 {
     return std::max(minValue, std::min(maxValue, value));
@@ -2319,7 +2321,10 @@ int32_t HermesXEmUiModule::runOnce()
     if (active || groupPresenceEnabled) {
         const uint32_t now = millis();
         const uint32_t emInfoIntervalMs = getEmInfoIntervalMs();
-        const uint32_t emHeartbeatIntervalMs = getEmHeartbeatIntervalMs();
+        uint32_t emHeartbeatIntervalMs = getEmHeartbeatIntervalMs();
+        if (!active && groupPresenceEnabled && emHeartbeatIntervalMs > 0) {
+            emHeartbeatIntervalMs = std::max<uint32_t>(emHeartbeatIntervalMs, kInactiveGroupPresenceHeartbeatMinMs);
+        }
         if (active && emInfoBroadcastEnabled &&
             (lastEmInfoSentMs == 0 || static_cast<uint32_t>(now - lastEmInfoSentMs) >= emInfoIntervalMs)) {
             sendEmInfoNow();
