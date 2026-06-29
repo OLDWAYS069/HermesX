@@ -76,13 +76,7 @@ static int32_t reconnectETH()
 
         LOG_INFO("Update NTP time from %s", config.network.ntp_server);
         if (timeClient.update()) {
-            LOG_DEBUG("NTP Request Success - Set RTCQualityNTP if needed");
-
-            struct timeval tv;
-            tv.tv_sec = timeClient.getEpochTime();
-            tv.tv_usec = 0;
-
-            perhapsSetRTC(RTCQualityNTP, &tv);
+            LOG_DEBUG("NTP Request Success - RTC unchanged; HermesX clock only trusts app or GPS time");
 
             ntp_renew = millis() + 43200 * 1000; // success, refresh every 12 hours
         } else {

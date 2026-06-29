@@ -130,13 +130,7 @@ static int32_t reconnectWiFi()
     if (WiFi.isConnected() && (!Throttle::isWithinTimespanMs(lastrun_ntp, 43200000) || (lastrun_ntp == 0))) { // every 12 hours
         LOG_DEBUG("Update NTP time from %s", config.network.ntp_server);
         if (timeClient.update()) {
-            LOG_DEBUG("NTP Request Success - Setting RTCQualityNTP if needed");
-
-            struct timeval tv;
-            tv.tv_sec = timeClient.getEpochTime();
-            tv.tv_usec = 0;
-
-            perhapsSetRTC(RTCQualityNTP, &tv);
+            LOG_DEBUG("NTP Request Success - RTC unchanged; HermesX clock only trusts app or GPS time");
             lastrun_ntp = millis();
         } else {
             LOG_DEBUG("NTP Update failed");

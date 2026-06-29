@@ -584,13 +584,6 @@ void setup()
     unphone.printStore();
 #endif
 
-#if ARCH_PORTDUINO
-    struct timeval tv;
-    tv.tv_sec = time(NULL);
-    tv.tv_usec = 0;
-    perhapsSetRTC(RTCQualityNTP, &tv);
-#endif
-
     powerMonInit();
     serialSinceMsec = millis();
 
@@ -1128,7 +1121,7 @@ void setup()
     LOG_DEBUG("Set Timezone to %s", getenv("TZ"));
 #endif
 
-    readFromRTC(); // read the main CPU RTC at first (in case we can't get GPS time)
+    // HermesX only trusts app-provided time and local GPS time for the user-facing clock.
 
     if (gEarlyDedicatedUpdateBoot) {
         LOG_INFO("[UpdateBootEarly] skip normal mesh init free=%u largest=%u",

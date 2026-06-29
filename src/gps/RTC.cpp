@@ -179,11 +179,6 @@ bool perhapsSetRTC(RTCQuality q, const struct timeval *tv, bool forceUpdate)
         settimeofday(tv, NULL);
 #endif
 
-        // nrf52 doesn't have a readable RTC (yet - software not written)
-#if HAS_RTC
-        readFromRTC();
-#endif
-
         return true;
     } else {
         return false;

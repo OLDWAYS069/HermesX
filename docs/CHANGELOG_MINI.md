@@ -1,4 +1,11 @@
+## 2026-06-29
+- Direct Home 原 direct clock overlay 改由常駐小威動畫取代，並與 GPS / NEON Clock buffer 分離；Home 小威固定在螢幕左側。
+- 小威 `趴著` / `坐著` 兩種姿勢都改為 4 幀 sprite 尾巴動畫，尾巴以水平掃動呈現，避免上下抖動或像分離棒狀物。
+- 小威動畫改用差異像素更新，平常只更新尾巴變動像素，降低 ST7735 實機閃爍。
+- `platformio run -e heltec-wireless-tracker` 編譯成功，CIV build 版本為 `HXB_C0.3.7_20260629_0439`；韌體產物已搬到 `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260629_0439.bin` 與 `.factory.bin`。
+
 ## 2026-06-23
+- Home 時鐘授時來源收斂為手機 App 與本機 GPS：不再接受 mesh 其他節點、WiFi/Ethernet NTP 或開機硬體 RTC 回填來更新 Home 時間，避免未連手機/GPS 時被錯誤來源帶到錯時間。
 - `TAK` / `TAK Tracker` 角色自動啟用「智慧功率」：進入時暫存原本 LoRa `tx_power`，先使用設定上限發送，再依 ACK、RSSI/SNR 與逾時在最低/最高 dBm 邊界內保守調整；離開 TAK 類角色時還原原本功率設定。
 - 智慧功率在 TAK 類角色下會取樣所有 remote LoRa RX，包括 `Portnum=300` / EMHB 這類 `WantAck=0` broadcast；連續強訊號 broadcast 也能保守觸發降功率，不再只靠 ACK 流量調整。
 - 智慧功率啟用時，Home frame 會切換成「智慧功率」儀表頁，顯示目前 LoRa 功率、最近 SNR/RSSI、RX 時間，以及 heard 到的 GROUP 裝置數。

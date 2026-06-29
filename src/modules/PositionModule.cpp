@@ -123,12 +123,8 @@ void PositionModule::alterReceivedProtobuf(meshtastic_MeshPacket &mp, meshtastic
 
 void PositionModule::trySetRtc(meshtastic_Position p, bool isLocal, bool forceUpdate)
 {
-    if (hasQualityTimesource() && !isLocal) {
-        LOG_DEBUG("Ignore time from mesh because we have a GPS, RTC, or Phone/NTP time source in the past day");
-        return;
-    }
-    if (!isLocal && p.location_source < meshtastic_Position_LocSource_LOC_INTERNAL) {
-        LOG_DEBUG("Ignore time from mesh because it has a unknown or manual source");
+    if (!isLocal) {
+        LOG_DEBUG("Ignore time from mesh; HermesX RTC is only set by app or local GPS");
         return;
     }
     struct timeval tv;
@@ -137,7 +133,7 @@ void PositionModule::trySetRtc(meshtastic_Position p, bool isLocal, bool forceUp
     tv.tv_sec = secs;
     tv.tv_usec = 0;
 
-    perhapsSetRTC(isLocal ? RTCQualityNTP : RTCQualityFromNet, &tv, forceUpdate);
+    perhapsSetRTC(RTCQualityNTP, &tv, forceUpdate);
 }
 
 bool PositionModule::hasQualityTimesource()

@@ -2,6 +2,21 @@
 
 本文件為可對外發布版本的更新紀錄，整理 HermesX 韌體的重要功能更新、體驗調整與修正項目。
 
+## 2026-06-29
+
+### 調整
+
+- Direct Home 原本的 direct clock overlay 改由常駐小威動畫取代，並與 GPS / NEON Clock buffer 分離；Home 小威固定顯示在螢幕左側，避免佔用舊 Home clock overlay buffer。
+- 小威支援 `趴著` / `坐著` 姿勢輪替，兩種姿勢都改為 4 幀 sprite 尾巴動畫；尾巴改成水平掃動，避免看起來像上下抖動或分離的棒狀物。
+- 小威動畫改為差異像素更新：只有進入 Home、位置或姿勢切換時才重畫整個區域，平常只更新尾巴變動像素，降低 ST7735 實機閃爍。
+
+### 驗證
+
+- `platformio run -e heltec-wireless-tracker` 編譯成功，CIV build 版本為 `HXB_C0.3.7_20260629_0439`。
+- 已依 handoff 搬移並驗證韌體產物：
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260629_0439.bin`
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260629_0439.factory.bin`
+
 ## 2026-06-23
 
 ### 新增
@@ -14,6 +29,7 @@
 
 ### 修正
 
+- Home 時鐘授時來源收斂為手機 App 與本機 GPS：不再接受 mesh 其他節點、WiFi/Ethernet NTP 或開機硬體 RTC 回填來更新 Home 時間，避免未連手機/GPS 時被錯誤來源帶到錯時間。
 - 修正手動 WiFi / USB 更新檔缺少 `HXB...` 檔名 metadata 時，更新模式把 ESP app descriptor 的版本字串顯示成待更新版本的問題。
 - `/upload-update-bin`、USB/XModem 串流與本機 `/update/firmware.bin` 檢查現在都必須從檔名 hint 解析出 `HXB..._YYYYMMDD_HHMM`；缺少時會明確顯示 `更新檔名缺少 HXB 版本`，不再 fallback 到 `esp_app_desc_t.version`。
 - 修正 `HXB_C0.3.7_YYYYMMDD_HHMM.bin` 這類版本前綴本身含底線的合法檔名被誤判為缺少 HXB 版本的問題；解析規則改以最後兩個底線切出日期與時間。

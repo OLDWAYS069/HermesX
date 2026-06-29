@@ -123,6 +123,7 @@ namespace graphics
 // This means the *visible* area (sh1106 can address 132, but shows 128 for example)
 #define IDLE_FRAMERATE 1 // in fps
 #define DIRECT_HOME_CLOCK_FRAMERATE 4 // in fps
+#define DIRECT_HOME_DOG_FRAMERATE 15 // in fps
 
 // DEBUG
 #define NUM_EXTRA_FRAMES 21 // HermesX action pages + text/debug/system frames
@@ -1094,7 +1095,7 @@ static void getHermesXHomeBatteryState(bool &hasBattery, int &batteryVoltageMv, 
 
 static bool formatHermesXHomeTimeDate(char *timeBuf, size_t timeBufSize, char *dateBuf, size_t dateBufSize)
 {
-    const uint32_t rtcSec = getValidTime(RTCQuality::RTCQualityDevice, true);
+    const uint32_t rtcSec = getValidTime(RTCQuality::RTCQualityNTP, true);
     if (rtcSec > 0) {
         time_t t = rtcSec;
         tm *localTm = gmtime(&t);
@@ -1823,21 +1824,10 @@ static bool getDirectNeonClockRegionRect(int16_t displayW,
 static void renderDirectHomeDog(TFTDisplay *tft,
                                 int16_t displayW,
                                 int16_t displayH,
-                                int16_t originY,
                                 uint16_t dogFrame,
-                                uint8_t dogPose,
-                                bool mqttHomeActive)
+                                uint8_t dogPose)
 {
     if (!tft) {
-        return;
-    }
-
-    int16_t clockRegionX = 0;
-    int16_t clockRegionY = 0;
-    int16_t clockRegionW = 0;
-    int16_t clockRegionH = 0;
-    int16_t frameX = 0;
-    if (!getDirectNeonClockRegionRect(displayW, originY, clockRegionX, clockRegionY, clockRegionW, clockRegionH, frameX)) {
         return;
     }
 
@@ -1846,20 +1836,13 @@ static void renderDirectHomeDog(TFTDisplay *tft,
     static constexpr int16_t kDogScale = 2;
     static constexpr int16_t kDogDrawW = kDogSpriteW * kDogScale;
     static constexpr int16_t kDogDrawH = kDogSpriteH * kDogScale;
-    const int16_t regionW = std::min<int16_t>(displayW - 4, 120);
-    const int16_t regionH = std::min<int16_t>(displayH - clockRegionY, kDogDrawH + 4);
-    const int16_t regionX = 2;
-    const int16_t regionY = clockRegionY;
-    if (regionW <= 0 || regionH <= 0) {
+    if (displayW <= 0 || displayH <= 0 || displayW < kDogDrawW || displayH < kDogDrawH) {
         return;
     }
 
-    DirectDrawClipRect clip{};
-    if (!makeDirectDrawClipRect(regionX, regionY, regionW, regionH, displayW, displayH, clip)) {
-        return;
-    }
-
-    static constexpr const char *kDogLyingFrames[2][kDogSpriteH] = {
+    static constexpr uint8_t kDogLyingFrameCount = 4;
+    static constexpr uint8_t kDogSittingFrameCount = 4;
+    static constexpr const char *kDogLyingFrames[kDogLyingFrameCount][kDogSpriteH] = {
         {
             "...............O....O...",
             "..............OTO..OHO..",
@@ -1872,48 +1855,100 @@ static void renderDirectHomeDog(TFTDisplay *tft,
             ".............OSLHHOHHO..",
             ".............SSHHHOHHS..",
             ".............SOHHHHHHHO.",
-            "...........OSOHHHHHHSOO",
-            "......SOOOOOOSSHHHOOOSOO",
-            ".T....SSSSOOSSSOHHOOSSSO",
-            "......OSSSSSSSSSOHHHOOOO.",
-            ".....SSHHSSSLOSOHHHHHO..",
-            "OO..OOHHHLTHLHHOHHHHHO..",
-            "OS..OSHHHTOHLHHHH..LSO..",
-            "OLO.OHHHHTOTTHHHHHHLLO..",
-            ".HSOOHHHHTSTTHHHHHLLOOO.",
+            "...........OSOHHHHHHSOO.",
+            ".....OSOOOOOOSSHHHOOOSOO",
+            "TOOOOOSSSSOOSSSOHHOOSSSO",
+            ".OHLLOSSSSSSSSOHHHOOOO..",
+            "..OSTOSHHSSSLOSOHHHHHO..",
+            "...OOOHHHLTHLHHOHHHHHO..",
+            "......HHHTOHLHHHH..LSO..",
+            "......HHHTOTTHHHHHHLLO..",
+            "......HHHTSTTHHHHHLLOOO.",
             ".OTLOHHHOOTTTHHHOOOOHHHS",
             "..TLOHHHTLSTSHHHHHHHOHLO",
             "..WWOHHHHHLOOHHHHHHHTHLO",
             ".....OOOOOOO.OOOOOOOOO..",
         },
         {
-            "...............OO...O...",
-            "...............TO..OHO..",
-            "...............TS..OHO..",
-            "..............OLLO.OHO..",
-            "..............OSLO.LTO..",
-            "..............OTLOOLTO..",
-            "..............OHLHHHHO..",
-            "..............OHHHHHHS..",
-            "..............OLHHOHHOO.",
-            ".............OOHHHOHHOO.",
-            ".............OOHHHHHHHO.",
-            "...........OSOHHHHHHOSO",
-            "......OSSSOOOSSHHHOOSSSO",
-            "......SSSSSSSSSHHHOOSSSO",
-            ".....OSSSSSSOSSOHHHSSSS.",
-            ".....SSHHSSSTTSOHHHLTO..",
-            "....OSHHHHTHLHHSTHHHHO..",
-            "....OSHHHHOTTHHHT..LHO..",
-            "....OHHHHHOTLHHHH..LHO..",
-            "...SOTHHHHSHLHHHHHLLHO..",
-            "..OOOTHHOOHHSHHOOOOTHHO.",
-            "OLTTOTHHHTLOSHHHHHHOHTH.",
-            "OHHTOSHHHHLOOHHHHHTSHTL.",
-            ".OOO.OOOOOOO.OOOOOOOOO..",
+            "...............O....O...",
+            "..............OTO..OHO..",
+            "..............OLO..OHO..",
+            "..............OLO..OHO..",
+            "..............OHT..HLO..",
+            "..............OHTOOHLO..",
+            ".............OOLTHHHHO..",
+            ".............OOLHHTHHO..",
+            ".............OSLHHOHHO..",
+            ".............SSHHHOHHS..",
+            ".............SOHHHHHHHO.",
+            "...........OSOHHHHHHSOO.",
+            "....OOSOOOOOOSSHHHOOOSOO",
+            ".TOOOOSSSSOOSSSOHHOOSSSO",
+            "..OHLOSSSSSSSSOHHHOOOO..",
+            "...OSTSHHSSSLOSOHHHHHO..",
+            "....OOHHHLTHLHHOHHHHHO..",
+            "......HHHTOHLHHHH..LSO..",
+            "......HHHTOTTHHHHHHLLO..",
+            "......HHHTSTTHHHHHLLOOO.",
+            ".OTLOHHHOOTTTHHHOOOOHHHS",
+            "..TLOHHHTLSTSHHHHHHHOHLO",
+            "..WWOHHHHHLOOHHHHHHHTHLO",
+            ".....OOOOOOO.OOOOOOOOO..",
+        },
+        {
+            "...............O....O...",
+            "..............OTO..OHO..",
+            "..............OLO..OHO..",
+            "..............OLO..OHO..",
+            "..............OHT..HLO..",
+            "..............OHTOOHLO..",
+            ".............OOLTHHHHO..",
+            ".............OOLHHTHHO..",
+            ".............OSLHHOHHO..",
+            ".............SSHHHOHHS..",
+            ".............SOHHHHHHHO.",
+            "...........OSOHHHHHHSOO.",
+            ".....OSOOOOOOSSHHHOOOSOO",
+            "....TOSSSSOOSSSOHHOOSSSO",
+            "...OHOSSSSSSSSOHHHOOOO..",
+            "....OSTHHSSSLOSOHHHHHO..",
+            ".....OHHHLTHLHHOHHHHHO..",
+            "......HHHTOHLHHHH..LSO..",
+            "......HHHTOTTHHHHHHLLO..",
+            "......HHHTSTTHHHHHLLOOO.",
+            ".OTLOHHHOOTTTHHHOOOOHHHS",
+            "..TLOHHHTLSTSHHHHHHHOHLO",
+            "..WWOHHHHHLOOHHHHHHHTHLO",
+            ".....OOOOOOO.OOOOOOOOO..",
+        },
+        {
+            "...............O....O...",
+            "..............OTO..OHO..",
+            "..............OLO..OHO..",
+            "..............OLO..OHO..",
+            "..............OHT..HLO..",
+            "..............OHTOOHLO..",
+            ".............OOLTHHHHO..",
+            ".............OOLHHTHHO..",
+            ".............OSLHHOHHO..",
+            ".............SSHHHOHHS..",
+            ".............SOHHHHHHHO.",
+            "...........OSOHHHHHHSOO.",
+            "....OOSOOOOOOSSHHHOOOSOO",
+            ".TOOOOSSSSOOSSSOHHOOSSSO",
+            "..OHLOSSSSSSSSOHHHOOOO..",
+            "...OSTSHHSSSLOSOHHHHHO..",
+            "....OOHHHLTHLHHOHHHHHO..",
+            "......HHHTOHLHHHH..LSO..",
+            "......HHHTOTTHHHHHHLLO..",
+            "......HHHTSTTHHHHHLLOOO.",
+            ".OTLOHHHOOTTTHHHOOOOHHHS",
+            "..TLOHHHTLSTSHHHHHHHOHLO",
+            "..WWOHHHHHLOOHHHHHHHTHLO",
+            ".....OOOOOOO.OOOOOOOOO..",
         },
     };
-    static constexpr const char *kDogSittingFrames[2][kDogSpriteH] = {
+    static constexpr const char *kDogSittingFrames[kDogSittingFrameCount][kDogSpriteH] = {
         {
             "..............OO...OO...",
             "..............TS...HT...",
@@ -1934,37 +1969,89 @@ static void renderDirectHomeDog(TFTDisplay *tft,
             ".........OSSSHHHHH.HHG..",
             "........OSSSSTTHHTHTTG..",
             "........OSHHOSHHHTHTHG..",
-            "..TSO..SOLHHHOOHHSSHHG..",
-            "..OHLSOOHHHHHOOHHTSHHG..",
-            "...OSTLSHHHHOOOHHOOHHG..",
+            "TSOOO...OLHHHOOHHSSHHG..",
+            ".OHLSS..HHHHHOOHHTSHHG..",
+            "..OSTO..HHHHOOOHHOOHHG..",
             ".....OOOHHHHHHOHHHOHHHO.",
             ".........OOOOOOOOOOOOOO.",
         },
         {
-            "..............OO........",
-            "..............TSO..OTO..",
-            "..............THO.OHLO..",
-            "..............TTOOOHLO..",
-            ".............OHLHHHHHO..",
-            ".............OHLHSOHHO..",
-            ".............OLLHSOHHOOO",
-            ".............OHHHHHHTSOO",
-            ".............OHHHOOOOSSO",
-            "............OOHHHOOTTT..",
-            "............OOOHHHOHHH..",
+            "..............OO...OO...",
+            "..............TS...HT...",
+            "..............LTO.OHTO..",
+            "..............LTOOOTTO..",
+            ".............OTLHHHHHO..",
+            ".............OTLHOOHHT..",
+            ".............OTTHOOHHOOO",
+            ".............OHHHHHHSSOO",
+            ".............OHHHOOOSSSO",
+            "............OOHHHOOSTL..",
+            "............OOOHHHOHHT..",
             "............OSOHHHHOOO..",
-            "...........OOOSTHHHHHO..",
-            "..........OOSSSLLSHHHO..",
-            "..........OSSSOLTS.HHO..",
-            ".........OOOSHHHHS..HG..",
-            "........OOSSSHHHHH.THG..",
-            "........OSSSSLHHHLHTTG..",
-            "........SSHHOLHHHSHTHG..",
-            ".......OSHHHHOLHHSSHHG..",
-            ".......OTHHHHOSHHSSHHG..",
-            "...OOSSOHHHHOOSHHOOHHG..",
-            "OOTTTTTOHHHHHTOHHHOHHTO.",
-            ".OOOO...OOOOOOOOO.OOOO..",
+            "...........OOOSLHHHHHO..",
+            "..........OSSSSLLSHHHO..",
+            "..........OSSSSTLS.HHO..",
+            ".........OOOSHHHHS..H...",
+            ".........OSSSHHHHH.HHG..",
+            "........OSSSSTTHHTHTTG..",
+            "........OSHHOSHHHTHTHG..",
+            "..TSOO..OLHHHOOHHSSHHG..",
+            "..OHLSO.HHHHHOOHHTSHHG..",
+            "...OST..HHHHOOOHHOOHHG..",
+            ".....OOOHHHHHHOHHHOHHHO.",
+            ".........OOOOOOOOOOOOOO.",
+        },
+        {
+            "..............OO...OO...",
+            "..............TS...HT...",
+            "..............LTO.OHTO..",
+            "..............LTOOOTTO..",
+            ".............OTLHHHHHO..",
+            ".............OTLHOOHHT..",
+            ".............OTTHOOHHOOO",
+            ".............OHHHHHHSSOO",
+            ".............OHHHOOOSSSO",
+            "............OOHHHOOSTL..",
+            "............OOOHHHOHHT..",
+            "............OSOHHHHOOO..",
+            "...........OOOSLHHHHHO..",
+            "..........OSSSSLLSHHHO..",
+            "..........OSSSSTLS.HHO..",
+            ".........OOOSHHHHS..H...",
+            ".........OSSSHHHHH.HHG..",
+            "........OSSSSTTHHTHTTG..",
+            "........OSHHOSHHHTHTHG..",
+            "....TSOOOLHHHOOHHSSHHG..",
+            "...OHLSOHHHHHOOHHTSHHG..",
+            "....OST.HHHHOOOHHOOHHG..",
+            ".....OOOHHHHHHOHHHOHHHO.",
+            ".........OOOOOOOOOOOOOO.",
+        },
+        {
+            "..............OO...OO...",
+            "..............TS...HT...",
+            "..............LTO.OHTO..",
+            "..............LTOOOTTO..",
+            ".............OTLHHHHHO..",
+            ".............OTLHOOHHT..",
+            ".............OTTHOOHHOOO",
+            ".............OHHHHHHSSOO",
+            ".............OHHHOOOSSSO",
+            "............OOHHHOOSTL..",
+            "............OOOHHHOHHT..",
+            "............OSOHHHHOOO..",
+            "...........OOOSLHHHHHO..",
+            "..........OSSSSLLSHHHO..",
+            "..........OSSSSTLS.HHO..",
+            ".........OOOSHHHHS..H...",
+            ".........OSSSHHHHH.HHG..",
+            "........OSSSSTTHHTHTTG..",
+            "........OSHHOSHHHTHTHG..",
+            "..TSOO..OLHHHOOHHSSHHG..",
+            "..OHLSO.HHHHHOOHHTSHHG..",
+            "...OST..HHHHOOOHHOOHHG..",
+            ".....OOOHHHHHHOHHHOHHHO.",
+            ".........OOOOOOOOOOOOOO.",
         },
     };
 
@@ -1976,13 +2063,63 @@ static void renderDirectHomeDog(TFTDisplay *tft,
     const uint16_t tongue = TFTDisplay::rgb565(0xBC, 0x55, 0x51);
     const uint16_t ground = TFTDisplay::rgb565(0xC6, 0xB8, 0xBB);
     const uint16_t bg = TFTDisplay::rgb565(0x00, 0x00, 0x00);
+    const uint8_t tailPhase = static_cast<uint8_t>(dogFrame % 6U);
 
-    const int16_t dogX = regionX;
-    const int16_t dogY = regionY + std::max<int16_t>(0, (regionH - kDogDrawH) / 2);
+    int16_t clockRegionX = 0;
+    int16_t clockRegionY = 0;
+    int16_t clockRegionW = 0;
+    int16_t clockRegionH = 0;
+    int16_t frameX = 0;
+    const bool hasClockRegion =
+        getDirectNeonClockRegionRect(displayW, 0, clockRegionX, clockRegionY, clockRegionW, clockRegionH, frameX);
+    const int16_t dogX = 2;
+    const int16_t dogY =
+        hasClockRegion ? std::max<int16_t>(0, clockRegionY + std::max<int16_t>(0, (clockRegionH - kDogDrawH) / 2))
+                       : std::max<int16_t>(0, (displayH - kDogDrawH) / 2);
+    const int16_t previousDogX = gHermesXDirectHomeUiCache.lastDogX;
+    const int16_t previousDogY = gHermesXDirectHomeUiCache.lastDogY;
+    const int16_t previousDogW = gHermesXDirectHomeUiCache.lastDogW;
+    const int16_t previousDogH = gHermesXDirectHomeUiCache.lastDogH;
+    const bool fullDogRepaint = !gHermesXDirectHomeUiCache.lastDogValid || previousDogX != dogX || previousDogY != dogY ||
+                                previousDogW != kDogDrawW || previousDogH != kDogDrawH ||
+                                gHermesXDirectHomeUiCache.lastDogPose != dogPose;
+    int16_t clearX = dogX;
+    int16_t clearY = dogY;
+    int16_t clearX2 = dogX + kDogDrawW;
+    int16_t clearY2 = dogY + kDogDrawH;
+    if (fullDogRepaint && gHermesXDirectHomeUiCache.lastDogValid && previousDogW > 0 && previousDogH > 0) {
+        clearX = std::min<int16_t>(clearX, previousDogX);
+        clearY = std::min<int16_t>(clearY, previousDogY);
+        clearX2 = std::max<int16_t>(clearX2, static_cast<int16_t>(previousDogX + previousDogW));
+        clearY2 = std::max<int16_t>(clearY2, static_cast<int16_t>(previousDogY + previousDogH));
+    }
+    clearX = std::max<int16_t>(0, clearX);
+    clearY = std::max<int16_t>(0, clearY);
+    clearX2 = std::min<int16_t>(displayW, clearX2);
+    clearY2 = std::min<int16_t>(displayH, clearY2);
+    const int16_t clearW = clearX2 - clearX;
+    const int16_t clearH = clearY2 - clearY;
+    if (fullDogRepaint && clearW > 0 && clearH > 0) {
+        tft->fillRect565(clearX, clearY, clearW, clearH, bg);
+        tft->overlayBufferForegroundRect565(clearX, clearY, clearW, clearH);
+    }
 
-    directFillRect565Clipped(tft, displayW, displayH, regionX, regionY, regionW, regionH, bg, &clip);
-    const uint8_t gaitFrame = static_cast<uint8_t>(dogFrame & 0x1U);
-    const char *const *sprite = (dogPose == 0) ? kDogLyingFrames[gaitFrame] : kDogSittingFrames[gaitFrame];
+    DirectDrawClipRect clip{};
+    if (!makeDirectDrawClipRect(dogX, dogY, kDogDrawW, kDogDrawH, displayW, displayH, clip)) {
+        return;
+    }
+
+    const uint8_t spriteFrame = (dogPose == 0) ? static_cast<uint8_t>(tailPhase % kDogLyingFrameCount)
+                                               : static_cast<uint8_t>(tailPhase % kDogSittingFrameCount);
+    const char *const *sprite = (dogPose == 0) ? kDogLyingFrames[spriteFrame] : kDogSittingFrames[spriteFrame];
+    const char *const *previousSprite = nullptr;
+    if (!fullDogRepaint) {
+        const uint8_t previousTailPhase = static_cast<uint8_t>(gHermesXDirectHomeUiCache.lastDogFrame % 6U);
+        const uint8_t previousSpriteFrame =
+            (dogPose == 0) ? static_cast<uint8_t>(previousTailPhase % kDogLyingFrameCount)
+                           : static_cast<uint8_t>(previousTailPhase % kDogSittingFrameCount);
+        previousSprite = (dogPose == 0) ? kDogLyingFrames[previousSpriteFrame] : kDogSittingFrames[previousSpriteFrame];
+    }
     auto colorFor = [&](char token) -> uint16_t {
         switch (token) {
         case 'O':
@@ -2006,9 +2143,24 @@ static void renderDirectHomeDog(TFTDisplay *tft,
 
     for (int16_t sy = 0; sy < kDogSpriteH; ++sy) {
         const char *row = sprite[sy];
+        const char *previousRow = previousSprite ? previousSprite[sy] : nullptr;
         for (int16_t sx = 0; sx < kDogSpriteW; ++sx) {
             const char token = row[sx];
+            if (previousRow && previousRow[sx] == token) {
+                continue;
+            }
             if (token == '.') {
+                if (previousRow) {
+                    directFillRect565Clipped(tft,
+                                             displayW,
+                                             displayH,
+                                             dogX + (sx * kDogScale),
+                                             dogY + (sy * kDogScale),
+                                             kDogScale,
+                                             kDogScale,
+                                             bg,
+                                             &clip);
+                }
                 continue;
             }
             directFillRect565Clipped(tft,
@@ -2023,22 +2175,10 @@ static void renderDirectHomeDog(TFTDisplay *tft,
         }
     }
 
-    tft->setColor(OLEDDISPLAY_COLOR::WHITE);
-    tft->setTextAlignment(TEXT_ALIGN_LEFT);
-    tft->setFont(FONT_SMALL);
-    const int16_t textX = dogX + kDogDrawW + 6;
-    const int16_t textY = regionY + std::max<int16_t>(0, (regionH - FONT_HEIGHT_SMALL) / 2);
-    const int16_t textW = std::max<int16_t>(0, regionW - kDogDrawW - 8);
-    const char *statusText = mqttHomeActive ? u8"MQTT開啟中" : u8"請連接手機";
-    HermesX_zh::drawMixedBounded(*tft, textX, textY, textW, statusText, HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-    if (textW > 0) {
-        tft->overlayBufferForegroundRect565(textX, textY, textW, FONT_HEIGHT_SMALL + 2);
-    }
-
-    gHermesXDirectHomeUiCache.lastDogX = regionX;
-    gHermesXDirectHomeUiCache.lastDogY = regionY;
-    gHermesXDirectHomeUiCache.lastDogW = regionW;
-    gHermesXDirectHomeUiCache.lastDogH = regionH;
+    gHermesXDirectHomeUiCache.lastDogX = dogX;
+    gHermesXDirectHomeUiCache.lastDogY = dogY;
+    gHermesXDirectHomeUiCache.lastDogW = kDogDrawW;
+    gHermesXDirectHomeUiCache.lastDogH = kDogDrawH;
 }
 
 static void renderDirectNeonClock(TFTDisplay *tft,
@@ -16629,7 +16769,6 @@ int32_t Screen::runOnce()
     bool directNeonBuffersReady = false;
     bool renderDirectHomeClock = false;
     bool renderDirectHomeDogOverlay = false;
-    bool directHomeMqttActive = false;
     bool forceDirectHomeClockRedraw = false;
     uint16_t directHomeDogFrame = 0xFFFF;
     char directHomeTimeBuf[16];
@@ -16676,8 +16815,6 @@ int32_t Screen::runOnce()
     const bool smartPowerHomeActive = onFixedMainFrame && isSmartPowerHomeActive();
     if (smartPowerHomeActive) {
         freeDirectNeonBuffers();
-    } else {
-        directNeonBuffersReady = ensureDirectNeonBuffers();
     }
     const bool onFixedGpsFrame = showingNormalScreen && ui->getUiState()->frameState == FIXED &&
                                  framesetInfo.positions.settings < framesetInfo.frameCount &&
@@ -16687,8 +16824,14 @@ int32_t Screen::runOnce()
     const bool incomingTextPopupActive = gIncomingTextPopupState.pending || gIncomingTextPopupState.visible;
     const bool incomingNodePopupActive = isIncomingNodePopupActive();
     const bool incomingNodePopupVisible = isIncomingNodePopupVisible();
-    const bool directGpsPosterVisible = directNeonBuffersReady && directGpsPosterNeonEnabled && onFixedGpsFrame &&
-                                        supportsDirectTftClockRendering(dispdev) && !incomingNodePopupActive;
+    const bool directGpsPosterCandidate =
+        directGpsPosterNeonEnabled && onFixedGpsFrame && supportsDirectTftClockRendering(dispdev) && !incomingNodePopupActive;
+    if (directGpsPosterCandidate) {
+        directNeonBuffersReady = ensureDirectNeonBuffers();
+    } else if (onFixedMainFrame && !smartPowerHomeActive) {
+        freeDirectNeonBuffers();
+    }
+    const bool directGpsPosterVisible = directGpsPosterCandidate && directNeonBuffersReady;
     bool incomingNodePopupDirty = false;
     if (incomingNodePopupVisible && supportsDirectTftClockRendering(dispdev)) {
         incomingNodePopupDirty = !gDirectIncomingNodePopupRenderCache.valid ||
@@ -16703,18 +16846,16 @@ int32_t Screen::runOnce()
     }
     const bool emergencyUiActive =
         HermesXInterfaceModule::instance && HermesXInterfaceModule::instance->isEmergencyUiActive();
-    if (directNeonBuffersReady && onFixedMainFrame && !smartPowerHomeActive && canUseDirectHermesXHomeClock(dispdev) && !incomingTextPopupActive &&
+    if (onFixedMainFrame && !smartPowerHomeActive && canUseDirectHermesXHomeClock(dispdev) && !incomingTextPopupActive &&
         !incomingNodePopupActive && !hermesEmergencyConfirmVisible && !emergencyUiActive && !lowMemoryReminderVisible) {
         const bool enteringDirectHomeOverlay = !gDirectHomeClockWasVisible && !gDirectHomeDogWasVisible;
 
         char homeDateBuf[24];
         homeDateBuf[0] = '\0';
-        const bool directHomeHasValidTime =
-            formatHermesXHomeTimeDate(directHomeTimeBuf, sizeof(directHomeTimeBuf), homeDateBuf, sizeof(homeDateBuf));
-        directHomeMqttActive = moduleConfig.mqtt.enabled;
-        renderDirectHomeClock = directHomeHasValidTime && !directHomeMqttActive;
-        renderDirectHomeDogOverlay = directHomeMqttActive || !directHomeHasValidTime;
-        directHomeDogFrame = directHomeMqttActive ? 0 : static_cast<uint16_t>(millis() / 110U);
+        formatHermesXHomeTimeDate(directHomeTimeBuf, sizeof(directHomeTimeBuf), homeDateBuf, sizeof(homeDateBuf));
+        renderDirectHomeClock = false;
+        renderDirectHomeDogOverlay = true;
+        directHomeDogFrame = static_cast<uint16_t>((static_cast<uint64_t>(millis()) * DIRECT_HOME_DOG_FRAMERATE) / 1000U);
 
         bool hasBattery = false;
         int batteryVoltageMv = 0;
@@ -16749,13 +16890,13 @@ int32_t Screen::runOnce()
             logDirectHomeNeonSummary("DirectHome state update");
         }
 
-        if (!directHomeMqttActive && targetFramerate < DIRECT_HOME_CLOCK_FRAMERATE) {
-            targetFramerate = DIRECT_HOME_CLOCK_FRAMERATE;
+        if (targetFramerate < DIRECT_HOME_DOG_FRAMERATE) {
+            targetFramerate = DIRECT_HOME_DOG_FRAMERATE;
             ui->setTargetFPS(targetFramerate);
         }
 
         if (enteringDirectHomeOverlay) {
-            // First frame when returning to Home must force a full UI-backed repaint, otherwise direct TFT clock can
+            // First frame when returning to Home must force a full UI-backed repaint, otherwise direct TFT overlays can
             // sit on top of stale pixels from previous frame buffers.
             gHermesXDirectHomeUiCache.valid = false;
             gHermesXDirectHomeUiCache.lastTimeValid = false;
@@ -16821,6 +16962,17 @@ int32_t Screen::runOnce()
         (gDirectHomeClockWasVisible && !renderDirectHomeClock) || (gDirectHomeDogWasVisible && !renderDirectHomeDogOverlay);
     if (leftDirectHomeOverlay) {
         skipUiUpdate = false;
+        if (gDirectHomeDogWasVisible && gHermesXDirectHomeUiCache.lastDogW > 0 && gHermesXDirectHomeUiCache.lastDogH > 0) {
+            tft->fillRect565(gHermesXDirectHomeUiCache.lastDogX,
+                             gHermesXDirectHomeUiCache.lastDogY,
+                             gHermesXDirectHomeUiCache.lastDogW,
+                             gHermesXDirectHomeUiCache.lastDogH,
+                             normalBg);
+            tft->overlayBufferForegroundRect565(gHermesXDirectHomeUiCache.lastDogX,
+                                                gHermesXDirectHomeUiCache.lastDogY,
+                                                gHermesXDirectHomeUiCache.lastDogW,
+                                                gHermesXDirectHomeUiCache.lastDogH);
+        }
         clearDirectNeonClockRegion(tft, dispdev->getWidth(), 0);
         gDirectHomeBasePainted = false;
         gDirectHomeMeshPainted = false;
@@ -17052,21 +17204,15 @@ int32_t Screen::runOnce()
         if (forceDirectHomeClockRedraw || !gHermesXDirectHomeUiCache.lastDogValid ||
             gHermesXDirectHomeUiCache.lastDogFrame != directHomeDogFrame ||
             gHermesXDirectHomeUiCache.lastDogPose != gDirectHomeDogPose) {
-            const bool repaintDogBackground = repaintDirectHomeClockMeshRegion(tft, dispdev->getWidth(), dispdev->getHeight(), 0);
             renderDirectHomeDog(tft,
                                 dispdev->getWidth(),
                                 dispdev->getHeight(),
-                                0,
                                 directHomeDogFrame,
-                                gDirectHomeDogPose,
-                                directHomeMqttActive);
+                                gDirectHomeDogPose);
             gHermesXDirectHomeUiCache.lastDogValid = true;
             gHermesXDirectHomeUiCache.lastDogFrame = directHomeDogFrame;
             gHermesXDirectHomeUiCache.lastDogPose = gDirectHomeDogPose;
             gHermesXDirectHomeUiCache.lastTimeValid = false;
-            if (repaintDogBackground) {
-                logDirectHomeNeonSummary("DirectHome dog redraw");
-            }
         }
     }
     if (directGpsPosterVisible) {
@@ -17161,7 +17307,7 @@ int32_t Screen::runOnce()
     // but we should only call setTargetFPS when framestate changes, because
     // otherwise that breaks animations.
     if (targetFramerate != IDLE_FRAMERATE && ui->getUiState()->frameState == FIXED && !hermesXBootHoldActive &&
-        !gDirectHomeClockWasVisible) {
+        !gDirectHomeClockWasVisible && !gDirectHomeDogWasVisible) {
         if (isHermesFastSetupActive() || (hermesXEmUiModule && hermesXEmUiModule->isActive())) {
             // Keep UI responsive while interacting with HermesX screens.
             fastUntilMs = millis() + 1200;
