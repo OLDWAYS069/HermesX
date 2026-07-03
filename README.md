@@ -39,6 +39,7 @@ HermesX 是基於 Meshtastic 的客製化韌體，主開發目標是 `heltec-wir
 - 建置指令：`platformio run -e heltec-wireless-tracker`
 - 文件入口：`docs/README.md`
 - 近期變更：`docs/CHANGELOG_MINI.md`
+- TAK MODE：`docs/TAK_MODE.md`
 
 ## 專案現況
 - HermesX 的主體功能與 UI 調整，仍以 `heltec-wireless-tracker` 的操作體驗為中心。
@@ -105,6 +106,7 @@ platformio run -e heltec-wireless-tracker
 ## 文件
 - `docs/README.md`：文件索引
 - `docs/CHANGELOG_MINI.md`：近期變更摘要
+- `docs/TAK_MODE.md`：TAK MODE 操作、頻道選擇與 GROUP 配對入口
 - `docs/PLAN_upstream_2.7.15_migration.md`：升級與搬移計畫
 - `docs/REF_techspec.md`：技術規格與命名約束
 

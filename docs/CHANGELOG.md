@@ -2,20 +2,51 @@
 
 本文件為可對外發布版本的更新紀錄，整理 HermesX 韌體的重要功能更新、體驗調整與修正項目。
 
+## 2026-07-03
+
+### Release
+
+- 發布 CIV build `HXB_C0.3.7_20260703_1702`，包含 TAK MODE 簡化、智慧功率主頁、頻道選擇、GROUP 設定快速入口與 TAK 文件整理。
+- 新增 release note：`docs/RELEASE_HXB_C0.3.7_20260703_1702.md`。
+
+### 驗證
+
+- `platformio run -e heltec-wireless-tracker -j 4` 編譯成功，CIV build 版本為 `HXB_C0.3.7_20260703_1702`。
+- 已依 handoff 搬移並驗證韌體產物：
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260703_1702.bin`
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260703_1702.factory.bin`
+- OTA SHA256: `68b3029477f39c80fe86b926000c2039b695ff1de6a2fc039324b35183d466c6`
+- Factory SHA256: `2074899852a65c5dd45694aeb254ab4a41659befe76e30464a7383dddb3ef8d3`
+
 ## 2026-06-29
 
 ### 調整
 
+- `TAK MODE` 進入與退出改用更新模式同款 transition 動畫，進入顯示 `進入TAK模式`，退出顯示 `退出TAK模式`，再排程重開機。
+- `TAK MODE` 啟用期間會暫時退出並阻擋 CannedMessage menu，避免智慧功率 Home 短按叫出 TAK 選單時與罐頭訊息輸入打架。
+- 修正 `TAK MODE` 彈窗 / 設定 / 頻道選擇無法被 Rotary 控制的問題；TAK 輸入改採 CannedMessage 同款 `rotEnc1` effective cw/ccw/press 解析。
+- `TAK MODE` 智慧功率主頁改為右轉開 TAK 選單、左轉開 `頻道選擇`、短按回原本主選單。
+- `頻道選擇` 的 `返回` 與 Cancel/Back 改為直接回 TAK 智慧功率主頁，不再跳回 TAK popup。
+- `TAK MODE` 彈窗新增 `GROUP設定` 快速入口，直接共用現有 GROUP PIN A/B 與查看 PIN 流程；從此入口返回時會回到 GROUP 菜單，方便接著檢查已配對節點列表。
+- 新增 `docs/TAK_MODE.md`，整理 TAK MODE 進出流程、智慧功率主頁、旋鈕操作、頻道選擇、GROUP 配對入口、CannedMessage 隔離與 CIV 版限制；README 與 docs index 已加入入口。
 - Direct Home 原本的 direct clock overlay 改由常駐小威動畫取代，並與 GPS / NEON Clock buffer 分離；Home 小威固定顯示在螢幕左側，避免佔用舊 Home clock overlay buffer。
 - 小威支援 `趴著` / `坐著` 姿勢輪替，兩種姿勢都改為 4 幀 sprite 尾巴動畫；尾巴改成水平掃動，避免看起來像上下抖動或分離的棒狀物。
 - 小威動畫改為差異像素更新：只有進入 Home、位置或姿勢切換時才重畫整個區域，平常只更新尾巴變動像素，降低 ST7735 實機閃爍。
 
 ### 驗證
 
+- `platformio run -e heltec-wireless-tracker` 編譯驗證成功，CIV build 版本為 `HXB_C0.3.7_20260629_2323`。
+- 已依 handoff 搬移並驗證韌體產物：
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260629_2323.bin`
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260629_2323.factory.bin`
 - `platformio run -e heltec-wireless-tracker` 編譯成功，CIV build 版本為 `HXB_C0.3.7_20260629_0439`。
 - 已依 handoff 搬移並驗證韌體產物：
   - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260629_0439.bin`
   - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260629_0439.factory.bin`
+- `platformio run -e heltec-wireless-tracker` 編譯成功，CIV build 版本為 `HXB_C0.3.7_20260629_1859`。
+- 已依 handoff 搬移並驗證韌體產物：
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260629_1859.bin`
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260629_1859.factory.bin`
 
 ## 2026-06-23
 

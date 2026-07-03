@@ -151,8 +151,12 @@ Recent Send、訊息 detail 與 canned message 編輯流程已經和 HermesX 專
 
 ### ==TAK MODE==
 
-`TAK MODE` 是獨立 action page。  
-短按會打開彈窗操作頁，可切換 TAK ON/OFF、進入 `TAKMODE設定`，並依設定開啟或關閉相關附屬入口。
+`TAK MODE` 會在啟用與退出時顯示 transition 動畫並重開機，讓 role、LoRa channel、位置廣播、聲光與智慧功率狀態一致套用。
+
+TAK 啟用後主頁會切換為智慧功率 UI。
+在主頁右轉會開啟 TAK 選單，左轉會開啟 `頻道選擇`，短按則回到原本 HermesX 主選單。
+
+TAK 選單可切換 TAK ON/OFF、進入 `TAKMODE設定`、選擇 TAK channel slot、快速進入 `GROUP設定`，並依設定開啟或關閉相關附屬入口。
 
 `TAKMODE設定` 可調整：
 
@@ -165,7 +169,12 @@ Recent Send、訊息 detail 與 canned message 編輯流程已經和 HermesX 專
 - EMUI
 - 尋人模組
 
+`頻道選擇` 是固定 LoRa channel slot 的現場快速選擇，不是 FHSS。
+`GROUP設定` 會共用既有 GROUP PIN A/B 與查看 PIN 流程，方便以類似配對的方式建立同組節點，再回 GROUP 菜單查看節點列表。
+
 在 CIV 版中，EMUI 即使出現在 TAK 設定語意裡，也不代表 EMAC 可用；本分支的 EM UI 進入會被 CIV build 關閉。
+
+完整操作細節見 `docs/TAK_MODE.md`。
 
 ### ==潛行模式與聲光回饋==
 

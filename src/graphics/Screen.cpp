@@ -9374,6 +9374,7 @@ static const uint8_t kSetupUpdateEntryMenuCount = 2;
 static const uint8_t kSetupUpdateMenuCount = 5;
 static constexpr uint32_t kSetupUpdateIntroMs = 900;
 static constexpr uint32_t kSetupUpdateExitRebootMs = 1200;
+static constexpr uint32_t kTakModeTransitionRebootMs = 1500;
 static const uint8_t kSetupUpdateCheckMenuCount = 8;
 static const uint8_t kSetupUpdateCheckFlowCount = 2;
 static const uint8_t kSetupUpdateRuntimeMenuCount = 3;
@@ -9463,7 +9464,10 @@ static const uint8_t kTakSmartDistanceCount = sizeof(kTakSmartDistanceOptions) /
 static const uint32_t kTakSmartIntervalOptions[] = {15, 30, 60, 120};
 static const char *kTakSmartIntervalLabels[] = {"15s", "30s", "60s", "120s"};
 static const uint8_t kTakSmartIntervalCount = sizeof(kTakSmartIntervalOptions) / sizeof(kTakSmartIntervalOptions[0]);
-static constexpr uint8_t kTakPopupRowCount = 5;
+static const uint32_t kTakMissionSlotOptions[] = {0, 5, 9, 17, 19, 3};
+static const char *kTakMissionSlotLabels[] = {u8"自動", "TAK A", "TAK B", "TAK C", "TAK D", "TAK E"};
+static const uint8_t kTakMissionSlotCount = sizeof(kTakMissionSlotOptions) / sizeof(kTakMissionSlotOptions[0]);
+static constexpr uint8_t kTakPopupRowCount = 7;
 static constexpr uint8_t kTakSettingsRowCount = 11;
 
 static const uint32_t kSetupMqttMapPublishOptions[] = {3600, 7200, 10800, 21600, 43200, 86400};
@@ -10342,10 +10346,10 @@ static constexpr uint32_t kStealthRetainedMagic = 0x4853544CUL; // HSTL
 static constexpr uint16_t kStealthRetainedVersion = 1;
 static constexpr const char *kStealthStateFile = "/prefs/hermesx_stealth_state.bin";
 static constexpr uint32_t kTakRetainedMagic = 0x4854414BUL; // HTAK
-static constexpr uint16_t kTakRetainedVersion = 2;
+static constexpr uint16_t kTakRetainedVersion = 3;
 static constexpr const char *kTakStateFile = "/prefs/hermesx_tak_state.bin";
 static constexpr uint32_t kTakProfileMagic = 0x48545046UL; // HTPF
-static constexpr uint16_t kTakProfileVersion = 1;
+static constexpr uint16_t kTakProfileVersion = 2;
 static constexpr const char *kTakProfileFile = "/prefs/hermesx_tak_profile.bin";
 
 struct TakModeProfile {
@@ -10357,6 +10361,7 @@ struct TakModeProfile {
     uint32_t positionBroadcastSecs = 20;
     uint32_t smartMinimumDistanceMeters = 10;
     uint32_t smartMinimumIntervalSecs = 15;
+    uint32_t missionSlot = 5;
     bool quietOutputs = true;
     bool allowEmUi = true;
     bool allowFinder = true;
@@ -10368,12 +10373,23 @@ enum class TakModePageView : uint8_t {
     Main,
     Popup,
     Settings,
+    ChannelSelect,
+    TransitionEnter,
+    TransitionExit,
 };
 static TakModePageView gTakModePageView = TakModePageView::Main;
 static uint8_t gTakModePopupSelected = 0;
 static uint8_t gTakModePopupOffset = 0;
 static uint8_t gTakModeSettingsSelected = 0;
 static uint8_t gTakModeSettingsOffset = 0;
+static uint32_t gTakModeTransitionStartedAtMs = 0;
+
+static void drawSetupUpdateTransitionPage(OLEDDisplay *display,
+                                          int16_t width,
+                                          int16_t height,
+                                          uint32_t startedAtMs,
+                                          const char *title,
+                                          const char *status);
 
 struct StealthRetainedState {
     uint32_t magic;
@@ -10399,6 +10415,8 @@ struct TakRuntimeState {
     uint32_t smartMinimumIntervalSecs = 0;
     uint32_t positionFlags = 0;
     uint32_t telemetryDeviceUpdateInterval = 0;
+    uint32_t loraChannelNum = 0;
+    float loraOverrideFrequency = 0.0f;
 };
 static TakRuntimeState gTakRuntimeState;
 
@@ -10418,6 +10436,95 @@ static bool isStealthModeActive()
 static bool isTakModeActive()
 {
     return gTakRuntimeState.active;
+}
+
+static const char *getTakMissionSlotLabel(uint32_t slot)
+{
+    for (uint8_t i = 0; i < kTakMissionSlotCount; ++i) {
+        if (kTakMissionSlotOptions[i] == slot) {
+            return kTakMissionSlotLabels[i];
+        }
+    }
+    return "Slot";
+}
+
+static uint32_t getTakEffectiveMissionSlot()
+{
+    const uint16_t slotCount = getSetupLoraChannelSlotCount();
+    if (gTakModeProfile.missionSlot == 0 || slotCount == 0) {
+        return 0;
+    }
+    if (gTakModeProfile.missionSlot > slotCount) {
+        return slotCount;
+    }
+    return gTakModeProfile.missionSlot;
+}
+
+static float getSetupLoraSlotFrequencyMhz(uint32_t slot)
+{
+    const RegionInfo *region = findSetupRegionInfo(config.lora.region);
+    if (!region) {
+        region = findSetupRegionInfo(meshtastic_Config_LoRaConfig_RegionCode_UNSET);
+    }
+    if (!region || slot == 0) {
+        return 0.0f;
+    }
+
+    const float bandwidthKhz = getSetupCurrentLoraBandwidthKhz();
+    if (bandwidthKhz <= 0.0f) {
+        return 0.0f;
+    }
+
+    return region->freqStart + (bandwidthKhz / 2000.0f) + ((slot - 1) * (bandwidthKhz / 1000.0f));
+}
+
+static String getTakMissionSlotDisplayLabel(uint32_t slot, bool includeFrequency)
+{
+    String label = getTakMissionSlotLabel(slot);
+    const uint32_t effectiveSlot = slot == 0 ? config.lora.channel_num : slot;
+    if (effectiveSlot != 0) {
+        label += " S";
+        label += String(effectiveSlot);
+    }
+    if (includeFrequency && effectiveSlot != 0) {
+        const float freq = getSetupLoraSlotFrequencyMhz(effectiveSlot);
+        if (freq > 0.0f) {
+            label += " ";
+            label += formatSetupFrequencyLabel(freq);
+        }
+    }
+    return label;
+}
+
+static const char *getTakAirtimeStatusLabel(float channelUtil)
+{
+    if (channelUtil >= 70.0f) {
+        return u8"嚴重擁塞";
+    }
+    if (channelUtil >= 50.0f) {
+        return u8"擁塞";
+    }
+    if (channelUtil >= 20.0f) {
+        return u8"偏忙";
+    }
+    return u8"正常";
+}
+
+static uint32_t getTakSuggestedMissionSlot()
+{
+    const uint16_t slotCount = getSetupLoraChannelSlotCount();
+    if (slotCount == 0) {
+        return 0;
+    }
+
+    const uint32_t current = config.lora.channel_num ? config.lora.channel_num : getTakEffectiveMissionSlot();
+    for (uint8_t i = 1; i < kTakMissionSlotCount; ++i) {
+        const uint32_t candidate = kTakMissionSlotOptions[i];
+        if (candidate != 0 && candidate <= slotCount && candidate != current) {
+            return candidate;
+        }
+    }
+    return 0;
 }
 
 static bool isTakDeviceRole(meshtastic_Config_DeviceConfig_Role role)
@@ -10467,6 +10574,16 @@ static void normalizeTakModeProfile(TakModeProfile &profile)
     }
     if (profile.smartMinimumIntervalSecs == 0) {
         profile.smartMinimumIntervalSecs = 15;
+    }
+    bool validMissionSlot = false;
+    for (uint8_t i = 0; i < kTakMissionSlotCount; ++i) {
+        if (profile.missionSlot == kTakMissionSlotOptions[i]) {
+            validMissionSlot = true;
+            break;
+        }
+    }
+    if (!validMissionSlot) {
+        profile.missionSlot = 5;
     }
 }
 
@@ -11093,6 +11210,13 @@ static bool applyTakModeSettings()
         changed = true;
     }
 
+    if (cannedMessageModule) {
+        const auto runState = cannedMessageModule->getRunState();
+        if (runState != CANNED_MESSAGE_RUN_STATE_DISABLED && runState != CANNED_MESSAGE_RUN_STATE_INACTIVE) {
+            cannedMessageModule->exitMenu();
+        }
+    }
+
     if (config.device.role != meshtastic_Config_DeviceConfig_Role_TAK) {
         changed = true;
     }
@@ -11110,6 +11234,18 @@ static bool applyTakModeSettings()
     config.position.position_broadcast_secs = gTakModeProfile.positionBroadcastSecs;
     config.position.broadcast_smart_minimum_distance = gTakModeProfile.smartMinimumDistanceMeters;
     config.position.broadcast_smart_minimum_interval_secs = gTakModeProfile.smartMinimumIntervalSecs;
+
+    const uint32_t takMissionSlot = getTakEffectiveMissionSlot();
+    const uint32_t nextChannelNum = takMissionSlot == 0 ? gTakRuntimeState.loraChannelNum : takMissionSlot;
+    const float nextOverrideFrequency = takMissionSlot == 0 ? gTakRuntimeState.loraOverrideFrequency : 0.0f;
+    if (config.lora.channel_num != nextChannelNum || fabsf(config.lora.override_frequency - nextOverrideFrequency) >= 0.0001f) {
+        config.lora.channel_num = nextChannelNum;
+        config.lora.override_frequency = nextOverrideFrequency;
+        changed = true;
+        if (service) {
+            service->configChanged.notifyObservers(NULL);
+        }
+    }
 
     return changed;
 }
@@ -11132,6 +11268,8 @@ static bool enableTakMode()
     gTakRuntimeState.smartMinimumIntervalSecs = config.position.broadcast_smart_minimum_interval_secs;
     gTakRuntimeState.positionFlags = config.position.position_flags;
     gTakRuntimeState.telemetryDeviceUpdateInterval = moduleConfig.telemetry.device_update_interval;
+    gTakRuntimeState.loraChannelNum = config.lora.channel_num;
+    gTakRuntimeState.loraOverrideFrequency = config.lora.override_frequency;
 
     if (HermesXInterfaceModule::instance) {
         gTakRuntimeState.uiLedBrightness = HermesXInterfaceModule::instance->getUiLedBrightness();
@@ -11210,6 +11348,8 @@ static bool disableTakMode()
     config.position.broadcast_smart_minimum_interval_secs = gTakRuntimeState.smartMinimumIntervalSecs;
     config.position.position_flags = gTakRuntimeState.positionFlags;
     moduleConfig.telemetry.device_update_interval = gTakRuntimeState.telemetryDeviceUpdateInterval;
+    config.lora.channel_num = gTakRuntimeState.loraChannelNum;
+    config.lora.override_frequency = gTakRuntimeState.loraOverrideFrequency;
     setHeartbeatLedDisabled(gTakRuntimeState.ledHeartbeatDisabled);
     if (HermesXInterfaceModule::instance) {
         HermesXInterfaceModule::instance->applyRoleOutputPolicy();
@@ -11230,7 +11370,22 @@ static bool disableTakMode()
     clearPersistedTakStateFile();
     clearRetainedTakState();
     gTakRuntimeState.active = false;
+    gTakModePageView = TakModePageView::Main;
     return true;
+}
+
+static void startTakModeTransition(bool entering)
+{
+    gTakModePageView = entering ? TakModePageView::TransitionEnter : TakModePageView::TransitionExit;
+    gTakModePopupSelected = 0;
+    gTakModePopupOffset = 0;
+    gTakModeSettingsSelected = 0;
+    gTakModeSettingsOffset = 0;
+    gTakModeTransitionStartedAtMs = millis();
+    if (screen) {
+        screen->showHermesXMainPage();
+        screen->requestImmediateRedraw();
+    }
 }
 
 static String base64UrlEncode(const uint8_t *data, size_t len)
@@ -12042,12 +12197,20 @@ void Screen::drawTakModeFrame(OLEDDisplay *display, OLEDDisplayUiState *state, i
     const int16_t width = display->getWidth();
     const int16_t height = display->getHeight();
 
+    loadTakModeProfileIfNeeded();
+    const bool popupView = gTakModePageView == TakModePageView::Popup;
+    const bool settingsView = gTakModePageView == TakModePageView::Settings;
+    const bool channelView = gTakModePageView == TakModePageView::ChannelSelect;
+    const bool overlayOnly = (state == nullptr) && (popupView || settingsView || channelView);
+
+    if (!overlayOnly) {
 #if defined(USE_EINK)
-    display->setColor(EINK_WHITE);
+        display->setColor(EINK_WHITE);
 #else
-    display->setColor(OLEDDISPLAY_COLOR::BLACK);
+        display->setColor(OLEDDISPLAY_COLOR::BLACK);
 #endif
-    display->fillRect(0, 0, width, height);
+        display->fillRect(0, 0, width, height);
+    }
 #if defined(USE_EINK)
     display->setColor(EINK_BLACK);
 #else
@@ -12057,31 +12220,54 @@ void Screen::drawTakModeFrame(OLEDDisplay *display, OLEDDisplayUiState *state, i
     display->setFont(FONT_SMALL);
     display->setTextAlignment(TEXT_ALIGN_LEFT);
 
-    loadTakModeProfileIfNeeded();
-    const bool popupView = gTakModePageView == TakModePageView::Popup;
-    const bool settingsView = gTakModePageView == TakModePageView::Settings;
     const char *title = "TAK MODE";
-    const int16_t titleW = graphics::HermesX_zh::stringAdvance(title, graphics::HermesX_zh::GLYPH_WIDTH, display);
-    int16_t titleX = x + (width - titleW) / 2;
-    if (titleX < x + 2) {
-        titleX = x + 2;
+
+    if (!overlayOnly) {
+        const int16_t titleW = graphics::HermesX_zh::stringAdvance(title, graphics::HermesX_zh::GLYPH_WIDTH, display);
+        int16_t titleX = x + (width - titleW) / 2;
+        if (titleX < x + 2) {
+            titleX = x + 2;
+        }
+        const int16_t titleY = y + 2;
+        graphics::HermesX_zh::drawMixedBounded(*display, titleX, titleY, width - 4, title,
+                                               graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
+
+        const int16_t shieldH = std::max<int16_t>(24, std::min<int16_t>(height / 2, 38));
+        const int16_t shieldW = shieldH + 8;
+        const int16_t shieldTop = y + (height - shieldH) / 2 - 5;
+        drawTakShieldIcon(display, x + width / 2, shieldTop, shieldW, shieldH, 2);
+
+        const char *status = isTakModeActive() ? "ON" : "OFF";
+        const int16_t statusW = graphics::HermesX_zh::stringAdvance(status, graphics::HermesX_zh::GLYPH_WIDTH, display);
+        graphics::HermesX_zh::drawMixedBounded(*display, x + (width - statusW) / 2, y + height - FONT_HEIGHT_SMALL - 3,
+                                               width - 4, status, graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL,
+                                               nullptr);
     }
-    const int16_t titleY = y + 2;
-    graphics::HermesX_zh::drawMixedBounded(*display, titleX, titleY, width - 4, title,
-                                           graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
 
-    const int16_t shieldH = std::max<int16_t>(24, std::min<int16_t>(height / 2, 38));
-    const int16_t shieldW = shieldH + 8;
-    const int16_t shieldTop = y + (height - shieldH) / 2 - 5;
-    drawTakShieldIcon(display, x + width / 2, shieldTop, shieldW, shieldH, 2);
+    if (!overlayOnly && !popupView && !settingsView && !channelView) {
+        const float channelUtil = airTime ? airTime->channelUtilizationPercent() : 0.0f;
+        String slotLine = getTakMissionSlotDisplayLabel(config.lora.channel_num ? config.lora.channel_num : getTakEffectiveMissionSlot(), false);
+        if (fabsf(config.lora.override_frequency) >= 0.0001f) {
+            slotLine = String(u8"手動 ") + formatSetupFrequencyLabel(config.lora.override_frequency);
+        }
+        char utilBuf[32];
+        snprintf(utilBuf, sizeof(utilBuf), "ChUtil %.0f%%", channelUtil);
+        String utilLine = String(utilBuf) + " " + getTakAirtimeStatusLabel(channelUtil);
+        graphics::HermesX_zh::drawMixedBounded(*display, x + 4, y + 15, width - 8, slotLine.c_str(),
+                                               graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
+        graphics::HermesX_zh::drawMixedBounded(*display, x + 4, y + height - 27, width - 8, utilLine.c_str(),
+                                               graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
+        if (channelUtil >= 50.0f) {
+            const uint32_t suggestedSlot = getTakSuggestedMissionSlot();
+            if (suggestedSlot != 0) {
+                String suggestLine = String(u8"建議 ") + getTakMissionSlotDisplayLabel(suggestedSlot, false);
+                graphics::HermesX_zh::drawMixedBounded(*display, x + 4, y + height - 16, width - 8, suggestLine.c_str(),
+                                                       graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
+            }
+        }
+    }
 
-    const char *status = isTakModeActive() ? "ON" : "OFF";
-    const int16_t statusW = graphics::HermesX_zh::stringAdvance(status, graphics::HermesX_zh::GLYPH_WIDTH, display);
-    graphics::HermesX_zh::drawMixedBounded(*display, x + (width - statusW) / 2, y + height - FONT_HEIGHT_SMALL - 3,
-                                           width - 4, status, graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL,
-                                           nullptr);
-
-    if (popupView || settingsView) {
+    if (popupView || settingsView || channelView) {
         const int16_t boxX = x + 8;
         const int16_t boxY = y + 10;
         const int16_t boxW = width - 16;
@@ -12099,7 +12285,7 @@ void Screen::drawTakModeFrame(OLEDDisplay *display, OLEDDisplayUiState *state, i
 #endif
         display->drawRect(boxX, boxY, boxW, boxH);
 
-        const char *modalTitle = settingsView ? u8"TAKMODE設定" : "TAK MODE";
+        const char *modalTitle = settingsView ? u8"TAKMODE設定" : (channelView ? u8"頻道選擇" : "TAK MODE");
         const int16_t modalTitleW =
             graphics::HermesX_zh::stringAdvance(modalTitle, graphics::HermesX_zh::GLYPH_WIDTH, display);
         graphics::HermesX_zh::drawMixedBounded(*display, boxX + std::max<int16_t>(2, (boxW - modalTitleW) / 2),
@@ -12116,8 +12302,9 @@ void Screen::drawTakModeFrame(OLEDDisplay *display, OLEDDisplayUiState *state, i
             visibleRows = 5;
         }
 
-        if (!settingsView) {
-            static const char *kRows[] = {"TAK MODE", u8"TAKMODE設定", "EMUI", u8"尋人模組", u8"返回主選單"};
+        if (!settingsView && !channelView) {
+            static const char *kRows[] = {"TAK MODE",   u8"TAKMODE設定", u8"頻道選擇", u8"GROUP設定",
+                                          "EMUI",       u8"尋人模組",    u8"返回主選單"};
             if (gTakModePopupSelected >= kTakPopupRowCount) {
                 gTakModePopupSelected = 0;
             }
@@ -12147,10 +12334,48 @@ void Screen::drawTakModeFrame(OLEDDisplay *display, OLEDDisplayUiState *state, i
                 String line = kRows[index];
                 if (index == 0) {
                     line += isTakModeActive() ? ": ON" : ": OFF";
-                } else if (index == 2 && !gTakModeProfile.allowEmUi) {
+                } else if (index == 4 && !gTakModeProfile.allowEmUi) {
                     line += ": OFF";
-                } else if (index == 3 && !gTakModeProfile.allowFinder) {
+                } else if (index == 5 && !gTakModeProfile.allowFinder) {
                     line += ": OFF";
+                }
+                graphics::HermesX_zh::drawMixedBounded(*display, boxX + 6, rowY, boxW - 12, line.c_str(),
+                                                       graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
+            }
+            return;
+        }
+
+        if (channelView) {
+            if (gTakModeSettingsSelected >= kTakMissionSlotCount + 1) {
+                gTakModeSettingsSelected = 0;
+            }
+            const uint8_t channelRowCount = kTakMissionSlotCount + 1;
+            if (visibleRows > channelRowCount) {
+                visibleRows = channelRowCount;
+            }
+            if (gTakModeSettingsSelected < gTakModeSettingsOffset) {
+                gTakModeSettingsOffset = gTakModeSettingsSelected;
+            } else if (gTakModeSettingsSelected >= gTakModeSettingsOffset + visibleRows) {
+                gTakModeSettingsOffset = gTakModeSettingsSelected - visibleRows + 1;
+            }
+            if (gTakModeSettingsOffset + visibleRows > channelRowCount) {
+                gTakModeSettingsOffset = channelRowCount - visibleRows;
+            }
+
+            for (uint8_t row = 0; row < visibleRows; ++row) {
+                const uint8_t index = gTakModeSettingsOffset + row;
+                if (index >= channelRowCount) {
+                    break;
+                }
+                const int16_t rowY = listTop + row * rowH;
+                const bool selected = index == gTakModeSettingsSelected;
+                if (selected) {
+                    display->drawRect(boxX + 3, rowY - 1, boxW - 6, rowH);
+                }
+                String line = index == 0 ? String(u8"返回")
+                                         : getTakMissionSlotDisplayLabel(kTakMissionSlotOptions[index - 1], true);
+                if (index > 0 && kTakMissionSlotOptions[index - 1] == gTakModeProfile.missionSlot) {
+                    line += " *";
                 }
                 graphics::HermesX_zh::drawMixedBounded(*display, boxX + 6, rowY, boxW - 12, line.c_str(),
                                                        graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
@@ -12338,12 +12563,22 @@ static void drawSmartPowerHomeFrame(OLEDDisplay *display, int16_t x, int16_t y)
 
 void Screen::drawHermesXMain(OLEDDisplay *display, OLEDDisplayUiState * /*state*/, int16_t x, int16_t y)
 {
+    if (gTakModePageView == TakModePageView::TransitionEnter || gTakModePageView == TakModePageView::TransitionExit) {
+        const char *title =
+            (gTakModePageView == TakModePageView::TransitionEnter) ? u8"進入TAK模式" : u8"退出TAK模式";
+        drawSetupUpdateTransitionPage(display, display->getWidth(), display->getHeight(), gTakModeTransitionStartedAtMs,
+                                      title, "");
+        return;
+    }
     if (lowMemoryReminderVisible) {
         drawLowMemoryProtectionFrame(display, nullptr);
         return;
     }
     if (isSmartPowerHomeActive()) {
         drawSmartPowerHomeFrame(display, x, y);
+        if (gTakModePageView != TakModePageView::Main) {
+            drawTakModeFrame(display, nullptr, x, y);
+        }
         return;
     }
 
@@ -16384,6 +16619,13 @@ int32_t Screen::runOnce()
         setFastFramerate();
     }
 
+    if (gTakModePageView == TakModePageView::TransitionEnter || gTakModePageView == TakModePageView::TransitionExit) {
+        if (gTakModeTransitionStartedAtMs == 0) {
+            gTakModeTransitionStartedAtMs = millis();
+        }
+        setFastFramerate();
+    }
+
 #if HAS_WIFI && !defined(ARCH_PORTDUINO)
     if ((hermesSetupPage == HermesFastSetupPage::UpdateCheckMenu ||
          hermesSetupPage == HermesFastSetupPage::UpdateCheckFlowPage) &&
@@ -16408,7 +16650,7 @@ int32_t Screen::runOnce()
     }
 #endif
 
-    if (isStealthModeActive() && cannedMessageModule) {
+    if ((isStealthModeActive() || isTakModeActive()) && cannedMessageModule) {
         const auto runState = cannedMessageModule->getRunState();
         if (runState != CANNED_MESSAGE_RUN_STATE_DISABLED && runState != CANNED_MESSAGE_RUN_STATE_INACTIVE) {
             cannedMessageModule->exitMenu();
@@ -17741,9 +17983,6 @@ void Screen::setFrames(FrameFocus focus)
     normalFrames[numframes++] = &Screen::drawGroupNodeListFrame;
     fsi.positions.groupDetail = numframes;
     normalFrames[numframes++] = &Screen::drawGroupNodeDetailFrame;
-    fsi.positions.takMode = numframes;
-    normalFrames[numframes++] = &Screen::drawTakModeFrame;
-
     fsi.positions.log = numframes;
     normalFrames[numframes++] = &Screen::drawDebugInfoTrampoline;
 
@@ -17844,8 +18083,6 @@ void Screen::setFrames(FrameFocus focus)
             ui->switchToFrame(fsi.positions.groupList);
         else if (canMap(oldFsi.positions.groupDetail, fsi.positions.groupDetail))
             ui->switchToFrame(fsi.positions.groupDetail);
-        else if (canMap(oldFsi.positions.takMode, fsi.positions.takMode))
-            ui->switchToFrame(fsi.positions.takMode);
         else if (canMap(oldFsi.positions.waypoint, fsi.positions.waypoint))
             ui->switchToFrame(fsi.positions.waypoint);
         else if (canMap(oldFsi.positions.main, fsi.positions.main))
@@ -18094,7 +18331,8 @@ void Screen::handleOnPress()
     }
 
     // These pages own their input; do not advance the normal frame carousel on raw press.
-    if (isHermesFastSetupActive() || isHermesXActionPageActive() || isTakModePageActive() || isRecentTextMessageDetailPageActive()) {
+    if (isHermesFastSetupActive() || isHermesXActionPageActive() || isTakModePageActive() || isSmartPowerHomeActive() ||
+        isRecentTextMessageDetailPageActive()) {
         return;
     }
     // If Canned Messages is using the "Scan and Select" input, dismiss the canned message frame when user button is pressed
@@ -18872,10 +19110,23 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
             screen->print("GPS page unavailable\n");
         }
     } else if (selectedAction == 3) {
-        if (screen && !screen->showTakModePage()) {
-            screen->print("TAK page unavailable\n");
-        } else if (!screen && ui && framesetInfo.positions.takMode < framesetInfo.frameCount) {
-            ui->switchToFrame(framesetInfo.positions.takMode);
+        if (isStealthModeActive()) {
+            if (screen) {
+                screen->print("Disable Stealth first\n");
+            }
+        } else if (!isTakModeActive()) {
+            if (enableTakMode()) {
+                if (screen) {
+                    screen->print("TAK MODE ON, rebooting...\n");
+                }
+                startTakModeTransition(true);
+                rebootAtMsec = millis() + kTakModeTransitionRebootMs;
+            }
+        } else {
+            gTakModePageView = TakModePageView::Popup;
+            gTakModePopupSelected = 0;
+            gTakModePopupOffset = 0;
+            showHermesXMainPage();
         }
     } else if (selectedAction == 4) {
         if (screen) {
@@ -23420,30 +23671,36 @@ bool Screen::handleGroupNodeDetailInput(const InputEvent *event)
 
 bool Screen::handleTakModeInput(const InputEvent *event)
 {
-    if (!event || !showingNormalScreen || !ui || framesetInfo.positions.takMode >= framesetInfo.frameCount) {
+    if (!event || !showingNormalScreen || !ui) {
         return false;
     }
 
-    const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
-    const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
-    const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
+    const char configuredCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
+    const char configuredCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
+    const char configuredPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
+    const char eventNone = static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_NONE);
+    const char eventUp = static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
+    const char eventDown = static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
+    const char eventSelect = static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
+    const char effectiveCw = (configuredCw == eventNone) ? eventDown : configuredCw;
+    const char effectiveCcw = (configuredCcw == eventNone) ? eventUp : configuredCcw;
+    const char effectivePress = (configuredPress == eventNone) ? eventSelect : configuredPress;
 
-    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
-    const bool isDown =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
+    const bool isUp = event->inputEvent == eventUp;
+    const bool isDown = event->inputEvent == eventDown;
     const bool isLeft =
         event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
     const bool isRight =
         event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
-    const bool isSelect =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
+    const bool isSelect = event->inputEvent == eventSelect;
     const bool isCancel =
         event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
         event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
-    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
-    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
-    const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
-    const bool isRotary = (event->source && strncmp(event->source, "rotEnc", 6) == 0);
+    const bool isCw = event->inputEvent == effectiveCw;
+    const bool isCcw = event->inputEvent == effectiveCcw;
+    const bool isPress = event->inputEvent == effectivePress;
+    const bool isRotaryEnc1 = (event->source && strcmp(event->source, "rotEnc1") == 0);
+    const bool isRotary = isRotaryEnc1 || (event->source && strncmp(event->source, "rotEnc", 6) == 0);
 
     int8_t navDir = 0;
     if (isRotary) {
@@ -23451,7 +23708,7 @@ bool Screen::handleTakModeInput(const InputEvent *event)
             navDir = -1;
         } else if (isCw) {
             navDir = 1;
-        } else if (eventCw == 0 && eventCcw == 0) {
+        } else if (!isRotaryEnc1) {
             if (isUp || isLeft) {
                 navDir = -1;
             } else if (isDown || isRight) {
@@ -23464,8 +23721,15 @@ bool Screen::handleTakModeInput(const InputEvent *event)
         navDir = 1;
     }
 
+    if (gTakModePageView == TakModePageView::TransitionEnter || gTakModePageView == TakModePageView::TransitionExit) {
+        return true;
+    }
+
     if (isCancel) {
-        if (gTakModePageView == TakModePageView::Settings) {
+        if (gTakModePageView == TakModePageView::ChannelSelect) {
+            gTakModePageView = TakModePageView::Main;
+            setFastFramerate();
+        } else if (gTakModePageView == TakModePageView::Settings) {
             gTakModePageView = TakModePageView::Popup;
             gTakModePopupSelected = 1;
             gTakModePopupOffset = 0;
@@ -23483,21 +23747,40 @@ bool Screen::handleTakModeInput(const InputEvent *event)
     }
 
     if (gTakModePageView == TakModePageView::Main) {
-        if (isSelect || isPress || navDir != 0) {
+        const bool wantsSelect = isRotaryEnc1 ? isPress : (isSelect || isPress);
+        if (navDir > 0) {
             gTakModePageView = TakModePageView::Popup;
             gTakModePopupSelected = 0;
             gTakModePopupOffset = 0;
             setFastFramerate();
             return true;
         }
+        if (navDir < 0) {
+            gTakModePageView = TakModePageView::ChannelSelect;
+            gTakModeSettingsSelected = 0;
+            gTakModeSettingsOffset = 0;
+            for (uint8_t i = 0; i < kTakMissionSlotCount; ++i) {
+                if (kTakMissionSlotOptions[i] == gTakModeProfile.missionSlot) {
+                    gTakModeSettingsSelected = i + 1;
+                    break;
+                }
+            }
+            setFastFramerate();
+            return true;
+        }
+        if (wantsSelect) {
+            gTakModePageView = TakModePageView::Main;
+            showHermesXActionPage();
+            return true;
+        }
         return false;
     }
 
     if (navDir != 0) {
-        uint8_t &selected =
-            (gTakModePageView == TakModePageView::Settings) ? gTakModeSettingsSelected : gTakModePopupSelected;
-        const uint8_t rowCount =
-            (gTakModePageView == TakModePageView::Settings) ? kTakSettingsRowCount : kTakPopupRowCount;
+        uint8_t &selected = (gTakModePageView == TakModePageView::Popup) ? gTakModePopupSelected : gTakModeSettingsSelected;
+        const uint8_t rowCount = (gTakModePageView == TakModePageView::Settings)      ? kTakSettingsRowCount
+                                 : (gTakModePageView == TakModePageView::ChannelSelect) ? (kTakMissionSlotCount + 1)
+                                                                                         : kTakPopupRowCount;
         int next = static_cast<int>(selected) + navDir;
         if (next < 0) {
             next = rowCount - 1;
@@ -23567,17 +23850,44 @@ bool Screen::handleTakModeInput(const InputEvent *event)
         return true;
     }
 
+    if (gTakModePageView == TakModePageView::ChannelSelect) {
+        if (gTakModeSettingsSelected == 0) {
+            gTakModePageView = TakModePageView::Main;
+        } else {
+            const uint8_t index = gTakModeSettingsSelected - 1;
+            if (index < kTakMissionSlotCount) {
+                gTakModeProfile.missionSlot = kTakMissionSlotOptions[index];
+                persistTakModeProfileToFile();
+                if (isTakModeActive()) {
+                    applyTakModeSettings();
+                    syncRetainedTakState();
+                    persistTakStateToFile();
+                }
+            }
+        }
+        setFastFramerate();
+        return true;
+    }
+
     if (gTakModePopupSelected == 0) {
         if (!isTakModeActive()) {
             if (isStealthModeActive()) {
                 if (screen) {
                     screen->print("Disable Stealth first\n");
                 }
-            } else if (enableTakMode() && screen) {
-                screen->print("TAK MODE ON (role=TAK)\n");
+            } else if (enableTakMode()) {
+                if (screen) {
+                    screen->print("TAK MODE ON, rebooting...\n");
+                }
+                startTakModeTransition(true);
+                rebootAtMsec = millis() + kTakModeTransitionRebootMs;
             }
-        } else if (disableTakMode() && screen) {
-            screen->print("TAK MODE OFF\n");
+        } else if (disableTakMode()) {
+            if (screen) {
+                screen->print("TAK MODE OFF, rebooting...\n");
+            }
+            startTakModeTransition(false);
+            rebootAtMsec = millis() + kTakModeTransitionRebootMs;
         }
         setFastFramerate();
         return true;
@@ -23592,6 +23902,41 @@ bool Screen::handleTakModeInput(const InputEvent *event)
     }
 
     if (gTakModePopupSelected == 2) {
+        gTakModePageView = TakModePageView::ChannelSelect;
+        gTakModeSettingsSelected = 0;
+        gTakModeSettingsOffset = 0;
+        setFastFramerate();
+        return true;
+    }
+
+    if (gTakModePopupSelected == 3) {
+        if (framesetInfo.positions.setup >= framesetInfo.frameCount) {
+            if (screen) {
+                screen->print("GROUP settings unavailable\n");
+            }
+            setFastFramerate();
+            return true;
+        }
+        gTakModePageView = TakModePageView::Main;
+        gTakModePopupSelected = 0;
+        gTakModePopupOffset = 0;
+        gGroupNodeState.menuCursor = 1;
+        gGroupNodeState.nodeListVisible = false;
+        gGroupNodeState.listCursor = 0;
+        gGroupNodeState.selectedIndex = 0;
+        gGroupNodeState.detailCursor = 0;
+        hermesSetupReturnToGroupMenu = true;
+        hermesSetupPage = HermesFastSetupPage::EmacMenu;
+        hermesSetupSelected = 0;
+        hermesSetupOffset = 0;
+        hermesSetupLastNavAtMs = 0;
+        hermesSetupLastNavDir = 0;
+        ui->switchToFrame(framesetInfo.positions.setup);
+        setFastFramerate();
+        return true;
+    }
+
+    if (gTakModePopupSelected == 4) {
 #if HERMESX_CIV_DISABLE_EMAC
         if (screen) {
             screen->print("EMUI disabled in CIV build\n");
@@ -23607,7 +23952,7 @@ bool Screen::handleTakModeInput(const InputEvent *event)
         return true;
     }
 
-    if (gTakModePopupSelected == 3) {
+    if (gTakModePopupSelected == 5) {
         if (gTakModeProfile.allowFinder) {
             hermesFinderUiMode = HermesFinderUiMode::Menu;
             hermesFinderMenuSelected = 0;
@@ -23619,6 +23964,7 @@ bool Screen::handleTakModeInput(const InputEvent *event)
         return true;
     }
 
+    gTakModePageView = TakModePageView::Main;
     showHermesXActionPage();
     return true;
 }
@@ -23706,6 +24052,14 @@ int Screen::handleInputEvent(const InputEvent *event)
         }
 
         if (handleTextMessagePopupInput(event)) {
+            return 0;
+        }
+
+        if (isTakModePageActive()) {
+            LOG_INFO("[Screen] handleInputEvent route -> TAK mode ui frame=%u", currentFrame);
+            if (handleTakModeInput(event)) {
+                return 0;
+            }
             return 0;
         }
 
@@ -23813,14 +24167,6 @@ int Screen::handleInputEvent(const InputEvent *event)
                 return 0;
             }
             if (handleGroupNodeDetailInput(event)) {
-                return 0;
-            }
-            return 0;
-        }
-
-        if (isTakModePageActive()) {
-            LOG_INFO("[Screen] handleInputEvent route -> TAK mode frame=%u", currentFrame);
-            if (handleTakModeInput(event)) {
                 return 0;
             }
             return 0;
@@ -24022,13 +24368,14 @@ bool Screen::isGroupNodeDetailPageActive() const
 
 bool Screen::isTakModePageActive() const
 {
-    if (!showingNormalScreen || !ui) {
+    if (!showingNormalScreen || !ui || !ui->getUiState()) {
         return false;
     }
-    if (framesetInfo.positions.takMode >= framesetInfo.frameCount) {
+    if (framesetInfo.positions.main >= framesetInfo.frameCount) {
         return false;
     }
-    return ui->getUiState()->currentFrame == framesetInfo.positions.takMode;
+    const bool onMainFrame = ui->getUiState()->currentFrame == framesetInfo.positions.main;
+    return onMainFrame && (isTakModeActive() || gTakModePageView != TakModePageView::Main);
 }
 
 bool Screen::isHermesInputOverlayActive() const
@@ -24100,7 +24447,7 @@ bool Screen::shouldShowHermesXMenuFooter(uint8_t frameIndex) const
     if (frameIndex == framesetInfo.positions.setup) { // FastSetup already has its own navigation model.
         return false;
     }
-    if (frameIndex == framesetInfo.positions.takMode) { // TAK page owns its toggle controls.
+    if (frameIndex == framesetInfo.positions.main && (isTakModeActive() || gTakModePageView != TakModePageView::Main)) {
         return false;
     }
     if (frameIndex == framesetInfo.positions.onlineList || frameIndex == framesetInfo.positions.onlineDetail) {
@@ -24371,14 +24718,23 @@ bool Screen::showTakModePage()
     if (!showingNormalScreen || !ui) {
         return false;
     }
-    if (framesetInfo.positions.takMode >= framesetInfo.frameCount) {
-        return false;
+
+    if (!isTakModeActive()) {
+        if (isStealthModeActive()) {
+            return false;
+        }
+        if (!enableTakMode()) {
+            return false;
+        }
+        startTakModeTransition(true);
+        rebootAtMsec = millis() + kTakModeTransitionRebootMs;
+        return true;
     }
 
-    gTakModePageView = TakModePageView::Main;
+    gTakModePageView = TakModePageView::Popup;
     gTakModePopupSelected = 0;
     gTakModePopupOffset = 0;
-    ui->switchToFrame(framesetInfo.positions.takMode);
+    showHermesXMainPage();
     setFastFramerate();
     return true;
 }
