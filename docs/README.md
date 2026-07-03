@@ -16,6 +16,7 @@
 | 🎨 介面 | HermesX_EM_UI_v2.1.md | 最新 EM UI 設計 |
 | 📶 功率 | SMART_POWER.md | TAK / TAK Tracker 智慧功率自動調整說明 |
 | 🛡️ TAK | TAK_MODE.md | TAK MODE 主頁、選單、頻道選擇、GROUP 配對入口與 CIV 限制 |
+| 💬 訊息 | 罐頭模組.md | 罐頭訊息使用、APP 自訂格式、目標頻道、Cancel/長按退出與 MSG 邊界 |
 | 📡 尋人 | 尋人模組.md | 尋人模組、GROUP 授權與尋人清單使用說明 |
 | 🗺️ 計劃 | PLAN_upstream_2.7.15_migration.md | 升級到 upstream 2.7.15 並完整搬移 HermesX UI/功能的計劃 |
 | 🧩 任務 | task_emui_rotary3021.md | Codex 專用任務指令 |
