@@ -1,3 +1,13 @@
+## 2026-07-06
+- `TAK MODE` 進入時會自動切換 LoRa preset 到 `Short_Fast`，搭配既有智慧功率降低 TAK / ATAK 封包 airtime；退出 TAK MODE 時會還原進入前的 preset 或 custom LoRa 參數。
+- `TAK MODE` 智慧功率主頁在不改動原本 GROUP 與訊號資訊排版的前提下，於 shortName 左側顯示目前 TAK 頻道標籤，例如 `TAK A`。
+- 新增旋鈕鎖定：長按旋鈕 3 秒可鎖定 / 解鎖，抵達長按秒數時顯示 `旋鈕鎖定` 彈窗並反白目前狀態。
+- 修正 Heltec Wireless Tracker 旋鈕長按被 `PowerHold` / EM 快捷路徑攔截的問題；rotary press pin 與 ButtonThread hold pin 共用時，會以 hold elapsed 優先在 3 秒觸發鎖定 / 解鎖。
+- 修正 `旋鈕鎖定` 彈窗顯示期間左右旋事件繼續流到 TAK MODE 主頁，導致 TAK 選單 / 頻道選擇把彈窗操作搶走的問題。
+- `platformio run -e heltec-wireless-tracker -j 4` 編譯成功，CIV build 版本為 `HXB_C0.3.7_20260706_1944`；韌體產物已搬到 `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260706_1944.bin` 與 `.factory.bin`。
+- OTA SHA256: `eb4965263bef982d015e13d7aa935692c5d32051f30619205a772f6a35dd9445`
+- 實機 WiFi OTA 上傳驗證成功；`/upload-update-bin` 使用 `PUT -T` 與 `X-Hermes-Filename`，不可用 multipart `curl -F`，上傳後需在 HermesX `更新模式` 執行 `套用更新`。
+
 ## 2026-07-03
 - Released CIV build `HXB_C0.3.7_20260703_1702`，包含 TAK MODE 簡化、智慧功率主頁、頻道選擇、GROUP 設定快速入口與 `docs/TAK_MODE.md`。
 - `platformio run -e heltec-wireless-tracker -j 4` 編譯成功；韌體產物已搬到 `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260703_1702.bin` 與 `.factory.bin`。

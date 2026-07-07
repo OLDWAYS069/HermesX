@@ -55,6 +55,7 @@ static bool isLongPressSuppressedNow();
 static constexpr uint32_t kResumeGraceMs = 1200;
 static constexpr uint32_t kReleaseDebounceMs = 80;
 static constexpr uint32_t kRotaryLongPressDelayMs = 1000;
+static constexpr uint32_t kRotaryLockHoldMs = 3000;
 static constexpr uint32_t kTraceRouteBindLongPressMs = 1000;
 static constexpr uint32_t kEmergencyPendingMs = 3000;
 static constexpr uint32_t kEmergencyPendingBeepMs = 1000;
@@ -71,6 +72,7 @@ static bool s_emergencyShortcutPending = false;
 static uint32_t s_emergencyShortcutDeadlineMs = 0;
 static uint32_t s_emergencyShortcutNextBeepMs = 0;
 static int32_t s_emergencyShortcutShownSec = -1;
+static bool s_rotaryLockHoldHandled = false;
 static constexpr float kEmergencyPendingToneFreq = 1760.0f;
 static constexpr uint32_t kEmergencyPendingToneMs = 120;
 
@@ -1056,6 +1058,29 @@ void ButtonThread::updatePowerHoldAnimation()
     }
 
 #if !MESHTASTIC_EXCLUDE_HERMESX
+    bool rotaryPressSharesHoldButton =
+        moduleConfig.canned_message.enabled && moduleConfig.canned_message.rotary1_enabled &&
+        moduleConfig.canned_message.inputbroker_pin_press != 0;
+    if (rotaryPressSharesHoldButton) {
+        bool matchesHoldButton = false;
+#if defined(BUTTON_PIN) || defined(USERPREFS_BUTTON_PIN)
+        const uint32_t primaryButtonPin =
+#if defined(USERPREFS_BUTTON_PIN)
+            config.device.button_gpio ? config.device.button_gpio : USERPREFS_BUTTON_PIN;
+#else
+            config.device.button_gpio ? config.device.button_gpio : BUTTON_PIN;
+#endif
+        matchesHoldButton = matchesHoldButton || moduleConfig.canned_message.inputbroker_pin_press == primaryButtonPin;
+#endif
+#if defined(BUTTON_PIN_ALT)
+        matchesHoldButton = matchesHoldButton || moduleConfig.canned_message.inputbroker_pin_press == BUTTON_PIN_ALT;
+#endif
+        rotaryPressSharesHoldButton = matchesHoldButton;
+    }
+    if (!anyPressed) {
+        s_rotaryLockHoldHandled = false;
+    }
+
     static bool s_traceRouteInputPressActive = false;
     static bool s_traceRouteBindLongHandled = false;
     if (screen && screen->shouldBlockPowerHoldForTraceRouteInput()) {
@@ -1117,6 +1142,47 @@ void ButtonThread::updatePowerHoldAnimation()
         }
         uint32_t elapsedMs = nowMs - s_holdPressStartMs;
         holdAnimationLastMs = elapsedMs;
+
+#if !MESHTASTIC_EXCLUDE_HERMESX
+        if (rotaryPressSharesHoldButton && !s_rotaryLockHoldHandled && elapsedMs >= kRotaryLockHoldMs) {
+            s_rotaryLockHoldHandled = true;
+            cancelEmergencyShortcutPending();
+            s_longGateArmed = false;
+            s_longEventPending = false;
+            s_longStartMillis = 0;
+            s_longPressFromAlt = false;
+            btnEvent = BUTTON_EVENT_NONE;
+            if (screen) {
+                screen->setRotaryLockState(!screen->isRotaryLocked());
+            }
+            if (holdAnimationActive || holdAnimationStarted) {
+                holdAnimationActive = false;
+                holdAnimationStarted = false;
+                holdAnimationMode = HoldAnimationMode::None;
+                holdAnimationLastMs = 0;
+                if (interfaceReady) {
+                    interfaceModule->stopPowerHoldAnimation(false);
+                }
+            }
+            LOG_INFO("PowerHold: rotary lock toggled via shared hold pin ms=%" PRIu32 " pin=%" PRIu32, elapsedMs,
+                     moduleConfig.canned_message.inputbroker_pin_press);
+            return;
+        }
+        if (s_rotaryLockHoldHandled) {
+            btnEvent = BUTTON_EVENT_NONE;
+            if (holdAnimationActive || holdAnimationStarted) {
+                holdAnimationActive = false;
+                holdAnimationStarted = false;
+                holdAnimationMode = HoldAnimationMode::None;
+                holdAnimationLastMs = 0;
+                if (interfaceReady) {
+                    interfaceModule->stopPowerHoldAnimation(false);
+                }
+            }
+            return;
+        }
+#endif
+
         const uint32_t visualGateMs =
 #if !MESHTASTIC_EXCLUDE_HERMESX
             static_cast<uint32_t>(static_cast<float>(holdDurationMs) * kPowerHoldVisualStretch + 0.5f);

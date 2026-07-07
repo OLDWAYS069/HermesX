@@ -33,6 +33,9 @@ class Screen
     void removeFunctionSymbol(std::string) {}
     void startAlert(const char *) {}
     void endAlert() {}
+    void setRotaryLockState(bool) {}
+    bool isRotaryLocked() const { return false; }
+    bool isRotaryLockPopupVisible() const { return false; }
     bool isStealthModeConstrained() const { return false; }
     void armStealthWakeWindow() {}
     bool showFrameByIndex(uint8_t) { return false; }
@@ -273,6 +276,9 @@ class Screen : public concurrency::OSThread
     void hideEmergencyConfirmPopup();
     bool isEmergencyConfirmPopupVisible() const { return hermesEmergencyConfirmVisible; }
     bool consumeEmergencyConfirmCancelRequest();
+    void setRotaryLockState(bool locked);
+    bool isRotaryLocked() const { return hermesRotaryLocked; }
+    bool isRotaryLockPopupVisible() const { return hermesRotaryLockPopupVisible; }
     bool isHermesXMainPageActive() const;
     bool isHermesFastSetupActive() const;
     bool isHermesXActionPageActive() const;
@@ -742,11 +748,13 @@ class Screen : public concurrency::OSThread
     void drawHermesXMain(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     void drawLowMemoryProtectionFrame(OLEDDisplay *display, OLEDDisplayUiState *state);
     static void drawEmergencyConfirmOverlay(OLEDDisplay *display, OLEDDisplayUiState *state);
+    static void drawRotaryLockOverlay(OLEDDisplay *display, OLEDDisplayUiState *state);
     static void drawHermesXActionFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     void drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     bool handleHermesXActionInput(const InputEvent *event);
     static void drawLowMemoryReminderOverlay(OLEDDisplay *display, OLEDDisplayUiState *state);
     bool handleLowMemoryReminderInput(const InputEvent *event);
+    bool handleRotaryLockInput(const InputEvent *event);
     bool handleEmergencyConfirmInput(const InputEvent *event);
     bool handleFinderPulseConfirmInput(const InputEvent *event);
     bool handleFinderPulseSendingInput(const InputEvent *event);
@@ -916,6 +924,10 @@ class Screen : public concurrency::OSThread
     bool hermesEmergencyConfirmVisible = false;
     bool hermesEmergencyConfirmCancelRequested = false;
     uint32_t hermesEmergencyConfirmRemainingSec = 0;
+    bool hermesRotaryLocked = false;
+    bool hermesRotaryLockPopupVisible = false;
+    bool hermesRotaryLockPopupSelectedLocked = false;
+    uint32_t hermesRotaryLockPopupShownAtMs = 0;
     HermesFinderUiMode hermesFinderUiMode = HermesFinderUiMode::None;
     uint8_t hermesFinderMenuSelected = 0;
     bool hermesFinderPulseConfirmVisible = false;

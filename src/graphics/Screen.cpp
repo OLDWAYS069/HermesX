@@ -10346,7 +10346,7 @@ static constexpr uint32_t kStealthRetainedMagic = 0x4853544CUL; // HSTL
 static constexpr uint16_t kStealthRetainedVersion = 1;
 static constexpr const char *kStealthStateFile = "/prefs/hermesx_stealth_state.bin";
 static constexpr uint32_t kTakRetainedMagic = 0x4854414BUL; // HTAK
-static constexpr uint16_t kTakRetainedVersion = 3;
+static constexpr uint16_t kTakRetainedVersion = 4;
 static constexpr const char *kTakStateFile = "/prefs/hermesx_tak_state.bin";
 static constexpr uint32_t kTakProfileMagic = 0x48545046UL; // HTPF
 static constexpr uint16_t kTakProfileVersion = 2;
@@ -10415,6 +10415,11 @@ struct TakRuntimeState {
     uint32_t smartMinimumIntervalSecs = 0;
     uint32_t positionFlags = 0;
     uint32_t telemetryDeviceUpdateInterval = 0;
+    bool loraUsePreset = true;
+    meshtastic_Config_LoRaConfig_ModemPreset loraModemPreset = meshtastic_Config_LoRaConfig_ModemPreset_LONG_FAST;
+    uint16_t loraBandwidth = 0;
+    uint32_t loraSpreadFactor = 0;
+    uint8_t loraCodingRate = 0;
     uint32_t loraChannelNum = 0;
     float loraOverrideFrequency = 0.0f;
 };
@@ -11235,6 +11240,15 @@ static bool applyTakModeSettings()
     config.position.broadcast_smart_minimum_distance = gTakModeProfile.smartMinimumDistanceMeters;
     config.position.broadcast_smart_minimum_interval_secs = gTakModeProfile.smartMinimumIntervalSecs;
 
+    if (!config.lora.use_preset || config.lora.modem_preset != meshtastic_Config_LoRaConfig_ModemPreset_SHORT_FAST) {
+        config.lora.use_preset = true;
+        config.lora.modem_preset = meshtastic_Config_LoRaConfig_ModemPreset_SHORT_FAST;
+        changed = true;
+        if (service) {
+            service->configChanged.notifyObservers(NULL);
+        }
+    }
+
     const uint32_t takMissionSlot = getTakEffectiveMissionSlot();
     const uint32_t nextChannelNum = takMissionSlot == 0 ? gTakRuntimeState.loraChannelNum : takMissionSlot;
     const float nextOverrideFrequency = takMissionSlot == 0 ? gTakRuntimeState.loraOverrideFrequency : 0.0f;
@@ -11268,6 +11282,11 @@ static bool enableTakMode()
     gTakRuntimeState.smartMinimumIntervalSecs = config.position.broadcast_smart_minimum_interval_secs;
     gTakRuntimeState.positionFlags = config.position.position_flags;
     gTakRuntimeState.telemetryDeviceUpdateInterval = moduleConfig.telemetry.device_update_interval;
+    gTakRuntimeState.loraUsePreset = config.lora.use_preset;
+    gTakRuntimeState.loraModemPreset = config.lora.modem_preset;
+    gTakRuntimeState.loraBandwidth = config.lora.bandwidth;
+    gTakRuntimeState.loraSpreadFactor = config.lora.spread_factor;
+    gTakRuntimeState.loraCodingRate = config.lora.coding_rate;
     gTakRuntimeState.loraChannelNum = config.lora.channel_num;
     gTakRuntimeState.loraOverrideFrequency = config.lora.override_frequency;
 
@@ -11348,6 +11367,11 @@ static bool disableTakMode()
     config.position.broadcast_smart_minimum_interval_secs = gTakRuntimeState.smartMinimumIntervalSecs;
     config.position.position_flags = gTakRuntimeState.positionFlags;
     moduleConfig.telemetry.device_update_interval = gTakRuntimeState.telemetryDeviceUpdateInterval;
+    config.lora.use_preset = gTakRuntimeState.loraUsePreset;
+    config.lora.modem_preset = gTakRuntimeState.loraModemPreset;
+    config.lora.bandwidth = gTakRuntimeState.loraBandwidth;
+    config.lora.spread_factor = gTakRuntimeState.loraSpreadFactor;
+    config.lora.coding_rate = gTakRuntimeState.loraCodingRate;
     config.lora.channel_num = gTakRuntimeState.loraChannelNum;
     config.lora.override_frequency = gTakRuntimeState.loraOverrideFrequency;
     setHeartbeatLedDisabled(gTakRuntimeState.ledHeartbeatDisabled);
@@ -12502,6 +12526,31 @@ static void drawSmartPowerHomeFrame(OLEDDisplay *display, int16_t x, int16_t y)
         const int16_t iconH = 12;
         const int16_t iconX = width - pad - iconW;
         const int16_t iconY = titleY;
+        const int16_t titleTextW = graphics::HermesX_zh::stringAdvance(u8"智慧功率", graphics::HermesX_zh::GLYPH_WIDTH, display);
+        const int16_t headerLeft = x + pad + titleTextW + 4;
+        const int16_t headerRight = iconX - 3;
+        const uint32_t currentSlot = config.lora.channel_num ? config.lora.channel_num : getTakEffectiveMissionSlot();
+        const char *channelLabel = nullptr;
+        if (fabsf(config.lora.override_frequency) >= 0.0001f) {
+            channelLabel = u8"手動";
+        } else if (currentSlot != 0) {
+            channelLabel = getTakMissionSlotLabel(currentSlot);
+        } else {
+            channelLabel = u8"自動";
+        }
+        display->setFont(FONT_SMALL);
+        const int16_t channelW = display->getStringWidth(channelLabel);
+        const int16_t shortNameW = owner.short_name[0] != '\0' ? display->getStringWidth(owner.short_name) : 0;
+        const int16_t gap = 3;
+        const int16_t headerW = headerRight - headerLeft;
+        if (headerW >= channelW) {
+            display->setTextAlignment(TEXT_ALIGN_LEFT);
+            display->drawString(headerLeft, titleY, channelLabel);
+            if (owner.short_name[0] != '\0' && headerW >= channelW + gap + shortNameW) {
+                display->setTextAlignment(TEXT_ALIGN_RIGHT);
+                display->drawString(headerRight, titleY, owner.short_name);
+            }
+        }
         drawHermesXBatteryIconHorizontal(display, iconX, iconY, iconW, iconH, batteryPercent);
     }
 
@@ -12824,6 +12873,89 @@ void Screen::drawEmergencyConfirmOverlay(OLEDDisplay *display, OLEDDisplayUiStat
              static_cast<unsigned long>(screen->hermesEmergencyConfirmRemainingSec));
     graphics::HermesX_zh::drawMixedBounded(*display, bodyX, statusY, bodyW, countdownLine, advance, FONT_HEIGHT_SMALL,
                                            nullptr);
+    display->setColor(WHITE);
+}
+
+void Screen::drawRotaryLockOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
+{
+    (void)state;
+    if (!display || !screen || !screen->hermesRotaryLockPopupVisible) {
+        return;
+    }
+
+    constexpr uint32_t kRotaryLockPopupMs = 5000;
+    const uint32_t nowMs = millis();
+    if (screen->hermesRotaryLockPopupShownAtMs != 0 &&
+        (nowMs - screen->hermesRotaryLockPopupShownAtMs) >= kRotaryLockPopupMs) {
+        screen->hermesRotaryLockPopupVisible = false;
+        screen->setFastFramerate();
+        return;
+    }
+
+    const int16_t width = display->getWidth();
+    const int16_t height = display->getHeight();
+
+    display->setFont(FONT_SMALL);
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+
+    const int16_t boxX = 7;
+    const int16_t boxY = 10;
+    const int16_t boxW = width - 14;
+    const int16_t boxH = height - 20;
+    const int16_t titleBarH = 13;
+    const int16_t optionH = 13;
+    const int16_t optionY = boxY + boxH - optionH - 4;
+    const int16_t optionW = (boxW - 15) / 2;
+    const int16_t unlockX = boxX + 5;
+    const int16_t lockX = unlockX + optionW + 5;
+
+#if defined(USE_EINK)
+    const auto dialogBg = EINK_WHITE;
+    const auto dialogFg = EINK_BLACK;
+#else
+    const auto dialogBg = OLEDDISPLAY_COLOR::WHITE;
+    const auto dialogFg = OLEDDISPLAY_COLOR::BLACK;
+#endif
+
+    display->setColor(dialogBg);
+    display->fillRect(boxX, boxY, boxW, boxH);
+    display->setColor(dialogFg);
+    display->drawRect(boxX, boxY, boxW, boxH);
+    display->fillRect(boxX + 1, boxY + 1, boxW - 2, titleBarH);
+    display->setColor(dialogBg);
+
+    const char *title = u8"旋鈕鎖定";
+    const int titleW = graphics::HermesX_zh::stringAdvance(title, graphics::HermesX_zh::GLYPH_WIDTH, display);
+    int16_t titleX = boxX + (boxW - titleW) / 2;
+    if (titleX < boxX + 2) {
+        titleX = boxX + 2;
+    }
+    graphics::HermesX_zh::drawMixedBounded(*display, titleX, boxY + 2, boxW - 4, title,
+                                           graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
+    display->setColor(dialogFg);
+
+    auto drawOption = [&](int16_t optionX, const char *label, bool selected) {
+        if (selected) {
+            display->setColor(dialogFg);
+            display->fillRect(optionX, optionY, optionW, optionH);
+            display->setColor(dialogBg);
+        } else {
+            display->setColor(dialogFg);
+            display->drawRect(optionX, optionY, optionW, optionH);
+        }
+
+        const int textW = graphics::HermesX_zh::stringAdvance(label, graphics::HermesX_zh::GLYPH_WIDTH, display);
+        int16_t textX = optionX + (optionW - textW) / 2;
+        if (textX < optionX + 1) {
+            textX = optionX + 1;
+        }
+        graphics::HermesX_zh::drawMixedBounded(*display, textX, optionY + 2, optionW - 2, label,
+                                               graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
+        display->setColor(dialogFg);
+    };
+
+    drawOption(unlockX, u8"解鎖", !screen->hermesRotaryLockPopupSelectedLocked);
+    drawOption(lockX, u8"鎖定", screen->hermesRotaryLockPopupSelectedLocked);
     display->setColor(WHITE);
 }
 
@@ -17664,6 +17796,19 @@ bool Screen::consumeEmergencyConfirmCancelRequest()
     return requested;
 }
 
+void Screen::setRotaryLockState(bool locked)
+{
+    hermesRotaryLocked = locked;
+    hermesRotaryLockPopupVisible = true;
+    hermesRotaryLockPopupSelectedLocked = locked;
+    hermesRotaryLockPopupShownAtMs = millis();
+    if (!screenOn) {
+        setOn(true);
+    }
+    setFastFramerate();
+    requestImmediateRedraw();
+}
+
 void Screen::startBootHoldReveal(uint32_t revealMs)
 {
     LOG_INFO("[HermesBootAnim] boothold reveal start duration=%u", static_cast<unsigned>(revealMs ? revealMs : 1));
@@ -18014,6 +18159,7 @@ void Screen::setFrames(FrameFocus focus)
 #endif
         drawFunctionOverlay,
         drawEmergencyConfirmOverlay,
+        drawRotaryLockOverlay,
         drawFinderPulseConfirmOverlay,
         drawFinderPulseSendingOverlay,
         drawIncomingTextPopupOverlay,
@@ -19269,6 +19415,87 @@ bool Screen::handleEmergencyConfirmInput(const InputEvent *event)
     if (isLeft || isRight || isUp || isDown || isSelect || isCancel || isPress || isCw || isCcw) {
         hermesEmergencyConfirmCancelRequested = true;
         hideEmergencyConfirmPopup();
+        return true;
+    }
+
+    return true;
+}
+
+bool Screen::handleRotaryLockInput(const InputEvent *event)
+{
+    if (!event || !hermesRotaryLockPopupVisible) {
+        return false;
+    }
+
+    const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
+    const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
+    const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
+    const bool isLeft =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
+    const bool isRight =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
+    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
+    const bool isDown =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
+    const bool isSelect =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
+    const bool isCancel =
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
+        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
+    const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
+    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
+    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
+    const bool isRotary = (event->source && strncmp(event->source, "rotEnc", 6) == 0);
+
+    int8_t navDir = 0;
+    if (isRotary) {
+        if (isCcw) {
+            navDir = -1;
+        } else if (isCw) {
+            navDir = 1;
+        } else if (eventCw == 0 && eventCcw == 0) {
+            if (isUp || isLeft) {
+                navDir = -1;
+            } else if (isDown || isRight) {
+                navDir = 1;
+            }
+        }
+    } else {
+        if (isLeft || isUp || isCcw) {
+            navDir = -1;
+        } else if (isRight || isDown || isCw) {
+            navDir = 1;
+        }
+    }
+
+    if (navDir < 0) {
+        hermesRotaryLockPopupSelectedLocked = false;
+        hermesRotaryLockPopupShownAtMs = millis();
+        setFastFramerate();
+        return true;
+    }
+    if (navDir > 0) {
+        hermesRotaryLockPopupSelectedLocked = true;
+        hermesRotaryLockPopupShownAtMs = millis();
+        setFastFramerate();
+        return true;
+    }
+
+    if (isSelect || isPress) {
+        hermesRotaryLocked = hermesRotaryLockPopupSelectedLocked;
+        hermesRotaryLockPopupVisible = false;
+        hermesRotaryLockPopupShownAtMs = 0;
+        setFastFramerate();
+        requestImmediateRedraw();
+        return true;
+    }
+
+    if (isCancel) {
+        hermesRotaryLockPopupVisible = false;
+        hermesRotaryLockPopupSelectedLocked = hermesRotaryLocked;
+        hermesRotaryLockPopupShownAtMs = 0;
+        setFastFramerate();
+        requestImmediateRedraw();
         return true;
     }
 
@@ -24027,6 +24254,10 @@ int Screen::handleInputEvent(const InputEvent *event)
             return 0;
         }
 
+        if (handleRotaryLockInput(event)) {
+            return 0;
+        }
+
         if (handleEmergencyConfirmInput(event)) {
             return 0;
         }
@@ -24381,6 +24612,7 @@ bool Screen::isTakModePageActive() const
 bool Screen::isHermesInputOverlayActive() const
 {
     return hermesUpdateModalActive || lowMemoryReminderVisible || hermesEmergencyConfirmVisible ||
+           hermesRotaryLockPopupVisible ||
            hermesFinderPulseConfirmVisible || hermesFinderPulseSendingVisible || isIncomingTextPopupActive() ||
            isIncomingNodePopupActive() || isTraceRoutePopupVisible() || isSetupDetailPopupVisible();
 }

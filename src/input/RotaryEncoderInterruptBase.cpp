@@ -1,12 +1,33 @@
 #include "RotaryEncoderInterruptBase.h"
 #include "configuration.h"
+#include "graphics/Screen.h"
+
+extern graphics::Screen *screen;
 
 namespace
 {
 constexpr uint32_t kRotaryDispatchMinMs = 40;
 constexpr uint32_t kRotaryPressDebounceMs = 200;
+constexpr uint32_t kRotaryLockHoldMs = 3000;
 constexpr int8_t kRotaryStepsPerDetent = 4;
 const int8_t kRotaryTransitionTable[16] = {0, -1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0};
+
+bool isHermesRotaryLocked()
+{
+    return screen && screen->isRotaryLocked();
+}
+
+bool isHermesRotaryLockPopupVisible()
+{
+    return screen && screen->isRotaryLockPopupVisible();
+}
+
+void setHermesRotaryLocked(bool locked)
+{
+    if (screen) {
+        screen->setRotaryLockState(locked);
+    }
+}
 }
 
 RotaryEncoderInterruptBase::RotaryEncoderInterruptBase(const char *name) : concurrency::OSThread(name)
@@ -82,8 +103,53 @@ int32_t RotaryEncoderInterruptBase::runOnce()
     e.touchX = 0;
     e.touchY = 0;
 
+    const uint32_t now = millis();
+    const bool pressLow = this->_pinPress != 0 && digitalRead(this->_pinPress) == LOW;
+
+    if (this->action == ROTARY_ACTION_PRESSED || this->pressTracking) {
+        if (pressLow) {
+            if (!this->pressTracking) {
+                this->pressTracking = true;
+                this->pressLongFired = false;
+                this->pressDownSinceMs = now;
+            }
+            if (!this->pressLongFired && (now - this->pressDownSinceMs) >= kRotaryLockHoldMs) {
+                this->pressLongFired = true;
+                if (!isHermesRotaryLockPopupVisible()) {
+                    setHermesRotaryLocked(!isHermesRotaryLocked());
+                }
+                this->action = ROTARY_ACTION_NONE;
+            }
+            setIntervalFromNow(50);
+            return INT32_MAX;
+        }
+
+        const bool reachedLongPress = this->pressTracking && this->pressDownSinceMs != 0 &&
+                                      (now - this->pressDownSinceMs) >= kRotaryLockHoldMs;
+        const bool shouldSendShortPress = this->pressTracking && !this->pressLongFired && !reachedLongPress &&
+                                          !isHermesRotaryLocked();
+        this->pressTracking = false;
+        this->pressLongFired = false;
+        this->pressDownSinceMs = 0;
+        this->action = ROTARY_ACTION_NONE;
+
+        if (shouldSendShortPress) {
+            if ((this->lastPressDispatchMs != 0) && ((now - this->lastPressDispatchMs) < kRotaryPressDebounceMs)) {
+                return INT32_MAX;
+            }
+            this->lastPressDispatchMs = now;
+            LOG_DEBUG("Rotary event Press");
+            e.inputEvent = this->_eventPressed;
+        }
+    }
+
+    if (isHermesRotaryLocked() && ((this->action == ROTARY_ACTION_CW) || (this->action == ROTARY_ACTION_CCW))) {
+        this->action = ROTARY_ACTION_NONE;
+        this->rotaryStep = 0;
+        return INT32_MAX;
+    }
+
     if ((this->action == ROTARY_ACTION_CW) || (this->action == ROTARY_ACTION_CCW)) {
-        uint32_t now = millis();
         if ((this->lastRotaryDispatchMs != 0) && ((now - this->lastRotaryDispatchMs) < kRotaryDispatchMinMs)) {
             this->action = ROTARY_ACTION_NONE;
             return INT32_MAX;
@@ -91,20 +157,7 @@ int32_t RotaryEncoderInterruptBase::runOnce()
         this->lastRotaryDispatchMs = now;
     }
 
-    if (this->action == ROTARY_ACTION_PRESSED) {
-        if (digitalRead(this->_pinPress) != LOW) {
-            this->action = ROTARY_ACTION_NONE;
-            return INT32_MAX;
-        }
-        uint32_t now = millis();
-        if ((this->lastPressDispatchMs != 0) && ((now - this->lastPressDispatchMs) < kRotaryPressDebounceMs)) {
-            this->action = ROTARY_ACTION_NONE;
-            return INT32_MAX;
-        }
-        this->lastPressDispatchMs = now;
-        LOG_DEBUG("Rotary event Press");
-        e.inputEvent = this->_eventPressed;
-    } else if (this->action == ROTARY_ACTION_CW) {
+    if (this->action == ROTARY_ACTION_CW) {
         LOG_DEBUG("Rotary event CW");
         e.inputEvent = this->_directionSwapped ? this->_eventCcw : this->_eventCw;
     } else if (this->action == ROTARY_ACTION_CCW) {
@@ -123,9 +176,6 @@ int32_t RotaryEncoderInterruptBase::runOnce()
 
 void RotaryEncoderInterruptBase::intPressHandler()
 {
-    if (digitalRead(this->_pinPress) != LOW) {
-        return;
-    }
     this->action = ROTARY_ACTION_PRESSED;
     setIntervalFromNow(20); // TODO: this modifies a non-volatile variable!
 }

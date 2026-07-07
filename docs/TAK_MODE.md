@@ -8,7 +8,9 @@
 
 退出 TAK MODE 時會顯示 `退出TAK模式` transition 動畫，接著排程重開機。
 
-這個流程刻意設計成和更新模式相近，原因是 TAK MODE 會暫存並套用多個 runtime 設定，包括 device role、LoRa 頻道、位置廣播、智慧功率與聲光狀態。透過重開機可讓 role 與 module 狀態在啟用後保持一致。
+這個流程刻意設計成和更新模式相近，原因是 TAK MODE 會暫存並套用多個 runtime 設定，包括 device role、LoRa preset、LoRa 頻道、位置廣播、智慧功率與聲光狀態。透過重開機可讓 role 與 module 狀態在啟用後保持一致。
+
+進入 TAK MODE 時會自動把 LoRa preset 切到 `Short_Fast`，讓 TAK / ATAK 現場封包優先使用較短 airtime，同時避免 `Short_Turbo` 對距離與法規頻寬的要求過於激進。退出 TAK MODE 時會還原進入前的 LoRa preset；若進入前是 custom LoRa 參數，也會還原原本的 bandwidth / spread factor / coding rate。
 
 ## 主頁
 
@@ -88,6 +90,8 @@ TAK 選單目前包含：
 
 當選擇固定 TAK slot 時，TAK MODE 會設定 `config.lora.channel_num`，並清除 `override_frequency`。退出 TAK MODE 時會還原進入 TAK 前的 `channel_num` 與 `override_frequency`。
 
+頻道 slot 只控制固定頻道位置；TAK MODE 的 LoRa preset 會另外自動切成 `Short_Fast`，退出時再還原。
+
 `頻道選擇` 中的 `返回`、Cancel 或 Back 都會直接回 TAK 智慧功率主頁，不會回到 TAK popup。
 
 ## GROUP 配對入口
@@ -128,6 +132,7 @@ TAK MODE 啟用期間會暫時退出並阻擋 CannedMessage menu。這是為了�
 - 進入 TAK MODE 會顯示 `進入TAK模式` 並重開機
 - 退出 TAK MODE 會顯示 `退出TAK模式` 並重開機
 - TAK 啟用後主頁是智慧功率 UI
+- LoRa preset 會切到 `Short_Fast`
 - 右轉開 TAK 選單
 - 左轉開 `頻道選擇`
 - 短按回 HermesX 主選單

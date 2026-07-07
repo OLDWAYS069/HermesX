@@ -2,6 +2,26 @@
 
 本文件為可對外發布版本的更新紀錄，整理 HermesX 韌體的重要功能更新、體驗調整與修正項目。
 
+## 2026-07-06
+
+### 調整
+
+- `TAK MODE` 進入時會自動切換 LoRa preset 到 `Short_Fast`，搭配既有智慧功率降低 TAK / ATAK 封包 airtime；退出 TAK MODE 時會還原進入前的 preset 或 custom LoRa 參數。
+- `TAK MODE` 智慧功率主頁在不改動原本 GROUP 與訊號資訊排版的前提下，於 shortName 左側顯示目前 TAK 頻道標籤，例如 `TAK A`。
+- 新增旋鈕鎖定：長按旋鈕 3 秒可鎖定 / 解鎖旋鈕輸入，抵達長按秒數時會顯示 `旋鈕鎖定` 彈窗，並以 `解鎖` / `鎖定` 兩格反白目前狀態。
+- 修正 Heltec Wireless Tracker 旋鈕長按被 `PowerHold` / EM 快捷路徑攔截的問題；當 rotary press pin 與 ButtonThread 的 hold pin 共用時，現在會以 ButtonThread 累計的 hold elapsed 優先在 3 秒觸發鎖定 / 解鎖，不再跳出 EM 模式進入警告。
+- 修正 `旋鈕鎖定` 彈窗顯示期間左右旋事件繼續流到 TAK MODE 主頁，導致原本的 TAK 選單 / 頻道選擇把彈窗操作搶走的問題；彈窗現在會先吃掉左右旋、上下、確認與取消事件。
+
+### 驗證
+
+- `platformio run -e heltec-wireless-tracker -j 4` 編譯成功，CIV build 版本為 `HXB_C0.3.7_20260706_1944`。
+- 已依 handoff 搬移並驗證韌體產物：
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260706_1944.bin`
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260706_1944.factory.bin`
+- OTA SHA256: `eb4965263bef982d015e13d7aa935692c5d32051f30619205a772f6a35dd9445`
+- Factory SHA256: `866ef8d7010c5ef90cd89924ffd3b02eaec56a8eda8b6d4bc83e21242b28376c`
+- 實機 WiFi OTA 上傳驗證成功；`/upload-update-bin` 需使用 `PUT -T` 搭配 `X-Hermes-Filename`，不可用 multipart `curl -F`。上傳完成後裝置回報 `Streamed 2933216 bytes to OTA partition.`，下一步需在 HermesX `更新模式` 執行 `套用更新`。
+
 ## 2026-07-03
 
 ### Release
