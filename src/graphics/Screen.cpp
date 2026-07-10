@@ -740,6 +740,10 @@ static void directDrawThickLine565Clipped(TFTDisplay *tft,
                                           int16_t thickness,
                                           uint16_t color,
                                           const DirectDrawClipRect *clip);
+static std::vector<String> buildMixedWrappedLines(OLEDDisplay *display,
+                                                  const char *text,
+                                                  int16_t maxWidth,
+                                                  int advanceX);
 
 struct HermesXDirectHomeUiCache {
     bool valid = false;
@@ -758,12 +762,16 @@ struct HermesXDirectHomeUiCache {
     int16_t lastDogY = -1;
     int16_t lastDogW = 0;
     int16_t lastDogH = 0;
+    uint8_t quoteSegment = 0xFF;
 };
 static HermesXDirectHomeUiCache gHermesXDirectHomeUiCache;
 static bool gDirectHomeClockWasVisible = false;
 static bool gDirectHomeDogWasVisible = false;
 static uint8_t gDirectHomeDogPose = 0;
 static uint8_t gDirectHomeDogEntryCount = 0;
+static uint8_t gHermesXHomeQuoteIndex = 0;
+static bool gHermesXHomeQuoteActive = false;
+static uint32_t gHermesXHomeQuoteStartedAtMs = 0;
 static bool gDirectGpsPosterWasVisible = false;
 static bool gIncomingNodePopupWasVisible = false;
 struct DirectIncomingNodePopupRenderCache {
@@ -819,10 +827,13 @@ static void invalidateDirectTftWakeCaches()
     gHermesXDirectHomeUiCache.lastDogY = -1;
     gHermesXDirectHomeUiCache.lastDogW = 0;
     gHermesXDirectHomeUiCache.lastDogH = 0;
+    gHermesXDirectHomeUiCache.quoteSegment = 0xFF;
     gDirectHomeClockWasVisible = false;
     gDirectHomeDogWasVisible = false;
     gDirectHomeDogPose = 0;
     gDirectHomeDogEntryCount = 0;
+    gHermesXHomeQuoteActive = false;
+    gHermesXHomeQuoteStartedAtMs = 0;
     gDirectGpsPosterWasVisible = false;
     gIncomingNodePopupWasVisible = false;
     gDirectIncomingNodePopupRenderCache.valid = false;
@@ -1113,6 +1124,85 @@ static bool formatHermesXHomeTimeDate(char *timeBuf, size_t timeBufSize, char *d
     snprintf(timeBuf, timeBufSize, "--:--:--");
     snprintf(dateBuf, dateBufSize, "等待授時");
     return false;
+}
+
+static constexpr const char *kHermesXHomeQuotes[] = {
+    u8"別慌，有我在",
+    u8"HermesX帥吧？",
+    u8"狗哥爆肝中",
+    u8"我其實是狗哥養的狗",
+    u8"我叫小威",
+    u8"你今天好嗎？",
+    u8"祝你有個開心的一天",
+    u8"壞心情退散！",
+    u8"好玩吧？",
+    u8"出發囉！！",
+    u8"狗哥有點小餓",
+};
+static constexpr uint8_t kHermesXHomeQuoteCount = sizeof(kHermesXHomeQuotes) / sizeof(kHermesXHomeQuotes[0]);
+static constexpr uint32_t kHermesXHomeQuoteSegmentMs = 2000U;
+
+static void startHermesXHomeQuote()
+{
+    if (kHermesXHomeQuoteCount == 0) {
+        return;
+    }
+    gHermesXHomeQuoteIndex = static_cast<uint8_t>(random(kHermesXHomeQuoteCount));
+    gHermesXHomeQuoteStartedAtMs = millis();
+    gHermesXHomeQuoteActive = true;
+    gHermesXDirectHomeUiCache.quoteSegment = 0xFF;
+}
+
+static uint8_t getHermesXHomeQuoteSegment()
+{
+    if (!gHermesXHomeQuoteActive || kHermesXHomeQuoteCount == 0) {
+        startHermesXHomeQuote();
+    }
+    const uint32_t elapsed = millis() - gHermesXHomeQuoteStartedAtMs;
+    return static_cast<uint8_t>((elapsed / kHermesXHomeQuoteSegmentMs) % 2U);
+}
+
+static const char *getHermesXHomeQuote()
+{
+    if (!gHermesXHomeQuoteActive || kHermesXHomeQuoteCount == 0) {
+        startHermesXHomeQuote();
+    }
+    return kHermesXHomeQuotes[gHermesXHomeQuoteIndex % kHermesXHomeQuoteCount];
+}
+
+static void drawHermesXHomeQuote(OLEDDisplay *display,
+                                 int16_t x,
+                                 int16_t y,
+                                 int16_t width,
+                                 int16_t height,
+                                 uint8_t segment)
+{
+    if (!display || width <= 0 || height <= 0) {
+        return;
+    }
+
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+    display->setFont(FONT_SMALL);
+    const int16_t lineHeight = 13;
+    const std::vector<String> lines =
+        buildMixedWrappedLines(display, getHermesXHomeQuote(), width, graphics::HermesX_zh::GLYPH_WIDTH);
+    if (lines.empty()) {
+        return;
+    }
+
+    const uint8_t lineIndex = lines.size() > 1 ? static_cast<uint8_t>(segment % lines.size()) : 0;
+    const char *line = lines[lineIndex].c_str();
+    const int16_t lineW = graphics::HermesX_zh::stringAdvance(line, graphics::HermesX_zh::GLYPH_WIDTH, display);
+    const int16_t drawX = x + std::max<int16_t>(0, (width - lineW) / 2);
+    const int16_t drawY = y + std::max<int16_t>(0, (height - lineHeight) / 2);
+    graphics::HermesX_zh::drawMixedBounded(*display,
+                                           drawX,
+                                           drawY,
+                                           x + width - drawX,
+                                           line,
+                                           graphics::HermesX_zh::GLYPH_WIDTH,
+                                           lineHeight,
+                                           nullptr);
 }
 
 static void drawHermesXHomeDog(OLEDDisplay *display, int16_t width, int16_t timeY, bool compactLayout)
@@ -12693,6 +12783,14 @@ void Screen::drawHermesXMain(OLEDDisplay *display, OLEDDisplayUiState * /*state*
     const uint16_t neonGlowOuterFg = TFTDisplay::rgb565(0x1A, 0x3F, 0xD6);
     const uint16_t neonGlowInnerFg = TFTDisplay::rgb565(0x4C, 0xD9, 0xFF);
     const uint16_t neonCoreFg = TFTDisplay::rgb565(0xFE, 0xFF, 0xFF);
+    const bool showHomeQuote = useDirectTftClock;
+    if (showHomeQuote) {
+        const int16_t quoteX = compactLayout ? 56 : 64;
+        const int16_t quoteY = originY + (compactLayout ? 16 : 20);
+        const int16_t quoteW = width - quoteX - (compactLayout ? 4 : 8);
+        const int16_t quoteH = compactLayout ? 28 : 34;
+        drawHermesXHomeQuote(display, quoteX, quoteY, quoteW, quoteH, getHermesXHomeQuoteSegment());
+    }
     if (!hasValidTime && !useDirectTftClock && !gLowMemoryProtectionActive) {
         drawHermesXHomeDog(display, width, timeY, compactLayout);
     } else if (useDirectTftClock) {
@@ -17223,6 +17321,10 @@ int32_t Screen::runOnce()
     if (onFixedMainFrame && !smartPowerHomeActive && canUseDirectHermesXHomeClock(dispdev) && !incomingTextPopupActive &&
         !incomingNodePopupActive && !hermesEmergencyConfirmVisible && !emergencyUiActive && !lowMemoryReminderVisible) {
         const bool enteringDirectHomeOverlay = !gDirectHomeClockWasVisible && !gDirectHomeDogWasVisible;
+        if (enteringDirectHomeOverlay) {
+            startHermesXHomeQuote();
+        }
+        const uint8_t homeQuoteSegment = getHermesXHomeQuoteSegment();
 
         char homeDateBuf[24];
         homeDateBuf[0] = '\0';
@@ -17253,7 +17355,8 @@ int32_t Screen::runOnce()
         const bool baseDirty = enteringDirectHomeOverlay || !gHermesXDirectHomeUiCache.valid ||
                                gHermesXDirectHomeUiCache.stealth != stealth ||
                                gHermesXDirectHomeUiCache.role != config.device.role ||
-                               strcmp(gHermesXDirectHomeUiCache.date, homeDateBuf) != 0 || telemetryDirty;
+                               strcmp(gHermesXDirectHomeUiCache.date, homeDateBuf) != 0 ||
+                               gHermesXDirectHomeUiCache.quoteSegment != homeQuoteSegment || telemetryDirty;
         if (enteringDirectHomeOverlay || telemetryDirty || baseDirty) {
             LOG_DEBUG("[DirectHome] state enter=%d telemetryChanged=%d telemetryRefreshDue=%d telemetryDirty=%d baseDirty=%d "
                       "basePainted=%d meshPainted=%d skipUi=%d updateModal=%d showingNormal=%d",
@@ -17281,6 +17384,7 @@ int32_t Screen::runOnce()
             gHermesXDirectHomeUiCache.lastDogY = -1;
             gHermesXDirectHomeUiCache.lastDogW = 0;
             gHermesXDirectHomeUiCache.lastDogH = 0;
+            gHermesXDirectHomeUiCache.quoteSegment = 0xFF;
             gDirectHomeBasePainted = false;
             gDirectHomeMeshPainted = false;
             gDirectHomeOrbLastPulsePercent = 0xFF;
@@ -17312,10 +17416,14 @@ int32_t Screen::runOnce()
             gHermesXDirectHomeUiCache.satCount = satCount;
             gHermesXDirectHomeUiCache.role = config.device.role;
             strlcpy(gHermesXDirectHomeUiCache.date, homeDateBuf, sizeof(gHermesXDirectHomeUiCache.date));
+            gHermesXDirectHomeUiCache.quoteSegment = homeQuoteSegment;
             gDirectHomeLastBaseRefreshMs = nowMs;
             forceDirectHomeClockRedraw = true;
         }
     } else {
+        if (!onFixedMainFrame) {
+            gHermesXHomeQuoteActive = false;
+        }
         gHermesXDirectHomeUiCache.valid = false;
         gHermesXDirectHomeUiCache.lastTimeValid = false;
         gHermesXDirectHomeUiCache.lastDogValid = false;
@@ -17325,6 +17433,7 @@ int32_t Screen::runOnce()
         gHermesXDirectHomeUiCache.lastDogY = -1;
         gHermesXDirectHomeUiCache.lastDogW = 0;
         gHermesXDirectHomeUiCache.lastDogH = 0;
+        gHermesXDirectHomeUiCache.quoteSegment = 0xFF;
         gDirectHomeBasePainted = false;
         gDirectHomeMeshPainted = false;
         gDirectHomeOrbLastPulsePercent = 0xFF;
@@ -17357,6 +17466,7 @@ int32_t Screen::runOnce()
         gHermesXDirectHomeUiCache.lastDogY = -1;
         gHermesXDirectHomeUiCache.lastDogW = 0;
         gHermesXDirectHomeUiCache.lastDogH = 0;
+        gHermesXDirectHomeUiCache.quoteSegment = 0xFF;
         gDirectHomeOrbLastPulsePercent = 0xFF;
         gDirectHomeOrbLastDrawMs = 0;
         gDirectHomeLastBaseRefreshMs = 0;
@@ -24615,6 +24725,37 @@ bool Screen::isHermesInputOverlayActive() const
            hermesRotaryLockPopupVisible ||
            hermesFinderPulseConfirmVisible || hermesFinderPulseSendingVisible || isIncomingTextPopupActive() ||
            isIncomingNodePopupActive() || isTraceRoutePopupVisible() || isSetupDetailPopupVisible();
+}
+
+bool Screen::shouldAllowRotaryLockLongPress() const
+{
+    if (!showingNormalScreen || !ui || !ui->getUiState()) {
+        return false;
+    }
+    if (isHermesInputOverlayActive()) {
+        return false;
+    }
+    if (shouldBlockPowerHoldForTraceRouteInput()) {
+        return false;
+    }
+    if (framesetInfo.positions.main >= framesetInfo.frameCount) {
+        return false;
+    }
+    const bool onFixedMainFrame = ui->getUiState()->frameState == FIXED &&
+                                  ui->getUiState()->currentFrame == framesetInfo.positions.main;
+    return onFixedMainFrame && isSmartPowerHomeActive();
+}
+
+bool Screen::shouldSuppressRotaryShortPressAfterHold(uint32_t heldMs) const
+{
+    constexpr uint32_t kTraceRouteRotaryLongPressMs = 1000;
+    if (heldMs < kTraceRouteRotaryLongPressMs) {
+        return false;
+    }
+    if (!showingNormalScreen || !ui) {
+        return false;
+    }
+    return shouldBlockPowerHoldForTraceRouteInput();
 }
 
 bool Screen::shouldBlockPowerHoldForTraceRouteInput() const

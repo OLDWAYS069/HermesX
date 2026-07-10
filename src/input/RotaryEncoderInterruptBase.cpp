@@ -22,6 +22,16 @@ bool isHermesRotaryLockPopupVisible()
     return screen && screen->isRotaryLockPopupVisible();
 }
 
+bool shouldAllowHermesRotaryLockLongPress()
+{
+    return screen && screen->shouldAllowRotaryLockLongPress();
+}
+
+bool shouldSuppressHermesRotaryShortPressAfterHold(uint32_t heldMs)
+{
+    return screen && screen->shouldSuppressRotaryShortPressAfterHold(heldMs);
+}
+
 void setHermesRotaryLocked(bool locked)
 {
     if (screen) {
@@ -115,7 +125,7 @@ int32_t RotaryEncoderInterruptBase::runOnce()
             }
             if (!this->pressLongFired && (now - this->pressDownSinceMs) >= kRotaryLockHoldMs) {
                 this->pressLongFired = true;
-                if (!isHermesRotaryLockPopupVisible()) {
+                if (!isHermesRotaryLockPopupVisible() && shouldAllowHermesRotaryLockLongPress()) {
                     setHermesRotaryLocked(!isHermesRotaryLocked());
                 }
                 this->action = ROTARY_ACTION_NONE;
@@ -124,10 +134,11 @@ int32_t RotaryEncoderInterruptBase::runOnce()
             return INT32_MAX;
         }
 
-        const bool reachedLongPress = this->pressTracking && this->pressDownSinceMs != 0 &&
-                                      (now - this->pressDownSinceMs) >= kRotaryLockHoldMs;
+        const uint32_t heldMs = (this->pressTracking && this->pressDownSinceMs != 0) ? (now - this->pressDownSinceMs) : 0;
+        const bool reachedLongPress = heldMs >= kRotaryLockHoldMs;
+        const bool suppressShortPress = shouldSuppressHermesRotaryShortPressAfterHold(heldMs);
         const bool shouldSendShortPress = this->pressTracking && !this->pressLongFired && !reachedLongPress &&
-                                          !isHermesRotaryLocked();
+                                          !suppressShortPress && !isHermesRotaryLocked();
         this->pressTracking = false;
         this->pressLongFired = false;
         this->pressDownSinceMs = 0;

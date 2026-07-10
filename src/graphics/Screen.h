@@ -36,6 +36,8 @@ class Screen
     void setRotaryLockState(bool) {}
     bool isRotaryLocked() const { return false; }
     bool isRotaryLockPopupVisible() const { return false; }
+    bool shouldAllowRotaryLockLongPress() const { return false; }
+    bool shouldSuppressRotaryShortPressAfterHold(uint32_t) const { return false; }
     bool isStealthModeConstrained() const { return false; }
     void armStealthWakeWindow() {}
     bool showFrameByIndex(uint8_t) { return false; }
@@ -295,6 +297,8 @@ class Screen : public concurrency::OSThread
     bool isTakModePageActive() const;
     bool isHermesInputOverlayActive() const;
     bool shouldBlockPowerHoldForTraceRouteInput() const;
+    bool shouldAllowRotaryLockLongPress() const;
+    bool shouldSuppressRotaryShortPressAfterHold(uint32_t heldMs) const;
     bool isFinderPulseConfirmVisible() const { return hermesFinderPulseConfirmVisible; }
     bool isFinderPulseSendingVisible() const { return hermesFinderPulseSendingVisible; }
     uint8_t getFinderPulseConfirmSelected() const { return hermesFinderPulseConfirmSelected; }

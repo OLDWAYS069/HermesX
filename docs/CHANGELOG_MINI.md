@@ -1,3 +1,24 @@
+## 2026-07-11
+- Direct Home 小威右側空白區改為開啟 Home 時隨機顯示一則 HermesX 文案；文字超出欄寬時會拆成兩段，每約 2 秒切換一次再循環。
+- `platformio run -e heltec-wireless-tracker -j 4` 編譯成功，CIV build 版本為 `HXB_C0.3.7_20260711_0239`；韌體產物已搬到 `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260711_0239.bin` 與 `.factory.bin`。
+- OTA SHA256: `31f356e99c9f771949f65afda6ec500bd454f73f50169e165d6590e6d119d2fe`
+
+## 2026-07-10
+- `platformio run -e heltec-wireless-tracker -j 1` 編譯成功，CIV build 版本為 `HXB_C0.3.7_20260710_1912`；韌體產物已搬到 `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260710_1912.bin` 與 `.factory.bin`。
+- OTA SHA256: `66d0d4495b18322aac6ce0bd722dd669a00e7c4bae6b758a3ffeda13894cc428`
+
+## 2026-07-09
+- 放寬 URL 更新檢查與下載的 HTTP / HTTPS timeout：標頭讀取等待由 5 秒提高到 15 秒，下載中單次無資料容忍由 5 秒提高到 30 秒，降低手機熱點、弱 WiFi 或 HTTPS 來源短暫停頓時誤判 `URL 下載逾時` 的機率。
+- URL 更新等待遠端標頭資料時會持續更新 UI 並餵 watchdog，避免長一點的網路等待被看成裝置卡死。
+
+## 2026-07-08
+- 修正旋鈕鎖定 3 秒長按範圍過大，導致 TraceRoute `綁定節點` / 快速 TraceRoute 的 1 秒長按綁定與解除綁定可能被干擾的問題。
+- 旋鈕鎖定長按現在只允許在固定主頁的 `TAK MODE` / 智慧功率頁生效；TraceRoute、ONLINE、GROUP、Finder、訊息、設定與 overlay 顯示期間不會觸發旋鈕鎖定。
+- `ButtonThread` 與 `RotaryEncoderInterruptBase` 共用 `shouldAllowRotaryLockLongPress()` 閘門，避免 shared hold pin 與 rotary interrupt 路徑不一致。
+- 修正 TraceRoute 1 秒長按叫出 `是否綁定？` 後，放開旋鈕時 rotary driver 又補送短按，導致確認框用預設 `否` 立即關閉的問題。
+- `platformio run -e heltec-wireless-tracker -j 4` 編譯成功，CIV build 版本為 `HXB_C0.3.7_20260708_0925`；韌體產物已搬到 `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260708_0925.bin` 與 `.factory.bin`。
+- OTA SHA256: `dbc8f23817adb94c16d4adaf59d3297319a44c90d8da0ce0b352dc13923acee0`
+
 ## 2026-07-06
 - `TAK MODE` 進入時會自動切換 LoRa preset 到 `Short_Fast`，搭配既有智慧功率降低 TAK / ATAK 封包 airtime；退出 TAK MODE 時會還原進入前的 preset 或 custom LoRa 參數。
 - `TAK MODE` 智慧功率主頁在不改動原本 GROUP 與訊號資訊排版的前提下，於 shortName 左側顯示目前 TAK 頻道標籤，例如 `TAK A`。

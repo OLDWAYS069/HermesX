@@ -1144,7 +1144,8 @@ void ButtonThread::updatePowerHoldAnimation()
         holdAnimationLastMs = elapsedMs;
 
 #if !MESHTASTIC_EXCLUDE_HERMESX
-        if (rotaryPressSharesHoldButton && !s_rotaryLockHoldHandled && elapsedMs >= kRotaryLockHoldMs) {
+        if (rotaryPressSharesHoldButton && !s_rotaryLockHoldHandled && elapsedMs >= kRotaryLockHoldMs && screen &&
+            screen->shouldAllowRotaryLockLongPress()) {
             s_rotaryLockHoldHandled = true;
             cancelEmergencyShortcutPending();
             s_longGateArmed = false;
@@ -1152,9 +1153,7 @@ void ButtonThread::updatePowerHoldAnimation()
             s_longStartMillis = 0;
             s_longPressFromAlt = false;
             btnEvent = BUTTON_EVENT_NONE;
-            if (screen) {
-                screen->setRotaryLockState(!screen->isRotaryLocked());
-            }
+            screen->setRotaryLockState(!screen->isRotaryLocked());
             if (holdAnimationActive || holdAnimationStarted) {
                 holdAnimationActive = false;
                 holdAnimationStarted = false;

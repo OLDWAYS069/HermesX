@@ -2,6 +2,58 @@
 
 本文件為可對外發布版本的更新紀錄，整理 HermesX 韌體的重要功能更新、體驗調整與修正項目。
 
+## 2026-07-11
+
+### 調整
+
+- Direct Home 小威右側空白區改為開啟 Home 時隨機顯示一則 HermesX 文案；文字超出欄寬時會拆成兩段，每約 2 秒切換一次再循環。
+- 文案切段納入 Direct Home base repaint 判斷，避免 direct TFT skip-ui 路徑讓右側文字停在舊段落。
+
+### 驗證
+
+- `platformio run -e heltec-wireless-tracker -j 4` 編譯成功，CIV build 版本為 `HXB_C0.3.7_20260711_0239`。
+- 已依 handoff 搬移並驗證韌體產物：
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260711_0239.bin`
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260711_0239.factory.bin`
+- OTA SHA256: `31f356e99c9f771949f65afda6ec500bd454f73f50169e165d6590e6d119d2fe`
+- Factory SHA256: `16f07d51235b5a28100ada288a376d3c9b8c0ba61c985bd4cad0bd5c36c611ae`
+
+## 2026-07-10
+
+### 驗證
+
+- `platformio run -e heltec-wireless-tracker -j 1` 編譯成功，CIV build 版本為 `HXB_C0.3.7_20260710_1912`。
+- 已依 handoff 搬移並驗證韌體產物：
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260710_1912.bin`
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260710_1912.factory.bin`
+- OTA SHA256: `66d0d4495b18322aac6ce0bd722dd669a00e7c4bae6b758a3ffeda13894cc428`
+- Factory SHA256: `17b52641f50f7c8147b9b539784400d8f68a7829fa22c06e112f12623130e9cf`
+
+## 2026-07-09
+
+### 修正
+
+- 放寬 URL 更新檢查與下載的 HTTP / HTTPS timeout：標頭讀取等待由 5 秒提高到 15 秒，下載中單次無資料容忍由 5 秒提高到 30 秒，降低手機熱點、弱 WiFi 或 HTTPS 來源短暫停頓時誤判 `URL 下載逾時` 的機率。
+- URL 更新等待遠端標頭資料時會持續更新 UI 並餵 watchdog，避免長一點的網路等待被看成裝置卡死。
+
+## 2026-07-08
+
+### 修正
+
+- 修正旋鈕鎖定長按範圍過大，導致 TraceRoute `綁定節點` / 快速 TraceRoute 的 1 秒長按綁定與解除綁定流程可能被 3 秒旋鈕鎖定邏輯干擾的問題。
+- 旋鈕鎖定 3 秒長按現在只允許在固定主頁的 `TAK MODE` / 智慧功率頁生效；TraceRoute、ONLINE、GROUP、Finder、訊息、設定與任何 overlay 顯示期間不會觸發旋鈕鎖定，保留各頁既有長按語意。
+- `ButtonThread` 與 `RotaryEncoderInterruptBase` 共用同一個 `shouldAllowRotaryLockLongPress()` 閘門，避免 shared hold pin 與 rotary interrupt 兩條路徑行為不一致。
+- 修正 TraceRoute 1 秒長按叫出 `是否綁定？` 後，放開旋鈕時 rotary driver 又補送短按，導致確認框用預設 `否` 立即關閉的問題；TR 頁面中按住超過 1 秒的 rotary release 現在不再產生短按事件。
+
+### 驗證
+
+- `platformio run -e heltec-wireless-tracker -j 4` 編譯成功，CIV build 版本為 `HXB_C0.3.7_20260708_0925`。
+- 已依 handoff 搬移並驗證韌體產物：
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260708_0925.bin`
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260708_0925.factory.bin`
+- OTA SHA256: `dbc8f23817adb94c16d4adaf59d3297319a44c90d8da0ce0b352dc13923acee0`
+- Factory SHA256: `7919a4821ce1871cac4ce62f62c1f3595179810a89523c6ae64b6273dca40336`
+
 ## 2026-07-06
 
 ### 調整

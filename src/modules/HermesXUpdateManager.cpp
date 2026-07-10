@@ -21,6 +21,10 @@ namespace
 #endif
 
 constexpr const char *kHermesXRemoteUpdateUrl = HERMESX_UPDATE_URL;
+constexpr uint32_t kRemoteHeaderReadTimeoutMs = 15000;
+constexpr uint32_t kRemoteDownloadStallTimeoutMs = 30000;
+constexpr uint16_t kRemoteHttpTimeoutMs = 30000;
+constexpr size_t kRemoteDownloadChunkSize = 4096;
 
 bool isAsciiDigits(const String &value)
 {
@@ -471,9 +475,11 @@ bool HermesXUpdateManager::beginHttpClientForUrl(HTTPClient &client, WiFiClientS
         return false;
     }
 
+    client.setTimeout(kRemoteHttpTimeoutMs);
     client.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     if (strncmp(url, "https://", 8) == 0) {
         secureClient.setInsecure();
+        secureClient.setTimeout(kRemoteHttpTimeoutMs / 1000);
         return client.begin(secureClient, url);
     }
     return client.begin(url);
@@ -533,7 +539,8 @@ bool HermesXUpdateManager::checkRemoteImage(const std::function<void()> &pump)
     uint8_t headerBuffer[kHeaderBytesRequired] = {0};
     size_t headerLength = 0;
     uint32_t startMs = millis();
-    while (headerLength < kHeaderBytesRequired && millis() - startMs < 5000) {
+    while (headerLength < kHeaderBytesRequired && millis() - startMs < kRemoteHeaderReadTimeoutMs) {
+        esp_task_wdt_reset();
         const size_t availableBytes = stream->available();
         if (availableBytes == 0) {
             if (pump) {
@@ -647,7 +654,7 @@ bool HermesXUpdateManager::downloadRemoteImage(const std::function<void()> &pump
     }
 
     WiFiClient *stream = client.getStreamPtr();
-    std::unique_ptr<uint8_t[]> buffer(new uint8_t[4096]);
+    std::unique_ptr<uint8_t[]> buffer(new uint8_t[kRemoteDownloadChunkSize]);
     if (!buffer) {
         client.end();
         abortWriting(u8"URL 下載緩衝區配置失敗", false);
@@ -661,7 +668,7 @@ bool HermesXUpdateManager::downloadRemoteImage(const std::function<void()> &pump
         if (availableBytes == 0) {
             if (zeroReadStartMs == 0) {
                 zeroReadStartMs = millis();
-            } else if (millis() - zeroReadStartMs > 5000) {
+            } else if (millis() - zeroReadStartMs > kRemoteDownloadStallTimeoutMs) {
                 client.end();
                 abortWriting(u8"URL 下載逾時", false);
                 return false;
@@ -674,7 +681,8 @@ bool HermesXUpdateManager::downloadRemoteImage(const std::function<void()> &pump
             continue;
         }
         zeroReadStartMs = 0;
-        const size_t want = std::min(static_cast<size_t>(4096), std::min(availableBytes, candidateSize - received));
+        const size_t want =
+            std::min(kRemoteDownloadChunkSize, std::min(availableBytes, candidateSize - received));
         const size_t got = stream->readBytes(buffer.get(), want);
         if (got == 0) {
             continue;
