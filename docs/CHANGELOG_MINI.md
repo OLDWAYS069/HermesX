@@ -1,3 +1,9 @@
+## 2026-07-14
+- Released CIV build `HXB_C0.3.7_20260713_1838`；相較上一版 `HXB_C0.3.7_20260711_0239`，TraceRoute `綁定節點` 新增 ShortName 搜尋入口、鍵盤 `EXIT` 與置中搜尋結果視窗。
+- 搜尋結果找到節點時顯示 ShortName / LongName，按 `返回` 後游標停在該節點，並保留短按詳情、長按綁定；找不到時會在同款小視窗顯示查詢 ShortName。
+- `platformio run -e heltec-wireless-tracker -j 4` 編譯成功；韌體產物已搬到 `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260713_1838.bin` 與 `.factory.bin`。
+- OTA SHA256: `6a3f9a25742804a6a34e0a9c849a9627b1ac92f3aaa36c770f02cbfd1a8369ac`
+
 ## 2026-07-11
 - Direct Home 小威右側空白區改為開啟 Home 時隨機顯示一則 HermesX 文案；文字超出欄寬時會拆成兩段，每約 2 秒切換一次再循環。
 - `platformio run -e heltec-wireless-tracker -j 4` 編譯成功，CIV build 版本為 `HXB_C0.3.7_20260711_0239`；韌體產物已搬到 `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260711_0239.bin` 與 `.factory.bin`。

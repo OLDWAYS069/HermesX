@@ -4645,6 +4645,33 @@ struct TraceRouteBoundState {
 };
 static TraceRouteUiMode gTraceRouteUiMode = TraceRouteUiMode::Menu;
 static TraceRouteBoundState gTraceRouteBoundState;
+
+struct TraceRouteSearchState {
+    bool active = false;
+    bool resultVisible = false;
+    bool resultFound = false;
+    NodeNum resultNode = 0;
+    String draft;
+    String resultQuery;
+    String toast;
+    uint32_t toastUntilMs = 0;
+    uint8_t keyRow = 0;
+    uint8_t keyCol = 0;
+};
+static TraceRouteSearchState gTraceRouteSearchState;
+static const char *kTraceRouteSearchKeyRows[][10] = {
+    {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"},
+    {"Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"},
+    {"A", "S", "D", "F", "G", "H", "J", "K", "L", nullptr},
+    {"Z", "X", "C", "V", "B", "N", "M", nullptr, nullptr, nullptr},
+    {"EXIT", "DEL", "OK", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr},
+};
+static const uint8_t kTraceRouteSearchKeyRowLengths[] = {10, 10, 9, 7, 3};
+static constexpr uint8_t kTraceRouteSearchKeyRowCount =
+    sizeof(kTraceRouteSearchKeyRowLengths) / sizeof(kTraceRouteSearchKeyRowLengths[0]);
+static constexpr uint8_t kTraceRouteBindSearchRow = 0;
+static constexpr uint8_t kTraceRouteBindBackRow = 1;
+static constexpr uint8_t kTraceRouteBindFirstNodeRow = 2;
 static const char *getSetupRoleLabel(meshtastic_Config_DeviceConfig_Role role);
 static String formatOnlineNodeSeenAgo(const meshtastic_NodeInfoLite &node);
 
@@ -5116,6 +5143,16 @@ static const meshtastic_NodeInfoLite *getTraceRouteNodeAt(uint8_t index)
     return &nodeDB->meshNodes->at(gTraceRouteNodeState.order[index]);
 }
 
+static bool isTraceRouteBindNodeRow(uint8_t cursor)
+{
+    return cursor >= kTraceRouteBindFirstNodeRow;
+}
+
+static uint8_t traceRouteBindNodeIndex(uint8_t cursor)
+{
+    return cursor - kTraceRouteBindFirstNodeRow;
+}
+
 static meshtastic_NodeInfoLite *getNodeByNum(NodeNum nodeNum)
 {
     return nodeDB ? nodeDB->getMeshNode(nodeNum) : nullptr;
@@ -5249,7 +5286,10 @@ static void cancelDeferredTraceRouteBoundShortPress()
 
 static bool showTraceRouteBindInfoForSelectedNode()
 {
-    gTraceRouteBoundState.bindSelectedIndex = gTraceRouteBoundState.bindCursor - 1;
+    if (!isTraceRouteBindNodeRow(gTraceRouteBoundState.bindCursor)) {
+        return false;
+    }
+    gTraceRouteBoundState.bindSelectedIndex = traceRouteBindNodeIndex(gTraceRouteBoundState.bindCursor);
     const meshtastic_NodeInfoLite *node = getSelectedTraceRouteNode();
     if (!node) {
         LOG_WARN("[Screen] TraceRoute bind short info missing node cursor=%u count=%u",
@@ -5265,12 +5305,13 @@ static bool showTraceRouteBindInfoForSelectedNode()
 
 static void deferTraceRouteBindShortPressForSelectedNode()
 {
-    if (gTraceRouteUiMode != TraceRouteUiMode::BindOnline || gTraceRouteBoundState.bindCursor == 0) {
+    if (gTraceRouteUiMode != TraceRouteUiMode::BindOnline ||
+        !isTraceRouteBindNodeRow(gTraceRouteBoundState.bindCursor)) {
         cancelDeferredTraceRouteBindShortPress();
         return;
     }
 
-    gTraceRouteBoundState.bindSelectedIndex = gTraceRouteBoundState.bindCursor - 1;
+    gTraceRouteBoundState.bindSelectedIndex = traceRouteBindNodeIndex(gTraceRouteBoundState.bindCursor);
     const meshtastic_NodeInfoLite *node = getSelectedTraceRouteNode();
     if (!node) {
         cancelDeferredTraceRouteBindShortPress();
@@ -5289,11 +5330,12 @@ static void deferTraceRouteBindShortPressForSelectedNode()
 static void openTraceRouteBindConfirmForSelectedNode()
 {
     cancelDeferredTraceRouteBindShortPress();
-    if (gTraceRouteUiMode != TraceRouteUiMode::BindOnline || gTraceRouteBoundState.bindCursor == 0) {
+    if (gTraceRouteUiMode != TraceRouteUiMode::BindOnline ||
+        !isTraceRouteBindNodeRow(gTraceRouteBoundState.bindCursor)) {
         return;
     }
 
-    gTraceRouteBoundState.bindSelectedIndex = gTraceRouteBoundState.bindCursor - 1;
+    gTraceRouteBoundState.bindSelectedIndex = traceRouteBindNodeIndex(gTraceRouteBoundState.bindCursor);
     const meshtastic_NodeInfoLite *node = getSelectedTraceRouteNode();
     if (!node) {
         LOG_WARN("[Screen] TraceRoute bind confirm missing node cursor=%u count=%u",
@@ -6935,6 +6977,18 @@ void Screen::drawTraceRouteNodeListFrame(OLEDDisplay *display, OLEDDisplayUiStat
     const int16_t width = std::max<int16_t>(display->getWidth() - x, 1);
     drawMixedSingleLineBounded(display, x, y, width - 2, "TraceRoute", FONT_HEIGHT_SMALL);
 
+    if (gTraceRouteSearchState.active) {
+        const String preview = gTraceRouteSearchState.draft.length() == 0
+                                   ? String("_")
+                                   : gTraceRouteSearchState.draft + "_";
+        drawSetupKeyboardPage(display, display->getWidth(), display->getHeight(), u8"搜尋裝置 ShortName", preview,
+                              kTraceRouteSearchKeyRows, kTraceRouteSearchKeyRowLengths,
+                              kTraceRouteSearchKeyRowCount, gTraceRouteSearchState.keyRow,
+                              gTraceRouteSearchState.keyCol, gTraceRouteSearchState.toast,
+                              gTraceRouteSearchState.toastUntilMs);
+        return;
+    }
+
     if (gTraceRouteUiMode == TraceRouteUiMode::Menu) {
         const char *items[] = {u8"返回", u8"綁定節點", "TraceRoute"};
         const int16_t rowH = FONT_HEIGHT_SMALL + 4;
@@ -6963,7 +7017,7 @@ void Screen::drawTraceRouteNodeListFrame(OLEDDisplay *display, OLEDDisplayUiStat
         visibleRows = 3;
     }
 
-    const uint8_t totalRows = gTraceRouteNodeState.count + 1;
+    const uint8_t totalRows = gTraceRouteNodeState.count + kTraceRouteBindFirstNodeRow;
     uint8_t startCursor = 0;
     if (gTraceRouteBoundState.bindCursor >= static_cast<uint8_t>(visibleRows)) {
         startCursor = gTraceRouteBoundState.bindCursor - static_cast<uint8_t>(visibleRows) + 1;
@@ -6980,12 +7034,16 @@ void Screen::drawTraceRouteNodeListFrame(OLEDDisplay *display, OLEDDisplayUiStat
             display->drawRect(x, rowY - 1, width - 2, rowH);
         }
 
-        if (cursorIndex == 0) {
+        if (cursorIndex == kTraceRouteBindSearchRow) {
+            drawMixedSingleLineBounded(display, x + 2, rowY, width - 4, u8"搜尋裝置", rowH);
+            continue;
+        }
+        if (cursorIndex == kTraceRouteBindBackRow) {
             drawMixedSingleLineBounded(display, x + 2, rowY, width - 4, u8"返回", rowH);
             continue;
         }
 
-        const meshtastic_NodeInfoLite *node = getTraceRouteNodeAt(cursorIndex - 1);
+        const meshtastic_NodeInfoLite *node = getTraceRouteNodeAt(traceRouteBindNodeIndex(cursorIndex));
         if (!node) {
             continue;
         }
@@ -7000,8 +7058,52 @@ void Screen::drawTraceRouteNodeListFrame(OLEDDisplay *display, OLEDDisplayUiStat
         drawMixedSingleLineBounded(display, x + 2, rowY, textWidth > 0 ? textWidth : width - 4, line.c_str(), rowH);
     }
 
-    if (gTraceRouteNodeState.count == 0 && visibleRows > 1) {
-        drawMixedSingleLineBounded(display, x + 2, listTop + rowH, width - 4, u8"沒有在線節點", rowH);
+    if (gTraceRouteNodeState.count == 0 && visibleRows > 2) {
+        drawMixedSingleLineBounded(display, x + 2, listTop + rowH * 2, width - 4, u8"沒有在線節點", rowH);
+    }
+
+    if (gTraceRouteSearchState.resultVisible) {
+#if defined(USE_EINK)
+        display->setColor(EINK_WHITE);
+#else
+        display->setColor(OLEDDISPLAY_COLOR::BLACK);
+#endif
+        const int16_t boxW = std::min<int16_t>(width - 12, 116);
+        const int16_t boxH = std::min<int16_t>(display->getHeight() - 8, 58);
+        const int16_t boxX = x + (width - boxW) / 2;
+        const int16_t boxY = y + (display->getHeight() - boxH) / 2;
+        display->fillRect(boxX, boxY, boxW, boxH);
+#if defined(USE_EINK)
+        display->setColor(EINK_BLACK);
+#else
+        display->setColor(OLEDDISPLAY_COLOR::WHITE);
+#endif
+        display->drawRect(boxX, boxY, boxW, boxH);
+        drawMixedSingleLineBounded(display, boxX + 6, boxY + 4, boxW - 12, u8"搜尋結果", FONT_HEIGHT_SMALL + 2);
+
+        String firstLine;
+        String secondLine;
+        const meshtastic_NodeInfoLite *resultNode =
+            gTraceRouteSearchState.resultFound ? getNodeByNum(gTraceRouteSearchState.resultNode) : nullptr;
+        if (resultNode) {
+            firstLine = String("ShortName: ") + resultNode->user.short_name;
+            secondLine = String("LongName: ") +
+                         (resultNode->user.long_name[0] ? String(resultNode->user.long_name) : String("--"));
+        } else {
+            firstLine = u8"找不到裝置";
+            secondLine = String("ShortName: ") + gTraceRouteSearchState.resultQuery;
+        }
+        drawMixedSingleLineBounded(display, boxX + 6, boxY + 17, boxW - 12, firstLine.c_str(), FONT_HEIGHT_SMALL + 1);
+        drawMixedSingleLineBounded(display, boxX + 6, boxY + 29, boxW - 12, secondLine.c_str(), FONT_HEIGHT_SMALL + 1);
+
+        const int16_t buttonW = 52;
+        const int16_t buttonH = FONT_HEIGHT_SMALL + 4;
+        const int16_t buttonX = boxX + (boxW - buttonW) / 2;
+        const int16_t buttonY = boxY + boxH - buttonH - 3;
+        display->drawRect(buttonX, buttonY, buttonW, buttonH);
+        const int16_t returnW = graphics::HermesX_zh::stringAdvance(u8"返回", graphics::HermesX_zh::GLYPH_WIDTH, display);
+        drawMixedSingleLineBounded(display, buttonX + (buttonW - returnW) / 2, buttonY + 1, returnW, u8"返回",
+                                   FONT_HEIGHT_SMALL + 2);
     }
 
     if (gTraceRouteBoundState.confirmVisible) {
@@ -19221,6 +19323,7 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
     };
     auto openTraceRouteNodeList = [&]() {
         rebuildTraceRouteNodeOrder();
+        gTraceRouteSearchState = TraceRouteSearchState{};
         gTraceRouteUiMode = TraceRouteUiMode::Menu;
         gTraceRouteBoundState.menuCursor = 1;
         gTraceRouteBoundState.confirmVisible = false;
@@ -23067,6 +23170,105 @@ bool Screen::handleTraceRouteNodeListInput(const InputEvent *event)
         navDir = 1;
     }
 
+    if (gTraceRouteSearchState.resultVisible) {
+        if (isSelect || isPress || isCancel || isLeft || isRight) {
+            gTraceRouteSearchState = TraceRouteSearchState{};
+            setFastFramerate();
+            requestImmediateRedraw();
+        }
+        return true;
+    }
+
+    if (gTraceRouteSearchState.active) {
+        if (isCancel) {
+            gTraceRouteSearchState = TraceRouteSearchState{};
+            setFastFramerate();
+            requestImmediateRedraw();
+            return true;
+        }
+
+        if (navDir != 0) {
+            int totalKeys = 0;
+            for (uint8_t row = 0; row < kTraceRouteSearchKeyRowCount; ++row) {
+                totalKeys += kTraceRouteSearchKeyRowLengths[row];
+            }
+            int keyIndex = 0;
+            for (uint8_t row = 0; row < kTraceRouteSearchKeyRowCount; ++row) {
+                if (row == gTraceRouteSearchState.keyRow) {
+                    keyIndex += gTraceRouteSearchState.keyCol;
+                    break;
+                }
+                keyIndex += kTraceRouteSearchKeyRowLengths[row];
+            }
+            keyIndex = (keyIndex + navDir + totalKeys) % totalKeys;
+            for (uint8_t row = 0; row < kTraceRouteSearchKeyRowCount; ++row) {
+                const uint8_t rowLength = kTraceRouteSearchKeyRowLengths[row];
+                if (keyIndex < rowLength) {
+                    gTraceRouteSearchState.keyRow = row;
+                    gTraceRouteSearchState.keyCol = static_cast<uint8_t>(keyIndex);
+                    break;
+                }
+                keyIndex -= rowLength;
+            }
+            setFastFramerate();
+            return true;
+        }
+
+        if (isSelect || isPress) {
+            const char *label =
+                kTraceRouteSearchKeyRows[gTraceRouteSearchState.keyRow][gTraceRouteSearchState.keyCol];
+            if (!label) {
+                return true;
+            }
+            if (strcmp(label, "OK") == 0) {
+                if (gTraceRouteSearchState.draft.length() == 0) {
+                    gTraceRouteSearchState.toast = u8"請輸入ShortName";
+                    gTraceRouteSearchState.toastUntilMs = millis() + 1500;
+                } else {
+                    rebuildTraceRouteNodeOrder();
+                    bool found = false;
+                    NodeNum foundNode = 0;
+                    for (uint8_t index = 0; index < gTraceRouteNodeState.count; ++index) {
+                        const meshtastic_NodeInfoLite *node =
+                            (nodeDB && nodeDB->meshNodes)
+                                ? &nodeDB->meshNodes->at(gTraceRouteNodeState.order[index])
+                                : nullptr;
+                        if (node && node->has_user &&
+                            String(node->user.short_name).equalsIgnoreCase(gTraceRouteSearchState.draft)) {
+                            gTraceRouteBoundState.bindCursor = index + kTraceRouteBindFirstNodeRow;
+                            gTraceRouteBoundState.bindSelectedIndex = index;
+                            LOG_INFO("[Screen] TraceRoute search found short=%s node=%08lx cursor=%u",
+                                     gTraceRouteSearchState.draft.c_str(), static_cast<unsigned long>(node->num),
+                                     static_cast<unsigned>(gTraceRouteBoundState.bindCursor));
+                            found = true;
+                            foundNode = node->num;
+                            break;
+                        }
+                    }
+                    const String query = gTraceRouteSearchState.draft;
+                    gTraceRouteSearchState = TraceRouteSearchState{};
+                    gTraceRouteSearchState.resultVisible = true;
+                    gTraceRouteSearchState.resultFound = found;
+                    gTraceRouteSearchState.resultNode = foundNode;
+                    gTraceRouteSearchState.resultQuery = query;
+                    requestImmediateRedraw();
+                }
+            } else if (strcmp(label, "EXIT") == 0) {
+                gTraceRouteSearchState = TraceRouteSearchState{};
+                requestImmediateRedraw();
+            } else if (strcmp(label, "DEL") == 0) {
+                if (gTraceRouteSearchState.draft.length() > 0) {
+                    gTraceRouteSearchState.draft.remove(gTraceRouteSearchState.draft.length() - 1);
+                }
+            } else if (gTraceRouteSearchState.draft.length() < 4) {
+                gTraceRouteSearchState.draft += label;
+            }
+            setFastFramerate();
+            return true;
+        }
+        return true;
+    }
+
     if (gTraceRouteBoundState.confirmVisible) {
         if (navDir != 0 || isLeft || isRight || isUp || isDown || isCw || isCcw) {
             gTraceRouteBoundState.confirmSelected = (gTraceRouteBoundState.confirmSelected == 0) ? 1 : 0;
@@ -23117,7 +23319,7 @@ bool Screen::handleTraceRouteNodeListInput(const InputEvent *event)
             } else if (gTraceRouteBoundState.menuCursor == 1) {
                 gTraceRouteUiMode = TraceRouteUiMode::BindOnline;
                 rebuildTraceRouteNodeOrder();
-                gTraceRouteBoundState.bindCursor = gTraceRouteNodeState.count > 0 ? 1 : 0;
+                gTraceRouteBoundState.bindCursor = kTraceRouteBindSearchRow;
                 gTraceRouteBoundState.bindSelectedIndex = 0;
                 LOG_INFO("[Screen] TraceRoute menu -> bind count=%u cursor=%u",
                          static_cast<unsigned>(gTraceRouteNodeState.count),
@@ -23142,9 +23344,9 @@ bool Screen::handleTraceRouteNodeListInput(const InputEvent *event)
     }
 
     rebuildTraceRouteNodeOrder();
-    const int totalEntries = static_cast<int>(gTraceRouteNodeState.count) + 1;
+    const int totalEntries = static_cast<int>(gTraceRouteNodeState.count) + kTraceRouteBindFirstNodeRow;
     if (gTraceRouteBoundState.bindCursor >= totalEntries) {
-        gTraceRouteBoundState.bindCursor = totalEntries > 1 ? 1 : 0;
+        gTraceRouteBoundState.bindCursor = kTraceRouteBindSearchRow;
         gTraceRouteBoundState.bindSelectedIndex = 0;
     }
     if (navDir != 0) {
@@ -23158,8 +23360,9 @@ bool Screen::handleTraceRouteNodeListInput(const InputEvent *event)
 
         if (nextCursor != gTraceRouteBoundState.bindCursor) {
             gTraceRouteBoundState.bindCursor = static_cast<uint8_t>(nextCursor);
-            if (nextCursor > 0) {
-                gTraceRouteBoundState.bindSelectedIndex = static_cast<uint8_t>(nextCursor - 1);
+            if (nextCursor >= kTraceRouteBindFirstNodeRow) {
+                gTraceRouteBoundState.bindSelectedIndex =
+                    traceRouteBindNodeIndex(static_cast<uint8_t>(nextCursor));
             }
             LOG_INFO("[Screen] TraceRoute bind nav dir=%d cursor=%u selected=%u count=%u", navDir,
                      static_cast<unsigned>(gTraceRouteBoundState.bindCursor),
@@ -23172,7 +23375,11 @@ bool Screen::handleTraceRouteNodeListInput(const InputEvent *event)
 
     if (isSelect || isPress) {
         cancelDeferredTraceRouteBindShortPress();
-        if (gTraceRouteBoundState.bindCursor == 0) {
+        if (gTraceRouteBoundState.bindCursor == kTraceRouteBindSearchRow) {
+            gTraceRouteSearchState = TraceRouteSearchState{};
+            gTraceRouteSearchState.active = true;
+            requestImmediateRedraw();
+        } else if (gTraceRouteBoundState.bindCursor == kTraceRouteBindBackRow) {
             gTraceRouteUiMode = TraceRouteUiMode::Menu;
         } else {
             if (isRotary) {
@@ -23299,7 +23506,8 @@ bool Screen::handleTraceRouteBindLongPress()
 {
     if (!showingNormalScreen || !ui || !isTraceRouteNodeListPageActive() ||
         gTraceRouteUiMode != TraceRouteUiMode::BindOnline || gTraceRouteBoundState.confirmVisible ||
-        gTraceRouteBoundState.bindCursor == 0) {
+        gTraceRouteSearchState.active || gTraceRouteSearchState.resultVisible ||
+        !isTraceRouteBindNodeRow(gTraceRouteBoundState.bindCursor)) {
         LOG_DEBUG("[Screen] TraceRoute bind long ignored normal=%u ui=%u active=%u mode=%u confirm=%u cursor=%u",
                   showingNormalScreen ? 1 : 0, ui ? 1 : 0, isTraceRouteNodeListPageActive() ? 1 : 0,
                   static_cast<unsigned>(gTraceRouteUiMode), gTraceRouteBoundState.confirmVisible ? 1 : 0,
@@ -23316,7 +23524,8 @@ bool Screen::shouldUseTraceRouteBindQuickLongPress() const
 {
     return showingNormalScreen && ui && isTraceRouteNodeListPageActive() &&
            gTraceRouteUiMode == TraceRouteUiMode::BindOnline && !gTraceRouteBoundState.confirmVisible &&
-           gTraceRouteBoundState.bindCursor != 0;
+           !gTraceRouteSearchState.active && !gTraceRouteSearchState.resultVisible &&
+           isTraceRouteBindNodeRow(gTraceRouteBoundState.bindCursor);
 }
 
 bool Screen::shouldUseTraceRouteBoundQuickLongPress() const
@@ -23349,19 +23558,21 @@ void Screen::completeDeferredTraceRouteBindShortPress()
     const NodeNum deferredNode = gTraceRouteBoundState.deferredShortNode;
     cancelDeferredTraceRouteBindShortPress();
 
-    if (!showingNormalScreen || !ui || !isTraceRouteNodeListPageActive() ||
+    if (!showingNormalScreen || !ui || !isTraceRouteNodeListPageActive() || gTraceRouteSearchState.active ||
+        gTraceRouteSearchState.resultVisible ||
         gTraceRouteUiMode != TraceRouteUiMode::BindOnline || gTraceRouteBoundState.confirmVisible ||
-        deferredCursor == 0 || deferredNode == 0) {
+        !isTraceRouteBindNodeRow(deferredCursor) || deferredNode == 0) {
         return;
     }
 
     rebuildTraceRouteNodeOrder();
-    if (deferredCursor > gTraceRouteNodeState.count) {
+    const uint8_t deferredIndex = traceRouteBindNodeIndex(deferredCursor);
+    if (deferredIndex >= gTraceRouteNodeState.count) {
         return;
     }
 
     gTraceRouteBoundState.bindCursor = deferredCursor;
-    gTraceRouteBoundState.bindSelectedIndex = deferredCursor - 1;
+    gTraceRouteBoundState.bindSelectedIndex = deferredIndex;
     const meshtastic_NodeInfoLite *node = getSelectedTraceRouteNode();
     if (!node || node->num != deferredNode) {
         LOG_WARN("[Screen] TraceRoute bind deferred short stale node=%08lx cursor=%u",

@@ -2,6 +2,39 @@
 
 本文件為可對外發布版本的更新紀錄，整理 HermesX 韌體的重要功能更新、體驗調整與修正項目。
 
+## 2026-07-14
+
+### 發布
+
+- 發布 CIV build `HXB_C0.3.7_20260713_1838`，上一個 GitHub Release 為 `HXB_C0.3.7_20260711_0239`。
+- 新增 release note：`docs/RELEASE_HXB_C0.3.7_20260713_1838.md`，記錄本版與上一版的完整差異。
+
+### 新增
+
+- TraceRoute `綁定節點` 清單最上方新增 `搜尋裝置`，可使用 ShortName 搜尋目前在線節點；清單順序調整為 `搜尋裝置`、`返回`、在線節點。
+- 搜尋裝置沿用 GROUP PIN 的鍵盤配置，並新增獨立 `EXIT` 鍵。
+- 搜尋結果新增置中小視窗：找到時顯示 ShortName / LongName，找不到時顯示查詢 ShortName，兩種結果都有可見的 `返回` 按鈕。
+
+### 調整
+
+- ShortName 搜尋使用不分英文字母大小寫的完整比對。
+- 成功結果視窗返回後，游標會停在找到的節點，繼續沿用短按查看 `LongName`、role、最近一次聽到，以及長按 1 秒綁定的既有操作。
+- 搜尋結果顯示期間會由結果視窗優先攔截輸入，避免底層清單誤觸詳情或長按綁定。
+
+### 與上一版差異
+
+- `HXB_C0.3.7_20260711_0239` 的主要新增是 Direct Home 隨機文案；本版新增的是 TraceRoute 綁定節點 ShortName 搜尋與完整結果互動。
+- 上一版已有的 Direct Home 文案、URL 更新 timeout 與 TraceRoute 長按修正均保留，本版未移除既有功能。
+
+### 驗證
+
+- `platformio run -e heltec-wireless-tracker -j 4` 編譯成功，CIV build 版本為 `HXB_C0.3.7_20260713_1838`。
+- 已依 handoff 搬移並驗證韌體產物：
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260713_1838.bin`
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260713_1838.factory.bin`
+- OTA SHA256: `6a3f9a25742804a6a34e0a9c849a9627b1ac92f3aaa36c770f02cbfd1a8369ac`
+- Factory SHA256: `6ee31f7620ab61f3b9c658ae933b3c232eb6c4012b147d395d6e1bb337ee0a5d`
+
 ## 2026-07-11
 
 ### 調整
