@@ -1,4 +1,16 @@
 ## 2026-07-14
+- Released CIV build `HXB_C0.3.7_20260714_1808`；TAK Tracker 完整共用 TAK MODE 新 UI、智慧功率、TAK profile、頻道選擇、GROUP、尋人與 CannedMessage 輸入隔離，同時保留 `TAK_TRACKER` role 行為。
+- App 建立的 Primary / Secondary 自訂頻道、名稱、PSK、uplink/downlink 與位置分享設定不會被 TAK 頻道選擇覆寫。
+- 本版同時收錄 TraceRoute 整頁搜尋結果、直接綁定／返回，以及旋鈕實際 GPIO 長按來源修正。
+- `platformio run -e heltec-wireless-tracker -j 4` 編譯成功；OTA SHA256: `131f1d890d1aae36ca8b6adf915f5493a2678a8444b8b4adcdeb064fdee8274f`。
+- TraceRoute ShortName 搜尋結果改為整頁顯示，完整呈現 `ShortName` 與自動換行的 `LongName`；成功時最下方提供 `綁定`、`返回`，找不到時提供 `返回`。
+- 搜尋結果按下 `綁定`、`返回` 或取消後都回到 `綁定節點` 清單，游標固定停在 `返回` 選項；`HXB_C0.3.7_20260714_1642` 已完成目標板編譯與 Desktop handoff，本次未發布。
+- `_1642` OTA SHA256: `37992d7cf8fd3fda1a4f5c12cf1767158e82eaa189d7dcd4cd188a036b7585a9`
+- 修正 TraceRoute 長按來源混用：綁定／解除綁定只接受按下當時已位於對應頁面的實際旋鈕長按，Home 或其他按鍵事件不再能跨頁誤觸取消綁定。
+- 依實機 log 修正 `rotEnc1` 已放開送出短按後，`ButtonThread` 延遲一秒誤呼叫解除綁定；頁面長按動作不再由 shared OneButton 狀態執行。
+- 修正旋鈕按住輪詢的 interval 被 `INT32_MAX` 回傳值覆蓋，現在每 50ms 讀取實際 GPIO，使 TR 1 秒長按與 Home 3 秒鎖定恢復且不受假按壓影響。
+- `platformio run -e heltec-wireless-tracker -j 4` 編譯成功，CIV build 版本為 `HXB_C0.3.7_20260714_1622`；韌體產物已搬到 `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260714_1622.bin` 與 `.factory.bin`。
+- OTA SHA256: `6eabd7777671ad2e05c403eb89be48b17e88b2b689fb4fa843f0f133819f02c5`
 - Released CIV build `HXB_C0.3.7_20260713_1838`；相較上一版 `HXB_C0.3.7_20260711_0239`，TraceRoute `綁定節點` 新增 ShortName 搜尋入口、鍵盤 `EXIT` 與置中搜尋結果視窗。
 - 搜尋結果找到節點時顯示 ShortName / LongName，按 `返回` 後游標停在該節點，並保留短按詳情、長按綁定；找不到時會在同款小視窗顯示查詢 ShortName。
 - `platformio run -e heltec-wireless-tracker -j 4` 編譯成功；韌體產物已搬到 `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260713_1838.bin` 與 `.factory.bin`。

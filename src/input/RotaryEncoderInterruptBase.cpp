@@ -8,6 +8,7 @@ namespace
 {
 constexpr uint32_t kRotaryDispatchMinMs = 40;
 constexpr uint32_t kRotaryPressDebounceMs = 200;
+constexpr uint32_t kTraceRouteLongHoldMs = 1000;
 constexpr uint32_t kRotaryLockHoldMs = 3000;
 constexpr int8_t kRotaryStepsPerDetent = 4;
 const int8_t kRotaryTransitionTable[16] = {0, -1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0};
@@ -30,6 +31,39 @@ bool shouldAllowHermesRotaryLockLongPress()
 bool shouldSuppressHermesRotaryShortPressAfterHold(uint32_t heldMs)
 {
     return screen && screen->shouldSuppressRotaryShortPressAfterHold(heldMs);
+}
+
+bool shouldArmTraceRouteBindHold()
+{
+    return screen && screen->shouldUseTraceRouteBindQuickLongPress();
+}
+
+bool shouldArmTraceRouteBoundHold()
+{
+    return screen && screen->shouldUseTraceRouteBoundQuickLongPress();
+}
+
+bool handleArmedTraceRouteHold(bool bindHoldArmed, bool boundHoldArmed)
+{
+    if (!screen) {
+        return false;
+    }
+    if (bindHoldArmed && screen->shouldUseTraceRouteBindQuickLongPress()) {
+        return screen->handleTraceRouteBindLongPress();
+    }
+    if (boundHoldArmed && screen->shouldUseTraceRouteBoundQuickLongPress()) {
+        return screen->handleTraceRouteBoundLongPress();
+    }
+    return false;
+}
+
+void completeTraceRouteShortPress()
+{
+    if (!screen) {
+        return;
+    }
+    screen->completeDeferredTraceRouteBindShortPress();
+    screen->completeDeferredTraceRouteBoundShortPress();
 }
 
 void setHermesRotaryLocked(bool locked)
@@ -121,7 +155,14 @@ int32_t RotaryEncoderInterruptBase::runOnce()
             if (!this->pressTracking) {
                 this->pressTracking = true;
                 this->pressLongFired = false;
+                this->traceRouteBindHoldArmed = shouldArmTraceRouteBindHold();
+                this->traceRouteBoundHoldArmed = shouldArmTraceRouteBoundHold();
                 this->pressDownSinceMs = now;
+            }
+            if (!this->pressLongFired && (now - this->pressDownSinceMs) >= kTraceRouteLongHoldMs &&
+                handleArmedTraceRouteHold(this->traceRouteBindHoldArmed, this->traceRouteBoundHoldArmed)) {
+                this->pressLongFired = true;
+                this->action = ROTARY_ACTION_NONE;
             }
             if (!this->pressLongFired && (now - this->pressDownSinceMs) >= kRotaryLockHoldMs) {
                 this->pressLongFired = true;
@@ -130,8 +171,10 @@ int32_t RotaryEncoderInterruptBase::runOnce()
                 }
                 this->action = ROTARY_ACTION_NONE;
             }
-            setIntervalFromNow(50);
-            return INT32_MAX;
+            // runOnce() 的非負回傳值會在 OSThread::run() 裡重新設定 interval。
+            // 直接回傳 50 才能在按住期間持續輪詢；先 setIntervalFromNow(50)
+            // 再回傳 INT32_MAX 會被覆蓋成永久等待，只剩放開中斷能喚醒。
+            return 50;
         }
 
         const uint32_t heldMs = (this->pressTracking && this->pressDownSinceMs != 0) ? (now - this->pressDownSinceMs) : 0;
@@ -141,6 +184,8 @@ int32_t RotaryEncoderInterruptBase::runOnce()
                                           !suppressShortPress && !isHermesRotaryLocked();
         this->pressTracking = false;
         this->pressLongFired = false;
+        this->traceRouteBindHoldArmed = false;
+        this->traceRouteBoundHoldArmed = false;
         this->pressDownSinceMs = 0;
         this->action = ROTARY_ACTION_NONE;
 
@@ -178,6 +223,9 @@ int32_t RotaryEncoderInterruptBase::runOnce()
 
     if (e.inputEvent != meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_NONE) {
         this->notifyObservers(&e);
+        if (e.inputEvent == this->_eventPressed) {
+            completeTraceRouteShortPress();
+        }
     }
 
     this->action = ROTARY_ACTION_NONE;

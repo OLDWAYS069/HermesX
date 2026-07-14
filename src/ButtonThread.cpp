@@ -55,8 +55,6 @@ static bool isLongPressSuppressedNow();
 static constexpr uint32_t kResumeGraceMs = 1200;
 static constexpr uint32_t kReleaseDebounceMs = 80;
 static constexpr uint32_t kRotaryLongPressDelayMs = 1000;
-static constexpr uint32_t kRotaryLockHoldMs = 3000;
-static constexpr uint32_t kTraceRouteBindLongPressMs = 1000;
 static constexpr uint32_t kEmergencyPendingMs = 3000;
 static constexpr uint32_t kEmergencyPendingBeepMs = 1000;
 // 罐頭訊息選單：長按約 1 秒退出
@@ -72,7 +70,6 @@ static bool s_emergencyShortcutPending = false;
 static uint32_t s_emergencyShortcutDeadlineMs = 0;
 static uint32_t s_emergencyShortcutNextBeepMs = 0;
 static int32_t s_emergencyShortcutShownSec = -1;
-static bool s_rotaryLockHoldHandled = false;
 static constexpr float kEmergencyPendingToneFreq = 1760.0f;
 static constexpr uint32_t kEmergencyPendingToneMs = 120;
 
@@ -547,26 +544,6 @@ int32_t ButtonThread::runOnce()
                 break;
             }
             if (isEmUiBlockingButtonActions()) {
-                break;
-            }
-            if (screen && screen->handleTraceRouteBindLongPress()) {
-                if (auto *interfaceModule = HermesXInterfaceModule::instance) {
-                    interfaceModule->stopPowerHoldAnimation(false);
-                }
-                s_longGateArmed = false;
-                s_longEventPending = false;
-                s_longStartMillis = 0;
-                s_longPressFromAlt = false;
-                break;
-            }
-            if (screen && screen->handleTraceRouteBoundLongPress()) {
-                if (auto *interfaceModule = HermesXInterfaceModule::instance) {
-                    interfaceModule->stopPowerHoldAnimation(false);
-                }
-                s_longGateArmed = false;
-                s_longEventPending = false;
-                s_longStartMillis = 0;
-                s_longPressFromAlt = false;
                 break;
             }
             // 長按約 1 秒可退出罐頭訊息選單，不進入關機流程
@@ -1061,6 +1038,7 @@ void ButtonThread::updatePowerHoldAnimation()
     bool rotaryPressSharesHoldButton =
         moduleConfig.canned_message.enabled && moduleConfig.canned_message.rotary1_enabled &&
         moduleConfig.canned_message.inputbroker_pin_press != 0;
+    bool rotaryHoldPressed = false;
     if (rotaryPressSharesHoldButton) {
         bool matchesHoldButton = false;
 #if defined(BUTTON_PIN) || defined(USERPREFS_BUTTON_PIN)
@@ -1070,39 +1048,23 @@ void ButtonThread::updatePowerHoldAnimation()
 #else
             config.device.button_gpio ? config.device.button_gpio : BUTTON_PIN;
 #endif
-        matchesHoldButton = matchesHoldButton || moduleConfig.canned_message.inputbroker_pin_press == primaryButtonPin;
+        if (moduleConfig.canned_message.inputbroker_pin_press == primaryButtonPin) {
+            matchesHoldButton = true;
+            rotaryHoldPressed = userButton.pin() >= 0 && userButton.debouncedValue();
+        }
 #endif
 #if defined(BUTTON_PIN_ALT)
-        matchesHoldButton = matchesHoldButton || moduleConfig.canned_message.inputbroker_pin_press == BUTTON_PIN_ALT;
+        if (moduleConfig.canned_message.inputbroker_pin_press == BUTTON_PIN_ALT) {
+            matchesHoldButton = true;
+            const bool altHoldPressed = userButtonAlt.pin() >= 0 && userButtonAlt.debouncedValue();
+            if (altHoldPressed) {
+                rotaryHoldPressed = true;
+            }
+        }
 #endif
         rotaryPressSharesHoldButton = matchesHoldButton;
     }
-    if (!anyPressed) {
-        s_rotaryLockHoldHandled = false;
-    }
-
-    static bool s_traceRouteInputPressActive = false;
-    static bool s_traceRouteBindLongHandled = false;
-    if (screen && screen->shouldBlockPowerHoldForTraceRouteInput()) {
-        if (anyPressed) {
-            s_traceRouteInputPressActive = true;
-            if (!s_traceRouteBindLongHandled && pressedMs >= kTraceRouteBindLongPressMs &&
-                screen->shouldUseTraceRouteBindQuickLongPress()) {
-                if (screen->handleTraceRouteBindLongPress()) {
-                    s_traceRouteBindLongHandled = true;
-                }
-            } else if (!s_traceRouteBindLongHandled && pressedMs >= kTraceRouteBindLongPressMs &&
-                       screen->shouldUseTraceRouteBoundQuickLongPress()) {
-                if (screen->handleTraceRouteBoundLongPress()) {
-                    s_traceRouteBindLongHandled = true;
-                }
-            }
-        } else if (s_traceRouteInputPressActive) {
-            s_traceRouteInputPressActive = false;
-            s_traceRouteBindLongHandled = false;
-            screen->completeDeferredTraceRouteBindShortPress();
-            screen->completeDeferredTraceRouteBoundShortPress();
-        }
+    if (screen && screen->shouldBlockPowerHoldForTraceRouteInput() && rotaryPressSharesHoldButton && rotaryHoldPressed) {
         if (holdAnimationActive || holdAnimationStarted) {
             holdAnimationActive = false;
             holdAnimationStarted = false;
@@ -1116,8 +1078,23 @@ void ButtonThread::updatePowerHoldAnimation()
         }
         return;
     }
-    s_traceRouteInputPressActive = false;
-    s_traceRouteBindLongHandled = false;
+
+    // 旋鈕鎖定由 RotaryEncoderInterruptBase 的實際 GPIO hold 計時負責。
+    // shared OneButton 在旋鈕放開後可能短暫維持 pressed，這裡只負責停止
+    // 已啟動的 power-hold 動畫，不再依 OneButton 狀態切換鎖定或執行頁面動作。
+    if (screen && screen->isRotaryLockPopupVisible() && rotaryPressSharesHoldButton) {
+        if (holdAnimationActive || holdAnimationStarted) {
+            holdAnimationActive = false;
+            holdAnimationStarted = false;
+            holdAnimationMode = HoldAnimationMode::None;
+            holdAnimationLastMs = 0;
+            s_holdPressStartMs = 0;
+            if (interfaceReady) {
+                interfaceModule->stopPowerHoldAnimation(false);
+            }
+        }
+        return;
+    }
 
     if (altPressedMs >= pressedMs && altPressedMs > 0) {
         holdDurationMs += kRotaryLongPressDelayMs;
@@ -1142,45 +1119,6 @@ void ButtonThread::updatePowerHoldAnimation()
         }
         uint32_t elapsedMs = nowMs - s_holdPressStartMs;
         holdAnimationLastMs = elapsedMs;
-
-#if !MESHTASTIC_EXCLUDE_HERMESX
-        if (rotaryPressSharesHoldButton && !s_rotaryLockHoldHandled && elapsedMs >= kRotaryLockHoldMs && screen &&
-            screen->shouldAllowRotaryLockLongPress()) {
-            s_rotaryLockHoldHandled = true;
-            cancelEmergencyShortcutPending();
-            s_longGateArmed = false;
-            s_longEventPending = false;
-            s_longStartMillis = 0;
-            s_longPressFromAlt = false;
-            btnEvent = BUTTON_EVENT_NONE;
-            screen->setRotaryLockState(!screen->isRotaryLocked());
-            if (holdAnimationActive || holdAnimationStarted) {
-                holdAnimationActive = false;
-                holdAnimationStarted = false;
-                holdAnimationMode = HoldAnimationMode::None;
-                holdAnimationLastMs = 0;
-                if (interfaceReady) {
-                    interfaceModule->stopPowerHoldAnimation(false);
-                }
-            }
-            LOG_INFO("PowerHold: rotary lock toggled via shared hold pin ms=%" PRIu32 " pin=%" PRIu32, elapsedMs,
-                     moduleConfig.canned_message.inputbroker_pin_press);
-            return;
-        }
-        if (s_rotaryLockHoldHandled) {
-            btnEvent = BUTTON_EVENT_NONE;
-            if (holdAnimationActive || holdAnimationStarted) {
-                holdAnimationActive = false;
-                holdAnimationStarted = false;
-                holdAnimationMode = HoldAnimationMode::None;
-                holdAnimationLastMs = 0;
-                if (interfaceReady) {
-                    interfaceModule->stopPowerHoldAnimation(false);
-                }
-            }
-            return;
-        }
-#endif
 
         const uint32_t visualGateMs =
 #if !MESHTASTIC_EXCLUDE_HERMESX

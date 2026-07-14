@@ -1,6 +1,20 @@
 # TAK MODE
 
-本文描述 HermesX C0.3.7 CIV 版目前的 `TAK MODE` 行為。TAK MODE 是面向 TAK / ATAK 現場使用的裝置模式，重點是降低 LoRa 阻塞風險、讓功率調整自動化，並把 GROUP 配對與尋人入口收斂到同一個現場操作流程。
+本文描述 HermesX C0.3.7 CIV 版目前的 `TAK MODE` 行為。TAK MODE 是面向 TAK / ATAK 現場使用的裝置模式，重點是降低 LoRa 阻塞風險、讓功率調整自動化，並把 GROUP 配對與尋人入口收斂到同一個現場操作流程。`TAK Tracker` role 也共用這套 HermesX UI、功能與頻道設定，但保留 upstream `TAK_TRACKER` 的追蹤器角色語意。
+
+## TAK Tracker 共用範圍
+
+裝置 role 設為 `TAK Tracker` 並重新開機後，會直接進入和 TAK MODE 相同的智慧功率主頁與操作流程：
+
+- 右轉開啟完整 TAK Tracker 選單
+- 左轉開啟相同的 `頻道選擇`
+- 共用 `TAKMODE設定`、`GROUP設定`、`尋人模組` 與 CIV build 限制
+- 共用智慧功率、聲光靜默與 CannedMessage 輸入隔離
+- 共用 `/prefs/hermesx_tak_profile.bin`，因此 TAK A-E、`自動` 與 profile 參數在兩種 role 間一致
+
+套用這些設定時不會把 `TAK Tracker` 改成 `TAK`；位置送出、省電與 rebroadcast 行為仍由 `TAK_TRACKER` role 負責。
+
+App 已建立的 Primary / Secondary 自訂頻道也會保留。TAK 的 `頻道選擇` 只調整 LoRa channel slot 與手動頻率回復基線，不會覆寫自訂頻道名稱、PSK、uplink/downlink 或位置分享設定。
 
 ## 進入與退出
 
@@ -132,6 +146,7 @@ TAK MODE 啟用期間會暫時退出並阻擋 CannedMessage menu。這是為了�
 - 進入 TAK MODE 會顯示 `進入TAK模式` 並重開機
 - 退出 TAK MODE 會顯示 `退出TAK模式` 並重開機
 - TAK 啟用後主頁是智慧功率 UI
+- TAK Tracker role 啟動後使用相同 UI、選單、功能與頻道選擇，且 role 不會被改成 TAK
 - LoRa preset 會切到 `Short_Fast`
 - 右轉開 TAK 選單
 - 左轉開 `頻道選擇`

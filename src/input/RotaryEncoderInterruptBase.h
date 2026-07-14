@@ -39,6 +39,8 @@ class RotaryEncoderInterruptBase : public Observable<const InputEvent *>, public
     uint32_t lastPressDispatchMs = 0;
     bool pressTracking = false;
     bool pressLongFired = false;
+    bool traceRouteBindHoldArmed = false;
+    bool traceRouteBoundHoldArmed = false;
     uint32_t pressDownSinceMs = 0;
 
   private:

@@ -4651,6 +4651,7 @@ struct TraceRouteSearchState {
     bool resultVisible = false;
     bool resultFound = false;
     NodeNum resultNode = 0;
+    uint8_t resultCursor = 0;
     String draft;
     String resultQuery;
     String toast;
@@ -6975,8 +6976,6 @@ void Screen::drawTraceRouteNodeListFrame(OLEDDisplay *display, OLEDDisplayUiStat
     display->setFont(FONT_SMALL);
 
     const int16_t width = std::max<int16_t>(display->getWidth() - x, 1);
-    drawMixedSingleLineBounded(display, x, y, width - 2, "TraceRoute", FONT_HEIGHT_SMALL);
-
     if (gTraceRouteSearchState.active) {
         const String preview = gTraceRouteSearchState.draft.length() == 0
                                    ? String("_")
@@ -6988,6 +6987,72 @@ void Screen::drawTraceRouteNodeListFrame(OLEDDisplay *display, OLEDDisplayUiStat
                               gTraceRouteSearchState.toastUntilMs);
         return;
     }
+
+    if (gTraceRouteSearchState.resultVisible) {
+        drawMixedSingleLineBounded(display, x, y, width - 2, u8"搜尋結果", FONT_HEIGHT_SMALL);
+
+        const meshtastic_NodeInfoLite *resultNode =
+            gTraceRouteSearchState.resultFound ? getNodeByNum(gTraceRouteSearchState.resultNode) : nullptr;
+        const int16_t contentX = x + 2;
+        const int16_t contentW = std::max<int16_t>(width - 4, 1);
+        const int16_t lineH = FONT_HEIGHT_SMALL + 1;
+        int16_t contentY = y + FONT_HEIGHT_SMALL + 3;
+
+        if (resultNode) {
+            const String shortName = String("ShortName: ") +
+                                     (resultNode->user.short_name[0] ? String(resultNode->user.short_name) : String("--"));
+            drawMixedSingleLineBounded(display, contentX, contentY, contentW, shortName.c_str(), lineH);
+            contentY += lineH;
+
+            const String longName = String("LongName: ") +
+                                    (resultNode->user.long_name[0] ? String(resultNode->user.long_name) : String("--"));
+            const std::vector<String> longNameLines = buildMixedWrappedLines(
+                display, longName.c_str(), contentW, graphics::HermesX_zh::GLYPH_WIDTH);
+            const int16_t buttonH = FONT_HEIGHT_SMALL + 4;
+            const int16_t buttonY = y + display->getHeight() - buttonH - 2;
+            const int16_t availableLines = std::max<int16_t>((buttonY - contentY - 2) / lineH, 1);
+            const int16_t linesToDraw = std::min<int16_t>(static_cast<int16_t>(longNameLines.size()), availableLines);
+            for (int16_t i = 0; i < linesToDraw; ++i) {
+                drawMixedSingleLineBounded(display, contentX, contentY + i * lineH, contentW,
+                                           longNameLines[i].c_str(), lineH);
+            }
+
+            const int16_t gap = 8;
+            const int16_t buttonW = std::min<int16_t>((contentW - gap) / 2, 58);
+            const int16_t buttonsW = buttonW * 2 + gap;
+            const int16_t bindX = x + (width - buttonsW) / 2;
+            const int16_t backX = bindX + buttonW + gap;
+            const int16_t selectedX = gTraceRouteSearchState.resultCursor == 0 ? bindX : backX;
+            display->drawRect(selectedX, buttonY, buttonW, buttonH);
+
+            const int16_t bindTextW =
+                graphics::HermesX_zh::stringAdvance(u8"綁定", graphics::HermesX_zh::GLYPH_WIDTH, display);
+            const int16_t backTextW =
+                graphics::HermesX_zh::stringAdvance(u8"返回", graphics::HermesX_zh::GLYPH_WIDTH, display);
+            drawMixedSingleLineBounded(display, bindX + (buttonW - bindTextW) / 2, buttonY + 1, bindTextW,
+                                       u8"綁定", FONT_HEIGHT_SMALL + 2);
+            drawMixedSingleLineBounded(display, backX + (buttonW - backTextW) / 2, buttonY + 1, backTextW,
+                                       u8"返回", FONT_HEIGHT_SMALL + 2);
+        } else {
+            drawMixedSingleLineBounded(display, contentX, contentY, contentW, u8"找不到裝置", lineH);
+            contentY += lineH;
+            const String query = String("ShortName: ") + gTraceRouteSearchState.resultQuery;
+            drawMixedSingleLineBounded(display, contentX, contentY, contentW, query.c_str(), lineH);
+
+            const int16_t buttonW = 58;
+            const int16_t buttonH = FONT_HEIGHT_SMALL + 4;
+            const int16_t buttonX = x + (width - buttonW) / 2;
+            const int16_t buttonY = y + display->getHeight() - buttonH - 2;
+            display->drawRect(buttonX, buttonY, buttonW, buttonH);
+            const int16_t backTextW =
+                graphics::HermesX_zh::stringAdvance(u8"返回", graphics::HermesX_zh::GLYPH_WIDTH, display);
+            drawMixedSingleLineBounded(display, buttonX + (buttonW - backTextW) / 2, buttonY + 1, backTextW,
+                                       u8"返回", FONT_HEIGHT_SMALL + 2);
+        }
+        return;
+    }
+
+    drawMixedSingleLineBounded(display, x, y, width - 2, "TraceRoute", FONT_HEIGHT_SMALL);
 
     if (gTraceRouteUiMode == TraceRouteUiMode::Menu) {
         const char *items[] = {u8"返回", u8"綁定節點", "TraceRoute"};
@@ -7060,50 +7125,6 @@ void Screen::drawTraceRouteNodeListFrame(OLEDDisplay *display, OLEDDisplayUiStat
 
     if (gTraceRouteNodeState.count == 0 && visibleRows > 2) {
         drawMixedSingleLineBounded(display, x + 2, listTop + rowH * 2, width - 4, u8"沒有在線節點", rowH);
-    }
-
-    if (gTraceRouteSearchState.resultVisible) {
-#if defined(USE_EINK)
-        display->setColor(EINK_WHITE);
-#else
-        display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-        const int16_t boxW = std::min<int16_t>(width - 12, 116);
-        const int16_t boxH = std::min<int16_t>(display->getHeight() - 8, 58);
-        const int16_t boxX = x + (width - boxW) / 2;
-        const int16_t boxY = y + (display->getHeight() - boxH) / 2;
-        display->fillRect(boxX, boxY, boxW, boxH);
-#if defined(USE_EINK)
-        display->setColor(EINK_BLACK);
-#else
-        display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-        display->drawRect(boxX, boxY, boxW, boxH);
-        drawMixedSingleLineBounded(display, boxX + 6, boxY + 4, boxW - 12, u8"搜尋結果", FONT_HEIGHT_SMALL + 2);
-
-        String firstLine;
-        String secondLine;
-        const meshtastic_NodeInfoLite *resultNode =
-            gTraceRouteSearchState.resultFound ? getNodeByNum(gTraceRouteSearchState.resultNode) : nullptr;
-        if (resultNode) {
-            firstLine = String("ShortName: ") + resultNode->user.short_name;
-            secondLine = String("LongName: ") +
-                         (resultNode->user.long_name[0] ? String(resultNode->user.long_name) : String("--"));
-        } else {
-            firstLine = u8"找不到裝置";
-            secondLine = String("ShortName: ") + gTraceRouteSearchState.resultQuery;
-        }
-        drawMixedSingleLineBounded(display, boxX + 6, boxY + 17, boxW - 12, firstLine.c_str(), FONT_HEIGHT_SMALL + 1);
-        drawMixedSingleLineBounded(display, boxX + 6, boxY + 29, boxW - 12, secondLine.c_str(), FONT_HEIGHT_SMALL + 1);
-
-        const int16_t buttonW = 52;
-        const int16_t buttonH = FONT_HEIGHT_SMALL + 4;
-        const int16_t buttonX = boxX + (boxW - buttonW) / 2;
-        const int16_t buttonY = boxY + boxH - buttonH - 3;
-        display->drawRect(buttonX, buttonY, buttonW, buttonH);
-        const int16_t returnW = graphics::HermesX_zh::stringAdvance(u8"返回", graphics::HermesX_zh::GLYPH_WIDTH, display);
-        drawMixedSingleLineBounded(display, buttonX + (buttonW - returnW) / 2, buttonY + 1, returnW, u8"返回",
-                                   FONT_HEIGHT_SMALL + 2);
     }
 
     if (gTraceRouteBoundState.confirmVisible) {
@@ -9973,10 +9994,12 @@ static int8_t getTakSmartPowerMaxDbm()
 }
 
 static bool isTakModeActive();
+static bool isTakExperienceActive();
 
 static bool isSmartPowerHomeActive()
 {
-    return isTakModeActive() || (HermesXInterfaceModule::instance && HermesXInterfaceModule::instance->isSmartPowerActive());
+    return isTakExperienceActive() ||
+           (HermesXInterfaceModule::instance && HermesXInterfaceModule::instance->isSmartPowerActive());
 }
 
 static bool shouldShowHermesXHomeFrame()
@@ -10635,6 +10658,17 @@ static bool isTakModeActive()
     return gTakRuntimeState.active;
 }
 
+static bool isTakExperienceActive()
+{
+    return isTakModeActive() || config.device.role == meshtastic_Config_DeviceConfig_Role_TAK ||
+           config.device.role == meshtastic_Config_DeviceConfig_Role_TAK_TRACKER;
+}
+
+static const char *getTakExperienceTitle()
+{
+    return config.device.role == meshtastic_Config_DeviceConfig_Role_TAK_TRACKER ? "TAK TRACKER" : "TAK MODE";
+}
+
 static const char *getTakMissionSlotLabel(uint32_t slot)
 {
     for (uint8_t i = 0; i < kTakMissionSlotCount; ++i) {
@@ -11130,7 +11164,7 @@ static bool restoreStealthModeAfterBoot()
     if (gStealthRuntimeState.active) {
         return false;
     }
-    if (isTakModeActive()) {
+    if (isTakExperienceActive()) {
         LOG_INFO("[HermesX] Skip stealth restore during boot because TAK MODE is active");
         clearRetainedStealthState();
         clearPersistedStealthStateFile();
@@ -11414,15 +11448,17 @@ static bool applyTakModeSettings()
         }
     }
 
-    if (config.device.role != meshtastic_Config_DeviceConfig_Role_TAK) {
+    const auto activeRole = isTakDeviceRole(config.device.role) ? config.device.role
+                                                                : meshtastic_Config_DeviceConfig_Role_TAK;
+    if (config.device.role != activeRole) {
         changed = true;
     }
-    config.device.role = meshtastic_Config_DeviceConfig_Role_TAK;
+    config.device.role = activeRole;
     if (HermesXInterfaceModule::instance) {
         HermesXInterfaceModule::instance->applyRoleOutputPolicy();
     }
     if (nodeDB) {
-        nodeDB->installRoleDefaults(meshtastic_Config_DeviceConfig_Role_TAK);
+        nodeDB->installRoleDefaults(activeRole);
         changed = true;
     }
     config.device.node_info_broadcast_secs = gTakModeProfile.nodeInfoBroadcastSecs;
@@ -11506,11 +11542,19 @@ static bool restoreTakModeAfterBoot()
         return false;
     }
     if (!isValidTakRetainedState(gTakRetainedState) && !loadPersistedTakStateFromFile()) {
+        if (isTakDeviceRole(config.device.role)) {
+            LOG_INFO("[HermesX] Adopt configured TAK role=%d into TAK UI runtime", static_cast<int>(config.device.role));
+            return enableTakMode();
+        }
         return false;
     }
     if (!isValidTakRetainedState(gTakRetainedState)) {
         clearRetainedTakState();
         clearPersistedTakStateFile();
+        if (isTakDeviceRole(config.device.role)) {
+            LOG_INFO("[HermesX] Rebuild TAK UI runtime for configured role=%d", static_cast<int>(config.device.role));
+            return enableTakMode();
+        }
         return false;
     }
 
@@ -12436,7 +12480,7 @@ void Screen::drawTakModeFrame(OLEDDisplay *display, OLEDDisplayUiState *state, i
     display->setFont(FONT_SMALL);
     display->setTextAlignment(TEXT_ALIGN_LEFT);
 
-    const char *title = "TAK MODE";
+    const char *title = getTakExperienceTitle();
 
     if (!overlayOnly) {
         const int16_t titleW = graphics::HermesX_zh::stringAdvance(title, graphics::HermesX_zh::GLYPH_WIDTH, display);
@@ -12453,7 +12497,7 @@ void Screen::drawTakModeFrame(OLEDDisplay *display, OLEDDisplayUiState *state, i
         const int16_t shieldTop = y + (height - shieldH) / 2 - 5;
         drawTakShieldIcon(display, x + width / 2, shieldTop, shieldW, shieldH, 2);
 
-        const char *status = isTakModeActive() ? "ON" : "OFF";
+        const char *status = isTakExperienceActive() ? "ON" : "OFF";
         const int16_t statusW = graphics::HermesX_zh::stringAdvance(status, graphics::HermesX_zh::GLYPH_WIDTH, display);
         graphics::HermesX_zh::drawMixedBounded(*display, x + (width - statusW) / 2, y + height - FONT_HEIGHT_SMALL - 3,
                                                width - 4, status, graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL,
@@ -12501,7 +12545,9 @@ void Screen::drawTakModeFrame(OLEDDisplay *display, OLEDDisplayUiState *state, i
 #endif
         display->drawRect(boxX, boxY, boxW, boxH);
 
-        const char *modalTitle = settingsView ? u8"TAKMODE設定" : (channelView ? u8"頻道選擇" : "TAK MODE");
+        const char *modalTitle = settingsView ? u8"TAKMODE設定"
+                                 : channelView ? u8"頻道選擇"
+                                               : getTakExperienceTitle();
         const int16_t modalTitleW =
             graphics::HermesX_zh::stringAdvance(modalTitle, graphics::HermesX_zh::GLYPH_WIDTH, display);
         graphics::HermesX_zh::drawMixedBounded(*display, boxX + std::max<int16_t>(2, (boxW - modalTitleW) / 2),
@@ -12519,8 +12565,8 @@ void Screen::drawTakModeFrame(OLEDDisplay *display, OLEDDisplayUiState *state, i
         }
 
         if (!settingsView && !channelView) {
-            static const char *kRows[] = {"TAK MODE",   u8"TAKMODE設定", u8"頻道選擇", u8"GROUP設定",
-                                          "EMUI",       u8"尋人模組",    u8"返回主選單"};
+            const char *kRows[] = {getTakExperienceTitle(), u8"TAKMODE設定", u8"頻道選擇", u8"GROUP設定",
+                                   "EMUI",                 u8"尋人模組",    u8"返回主選單"};
             if (gTakModePopupSelected >= kTakPopupRowCount) {
                 gTakModePopupSelected = 0;
             }
@@ -12549,7 +12595,7 @@ void Screen::drawTakModeFrame(OLEDDisplay *display, OLEDDisplayUiState *state, i
 
                 String line = kRows[index];
                 if (index == 0) {
-                    line += isTakModeActive() ? ": ON" : ": OFF";
+                    line += isTakExperienceActive() ? ": ON" : ": OFF";
                 } else if (index == 4 && !gTakModeProfile.allowEmUi) {
                     line += ": OFF";
                 } else if (index == 5 && !gTakModeProfile.allowFinder) {
@@ -13376,7 +13422,7 @@ void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*stat
     if (!hermesActionStealthConfirmVisible) {
         rebuildOnlineNodeOrder();
         const bool stealthOn = isStealthModeActive();
-        const bool takOn = isTakModeActive();
+        const bool takOn = isTakExperienceActive();
         const bool gpsPresent = config.position.gps_mode != meshtastic_Config_PositionConfig_GpsMode_NOT_PRESENT;
         const bool gpsOn = config.position.gps_mode == meshtastic_Config_PositionConfig_GpsMode_ENABLED;
         const bool hasRecentMessages = hasRecentTextMessages();
@@ -16982,7 +17028,7 @@ int32_t Screen::runOnce()
     }
 #endif
 
-    if ((isStealthModeActive() || isTakModeActive()) && cannedMessageModule) {
+    if ((isStealthModeActive() || isTakExperienceActive()) && cannedMessageModule) {
         const auto runState = cannedMessageModule->getRunState();
         if (runState != CANNED_MESSAGE_RUN_STATE_DISABLED && runState != CANNED_MESSAGE_RUN_STATE_INACTIVE) {
             cannedMessageModule->exitMenu();
@@ -19427,7 +19473,7 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
     } else if (selectedAction == 0) {
         bool needsReboot = false;
         if (!isStealthModeActive()) {
-            if (isTakModeActive()) {
+            if (isTakExperienceActive()) {
                 if (screen) {
                     screen->print("Disable TAK MODE first\n");
                 }
@@ -19473,7 +19519,7 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
             if (screen) {
                 screen->print("Disable Stealth first\n");
             }
-        } else if (!isTakModeActive()) {
+        } else if (!isTakExperienceActive()) {
             if (enableTakMode()) {
                 if (screen) {
                     screen->print("TAK MODE ON, rebooting...\n");
@@ -23171,8 +23217,26 @@ bool Screen::handleTraceRouteNodeListInput(const InputEvent *event)
     }
 
     if (gTraceRouteSearchState.resultVisible) {
-        if (isSelect || isPress || isCancel || isLeft || isRight) {
+        if (navDir != 0 && gTraceRouteSearchState.resultFound) {
+            gTraceRouteSearchState.resultCursor = gTraceRouteSearchState.resultCursor == 0 ? 1 : 0;
+            setFastFramerate();
+            requestImmediateRedraw();
+            return true;
+        }
+
+        if (isSelect || isPress || isCancel) {
+            const bool bindSelected = !isCancel && gTraceRouteSearchState.resultFound &&
+                                      gTraceRouteSearchState.resultCursor == 0;
+            const NodeNum resultNode = gTraceRouteSearchState.resultNode;
+            if (bindSelected) {
+                const bool bound = bindTraceRouteNode(resultNode);
+                LOG_INFO("[Screen] TraceRoute search bind node=%08lx result=%u", static_cast<unsigned long>(resultNode),
+                         bound ? 1 : 0);
+            }
             gTraceRouteSearchState = TraceRouteSearchState{};
+            gTraceRouteUiMode = TraceRouteUiMode::BindOnline;
+            gTraceRouteBoundState.bindCursor = kTraceRouteBindBackRow;
+            gTraceRouteBoundState.bindSelectedIndex = 0;
             setFastFramerate();
             requestImmediateRedraw();
         }
@@ -23235,11 +23299,8 @@ bool Screen::handleTraceRouteNodeListInput(const InputEvent *event)
                                 : nullptr;
                         if (node && node->has_user &&
                             String(node->user.short_name).equalsIgnoreCase(gTraceRouteSearchState.draft)) {
-                            gTraceRouteBoundState.bindCursor = index + kTraceRouteBindFirstNodeRow;
-                            gTraceRouteBoundState.bindSelectedIndex = index;
-                            LOG_INFO("[Screen] TraceRoute search found short=%s node=%08lx cursor=%u",
-                                     gTraceRouteSearchState.draft.c_str(), static_cast<unsigned long>(node->num),
-                                     static_cast<unsigned>(gTraceRouteBoundState.bindCursor));
+                            LOG_INFO("[Screen] TraceRoute search found short=%s node=%08lx",
+                                     gTraceRouteSearchState.draft.c_str(), static_cast<unsigned long>(node->num));
                             found = true;
                             foundNode = node->num;
                             break;
@@ -23250,6 +23311,7 @@ bool Screen::handleTraceRouteNodeListInput(const InputEvent *event)
                     gTraceRouteSearchState.resultVisible = true;
                     gTraceRouteSearchState.resultFound = found;
                     gTraceRouteSearchState.resultNode = foundNode;
+                    gTraceRouteSearchState.resultCursor = found ? 0 : 1;
                     gTraceRouteSearchState.resultQuery = query;
                     requestImmediateRedraw();
                 }
@@ -24389,7 +24451,7 @@ bool Screen::handleTakModeInput(const InputEvent *event)
             break;
         }
         persistTakModeProfileToFile();
-        if (isTakModeActive()) {
+        if (isTakExperienceActive()) {
             applyTakModeSettings();
             syncRetainedTakState();
             persistTakStateToFile();
@@ -24406,7 +24468,7 @@ bool Screen::handleTakModeInput(const InputEvent *event)
             if (index < kTakMissionSlotCount) {
                 gTakModeProfile.missionSlot = kTakMissionSlotOptions[index];
                 persistTakModeProfileToFile();
-                if (isTakModeActive()) {
+                if (isTakExperienceActive()) {
                     applyTakModeSettings();
                     syncRetainedTakState();
                     persistTakStateToFile();
@@ -24418,7 +24480,7 @@ bool Screen::handleTakModeInput(const InputEvent *event)
     }
 
     if (gTakModePopupSelected == 0) {
-        if (!isTakModeActive()) {
+        if (!isTakExperienceActive()) {
             if (isStealthModeActive()) {
                 if (screen) {
                     screen->print("Disable Stealth first\n");
@@ -24430,7 +24492,14 @@ bool Screen::handleTakModeInput(const InputEvent *event)
                 startTakModeTransition(true);
                 rebootAtMsec = millis() + kTakModeTransitionRebootMs;
             }
-        } else if (disableTakMode()) {
+        } else {
+            if (!isTakModeActive() && isTakDeviceRole(config.device.role)) {
+                enableTakMode();
+            }
+            if (!disableTakMode()) {
+                setFastFramerate();
+                return true;
+            }
             if (screen) {
                 screen->print("TAK MODE OFF, rebooting...\n");
             }
@@ -24927,7 +24996,7 @@ bool Screen::isTakModePageActive() const
         return false;
     }
     const bool onMainFrame = ui->getUiState()->currentFrame == framesetInfo.positions.main;
-    return onMainFrame && (isTakModeActive() || gTakModePageView != TakModePageView::Main);
+    return onMainFrame && (isTakExperienceActive() || gTakModePageView != TakModePageView::Main);
 }
 
 bool Screen::isHermesInputOverlayActive() const
@@ -25031,7 +25100,8 @@ bool Screen::shouldShowHermesXMenuFooter(uint8_t frameIndex) const
     if (frameIndex == framesetInfo.positions.setup) { // FastSetup already has its own navigation model.
         return false;
     }
-    if (frameIndex == framesetInfo.positions.main && (isTakModeActive() || gTakModePageView != TakModePageView::Main)) {
+    if (frameIndex == framesetInfo.positions.main &&
+        (isTakExperienceActive() || gTakModePageView != TakModePageView::Main)) {
         return false;
     }
     if (frameIndex == framesetInfo.positions.onlineList || frameIndex == framesetInfo.positions.onlineDetail) {
@@ -25303,7 +25373,7 @@ bool Screen::showTakModePage()
         return false;
     }
 
-    if (!isTakModeActive()) {
+    if (!isTakExperienceActive()) {
         if (isStealthModeActive()) {
             return false;
         }

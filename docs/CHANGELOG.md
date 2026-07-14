@@ -4,6 +4,51 @@
 
 ## 2026-07-14
 
+### 發布：HXB_C0.3.7_20260714_1808
+
+- 正式發布 CIV build `HXB_C0.3.7_20260714_1808`，上一個 GitHub Release 為 `HXB_C0.3.7_20260713_1838`。
+- `TAK Tracker` 現在完整共用 TAK MODE 的智慧功率主頁、旋鈕操作、TAK profile、頻道選擇、GROUP 設定、尋人入口與 CannedMessage 輸入隔離。
+- 套用 TAK 共用設定時保留 `TAK_TRACKER` role，不會被改寫成 `TAK`；Tracker 的位置送出、省電與 rebroadcast 語意維持不變。
+- App 建立的 Primary / Secondary 自訂頻道、名稱、PSK、uplink/downlink 與位置分享設定不會被 TAK 頻道選擇覆寫。
+- 收錄本日尚未發布的 TraceRoute 整頁搜尋結果、直接綁定／返回操作，以及旋鈕實際 GPIO 長按來源修正。
+- 新增 release note：`docs/RELEASE_HXB_C0.3.7_20260714_1808.md`。
+
+### 最終驗證
+
+- `platformio run -e heltec-wireless-tracker -j 4` 編譯成功，RAM 34.5%，Flash 88.0%。
+- 韌體內嵌版本確認為 `HXB_C0.3.7_20260714_1808`。
+- Desktop OTA / Factory 產物與 build 輸出的 SHA256 一致。
+- OTA SHA256: `131f1d890d1aae36ca8b6adf915f5493a2678a8444b8b4adcdeb064fdee8274f`
+- Factory SHA256: `382b2fd360fb83f7e89d206648574f60d1b4c3ad6bbe37dd9c78eb10f2e03b2c`
+
+### 調整
+
+- TraceRoute `搜尋裝置` 的搜尋結果由置中小視窗改為整頁顯示，完整呈現 `ShortName` 與自動換行的 `LongName`。
+- 搜尋成功結果頁最下方新增 `綁定`、`返回` 兩個可選操作；`綁定` 會直接加入快速 TraceRoute 綁定清單，`返回` 不變更綁定。
+- 從搜尋結果選擇 `綁定`、`返回` 或取消離開後，`綁定節點` 清單游標一律停在 `返回` 選項，不再自動定位到搜尋到的節點。
+- 找不到裝置時同樣使用整頁結果，顯示查詢 ShortName，最下方只提供有效的 `返回` 操作。
+
+### 修正
+
+- 修正 TraceRoute 長按來源混用：泛用 `BUTTON_EVENT_LONG_PRESSED` 與所有按鍵共用的 `anyPressed` 不再直接觸發綁定或解除綁定，避免 Home 或其他按鍵的既有按壓在切頁後被誤判成 TraceRoute 長按。
+- 依實機 log 修正 shared hold pin 放開後的假長按：`rotEnc1` 已送出短按後，`ButtonThread` 的 OneButton 狀態仍可能延遲滿 1 秒並誤呼叫解除綁定；`ButtonThread` 現在不再執行 TraceRoute 綁定／解除或旋鈕鎖定頁面動作。
+- 修正 `RotaryEncoderInterruptBase` 按住輪詢排程：原本先設定 50ms interval 又回傳 `INT32_MAX`，會被 `OSThread::run()` 覆蓋成永久等待，導致真正長按無法成立；按住期間現在直接回傳 50ms 持續讀取實際 GPIO。
+- TraceRoute 1 秒長按與 Home 3 秒旋鈕鎖定統一由旋鈕 GPIO hold 時間判定，並在按下當下鎖定頁面資格；其他按鍵、放開後的 OneButton 延遲狀態或跨頁既有按壓均不能觸發解除綁定。
+- 保留 TraceRoute 放開時的短按抑制與延後短按完成：短按仍查看節點詳情／送出 TraceRoute，長按後放開不會再補送短按或關閉確認框。
+
+### 驗證
+
+- `platformio run -e heltec-wireless-tracker -j 4` 編譯成功，搜尋結果整頁與返回焦點調整的 CIV build 版本為 `HXB_C0.3.7_20260714_1642`；已完成 Desktop handoff，本次未發布。
+- 已搬移 `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260714_1642.bin` 與 `.factory.bin`，來源與目的地 SHA256 一致。
+- OTA SHA256: `37992d7cf8fd3fda1a4f5c12cf1767158e82eaa189d7dcd4cd188a036b7585a9`
+- Factory SHA256: `962fb543e58efb55081a4315418fdc42eeab02754a9148dbcd346958a5862845`
+- `platformio run -e heltec-wireless-tracker -j 4` 編譯成功，CIV build 版本為 `HXB_C0.3.7_20260714_1622`。
+- 已依 handoff 搬移並驗證韌體產物：
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260714_1622.bin`
+  - `/Users/oldways/Desktop/HermesX韌體/HXB_C0.3.7_20260714_1622.factory.bin`
+- OTA SHA256: `6eabd7777671ad2e05c403eb89be48b17e88b2b689fb4fa843f0f133819f02c5`
+- Factory SHA256: `9cebf4975e86b480183e9655bc17163f913dd65311fb692d82dfaadd723bd0e5`
+
 ### 發布
 
 - 發布 CIV build `HXB_C0.3.7_20260713_1838`，上一個 GitHub Release 為 `HXB_C0.3.7_20260711_0239`。
