@@ -4608,6 +4608,7 @@ static RecentTextMessageState gRecentTextMessageState;
 
 static constexpr uint16_t kOnlineNodeCapacity = 250;
 static constexpr uint8_t kTraceRouteBoundNodeCapacity = 16;
+static constexpr const char *kTraceRouteBoundNodesFile = "/prefs/hermesx_tr_bound_nodes.txt";
 
 struct OnlineNodeState {
     uint16_t order[kOnlineNodeCapacity]{};
@@ -4645,6 +4646,7 @@ struct TraceRouteBoundState {
 };
 static TraceRouteUiMode gTraceRouteUiMode = TraceRouteUiMode::Menu;
 static TraceRouteBoundState gTraceRouteBoundState;
+static bool gTraceRouteBoundNodesLoaded = false;
 
 struct TraceRouteSearchState {
     bool active = false;
@@ -4785,7 +4787,7 @@ struct TraceRouteRequestState {
     uint32_t startedMs = 0;
 };
 static TraceRouteRequestState gTraceRouteRequestState;
-static constexpr uint32_t kTraceRouteResultTimeoutMs = 10000;
+static constexpr uint32_t kTraceRouteResultTimeoutMs = 30000;
 
 static void dismissIncomingTextPopup()
 {
@@ -5159,8 +5161,75 @@ static meshtastic_NodeInfoLite *getNodeByNum(NodeNum nodeNum)
     return nodeDB ? nodeDB->getMeshNode(nodeNum) : nullptr;
 }
 
+static void loadTraceRouteBoundNodes()
+{
+    if (gTraceRouteBoundNodesLoaded) {
+        return;
+    }
+    gTraceRouteBoundNodesLoaded = true;
+
+    if (!FSCom.exists(kTraceRouteBoundNodesFile)) {
+        return;
+    }
+
+    auto f = FSCom.open(kTraceRouteBoundNodesFile, FILE_O_READ);
+    if (!f) {
+        LOG_WARN("[Screen] Failed to load TraceRoute bound nodes");
+        return;
+    }
+
+    while (f.available() && gTraceRouteBoundState.count < kTraceRouteBoundNodeCapacity) {
+        String raw = f.readStringUntil('\n');
+        raw.trim();
+        if (raw.isEmpty()) {
+            continue;
+        }
+
+        const NodeNum nodeNum = static_cast<NodeNum>(strtoul(raw.c_str(), nullptr, 16));
+        if (nodeNum == 0) {
+            continue;
+        }
+
+        bool duplicate = false;
+        for (uint8_t i = 0; i < gTraceRouteBoundState.count; ++i) {
+            if (gTraceRouteBoundState.nodes[i] == nodeNum) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate) {
+            gTraceRouteBoundState.nodes[gTraceRouteBoundState.count++] = nodeNum;
+        }
+    }
+    LOG_INFO("[Screen] Loaded %u TraceRoute bound nodes", static_cast<unsigned>(gTraceRouteBoundState.count));
+}
+
+static bool saveTraceRouteBoundNodes()
+{
+    if (!FSCom.exists("/prefs")) {
+        FSCom.mkdir("/prefs");
+    }
+    if (FSCom.exists(kTraceRouteBoundNodesFile)) {
+        FSCom.remove(kTraceRouteBoundNodesFile);
+    }
+
+    auto f = FSCom.open(kTraceRouteBoundNodesFile, FILE_O_WRITE);
+    if (!f) {
+        LOG_WARN("[Screen] Failed to save TraceRoute bound nodes");
+        return false;
+    }
+
+    char nodeId[12];
+    for (uint8_t i = 0; i < gTraceRouteBoundState.count; ++i) {
+        snprintf(nodeId, sizeof(nodeId), "%08lx\n", static_cast<unsigned long>(gTraceRouteBoundState.nodes[i]));
+        f.print(nodeId);
+    }
+    return true;
+}
+
 static bool isTraceRouteNodeBound(NodeNum nodeNum)
 {
+    loadTraceRouteBoundNodes();
     if (nodeNum == 0) {
         return false;
     }
@@ -5174,16 +5243,19 @@ static bool isTraceRouteNodeBound(NodeNum nodeNum)
 
 static bool bindTraceRouteNode(NodeNum nodeNum)
 {
+    loadTraceRouteBoundNodes();
     if (nodeNum == 0 || isTraceRouteNodeBound(nodeNum) ||
         gTraceRouteBoundState.count >= kTraceRouteBoundNodeCapacity) {
         return false;
     }
     gTraceRouteBoundState.nodes[gTraceRouteBoundState.count++] = nodeNum;
+    saveTraceRouteBoundNodes();
     return true;
 }
 
 static bool unbindTraceRouteNodeAt(uint8_t index)
 {
+    loadTraceRouteBoundNodes();
     if (index >= gTraceRouteBoundState.count) {
         return false;
     }
@@ -5200,16 +5272,27 @@ static bool unbindTraceRouteNodeAt(uint8_t index)
     } else if (gTraceRouteBoundState.boundSelectedIndex >= gTraceRouteBoundState.count) {
         gTraceRouteBoundState.boundSelectedIndex = gTraceRouteBoundState.count - 1;
     }
+    saveTraceRouteBoundNodes();
     return true;
 }
 
 static void compactTraceRouteBoundNodes()
 {
+    loadTraceRouteBoundNodes();
     uint8_t write = 0;
     for (uint8_t read = 0; read < gTraceRouteBoundState.count; ++read) {
         const NodeNum nodeNum = gTraceRouteBoundState.nodes[read];
-        const meshtastic_NodeInfoLite *node = getNodeByNum(nodeNum);
-        if (!node || !isOnlineNodeCandidate(*node)) {
+        if (nodeNum == 0) {
+            continue;
+        }
+        bool duplicate = false;
+        for (uint8_t i = 0; i < write; ++i) {
+            if (gTraceRouteBoundState.nodes[i] == nodeNum) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (duplicate) {
             continue;
         }
         gTraceRouteBoundState.nodes[write++] = nodeNum;
@@ -17208,7 +17291,7 @@ int32_t Screen::runOnce()
         if (HermesXInterfaceModule::instance) {
             HermesXInterfaceModule::instance->playNackFail();
         }
-        showTraceRoutePopup("TraceRoute", "SEND FAIL");
+        showTraceRoutePopup("TraceRoute", u8"等待回應逾時");
         setFastFramerate();
     }
 

@@ -2,6 +2,24 @@
 
 本文件為可對外發布版本的更新紀錄，整理 HermesX 韌體的重要功能更新、體驗調整與修正項目。
 
+## 2026-07-15
+
+### 發布：HXB_C0.3.7_20260715_0142
+
+- 正式發布 CIV build `HXB_C0.3.7_20260715_0142`，上一個 GitHub Release 為 `HXB_C0.3.7_20260714_1808`。
+- TraceRoute `綁定節點` 清單改存入裝置持久化空間，重新開機後會自動載入，不再因 RAM 狀態重置而遺失。
+- 暫時離線或不符合目前 ONLINE 時效條件的節點不再被自動解除綁定；只有使用者長按解除，或清除／重置裝置儲存資料時才會移除。
+- TraceRoute request 等待回應上限由 10 秒調整為 30 秒；逾時提示改為 `等待回應逾時`，與送出前失敗的 `SEND FAIL` 明確區分。
+- 新增 release note：`docs/RELEASE_HXB_C0.3.7_20260715_0142.md`。
+
+### 最終驗證
+
+- `platformio run -e heltec-wireless-tracker` 編譯成功，RAM 34.5%，Flash 88.0%。
+- 韌體內嵌版本確認為 `HXB_C0.3.7_20260715_0142`。
+- Desktop OTA / Factory 產物與 build 輸出的 SHA256 一致。
+- OTA SHA256: `6310d9c21c198aedadfc550823d3c276722753fb0168779a0db9d8b506a75ed5`
+- Factory SHA256: `a9a8424a75f2e7cf778c4d64f68cce4a1affb5bdf7c5c8412058400929776937`
+
 ## 2026-07-14
 
 ### 發布：HXB_C0.3.7_20260714_1808

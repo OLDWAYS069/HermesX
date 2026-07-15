@@ -1,3 +1,8 @@
+## 2026-07-15
+- Released CIV build `HXB_C0.3.7_20260715_0142`；TraceRoute 綁定節點改存入持久化空間，重新開機後會自動載入，暫時離線也不會被自動解除綁定。
+- TraceRoute request 等待回應上限由 10 秒調整為 30 秒；逾時顯示 `等待回應逾時`，送出前失敗仍顯示 `SEND FAIL`。
+- `platformio run -e heltec-wireless-tracker` 編譯成功；OTA SHA256: `6310d9c21c198aedadfc550823d3c276722753fb0168779a0db9d8b506a75ed5`。
+
 ## 2026-07-14
 - Released CIV build `HXB_C0.3.7_20260714_1808`；TAK Tracker 完整共用 TAK MODE 新 UI、智慧功率、TAK profile、頻道選擇、GROUP、尋人與 CannedMessage 輸入隔離，同時保留 `TAK_TRACKER` role 行為。
 - App 建立的 Primary / Secondary 自訂頻道、名稱、PSK、uplink/downlink 與位置分享設定不會被 TAK 頻道選擇覆寫。
