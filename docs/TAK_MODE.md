@@ -91,16 +91,20 @@ TAK 選單目前包含：
 - `TAK D`
 - `TAK E`
 
-內部 slot 對應：
+### TAK 頻道、Slot 與頻率
 
-| 顯示 | Slot |
-|------|------|
-| 自動 | 保留原本 channel |
-| TAK A | 5 |
-| TAK B | 9 |
-| TAK C | 17 |
-| TAK D | 19 |
-| TAK E | 3 |
+以下頻率以本分支的台灣 `TW 920–925 MHz` 區域，以及 TAK MODE 自動套用的 `Short_Fast`（250 kHz 頻寬）計算：
+
+| 顯示 | Slot | 中心頻率 |
+|------|------|----------|
+| 自動 | 保留進入 TAK MODE 前的 channel | 依原本 Slot／頻率設定 |
+| TAK A | 5 | 921.125 MHz |
+| TAK B | 9 | 922.125 MHz |
+| TAK C | 17 | 924.125 MHz |
+| TAK D | 19 | 924.625 MHz |
+| TAK E | 3 | 920.625 MHz |
+
+頻率計算方式與韌體一致：`920.0 + 0.125 + ((Slot - 1) × 0.250)` MHz。若裝置改用其他區域、其他 LoRa 頻寬或設定 `frequency_offset`，實際頻率會跟著改變；上表不是跨區域通用頻率表。
 
 當選擇固定 TAK slot 時，TAK MODE 會設定 `config.lora.channel_num`，並清除 `override_frequency`。退出 TAK MODE 時會還原進入 TAK 前的 `channel_num` 與 `override_frequency`。
 
