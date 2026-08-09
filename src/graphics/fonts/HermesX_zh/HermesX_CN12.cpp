@@ -60,6 +60,46 @@ void unpackGlyphBits(int index, std::uint16_t (&rows)[GLYPH_HEIGHT])
     }
 }
 
+bool drawBopomofoToneMark12(OLEDDisplay &display, int16_t x, int16_t y, std::uint32_t codepoint)
+{
+    std::uint16_t rows[GLYPH_HEIGHT] = {};
+    switch (codepoint) {
+    case 0x02C7: // ˇ
+        rows[3] = 0x108;
+        rows[4] = 0x090;
+        rows[5] = 0x060;
+        break;
+    case 0x02CA: // ˊ
+        rows[2] = 0x018;
+        rows[3] = 0x030;
+        rows[4] = 0x060;
+        rows[5] = 0x0C0;
+        break;
+    case 0x02CB: // ˋ
+        rows[2] = 0x0C0;
+        rows[3] = 0x060;
+        rows[4] = 0x030;
+        rows[5] = 0x018;
+        break;
+    case 0x02D9: // ˙
+        rows[3] = 0x060;
+        rows[4] = 0x060;
+        break;
+    default:
+        return false;
+    }
+
+    const OLEDDISPLAY_COLOR color = display.getColor();
+    for (std::uint8_t row = 0; row < GLYPH_HEIGHT; ++row) {
+        for (std::uint8_t col = 0; col < GLYPH_WIDTH; ++col) {
+            if ((rows[row] >> (GLYPH_WIDTH - 1 - col)) & 0x1u) {
+                display.setPixelColor(x + col, y + row, color);
+            }
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 std::uint32_t nextCodepoint(const char *&cursor, const char *end)
@@ -208,6 +248,11 @@ void drawMixed(OLEDDisplay &display, int16_t x, int16_t y, const char *text, int
             continue;
         }
 
+        if (drawBopomofoToneMark12(display, x, y, cp)) {
+            x += advanceX;
+            continue;
+        }
+
         int glyphIndex = locateCodepoint(cp);
         if (glyphIndex < 0) {
             incrementMissingGlyph();
@@ -260,15 +305,19 @@ void drawMixedBounded(OLEDDisplay &display, int16_t x, int16_t y, int16_t maxWid
             continue;
         }
 
+        if (x + advanceX > originX + limit) {
+            x = originX;
+            y += lineHeight;
+        }
+        if (drawBopomofoToneMark12(display, x, y, cp)) {
+            x += advanceX;
+            continue;
+        }
+
         int glyphIndex = locateCodepoint(cp);
         if (glyphIndex < 0) {
             incrementMissingGlyph();
             glyphIndex = fallbackIndex();
-        }
-
-        if (x + advanceX > originX + limit) {
-            x = originX;
-            y += lineHeight;
         }
 
         drawHanzi12Slow(display, x, y, glyphIndex);
@@ -318,4 +367,3 @@ int stringAdvance(const char *text, int advanceX, OLEDDisplay *display)
 }
 
 } // namespace graphics::HermesX_zh
-

@@ -1,3 +1,17 @@
+## 2026-08-06
+- 修正 Home 待機期間每 2 秒因語錄 segment 切換而強制完整重畫的 Heap 配置壓力；語錄改為進入 Home 時一次繪製最多兩行，小威 60 FPS direct-TFT 動畫維持不變。
+- `HXB_C0.3.7_20260806_2012` 完成 `heltec-wireless-tracker` 編譯驗證與 Desktop handoff；RAM 34.5%，Flash 90.6%，OTA SHA256: `1d22b1f8cf0a55f8281d8adfab85b8c502af4b3d7cf280685c0c30c54f819066`。
+
+## 2026-08-05
+- ONLINE／GROUP 共用的 MSG 編輯器新增大千注音組字與候選字頁，使用精簡靜態詞庫以保留 OTA app slot。
+- 英文鍵盤原有 `Aa` 位置與大小寫功能保留，另以 `中`／`EN` 獨立切換輸入法；刪除已支援完整 UTF-8 字元。
+- 新增注音聲調符號顯示、移植來源與第三方授權文件；操作方式見 `docs/注音輸入.md`。
+- `platformio run -e heltec-wireless-tracker -j 4` 編譯成功並完成 Desktop handoff，CIV build 版本為 `HXB_C0.3.7_20260805_0229`；RAM 34.5%，Flash 90.6%，OTA SHA256: `bb1dadbfe2becd1895012dbea08553be52982e0985782300d3849bdcaad9c79c`。
+- 修正小威取代 Direct Clock 後 `gDirectHomeBasePainted` 仍只在時鐘分支更新，造成待機無法進入 `skipUi` 的問題；小威首幀底圖完成後可停止不必要的底層 UI 重繪，60 FPS direct-TFT 動畫維持不變。
+- 本修正以 `HXB_C0.3.7_20260805_1359` 完成 `heltec-wireless-tracker` 編譯驗證與 Desktop handoff；RAM 34.5%，Flash 90.6%，OTA SHA256: `795f008320e73684af470a410ab119ab2df70d9f59367711b15ef98e57aecd4e`。
+- 實機待機 log 顯示 `_1359` 的小威 Home 仍可能因 `OLEDDisplayUi` frame budget 未執行 dirty base redraw 而持續 `basePainted=0`；Dog base dirty 現改為明確強制下一個 FIXED UI tick，讓完成後的待機幀確實進入 `skipUi`。
+- 第二版修正以 `HXB_C0.3.7_20260805_1656` 完成 `heltec-wireless-tracker` 編譯驗證與 Desktop handoff；RAM 34.5%，Flash 90.6%，OTA SHA256: `1f09ea8e1779ea3f116b1759aaa33d5c31ccf6b74edb7f45cb4064789b27e810`。
+
 ## 2026-07-15
 - Released CIV build `HXB_C0.3.7_20260715_0142`；TraceRoute 綁定節點改存入持久化空間，重新開機後會自動載入，暫時離線也不會被自動解除綁定。
 - TraceRoute request 等待回應上限由 10 秒調整為 30 秒；逾時顯示 `等待回應逾時`，送出前失敗仍顯示 `SEND FAIL`。

@@ -48,6 +48,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "gps/RTC.h"
 #include "graphics/ScreenFonts.h"
 #include "graphics/fonts/PattanakarnClock32.h"
+#include "graphics/hermesx_input/HermesXBpmfEngine.h"
 // --- HermesX Remove TFT fast-path START
 #include "graphics/fonts/HermesX_zh/HermesX_CN12.h"
 #include "HeapDebug.h"
@@ -762,7 +763,6 @@ struct HermesXDirectHomeUiCache {
     int16_t lastDogY = -1;
     int16_t lastDogW = 0;
     int16_t lastDogH = 0;
-    uint8_t quoteSegment = 0xFF;
 };
 static HermesXDirectHomeUiCache gHermesXDirectHomeUiCache;
 static bool gDirectHomeClockWasVisible = false;
@@ -771,7 +771,6 @@ static uint8_t gDirectHomeDogPose = 0;
 static uint8_t gDirectHomeDogEntryCount = 0;
 static uint8_t gHermesXHomeQuoteIndex = 0;
 static bool gHermesXHomeQuoteActive = false;
-static uint32_t gHermesXHomeQuoteStartedAtMs = 0;
 static bool gDirectGpsPosterWasVisible = false;
 static bool gIncomingNodePopupWasVisible = false;
 struct DirectIncomingNodePopupRenderCache {
@@ -827,13 +826,11 @@ static void invalidateDirectTftWakeCaches()
     gHermesXDirectHomeUiCache.lastDogY = -1;
     gHermesXDirectHomeUiCache.lastDogW = 0;
     gHermesXDirectHomeUiCache.lastDogH = 0;
-    gHermesXDirectHomeUiCache.quoteSegment = 0xFF;
     gDirectHomeClockWasVisible = false;
     gDirectHomeDogWasVisible = false;
     gDirectHomeDogPose = 0;
     gDirectHomeDogEntryCount = 0;
     gHermesXHomeQuoteActive = false;
-    gHermesXHomeQuoteStartedAtMs = 0;
     gDirectGpsPosterWasVisible = false;
     gIncomingNodePopupWasVisible = false;
     gDirectIncomingNodePopupRenderCache.valid = false;
@@ -1140,26 +1137,13 @@ static constexpr const char *kHermesXHomeQuotes[] = {
     u8"狗哥有點小餓",
 };
 static constexpr uint8_t kHermesXHomeQuoteCount = sizeof(kHermesXHomeQuotes) / sizeof(kHermesXHomeQuotes[0]);
-static constexpr uint32_t kHermesXHomeQuoteSegmentMs = 2000U;
-
 static void startHermesXHomeQuote()
 {
     if (kHermesXHomeQuoteCount == 0) {
         return;
     }
     gHermesXHomeQuoteIndex = static_cast<uint8_t>(random(kHermesXHomeQuoteCount));
-    gHermesXHomeQuoteStartedAtMs = millis();
     gHermesXHomeQuoteActive = true;
-    gHermesXDirectHomeUiCache.quoteSegment = 0xFF;
-}
-
-static uint8_t getHermesXHomeQuoteSegment()
-{
-    if (!gHermesXHomeQuoteActive || kHermesXHomeQuoteCount == 0) {
-        startHermesXHomeQuote();
-    }
-    const uint32_t elapsed = millis() - gHermesXHomeQuoteStartedAtMs;
-    return static_cast<uint8_t>((elapsed / kHermesXHomeQuoteSegmentMs) % 2U);
 }
 
 static const char *getHermesXHomeQuote()
@@ -1174,8 +1158,7 @@ static void drawHermesXHomeQuote(OLEDDisplay *display,
                                  int16_t x,
                                  int16_t y,
                                  int16_t width,
-                                 int16_t height,
-                                 uint8_t segment)
+                                 int16_t height)
 {
     if (!display || width <= 0 || height <= 0) {
         return;
@@ -1190,19 +1173,22 @@ static void drawHermesXHomeQuote(OLEDDisplay *display,
         return;
     }
 
-    const uint8_t lineIndex = lines.size() > 1 ? static_cast<uint8_t>(segment % lines.size()) : 0;
-    const char *line = lines[lineIndex].c_str();
-    const int16_t lineW = graphics::HermesX_zh::stringAdvance(line, graphics::HermesX_zh::GLYPH_WIDTH, display);
-    const int16_t drawX = x + std::max<int16_t>(0, (width - lineW) / 2);
-    const int16_t drawY = y + std::max<int16_t>(0, (height - lineHeight) / 2);
-    graphics::HermesX_zh::drawMixedBounded(*display,
-                                           drawX,
-                                           drawY,
-                                           x + width - drawX,
-                                           line,
-                                           graphics::HermesX_zh::GLYPH_WIDTH,
-                                           lineHeight,
-                                           nullptr);
+    const size_t visibleLineCount = std::min<size_t>(2, lines.size());
+    const int16_t totalHeight = static_cast<int16_t>(visibleLineCount * lineHeight);
+    const int16_t firstY = y + std::max<int16_t>(0, (height - totalHeight) / 2);
+    for (size_t lineIndex = 0; lineIndex < visibleLineCount; ++lineIndex) {
+        const char *line = lines[lineIndex].c_str();
+        const int16_t lineW = graphics::HermesX_zh::stringAdvance(line, graphics::HermesX_zh::GLYPH_WIDTH, display);
+        const int16_t drawX = x + std::max<int16_t>(0, (width - lineW) / 2);
+        graphics::HermesX_zh::drawMixedBounded(*display,
+                                               drawX,
+                                               firstY + static_cast<int16_t>(lineIndex * lineHeight),
+                                               x + width - drawX,
+                                               line,
+                                               graphics::HermesX_zh::GLYPH_WIDTH,
+                                               lineHeight,
+                                               nullptr);
+    }
 }
 
 static void drawHermesXHomeDog(OLEDDisplay *display, int16_t width, int16_t timeY, bool compactLayout)
@@ -4706,6 +4692,10 @@ struct DirectMessageComposerState {
     uint8_t keyRow = 0;
     uint8_t keyCol = 0;
     bool lowercase = false;
+    bool bopomofoMode = false;
+    bool candidateMode = false;
+    uint8_t candidateCursor = 0;
+    hermesx_bpmf::HermesXBpmfEngine bpmf;
 };
 static DirectMessageComposerState gDirectMessageComposerState;
 static const char *kDirectMessageKeyRowsUpper[][10] = {
@@ -4713,18 +4703,32 @@ static const char *kDirectMessageKeyRowsUpper[][10] = {
     {"Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"},
     {"A", "S", "D", "F", "G", "H", "J", "K", "L", "Aa"},
     {"Z", "X", "C", "V", "B", "N", "M", ".", "-", "_"},
-    {"EXIT", "SP", "DEL", "OK", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr},
+    {"EXIT", "SP", "DEL", u8"中", "OK", nullptr, nullptr, nullptr, nullptr, nullptr},
 };
 static const char *kDirectMessageKeyRowsLower[][10] = {
     {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"},
     {"q", "w", "e", "r", "t", "y", "u", "i", "o", "p"},
     {"a", "s", "d", "f", "g", "h", "j", "k", "l", "Aa"},
     {"z", "x", "c", "v", "b", "n", "m", ".", "-", "_"},
-    {"EXIT", "SP", "DEL", "OK", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr},
+    {"EXIT", "SP", "DEL", u8"中", "OK", nullptr, nullptr, nullptr, nullptr, nullptr},
 };
-static const uint8_t kDirectMessageKeyRowLengths[] = {10, 10, 10, 10, 4};
+static const char *kDirectMessageKeyRowsBopomofo[][10] = {
+    {u8"ㄅ", u8"ㄉ", u8"ˇ", u8"ˋ", u8"ㄓ", u8"ˊ", u8"ㄚ", u8"ㄞ", u8"ㄢ", u8"ㄦ"},
+    {u8"ㄆ", u8"ㄊ", u8"ㄍ", u8"ㄐ", u8"ㄔ", u8"ㄗ", u8"ㄧ", u8"ㄛ", u8"ㄟ", u8"ㄣ"},
+    {u8"ㄇ", u8"ㄋ", u8"ㄎ", u8"ㄑ", u8"ㄕ", u8"ㄘ", u8"ㄨ", u8"ㄜ", u8"ㄠ", u8"ㄤ"},
+    {u8"ㄈ", u8"ㄌ", u8"ㄏ", u8"ㄒ", u8"ㄖ", u8"ㄙ", u8"ㄩ", u8"ㄝ", u8"ㄡ", u8"ㄥ"},
+    {"EXIT", "SP", "DEL", "Aa", u8"˙", "EN", "OK", nullptr, nullptr, nullptr},
+};
+static const char kDirectMessageBopomofoScreenKeys[][10] = {
+    {'1', '2', '3', '4', '5', '6', '7', '8', '9', '0'},
+    {'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'},
+    {'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';'},
+    {'z', 'x', 'c', 'v', 'b', 'n', 'm', '.', ',', '?'},
+};
+static const uint8_t kDirectMessageKeyRowLengthsEnglish[] = {10, 10, 10, 10, 5};
+static const uint8_t kDirectMessageKeyRowLengthsBopomofo[] = {10, 10, 10, 10, 7};
 static const uint8_t kDirectMessageKeyRowCount =
-    sizeof(kDirectMessageKeyRowLengths) / sizeof(kDirectMessageKeyRowLengths[0]);
+    sizeof(kDirectMessageKeyRowLengthsEnglish) / sizeof(kDirectMessageKeyRowLengthsEnglish[0]);
 static void drawSetupKeyboardPage(OLEDDisplay *display,
                                   int16_t width,
                                   int16_t height,
@@ -4737,6 +4741,7 @@ static void drawSetupKeyboardPage(OLEDDisplay *display,
                                   uint8_t selectedCol,
                                   String &toast,
                                   uint32_t &toastUntilMs);
+static void drawDirectMessageCandidatePage(OLEDDisplay *display, int16_t width, int16_t height);
 
 struct IncomingTextPopupState {
     meshtastic_MeshPacket packet{};
@@ -5778,6 +5783,11 @@ static void startDirectMessageComposer(NodeNum destNode, bool fromGroupDetail)
     gDirectMessageComposerState.keyRow = 0;
     gDirectMessageComposerState.keyCol = 0;
     gDirectMessageComposerState.lowercase = false;
+    gDirectMessageComposerState.bopomofoMode = false;
+    gDirectMessageComposerState.candidateMode = false;
+    gDirectMessageComposerState.candidateCursor = 0;
+    gDirectMessageComposerState.bpmf = hermesx_bpmf::HermesXBpmfEngine();
+    gDirectMessageComposerState.bpmf.setMaxCandidates(8);
 }
 
 static void stopDirectMessageComposer()
@@ -5790,6 +5800,10 @@ static void stopDirectMessageComposer()
     gDirectMessageComposerState.keyRow = 0;
     gDirectMessageComposerState.keyCol = 0;
     gDirectMessageComposerState.lowercase = false;
+    gDirectMessageComposerState.bopomofoMode = false;
+    gDirectMessageComposerState.candidateMode = false;
+    gDirectMessageComposerState.candidateCursor = 0;
+    gDirectMessageComposerState.bpmf = hermesx_bpmf::HermesXBpmfEngine();
 }
 
 static bool sendDirectTextMessage(NodeNum destNode, const String &message)
@@ -5816,7 +5830,36 @@ static bool sendDirectTextMessage(NodeNum destNode, const String &message)
 
 static const char *const (*getDirectMessageKeyRows())[10]
 {
+    if (gDirectMessageComposerState.bopomofoMode) {
+        return kDirectMessageKeyRowsBopomofo;
+    }
     return gDirectMessageComposerState.lowercase ? kDirectMessageKeyRowsLower : kDirectMessageKeyRowsUpper;
+}
+
+static const uint8_t *getDirectMessageKeyRowLengths()
+{
+    return gDirectMessageComposerState.bopomofoMode ? kDirectMessageKeyRowLengthsBopomofo
+                                                    : kDirectMessageKeyRowLengthsEnglish;
+}
+
+static void removeLastUtf8Character(String &text)
+{
+    if (text.length() == 0) {
+        return;
+    }
+    int index = static_cast<int>(text.length()) - 1;
+    while (index > 0 && (static_cast<uint8_t>(text[index]) & 0xC0u) == 0x80u) {
+        --index;
+    }
+    text.remove(static_cast<unsigned int>(index));
+}
+
+static String getDirectMessageCompositionText()
+{
+    if (!gDirectMessageComposerState.bopomofoMode || !gDirectMessageComposerState.bpmf.composing()) {
+        return String();
+    }
+    return String(gDirectMessageComposerState.bpmf.composingText().c_str());
 }
 
 static void drawDirectMessageComposerFrame(OLEDDisplay *display, int16_t x, int16_t y)
@@ -5829,10 +5872,16 @@ static void drawDirectMessageComposerFrame(OLEDDisplay *display, int16_t x, int1
     (void)y;
     const int16_t width = display->getWidth();
     const int16_t height = display->getHeight();
+    if (gDirectMessageComposerState.candidateMode) {
+        drawDirectMessageCandidatePage(display, width, height);
+        return;
+    }
     String header = String("MSG ") + getDirectMessageTargetName(gDirectMessageComposerState.dest);
-    String draft = gDirectMessageComposerState.draft.length() == 0 ? String("_") : gDirectMessageComposerState.draft + "_";
+    String draft = gDirectMessageComposerState.draft;
+    draft += getDirectMessageCompositionText();
+    draft += "_";
     drawSetupKeyboardPage(display, width, height, header.c_str(), draft, getDirectMessageKeyRows(),
-                          kDirectMessageKeyRowLengths, kDirectMessageKeyRowCount, gDirectMessageComposerState.keyRow,
+                          getDirectMessageKeyRowLengths(), kDirectMessageKeyRowCount, gDirectMessageComposerState.keyRow,
                           gDirectMessageComposerState.keyCol, gDirectMessageComposerState.toast,
                           gDirectMessageComposerState.toastUntilMs);
 }
@@ -12106,7 +12155,8 @@ static void drawSetupKeyboardPage(OLEDDisplay *display,
 #else
     display->setColor(OLEDDISPLAY_COLOR::WHITE);
 #endif
-    display->drawStringMaxWidth(2, kSetupHeaderHeight + 2, width - 4, draft);
+    graphics::HermesX_zh::drawMixedBounded(*display, 2, kSetupHeaderHeight + 2, width - 4, draft.c_str(),
+                                           graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
 
     const int16_t keyTop = (FONT_HEIGHT_SMALL * 2) + 6;
     const int16_t keyAreaHeight = height - keyTop;
@@ -12147,7 +12197,14 @@ static void drawSetupKeyboardPage(OLEDDisplay *display,
 #endif
             }
             display->drawRect(cellX, rowY, cellWidth, rowHeight);
-            display->drawString(cellX + cellWidth / 2, rowY + (rowHeight - FONT_HEIGHT_SMALL) / 2, label);
+            const int16_t labelWidth = graphics::HermesX_zh::stringAdvance(
+                label, graphics::HermesX_zh::GLYPH_WIDTH, display);
+            const bool hasUtf8 = strlen(label) > 0 && static_cast<uint8_t>(label[0]) >= 0x80u;
+            const int16_t labelHeight = hasUtf8 ? graphics::HermesX_zh::GLYPH_HEIGHT : FONT_HEIGHT_SMALL;
+            const int16_t labelX = cellX + std::max<int16_t>(0, (cellWidth - labelWidth) / 2);
+            const int16_t labelY = rowY + std::max<int16_t>(0, (rowHeight - labelHeight) / 2);
+            graphics::HermesX_zh::drawMixed(*display, labelX, labelY, label,
+                                            graphics::HermesX_zh::GLYPH_WIDTH, rowHeight, nullptr);
         }
     }
 
@@ -12158,6 +12215,77 @@ static void drawSetupKeyboardPage(OLEDDisplay *display,
     display->setColor(OLEDDISPLAY_COLOR::WHITE);
 #endif
     drawSetupToast(display, width, height, toast, toastUntilMs);
+}
+
+static void drawDirectMessageCandidatePage(OLEDDisplay *display, int16_t width, int16_t height)
+{
+    if (!display) {
+        return;
+    }
+
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+#if defined(USE_EINK)
+    display->setColor(EINK_WHITE);
+#else
+    display->setColor(OLEDDISPLAY_COLOR::BLACK);
+#endif
+    display->fillRect(0, 0, width, height);
+    drawSetupHeader(display, width, u8"注音候選");
+#if defined(USE_EINK)
+    display->setColor(EINK_BLACK);
+#else
+    display->setColor(OLEDDISPLAY_COLOR::WHITE);
+#endif
+    display->setFont(FONT_SMALL);
+
+    String preview = gDirectMessageComposerState.draft;
+    preview += getDirectMessageCompositionText();
+    preview += "_";
+    graphics::HermesX_zh::drawMixedBounded(*display, 2, kSetupHeaderHeight + 1, width - 4, preview.c_str(),
+                                           graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
+
+    const std::vector<std::string> &candidates = gDirectMessageComposerState.bpmf.candidates();
+    const uint8_t totalRows = static_cast<uint8_t>(std::min<size_t>(candidates.size() + 1, 255));
+    const int16_t listTop = kSetupHeaderHeight + FONT_HEIGHT_SMALL + 3;
+    const int16_t rowHeight = 15;
+    const uint8_t visibleRows = static_cast<uint8_t>(std::max<int16_t>(1, (height - listTop) / rowHeight));
+    uint8_t start = 0;
+    if (gDirectMessageComposerState.candidateCursor >= visibleRows) {
+        start = gDirectMessageComposerState.candidateCursor - visibleRows + 1;
+    }
+
+    for (uint8_t row = 0; row < visibleRows; ++row) {
+        const uint8_t item = start + row;
+        if (item >= totalRows) {
+            break;
+        }
+        const int16_t rowY = listTop + row * rowHeight;
+        const bool selected = item == gDirectMessageComposerState.candidateCursor;
+        if (selected) {
+            display->fillRect(0, rowY, width, rowHeight);
+#if defined(USE_EINK)
+            display->setColor(EINK_WHITE);
+#else
+            display->setColor(OLEDDISPLAY_COLOR::BLACK);
+#endif
+        }
+
+        String label;
+        if (item == 0) {
+            label = u8"返回鍵盤";
+        } else {
+            label = String(item) + ". " + candidates[item - 1].c_str();
+        }
+        graphics::HermesX_zh::drawMixedBounded(*display, 3, rowY + 1, width - 6, label.c_str(),
+                                               graphics::HermesX_zh::GLYPH_WIDTH, rowHeight, nullptr);
+        if (selected) {
+#if defined(USE_EINK)
+            display->setColor(EINK_BLACK);
+#else
+            display->setColor(OLEDDISPLAY_COLOR::WHITE);
+#endif
+        }
+    }
 }
 
 static void resetHermesFastSetupTftPalette(OLEDDisplay *display)
@@ -13020,7 +13148,7 @@ void Screen::drawHermesXMain(OLEDDisplay *display, OLEDDisplayUiState * /*state*
         const int16_t quoteY = originY + (compactLayout ? 16 : 20);
         const int16_t quoteW = width - quoteX - (compactLayout ? 4 : 8);
         const int16_t quoteH = compactLayout ? 28 : 34;
-        drawHermesXHomeQuote(display, quoteX, quoteY, quoteW, quoteH, getHermesXHomeQuoteSegment());
+        drawHermesXHomeQuote(display, quoteX, quoteY, quoteW, quoteH);
     }
     if (!hasValidTime && !useDirectTftClock && !gLowMemoryProtectionActive) {
         drawHermesXHomeDog(display, width, timeY, compactLayout);
@@ -17472,6 +17600,7 @@ int32_t Screen::runOnce()
     bool directNeonBuffersReady = false;
     bool renderDirectHomeClock = false;
     bool renderDirectHomeDogOverlay = false;
+    bool directHomeBaseRedrawRequested = false;
     bool forceDirectHomeClockRedraw = false;
     uint16_t directHomeDogFrame = 0xFFFF;
     char directHomeTimeBuf[16];
@@ -17555,8 +17684,6 @@ int32_t Screen::runOnce()
         if (enteringDirectHomeOverlay) {
             startHermesXHomeQuote();
         }
-        const uint8_t homeQuoteSegment = getHermesXHomeQuoteSegment();
-
         char homeDateBuf[24];
         homeDateBuf[0] = '\0';
         formatHermesXHomeTimeDate(directHomeTimeBuf, sizeof(directHomeTimeBuf), homeDateBuf, sizeof(homeDateBuf));
@@ -17586,8 +17713,7 @@ int32_t Screen::runOnce()
         const bool baseDirty = enteringDirectHomeOverlay || !gHermesXDirectHomeUiCache.valid ||
                                gHermesXDirectHomeUiCache.stealth != stealth ||
                                gHermesXDirectHomeUiCache.role != config.device.role ||
-                               strcmp(gHermesXDirectHomeUiCache.date, homeDateBuf) != 0 ||
-                               gHermesXDirectHomeUiCache.quoteSegment != homeQuoteSegment || telemetryDirty;
+                               strcmp(gHermesXDirectHomeUiCache.date, homeDateBuf) != 0 || telemetryDirty;
         if (enteringDirectHomeOverlay || telemetryDirty || baseDirty) {
             LOG_DEBUG("[DirectHome] state enter=%d telemetryChanged=%d telemetryRefreshDue=%d telemetryDirty=%d baseDirty=%d "
                       "basePainted=%d meshPainted=%d skipUi=%d updateModal=%d showingNormal=%d",
@@ -17615,7 +17741,6 @@ int32_t Screen::runOnce()
             gHermesXDirectHomeUiCache.lastDogY = -1;
             gHermesXDirectHomeUiCache.lastDogW = 0;
             gHermesXDirectHomeUiCache.lastDogH = 0;
-            gHermesXDirectHomeUiCache.quoteSegment = 0xFF;
             gDirectHomeBasePainted = false;
             gDirectHomeMeshPainted = false;
             gDirectHomeOrbLastPulsePercent = 0xFF;
@@ -17640,6 +17765,7 @@ int32_t Screen::runOnce()
         if (canSkipUi) {
             skipUiUpdate = true;
         } else {
+            directHomeBaseRedrawRequested = true;
             gHermesXDirectHomeUiCache.valid = true;
             gHermesXDirectHomeUiCache.stealth = stealth;
             gHermesXDirectHomeUiCache.hasBattery = hasBattery;
@@ -17647,7 +17773,6 @@ int32_t Screen::runOnce()
             gHermesXDirectHomeUiCache.satCount = satCount;
             gHermesXDirectHomeUiCache.role = config.device.role;
             strlcpy(gHermesXDirectHomeUiCache.date, homeDateBuf, sizeof(gHermesXDirectHomeUiCache.date));
-            gHermesXDirectHomeUiCache.quoteSegment = homeQuoteSegment;
             gDirectHomeLastBaseRefreshMs = nowMs;
             forceDirectHomeClockRedraw = true;
         }
@@ -17664,7 +17789,6 @@ int32_t Screen::runOnce()
         gHermesXDirectHomeUiCache.lastDogY = -1;
         gHermesXDirectHomeUiCache.lastDogW = 0;
         gHermesXDirectHomeUiCache.lastDogH = 0;
-        gHermesXDirectHomeUiCache.quoteSegment = 0xFF;
         gDirectHomeBasePainted = false;
         gDirectHomeMeshPainted = false;
         gDirectHomeOrbLastPulsePercent = 0xFF;
@@ -17697,7 +17821,6 @@ int32_t Screen::runOnce()
         gHermesXDirectHomeUiCache.lastDogY = -1;
         gHermesXDirectHomeUiCache.lastDogW = 0;
         gHermesXDirectHomeUiCache.lastDogH = 0;
-        gHermesXDirectHomeUiCache.quoteSegment = 0xFF;
         gDirectHomeOrbLastPulsePercent = 0xFF;
         gDirectHomeOrbLastDrawMs = 0;
         gDirectHomeLastBaseRefreshMs = 0;
@@ -17819,6 +17942,12 @@ int32_t Screen::runOnce()
             ui->getUiState()->lastUpdate = 0;
         }
     }
+    if (directHomeBaseRedrawRequested && ui && ui->getUiState() && ui->getUiState()->frameState == FIXED) {
+        // The dog is rendered directly to TFT after the UI pass. Force the dirty Home base through
+        // OLEDDisplayUi's frame budget so basePainted can become true instead of waiting forever
+        // while the 60 FPS dog loop keeps running just ahead of the scheduled UI tick.
+        ui->getUiState()->lastUpdate = 0;
+    }
 #endif
 
     // this must be before the frameState == FIXED check, because we always
@@ -17840,6 +17969,9 @@ int32_t Screen::runOnce()
         gDirectGpsBasePainted = true;
     } else if (!onFixedGpsFrame) {
         gDirectGpsBasePainted = false;
+    }
+    if ((renderDirectHomeClock || renderDirectHomeDogOverlay) && uiRenderedThisTick) {
+        gDirectHomeBasePainted = true;
     }
     if (renderDirectHomeClock && kEnableDirectHomeOrbAnimation) {
         static constexpr uint32_t kOrbPulseCycleMs = 5000U;
@@ -17892,11 +18024,6 @@ int32_t Screen::runOnce()
             gDirectHomeOrbLastPulsePercent = pulsePercent;
             gDirectHomeOrbLastDrawMs = nowMs;
         }
-        if (uiRenderedThisTick) {
-            gDirectHomeBasePainted = true;
-        }
-    } else if (renderDirectHomeClock && uiRenderedThisTick) {
-        gDirectHomeBasePainted = true;
     }
     if (renderDirectHomeClock) {
         if (forceDirectHomeClockRedraw || !gHermesXDirectHomeUiCache.lastTimeValid ||
@@ -23808,6 +23935,24 @@ bool Screen::handleDirectMessageComposerInput(const InputEvent *event)
         }
     };
 
+    auto openBopomofoCandidates = [&]() {
+        if (!gDirectMessageComposerState.bpmf.composing()) {
+            return false;
+        }
+        gDirectMessageComposerState.bpmf.refresh();
+        if (!gDirectMessageComposerState.bpmf.hasCandidates()) {
+            gDirectMessageComposerState.toast = u8"沒有候選字";
+            gDirectMessageComposerState.toastUntilMs = millis() + 1200;
+            setFastFramerate();
+            return false;
+        }
+        gDirectMessageComposerState.candidateMode = true;
+        gDirectMessageComposerState.candidateCursor = 1;
+        setFastFramerate();
+        requestImmediateRedraw();
+        return true;
+    };
+
     const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
     const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
     const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
@@ -23822,36 +23967,6 @@ bool Screen::handleDirectMessageComposerInput(const InputEvent *event)
     const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
     const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
     const bool isRotary = event->source && strncmp(event->source, "rotEnc", 6) == 0;
-
-    if (isCancel || (!isRotary && (isLeft || isRight))) {
-        closeComposer();
-        return true;
-    }
-
-    if (event->kbchar >= 0x20 && event->kbchar <= 0x7E &&
-        event->kbchar != INPUT_BROKER_MSG_LEFT && event->kbchar != INPUT_BROKER_MSG_RIGHT &&
-        event->kbchar != INPUT_BROKER_MSG_UP && event->kbchar != INPUT_BROKER_MSG_DOWN) {
-        if (gDirectMessageComposerState.draft.length() < meshtastic_Constants_DATA_PAYLOAD_LEN) {
-            gDirectMessageComposerState.draft += event->kbchar;
-        }
-        setFastFramerate();
-        return true;
-    }
-
-    if (event->kbchar == 0x08 || event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK)) {
-        if (gDirectMessageComposerState.draft.length() > 0) {
-            gDirectMessageComposerState.draft.remove(gDirectMessageComposerState.draft.length() - 1);
-            setFastFramerate();
-            return true;
-        }
-        closeComposer();
-        return true;
-    }
-
-    if (event->kbchar == 0x0D || event->kbchar == 0x0A) {
-        sendDraft();
-        return true;
-    }
 
     int8_t navDir = 0;
     if (isRotary) {
@@ -23872,10 +23987,120 @@ bool Screen::handleDirectMessageComposerInput(const InputEvent *event)
         navDir = 1;
     }
 
+    if (gDirectMessageComposerState.candidateMode) {
+        const std::vector<std::string> &candidates = gDirectMessageComposerState.bpmf.candidates();
+        const int totalEntries = static_cast<int>(candidates.size()) + 1;
+        if (isCancel || event->inputEvent ==
+                            static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK) ||
+            (!isRotary && (isLeft || isRight))) {
+            gDirectMessageComposerState.candidateMode = false;
+            gDirectMessageComposerState.candidateCursor = 0;
+            setFastFramerate();
+            requestImmediateRedraw();
+            return true;
+        }
+        if (navDir != 0 && totalEntries > 0) {
+            int next = static_cast<int>(gDirectMessageComposerState.candidateCursor) + navDir;
+            next = (next + totalEntries) % totalEntries;
+            gDirectMessageComposerState.candidateCursor = static_cast<uint8_t>(next);
+            setFastFramerate();
+            return true;
+        }
+        if (isSelect || isPress || event->kbchar == 0x0D || event->kbchar == 0x0A) {
+            if (gDirectMessageComposerState.candidateCursor == 0) {
+                gDirectMessageComposerState.candidateMode = false;
+                setFastFramerate();
+                requestImmediateRedraw();
+                return true;
+            }
+            const size_t candidateIndex = gDirectMessageComposerState.candidateCursor - 1;
+            if (candidateIndex < candidates.size()) {
+                const std::string &candidate = candidates[candidateIndex];
+                if (gDirectMessageComposerState.draft.length() + candidate.length() >
+                    meshtastic_Constants_DATA_PAYLOAD_LEN) {
+                    gDirectMessageComposerState.candidateMode = false;
+                    gDirectMessageComposerState.toast = u8"訊息已達上限";
+                    gDirectMessageComposerState.toastUntilMs = millis() + 1200;
+                    setFastFramerate();
+                    return true;
+                }
+                const std::string committed = gDirectMessageComposerState.bpmf.select(candidateIndex);
+                gDirectMessageComposerState.draft += committed.c_str();
+            }
+            gDirectMessageComposerState.candidateMode = false;
+            gDirectMessageComposerState.candidateCursor = 0;
+            setFastFramerate();
+            requestImmediateRedraw();
+            return true;
+        }
+        return true;
+    }
+
+    if (isCancel || (!isRotary && (isLeft || isRight))) {
+        closeComposer();
+        return true;
+    }
+
+    if (event->kbchar >= 0x20 && event->kbchar <= 0x7E &&
+        event->kbchar != INPUT_BROKER_MSG_LEFT && event->kbchar != INPUT_BROKER_MSG_RIGHT &&
+        event->kbchar != INPUT_BROKER_MSG_UP && event->kbchar != INPUT_BROKER_MSG_DOWN) {
+        if (gDirectMessageComposerState.bopomofoMode) {
+            char key = static_cast<char>(event->kbchar);
+            if (key == ' ') {
+                if (gDirectMessageComposerState.bpmf.composing()) {
+                    gDirectMessageComposerState.bpmf.addSpace();
+                } else if (gDirectMessageComposerState.draft.length() < meshtastic_Constants_DATA_PAYLOAD_LEN) {
+                    gDirectMessageComposerState.draft += ' ';
+                }
+                setFastFramerate();
+                return true;
+            }
+            if (key >= 'A' && key <= 'Z') {
+                key = static_cast<char>(key - 'A' + 'a');
+            }
+            const hermesx_bpmf::HermesXBpmfSymbol *symbol = hermesx_bpmf::lookup_key(key);
+            if (symbol) {
+                gDirectMessageComposerState.bpmf.addSymbol(*symbol);
+            }
+            setFastFramerate();
+            return true;
+        }
+        if (gDirectMessageComposerState.draft.length() < meshtastic_Constants_DATA_PAYLOAD_LEN) {
+            gDirectMessageComposerState.draft += event->kbchar;
+        }
+        setFastFramerate();
+        return true;
+    }
+
+    if (event->kbchar == 0x08 || event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK)) {
+        if (gDirectMessageComposerState.bopomofoMode && gDirectMessageComposerState.bpmf.composing()) {
+            gDirectMessageComposerState.bpmf.backspace();
+            setFastFramerate();
+            return true;
+        }
+        if (gDirectMessageComposerState.draft.length() > 0) {
+            removeLastUtf8Character(gDirectMessageComposerState.draft);
+            setFastFramerate();
+            return true;
+        }
+        closeComposer();
+        return true;
+    }
+
+    if (event->kbchar == 0x0D || event->kbchar == 0x0A) {
+        if (gDirectMessageComposerState.bopomofoMode && gDirectMessageComposerState.bpmf.composing()) {
+            openBopomofoCandidates();
+        } else {
+            sendDraft();
+        }
+        return true;
+    }
+
     if (navDir != 0) {
+        const uint8_t *rowLengths = getDirectMessageKeyRowLengths();
         int totalKeys = 0;
         for (uint8_t row = 0; row < kDirectMessageKeyRowCount; ++row) {
-            totalKeys += kDirectMessageKeyRowLengths[row];
+            totalKeys += rowLengths[row];
         }
         int index = 0;
         for (uint8_t row = 0; row < kDirectMessageKeyRowCount; ++row) {
@@ -23883,12 +24108,12 @@ bool Screen::handleDirectMessageComposerInput(const InputEvent *event)
                 index += gDirectMessageComposerState.keyCol;
                 break;
             }
-            index += kDirectMessageKeyRowLengths[row];
+            index += rowLengths[row];
         }
         index = (index + navDir + totalKeys) % totalKeys;
         int remaining = index;
         for (uint8_t row = 0; row < kDirectMessageKeyRowCount; ++row) {
-            const uint8_t rowLen = kDirectMessageKeyRowLengths[row];
+            const uint8_t rowLen = rowLengths[row];
             if (remaining < rowLen) {
                 gDirectMessageComposerState.keyRow = row;
                 gDirectMessageComposerState.keyCol = remaining;
@@ -23906,18 +24131,48 @@ bool Screen::handleDirectMessageComposerInput(const InputEvent *event)
             return true;
         }
         if (strcmp(label, "OK") == 0) {
-            sendDraft();
+            if (gDirectMessageComposerState.bopomofoMode && gDirectMessageComposerState.bpmf.composing()) {
+                openBopomofoCandidates();
+            } else {
+                sendDraft();
+            }
         } else if (strcmp(label, "EXIT") == 0) {
             closeComposer();
         } else if (strcmp(label, "DEL") == 0) {
-            if (gDirectMessageComposerState.draft.length() > 0) {
-                gDirectMessageComposerState.draft.remove(gDirectMessageComposerState.draft.length() - 1);
+            if (gDirectMessageComposerState.bopomofoMode && gDirectMessageComposerState.bpmf.composing()) {
+                gDirectMessageComposerState.bpmf.backspace();
+            } else if (gDirectMessageComposerState.draft.length() > 0) {
+                removeLastUtf8Character(gDirectMessageComposerState.draft);
             }
         } else if (strcmp(label, "Aa") == 0) {
             gDirectMessageComposerState.lowercase = !gDirectMessageComposerState.lowercase;
+        } else if (strcmp(label, u8"˙") == 0) {
+            const hermesx_bpmf::HermesXBpmfSymbol *tone = hermesx_bpmf::tone5_symbol();
+            if (tone) {
+                gDirectMessageComposerState.bpmf.addSymbol(*tone);
+            }
+        } else if (strcmp(label, u8"中") == 0) {
+            gDirectMessageComposerState.bopomofoMode = true;
+            gDirectMessageComposerState.bpmf.reset();
+        } else if (strcmp(label, "EN") == 0) {
+            gDirectMessageComposerState.bopomofoMode = false;
+            gDirectMessageComposerState.bpmf.reset();
+            if (gDirectMessageComposerState.keyRow == kDirectMessageKeyRowCount - 1 &&
+                gDirectMessageComposerState.keyCol >= kDirectMessageKeyRowLengthsEnglish[kDirectMessageKeyRowCount - 1]) {
+                gDirectMessageComposerState.keyCol = kDirectMessageKeyRowLengthsEnglish[kDirectMessageKeyRowCount - 1] - 1;
+            }
         } else if (strcmp(label, "SP") == 0) {
-            if (gDirectMessageComposerState.draft.length() < meshtastic_Constants_DATA_PAYLOAD_LEN) {
+            if (gDirectMessageComposerState.bopomofoMode && gDirectMessageComposerState.bpmf.composing()) {
+                gDirectMessageComposerState.bpmf.addSpace();
+            } else if (gDirectMessageComposerState.draft.length() < meshtastic_Constants_DATA_PAYLOAD_LEN) {
                 gDirectMessageComposerState.draft += ' ';
+            }
+        } else if (gDirectMessageComposerState.bopomofoMode && gDirectMessageComposerState.keyRow < 4) {
+            const char key = kDirectMessageBopomofoScreenKeys[gDirectMessageComposerState.keyRow]
+                                                                [gDirectMessageComposerState.keyCol];
+            const hermesx_bpmf::HermesXBpmfSymbol *symbol = hermesx_bpmf::screen_symbol(key);
+            if (symbol) {
+                gDirectMessageComposerState.bpmf.addSymbol(*symbol);
             }
         } else if (gDirectMessageComposerState.draft.length() + strlen(label) <= meshtastic_Constants_DATA_PAYLOAD_LEN) {
             gDirectMessageComposerState.draft += label;
