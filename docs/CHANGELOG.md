@@ -2,6 +2,29 @@
 
 本文件為可對外發布版本的更新紀錄，整理 HermesX 韌體的重要功能更新、體驗調整與修正項目。
 
+## 2026-08-31
+
+### 版本準備：HXB_C0.4.0_20260831_2258
+
+- HermesX CIV 產品版號由 `HXB_C0.3.7` 升為 `HXB_C0.4.0`；`APP_VERSION` 仍保留 Meshtastic 相容版本，OTA 與畫面顯示使用 HermesX 產品版號。
+- 完成 HermesX UI 架構重整：`Screen` 保留上游畫面生命週期、硬體取樣、切頁與副作用 dispatch，各功能的狀態、輸入判斷及純繪圖移入獨立元件。
+- 新增 `HermesXUiInputRouter` 作為統一輸入 ownership，依 overlay 與頁面優先權只選擇一個輸入目標，避免底層頁面同時收到旋鈕或按鍵事件。
+- Message、TraceRoute、Online／Finder／GROUP Node Browser、FastSetup、Home、GPS、TAK Mode、Low Memory、Emergency Confirm 與 Rotary Lock 已建立 Model／Controller／Renderer 或對應 Presenter／StateCollector 邊界。
+- Home／GPS Direct TFT 路徑拆出狀態收集、cache/model、controller、presenter、renderer、Neon workspace 與共用繪圖 primitive，`Screen` 僅負責資料來源及顯示生命週期整合。
+- 新增 `HermesXPreferences` 與 `HermesXTraceRouteBindings` service，將 UI 偏好與 TraceRoute 綁定持久化移出 renderer／畫面狀態。
+- Emergency Confirm 的可見狀態、倒數與取消 latch，以及 Rotary Lock 的鎖定值、popup、選擇、timeout 與輸入轉換均已移出 `Screen`；`ButtonThread` 與旋鈕驅動的既有公開 API 維持不變。
+- `Screen.cpp` 目前收斂至 15,031 行；仍保留上游 Meshtastic 多板型畫面框架、全域資料取樣、硬體副作用與 HermesX 整合膠水。
+- 新增 `docs/HermesX_新版專案架構.md`，記錄分層、輸入優先權、功能檔案對照、服務邊界與後續擴充規則。
+
+### 驗證
+
+- `platformio run -e heltec-wireless-tracker -j 4` 完整建置成功。
+- 韌體內嵌 `APP_HERMES_VERSION`：`HXB_C0.4.0_20260831_2258`。
+- RAM 34.7%（113,560 / 327,680 bytes）；Flash 90.8%（3,033,709 / 3,342,336 bytes）。
+- OTA SHA256：`654c80c622041db00275c5984fd9a5d1d6ee46dec4ba4dcc850acf20411eea77`。
+- Factory SHA256：`01802f8fc6e49e5eb118e333802157868a3018963e7fea9e386b9987d4038033`。
+- Emergency Confirm 與 Rotary Lock 的新元件已確認出現在最終 `firmware.elf` 符號表；實機初步驗證回報正常。
+
 ## 2026-07-15
 
 ### 發布：HXB_C0.3.7_20260715_0142

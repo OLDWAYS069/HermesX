@@ -53,6 +53,7 @@ class Screen
 #include "../configuration.h"
 #include "gps/GeoCoord.h"
 #include "graphics/ScreenFonts.h"
+#include "graphics/hermesx_ui/HermesXFastSetupUiModel.h"
 
 #ifdef USE_ST7567
 #include <ST7567Wire.h>
@@ -276,11 +277,11 @@ class Screen : public concurrency::OSThread
     void showEmergencyConfirmPopup(uint32_t remainingSec);
     void updateEmergencyConfirmPopup(uint32_t remainingSec);
     void hideEmergencyConfirmPopup();
-    bool isEmergencyConfirmPopupVisible() const { return hermesEmergencyConfirmVisible; }
+    bool isEmergencyConfirmPopupVisible() const;
     bool consumeEmergencyConfirmCancelRequest();
     void setRotaryLockState(bool locked);
-    bool isRotaryLocked() const { return hermesRotaryLocked; }
-    bool isRotaryLockPopupVisible() const { return hermesRotaryLockPopupVisible; }
+    bool isRotaryLocked() const;
+    bool isRotaryLockPopupVisible() const;
     bool isHermesXMainPageActive() const;
     bool isHermesFastSetupActive() const;
     bool isHermesXActionPageActive() const;
@@ -295,15 +296,11 @@ class Screen : public concurrency::OSThread
     bool isGroupNodeListPageActive() const;
     bool isGroupNodeDetailPageActive() const;
     bool isTakModePageActive() const;
+    bool isFinderPulseSendingVisible() const;
     bool isHermesInputOverlayActive() const;
     bool shouldBlockPowerHoldForTraceRouteInput() const;
     bool shouldAllowRotaryLockLongPress() const;
     bool shouldSuppressRotaryShortPressAfterHold(uint32_t heldMs) const;
-    bool isFinderPulseConfirmVisible() const { return hermesFinderPulseConfirmVisible; }
-    bool isFinderPulseSendingVisible() const { return hermesFinderPulseSendingVisible; }
-    uint8_t getFinderPulseConfirmSelected() const { return hermesFinderPulseConfirmSelected; }
-    uint32_t getFinderPulseConfirmShownAtMs() const { return hermesFinderPulseConfirmShownAtMs; }
-    uint32_t getFinderPulseSendingShownAtMs() const { return hermesFinderPulseSendingShownAtMs; }
     uint8_t getCurrentFrameIndexForDebug() const;
     uint8_t getRecentListFrameIndexForDebug() const;
     uint8_t getRecentDetailFrameIndexForDebug() const;
@@ -750,7 +747,6 @@ class Screen : public concurrency::OSThread
     bool handleHermesFastSetupInput(const InputEvent *event);
     static void drawHermesXMainFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     void drawHermesXMain(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
-    void drawLowMemoryProtectionFrame(OLEDDisplay *display, OLEDDisplayUiState *state);
     static void drawEmergencyConfirmOverlay(OLEDDisplay *display, OLEDDisplayUiState *state);
     static void drawRotaryLockOverlay(OLEDDisplay *display, OLEDDisplayUiState *state);
     static void drawHermesXActionFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
@@ -786,7 +782,6 @@ class Screen : public concurrency::OSThread
     bool handleGroupNodeDetailInput(const InputEvent *event);
     bool handleTakModeInput(const InputEvent *event);
     bool handleDirectMessageComposerInput(const InputEvent *event);
-    bool handleIncomingNodePopupInput(const InputEvent *event);
     bool handleTextMessagePopupInput(const InputEvent *event);
     bool handleSetupDetailPopupInput(const InputEvent *event);
     bool handleTraceRoutePopupInput(const InputEvent *event);
@@ -836,66 +831,6 @@ class Screen : public concurrency::OSThread
 
     bool hasCompass = false;
 
-    enum class HermesFastSetupPage : uint8_t {
-        Entry,
-        Root,
-        EmacMenu,
-        EmacEmInfoMenu,
-        EmacEmInfoIntervalSelect,
-        EmacHeartbeatIntervalSelect,
-        EmacOfflineThresholdSelect,
-        EmacBatteryIncludeSelect,
-        UiMenu,
-        UiBrightnessSelect,
-        UiScreenSleepSelect,
-        UiTimezoneSelect,
-        UiRotarySwapSelect,
-        NodeMenu,
-        UpdateIntro,
-        UpdateExitPending,
-        UpdateMenu,
-        UpdateCheckMenu,
-        UpdateCheckFlowPage,
-        UpdateDetailPopup,
-        UpdateRuntimeMenu,
-        UpdateWifiConfigMenu,
-        UpdateWifiMenu,
-        UpdateUploadMenu,
-        UpdateApplyMenu,
-        UpdateWifiSsidEdit,
-        UpdateWifiPasswordEdit,
-        DeviceInfoMenu,
-        DeviceInfoShortNameEdit,
-        DeviceInfoLongNameEdit,
-        DeviceInfoBroadcastSelect,
-        NodeDatabaseMenu,
-        NodeDatabaseResetSelect,
-        MqttMenu,
-        MqttMapReportMenu,
-        MqttMapPrecisionSelect,
-        MqttMapPublishSelect,
-        ChannelMenu,
-        ChannelDetailMenu,
-        ChannelPrecisionSelect,
-        PowerMenu,
-        PowerGuardVoltageSelect,
-        PassEdit,
-        FrequencyEdit,
-        PassShow,
-        LoraMenu,
-        LoraRoleSelect,
-        LoraPresetSelect,
-        LoraRegionSelect,
-        LoraChannelSlotSelect,
-        CannedMenu,
-        CannedChannelSelect,
-        GpsMenu,
-        GpsUpdateSelect,
-        GpsBroadcastSelect,
-        GpsSmartDistanceSelect,
-        GpsSmartIntervalSelect,
-    };
-    HermesFastSetupPage hermesSetupPage = HermesFastSetupPage::Entry;
     enum class HermesFinderUiMode : uint8_t {
         None,
         Menu,
@@ -911,11 +846,6 @@ class Screen : public concurrency::OSThread
         Check,
         Download,
     };
-    int16_t hermesSetupSelected = 0;
-    int16_t hermesSetupOffset = 0;
-    HermesFastSetupPage hermesSetupReturnPage = HermesFastSetupPage::Root;
-    uint32_t hermesSetupLastNavAtMs = 0;
-    int8_t hermesSetupLastNavDir = 0;
     uint32_t hermesUpdateIntroStartedAtMs = 0;
     int8_t hermesActionSelected = 0;
     bool hermesActionFeatureMenuActive = false;
@@ -925,27 +855,8 @@ class Screen : public concurrency::OSThread
     bool hermesActionStealthConfirmVisible = false;
     uint8_t hermesActionStealthConfirmSelected = 0; // 0=No, 1=Yes
     uint32_t hermesActionStealthConfirmShownAtMs = 0;
-    bool hermesEmergencyConfirmVisible = false;
-    bool hermesEmergencyConfirmCancelRequested = false;
-    uint32_t hermesEmergencyConfirmRemainingSec = 0;
-    bool hermesRotaryLocked = false;
-    bool hermesRotaryLockPopupVisible = false;
-    bool hermesRotaryLockPopupSelectedLocked = false;
-    uint32_t hermesRotaryLockPopupShownAtMs = 0;
     HermesFinderUiMode hermesFinderUiMode = HermesFinderUiMode::None;
     uint8_t hermesFinderMenuSelected = 0;
-    bool hermesFinderPulseConfirmVisible = false;
-    uint8_t hermesFinderPulseConfirmSelected = 0; // 0=Cancel, 1=Broadcast
-    uint32_t hermesFinderPulseConfirmShownAtMs = 0;
-    bool hermesFinderPulseDispatched = false;
-    bool hermesFinderPulseSendingVisible = false;
-    uint32_t hermesFinderPulseSendingShownAtMs = 0;
-    bool lowMemoryReminderVisible = false;
-    uint8_t lowMemoryReminderSelected = 0; // 0=exit, 1=clean nodes
-    uint32_t lowMemoryReminderSuppressUntilMs = 0;
-    uint32_t lowMemoryReminderTriggerFree = 0;
-    uint32_t lowMemoryReminderTriggerLargest = 0;
-    char lowMemoryProtectionStatus[48] = "";
     uint32_t hermesSetupNodeCleanupAgeSeconds = 12U * 60U * 60U;
     bool hasUnreadTextMessage = false;
     uint8_t notifyingTextMessageFrame = UINT8_MAX;

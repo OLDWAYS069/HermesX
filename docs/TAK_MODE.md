@@ -1,6 +1,6 @@
 # TAK MODE
 
-本文描述 HermesX C0.3.7 CIV 版目前的 `TAK MODE` 行為。TAK MODE 是面向 TAK / ATAK 現場使用的裝置模式，重點是降低 LoRa 阻塞風險、讓功率調整自動化，並把 GROUP 配對與尋人入口收斂到同一個現場操作流程。`TAK Tracker` role 也共用這套 HermesX UI、功能與頻道設定，但保留 upstream `TAK_TRACKER` 的追蹤器角色語意。
+本文描述 HermesX C0.4.0 CIV 版目前的 `TAK MODE` 行為。TAK MODE 是面向 TAK / ATAK 現場使用的裝置模式，重點是降低 LoRa 阻塞風險、讓功率調整自動化，並把 GROUP 配對與尋人入口收斂到同一個現場操作流程。`TAK Tracker` role 也共用這套 HermesX UI、功能與頻道設定，但保留 upstream `TAK_TRACKER` 的追蹤器角色語意。
 
 ## TAK Tracker 共用範圍
 

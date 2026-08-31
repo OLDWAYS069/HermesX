@@ -1,15 +1,16 @@
 ㄋ# HermesX Documentation Index
 
-> 文件目前以 `HermesX_C0.3.7` 的 `CIV` 版為主；此分支由 `HermesX_C0.3.2` 升版，閱讀時請以目前分支設定為準。
+> 文件目前以 `HXB_C0.4.0` 的 `CIV` 版為主；工作分支仍沿用 `HermesX_C0.3.7`，閱讀時請以目前 build flags 為準。
 
 | 類型 | 檔名 | 說明 |
 |------|------|------|
-| 📌 分支 | HermesX_C0.3.7 (`CIV`) | 由 `HermesX_C0.3.2` 升版，關閉 EMAC，保留 GROUP/尋人 |
+| 📌 版本 | HXB_C0.4.0 (`CIV`) | 架構重整版；關閉 EMAC，保留 GROUP/尋人 |
 | 🔀 版本切換 | VERSION_BRANCHES.md | `GOV` / `CIV` 分支、版號與 build flags 對照 |
 | 📘 規格 | REF_prd.md | 需求規格與驗收條件 |
 | 📗 狀態 | REF_status.md | 開發進度與議題 |
 | 🧭 協議狀態 | REF_30211_status.md | 302.1.1 Core / Extension 實作矩陣 |
 | ⚙️ 技術 | REF_techspec.md | 命名、模組、硬體規範 |
+| 🏗️ 架構 | HermesX_新版專案架構.md | 新版 UI 分層、統一輸入路由、服務邊界與擴充規則 |
 | 📍 路由 | TraceRoute.md | TraceRoute 綁定節點、快速 TR 與解除綁定操作 |
 | 🧠 議題 | ISSUE_neon_memory_pressure_2026-03-20.md | HermesX TFT/neon 記憶體壓力調查、量測結果與優化紀錄 |
 | 🆘 緊急模式 | REF_EmergencyMode.md | Emergency Mode 規格（302.1 架構） |

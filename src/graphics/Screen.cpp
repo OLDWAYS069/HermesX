@@ -45,10 +45,52 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "error.h"
 #include "gps/GeoCoord.h"
 #include "modules/HermesEmUiModule.h"
+#include "modules/HermesXTraceRouteBindings.h"
 #include "gps/RTC.h"
 #include "graphics/ScreenFonts.h"
-#include "graphics/fonts/PattanakarnClock32.h"
-#include "graphics/hermesx_input/HermesXBpmfEngine.h"
+#include "graphics/hermesx_ui/HermesXDirectMessageComposer.h"
+#include "graphics/hermesx_ui/HermesXDetailPopupController.h"
+#include "graphics/hermesx_ui/HermesXDetailPopupModel.h"
+#include "graphics/hermesx_ui/HermesXEmergencyConfirmUiController.h"
+#include "graphics/hermesx_ui/HermesXEmergencyConfirmUiModel.h"
+#include "graphics/hermesx_ui/HermesXEmergencyConfirmUiRenderer.h"
+#include "graphics/hermesx_ui/HermesXFastSetupUiController.h"
+#include "graphics/hermesx_ui/HermesXFastSetupUiModel.h"
+#include "graphics/hermesx_ui/HermesXFastSetupUiRenderer.h"
+#include "graphics/hermesx_ui/HermesXHomeUiController.h"
+#include "graphics/hermesx_ui/HermesXHomeDirectPresenter.h"
+#include "graphics/hermesx_ui/HermesXHomeUiModel.h"
+#include "graphics/hermesx_ui/HermesXHomeStateCollector.h"
+#include "graphics/hermesx_ui/HermesXHomeUiRenderer.h"
+#include "graphics/hermesx_ui/HermesXGpsDirectPresenter.h"
+#include "graphics/hermesx_ui/HermesXGpsDirectRenderer.h"
+#include "graphics/hermesx_ui/HermesXGpsStateCollector.h"
+#include "graphics/hermesx_ui/HermesXGpsUiController.h"
+#include "graphics/hermesx_ui/HermesXGpsUiModel.h"
+#include "graphics/hermesx_ui/HermesXGpsUiRenderer.h"
+#include "graphics/hermesx_ui/HermesXMessageUiController.h"
+#include "graphics/hermesx_ui/HermesXMessageUiModel.h"
+#include "graphics/hermesx_ui/HermesXMessageUiRenderer.h"
+#include "graphics/hermesx_ui/HermesXLowMemoryUiController.h"
+#include "graphics/hermesx_ui/HermesXLowMemoryUiModel.h"
+#include "graphics/hermesx_ui/HermesXLowMemoryUiRenderer.h"
+#include "graphics/hermesx_ui/HermesXRotaryLockUiController.h"
+#include "graphics/hermesx_ui/HermesXRotaryLockUiModel.h"
+#include "graphics/hermesx_ui/HermesXRotaryLockUiRenderer.h"
+#include "graphics/hermesx_ui/HermesXNeonWorkspace.h"
+#include "graphics/hermesx_ui/HermesXPattanakarnNeonFont.h"
+#include "graphics/hermesx_ui/HermesXNodeBrowserDataSource.h"
+#include "graphics/hermesx_ui/HermesXNodeBrowserUiController.h"
+#include "graphics/hermesx_ui/HermesXNodeBrowserUiModel.h"
+#include "graphics/hermesx_ui/HermesXNodeBrowserUiRenderer.h"
+#include "graphics/hermesx_ui/HermesXTakModeUiController.h"
+#include "graphics/hermesx_ui/HermesXTakModeUiModel.h"
+#include "graphics/hermesx_ui/HermesXTakModeUiRenderer.h"
+#include "graphics/hermesx_ui/HermesXTextLayout.h"
+#include "graphics/hermesx_ui/HermesXTraceRouteUiController.h"
+#include "graphics/hermesx_ui/HermesXTraceRouteUiModel.h"
+#include "graphics/hermesx_ui/HermesXTraceRouteUiRenderer.h"
+#include "graphics/hermesx_ui/HermesXUiInputRouter.h"
 // --- HermesX Remove TFT fast-path START
 #include "graphics/fonts/HermesX_zh/HermesX_CN12.h"
 #include "HeapDebug.h"
@@ -83,6 +125,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "modules/HermesXBatteryProtection.h"
 #include "modules/LighthouseModule.h"
 #include "modules/HermesXInterfaceModule.h"
+#include "modules/HermesXPreferences.h"
 #include "modules/NodeInfoModule.h"
 #include "modules/HermesXUpdateManager.h"
 #include "modules/TextMessageModule.h"
@@ -121,10 +164,17 @@ using namespace meshtastic; /** @todo remove */
 namespace graphics
 {
 
+using HermesXTextLayout::copyUtf8Snippet;
+using HermesXTextLayout::drawLargeMixedLine;
+using HermesXTextLayout::drawMixedSingleLineBounded;
+using HermesXTextLayout::drawSizedMixedLine;
+using HermesXTextLayout::drawVisibleWrappedLines;
+using HermesXTextLayout::measureMixedWrappedTextHeight;
+
+static auto &gHermesFastSetupNavigation = HermesXFastSetupUiModel::instance().navigation();
+
 // This means the *visible* area (sh1106 can address 132, but shows 128 for example)
 #define IDLE_FRAMERATE 1 // in fps
-#define DIRECT_HOME_CLOCK_FRAMERATE 4 // in fps
-#define DIRECT_HOME_DOG_FRAMERATE 15 // in fps
 
 // DEBUG
 #define NUM_EXTRA_FRAMES 21 // HermesX action pages + text/debug/system frames
@@ -137,17 +187,6 @@ static uint32_t targetFramerate = IDLE_FRAMERATE;
 static uint32_t fastUntilMs = 0;
 #if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
     defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
-struct HermesFastSetupTftPaletteState {
-    const OLEDDisplay *display = nullptr;
-    int16_t width = 0;
-    int16_t height = 0;
-    int itemCount = -1;
-    int selectedIndex = -1;
-    int listOffset = -1;
-    bool showToast = false;
-    bool valid = false;
-};
-static HermesFastSetupTftPaletteState hermesFastSetupTftPaletteState;
 static bool hermesFastSetupTftPaletteActive = false;
 #endif
 
@@ -192,7 +231,7 @@ static bool heartbeat = false;
 
 #define getStringCenteredX(s) ((SCREEN_WIDTH - display->getStringWidth(s)) / 2)
 
-static bool supportsDirectTftClockRendering(OLEDDisplay *display);
+static bool supportsDirectTftOverlayRendering(OLEDDisplay *display);
 
 // Check if the display can render a string (detect special chars; emoji)
 static bool haveGlyphs(const char *str)
@@ -216,35 +255,6 @@ static bool haveGlyphs(const char *str)
 
     LOG_DEBUG("haveGlyphs=%d", have);
     return have;
-}
-
-static void drawMixedRightAligned(OLEDDisplay *display, int16_t rightX, int16_t y, const char *text, int lineHeight)
-{
-    if (!display || !text)
-        return;
-
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-
-    const char *lineStart = text;
-    int lineIndex = 0;
-    while (true) {
-        const char *newline = strchr(lineStart, '\n');
-        const size_t length = newline ? static_cast<size_t>(newline - lineStart) : strlen(lineStart);
-        String lineString(lineStart, length);
-        const int lineWidth =
-            HermesX_zh::stringAdvance(lineString.c_str(), HermesX_zh::GLYPH_WIDTH, display);
-        const int16_t drawX = rightX - lineWidth;
-        if (screen)
-            screen->drawMixed(display, drawX, y + lineIndex * lineHeight, lineString.c_str(),
-                              HermesX_zh::GLYPH_WIDTH, lineHeight);
-        else
-            HermesX_zh::drawMixed(*display, drawX, y + lineIndex * lineHeight, lineString.c_str(),
-                                  HermesX_zh::GLYPH_WIDTH, lineHeight, nullptr);
-        if (!newline)
-            break;
-        lineStart = newline + 1;
-        ++lineIndex;
-    }
 }
 
 /**
@@ -446,7 +456,7 @@ static void drawHermesXMenuFooterOverlay(OLEDDisplay *display, OLEDDisplayUiStat
     if (!display || !state || !screen) {
         return;
     }
-    if (supportsDirectTftClockRendering(display)) {
+    if (supportsDirectTftOverlayRendering(display)) {
         // Compact direct-TFT pages (Home/GPS poster) are full-frame visuals; skip footer shortcut overlay
         // to avoid persistent top-right artifacts between transitions.
         return;
@@ -673,217 +683,37 @@ static void drawBattery(OLEDDisplay *display, int16_t x, int16_t y, uint8_t *img
     display->drawFastImage(x, y, 16, 8, imgBuffer);
 }
 
-static uint8_t estimateBatteryPercentFromVoltageMv(int batteryVoltageMv)
-{
-    // Simple single-cell Li-ion estimate: 3.30V = empty, 4.20V = full.
-    constexpr int kBatteryEmptyMv = 3300;
-    constexpr int kBatteryFullMv = 4200;
-
-    if (batteryVoltageMv <= kBatteryEmptyMv) {
-        return 0;
-    }
-    if (batteryVoltageMv >= kBatteryFullMv) {
-        return 100;
-    }
-
-    const int scaled = ((batteryVoltageMv - kBatteryEmptyMv) * 100) / (kBatteryFullMv - kBatteryEmptyMv);
-    if (scaled < 0) {
-        return 0;
-    }
-    if (scaled > 100) {
-        return 100;
-    }
-    return static_cast<uint8_t>(scaled);
-}
-
-struct HermesXBatteryCache {
-    bool valid = false;
-    int voltageMv = 0;
-    uint8_t percent = 0;
-};
-static HermesXBatteryCache gHermesXBatteryCache;
-static bool supportsDirectTftClockRendering(OLEDDisplay *display);
-static int16_t measurePattanakarnClockText(const char *text);
+static bool supportsDirectTftOverlayRendering(OLEDDisplay *display);
 static bool isStealthModeActive();
-static uint16_t mapDirectGpsWarmLayerColor(uint8_t value);
 static bool shouldShowHermesXHomeFrame();
 static bool shouldShowHermesXGpsFrame();
-struct DirectDrawClipRect {
-    bool enabled = false;
-    int16_t minX = 0;
-    int16_t maxX = -1;
-    int16_t minY = 0;
-    int16_t maxY = -1;
-};
-static bool makeDirectDrawClipRect(int16_t x,
-                                   int16_t y,
-                                   int16_t w,
-                                   int16_t h,
-                                   int16_t displayW,
-                                   int16_t displayH,
-                                   DirectDrawClipRect &outClip);
-static void directFillRect565Clipped(TFTDisplay *tft,
-                                     int16_t displayW,
-                                     int16_t displayH,
-                                     int16_t x,
-                                     int16_t y,
-                                     int16_t w,
-                                     int16_t h,
-                                     uint16_t color,
-                                     const DirectDrawClipRect *clip);
-static void directDrawThickLine565Clipped(TFTDisplay *tft,
-                                          int16_t displayW,
-                                          int16_t displayH,
-                                          int16_t x0,
-                                          int16_t y0,
-                                          int16_t x1,
-                                          int16_t y1,
-                                          int16_t thickness,
-                                          uint16_t color,
-                                          const DirectDrawClipRect *clip);
-static std::vector<String> buildMixedWrappedLines(OLEDDisplay *display,
-                                                  const char *text,
-                                                  int16_t maxWidth,
-                                                  int advanceX);
-
-struct HermesXDirectHomeUiCache {
-    bool valid = false;
-    bool stealth = false;
-    bool hasBattery = false;
-    uint8_t batteryPercent = 0;
-    uint8_t satCount = 0;
-    meshtastic_Config_DeviceConfig_Role role = meshtastic_Config_DeviceConfig_Role_CLIENT;
-    char date[24] = {0};
-    bool lastTimeValid = false;
-    char lastTime[16] = {0};
-    bool lastDogValid = false;
-    uint16_t lastDogFrame = 0xFFFF;
-    uint8_t lastDogPose = 0xFF;
-    int16_t lastDogX = -1;
-    int16_t lastDogY = -1;
-    int16_t lastDogW = 0;
-    int16_t lastDogH = 0;
-};
-static HermesXDirectHomeUiCache gHermesXDirectHomeUiCache;
-static bool gDirectHomeClockWasVisible = false;
-static bool gDirectHomeDogWasVisible = false;
-static uint8_t gDirectHomeDogPose = 0;
-static uint8_t gDirectHomeDogEntryCount = 0;
-static uint8_t gHermesXHomeQuoteIndex = 0;
-static bool gHermesXHomeQuoteActive = false;
-static bool gDirectGpsPosterWasVisible = false;
-static bool gIncomingNodePopupWasVisible = false;
-struct DirectIncomingNodePopupRenderCache {
-    bool valid = false;
-    uint32_t nodeNum = 0;
-    int16_t width = 0;
-    int16_t height = 0;
-};
-static DirectIncomingNodePopupRenderCache gDirectIncomingNodePopupRenderCache;
-static bool gDirectHomeBasePainted = false;
-static bool gDirectHomeMeshPainted = false;
-static uint8_t gDirectHomeOrbLastPulsePercent = 0xFF;
-static uint32_t gDirectHomeOrbLastDrawMs = 0;
-static uint32_t gDirectHomeLastBaseRefreshMs = 0;
-static constexpr uint32_t kDirectHomeBaseRefreshMinMs = 3000;
-static constexpr uint32_t kDirectHomeOrbMinFrameIntervalMs = 90;
-// Stability A/B switch: disable Home right-bottom orb animation path to isolate panic source.
-static constexpr bool kEnableDirectHomeOrbAnimation = false;
 // Emergency guard: keep GPS direct-TFT neon post-render disabled until boot stability is verified.
 static constexpr bool kEnableDirectGpsPosterTitleNeon = true;
 static constexpr bool kEnableDirectGpsPosterDecorNeon = true;
 static constexpr bool kEnableDirectGpsPosterCoordinateNeon = true;
 
-struct DirectGpsPosterRenderCache {
-    bool valid = false;
-    bool gpsEnabled = false;
-    bool gpsConnected = false;
-    bool gpsHasLock = false;
-    uint8_t satCount = 0;
-    bool fixedPosition = false;
-    bool hasCoordinates = false;
-    int32_t latitudeE7 = INT32_MIN;
-    int32_t longitudeE7 = INT32_MIN;
-    int32_t altitude = INT32_MIN;
-    int16_t width = 0;
-    int16_t height = 0;
-};
-static DirectGpsPosterRenderCache gDirectGpsPosterRenderCache;
-static bool gDirectGpsNeedsFullFrameAfterSwitch = false;
-static bool gDirectGpsBasePainted = false;
-static uint8_t gDirectLastFrameIndex = 0xFF;
 static bool gNormalFramesInitializedAfterBoot = false;
 static constexpr uint32_t kScreenWakeInputGuardMs = 220;
 
 static void invalidateDirectTftWakeCaches()
 {
-    gHermesXDirectHomeUiCache.valid = false;
-    gHermesXDirectHomeUiCache.lastTimeValid = false;
-    gHermesXDirectHomeUiCache.lastDogValid = false;
-    gHermesXDirectHomeUiCache.lastDogFrame = 0xFFFF;
-    gHermesXDirectHomeUiCache.lastDogPose = 0xFF;
-    gHermesXDirectHomeUiCache.lastDogX = -1;
-    gHermesXDirectHomeUiCache.lastDogY = -1;
-    gHermesXDirectHomeUiCache.lastDogW = 0;
-    gHermesXDirectHomeUiCache.lastDogH = 0;
-    gDirectHomeClockWasVisible = false;
-    gDirectHomeDogWasVisible = false;
-    gDirectHomeDogPose = 0;
-    gDirectHomeDogEntryCount = 0;
-    gHermesXHomeQuoteActive = false;
-    gDirectGpsPosterWasVisible = false;
-    gIncomingNodePopupWasVisible = false;
-    gDirectIncomingNodePopupRenderCache.valid = false;
-    gDirectHomeBasePainted = false;
-    gDirectHomeMeshPainted = false;
-    gDirectHomeOrbLastPulsePercent = 0xFF;
-    gDirectHomeOrbLastDrawMs = 0;
-    gDirectHomeLastBaseRefreshMs = 0;
-    gDirectGpsPosterRenderCache.valid = false;
-    gDirectGpsNeedsFullFrameAfterSwitch = true;
-    gDirectGpsBasePainted = false;
-    gDirectLastFrameIndex = 0xFF;
+    HermesXHomeUiController::instance().resetForWake();
+    HermesXHomeUiRenderer::resetQuote();
+    HermesXGpsUiController::instance().resetForWake();
 }
 
-static constexpr int16_t kDirectNeonClockGlowRadiusOuter = 5;
-static constexpr int16_t kDirectNeonClockMargin = kDirectNeonClockGlowRadiusOuter + 1;
-static constexpr int16_t kDirectNeonClockGlyphMaxW = 21;
-static constexpr int16_t kDirectNeonClockGlyphTileW = kDirectNeonClockGlyphMaxW + (kDirectNeonClockMargin * 2);
-static constexpr int16_t kDirectNeonClockGlyphTileH = PattanakarnClock32::kGlyphHeight + (kDirectNeonClockMargin * 2);
-static constexpr int16_t kDirectNeonClockSlotCount = 8;
-static constexpr int16_t kDirectNeonClockMaxRegionW = (kDirectNeonClockGlyphMaxW * 6) + 14 + (kDirectNeonClockMargin * 2);
-static constexpr int16_t kDirectNeonClockMaxRegionH = PattanakarnClock32::kGlyphHeight + (kDirectNeonClockMargin * 2);
-// GPS neon text uses a smaller region than the Home clock, but both share one scratch map.
-// Keep the shared map large enough for the larger Home clock region to avoid overruns.
-static constexpr int16_t kDirectNeonTextMaxW = 128;
-static constexpr int16_t kDirectNeonTextMaxH = 32;
-static constexpr int16_t kDirectNeonSharedMaxW =
-    (kDirectNeonClockMaxRegionW > kDirectNeonTextMaxW) ? kDirectNeonClockMaxRegionW : kDirectNeonTextMaxW;
-static constexpr int16_t kDirectNeonSharedMaxH =
-    (kDirectNeonClockMaxRegionH > kDirectNeonTextMaxH) ? kDirectNeonClockMaxRegionH : kDirectNeonTextMaxH;
-static constexpr size_t kDirectNeonSharedComposedLayerMapSize =
-    static_cast<size_t>(kDirectNeonSharedMaxW) * static_cast<size_t>(kDirectNeonSharedMaxH);
+static constexpr int16_t kDirectNeonClockGlyphTileW = HermesXNeonClockGlyphTileWidth;
+static constexpr int16_t kDirectNeonClockGlyphTileH = HermesXNeonClockGlyphTileHeight;
+static constexpr int16_t kDirectNeonClockMaxRegionW = HermesXHomeUiRenderer::NeonClockMaxRegionWidth;
+static constexpr int16_t kDirectNeonClockMaxRegionH = HermesXHomeUiRenderer::NeonClockMaxRegionHeight;
 
-struct DirectNeonClockGlyphCache {
-    bool valid = false;
-    char ch = '\0';
-    uint8_t coreW = 0;
-    uint8_t tileW = 0;
-    uint8_t tileH = 0;
-    uint8_t layerMap[kDirectNeonClockGlyphTileW * kDirectNeonClockGlyphTileH] = {0};
-};
-
-static DirectNeonClockGlyphCache *gDirectNeonClockGlyphCache = nullptr;
-static uint32_t gDirectNeonClockGlyphCacheBuildCount = 0;
-// Home clock and GPS neon text never render concurrently, so they can share one scratch map.
-static uint8_t *gDirectNeonSharedComposedLayerMap = nullptr;
-static uint8_t *gDirectNeonClockPreviousComposedLayerMap = nullptr;
-static uint8_t *gDirectNeonClockFullMask = nullptr;
-static uint8_t *gDirectNeonClockCoreMask = nullptr;
-static uint8_t *gDirectGpsTitleFullMask = nullptr;
-static uint8_t *gDirectGpsTitleLayerMap = nullptr;
-static uint32_t gDirectNeonBufferGeneration = 0;
 static bool gLowMemoryProtectionActive = false;
+static auto &gEmergencyConfirmUiModel = graphics::HermesXEmergencyConfirmUiModel::instance();
+static auto &gEmergencyConfirmUiState = gEmergencyConfirmUiModel.state();
+static auto &gLowMemoryUiModel = graphics::HermesXLowMemoryUiModel::instance();
+static auto &gLowMemoryUiState = gLowMemoryUiModel.state();
+static auto &gRotaryLockUiModel = graphics::HermesXRotaryLockUiModel::instance();
+static auto &gRotaryLockUiState = gRotaryLockUiModel.state();
 
 constexpr uint32_t kLowMemoryReminderFreeThreshold = 6 * 1024;
 constexpr uint32_t kLowMemoryReminderLargestThreshold = 4 * 1024;
@@ -902,46 +732,7 @@ static bool shouldKeepDirectNeonBuffers()
 
 static void freeDirectNeonBuffers()
 {
-    bool freedAny = false;
-    if (gDirectNeonClockGlyphCache) {
-        free(gDirectNeonClockGlyphCache);
-        gDirectNeonClockGlyphCache = nullptr;
-        freedAny = true;
-    }
-    if (gDirectNeonSharedComposedLayerMap) {
-        free(gDirectNeonSharedComposedLayerMap);
-        gDirectNeonSharedComposedLayerMap = nullptr;
-        freedAny = true;
-    }
-    if (gDirectNeonClockPreviousComposedLayerMap) {
-        free(gDirectNeonClockPreviousComposedLayerMap);
-        gDirectNeonClockPreviousComposedLayerMap = nullptr;
-        freedAny = true;
-    }
-    if (gDirectNeonClockFullMask) {
-        free(gDirectNeonClockFullMask);
-        gDirectNeonClockFullMask = nullptr;
-        freedAny = true;
-    }
-    if (gDirectNeonClockCoreMask) {
-        free(gDirectNeonClockCoreMask);
-        gDirectNeonClockCoreMask = nullptr;
-        freedAny = true;
-    }
-    if (gDirectGpsTitleFullMask) {
-        free(gDirectGpsTitleFullMask);
-        gDirectGpsTitleFullMask = nullptr;
-        freedAny = true;
-    }
-    if (gDirectGpsTitleLayerMap) {
-        free(gDirectGpsTitleLayerMap);
-        gDirectGpsTitleLayerMap = nullptr;
-        freedAny = true;
-    }
-    gDirectNeonClockGlyphCacheBuildCount = 0;
-    if (freedAny) {
-        ++gDirectNeonBufferGeneration;
-    }
+    HermesXNeonWorkspace::instance().release();
 }
 
 static void activateLowMemoryProtection(uint32_t freeHeap, uint32_t largestBlock)
@@ -997,49 +788,23 @@ static bool releaseLowMemoryProtectionIfRecovered(uint32_t freeHeap, uint32_t la
 static bool ensureDirectNeonBuffers()
 {
     static uint32_t lastAllocFailureLogMs = 0;
+    auto &workspace = HermesXNeonWorkspace::instance();
 
     if (!shouldKeepDirectNeonBuffers()) {
-        freeDirectNeonBuffers();
+        workspace.release();
         return false;
     }
 
-    const size_t glyphMaskBytes = static_cast<size_t>(kDirectNeonClockGlyphTileW) * static_cast<size_t>(kDirectNeonClockGlyphTileH);
-
-    if (!gDirectNeonClockGlyphCache) {
-        gDirectNeonClockGlyphCache = static_cast<DirectNeonClockGlyphCache *>(calloc(PattanakarnClock32::kGlyphCount,
-                                                                                      sizeof(DirectNeonClockGlyphCache)));
-    }
-    if (!gDirectNeonSharedComposedLayerMap) {
-        gDirectNeonSharedComposedLayerMap = static_cast<uint8_t *>(malloc(kDirectNeonSharedComposedLayerMapSize));
-    }
-    if (!gDirectNeonClockPreviousComposedLayerMap) {
-        gDirectNeonClockPreviousComposedLayerMap = static_cast<uint8_t *>(malloc(kDirectNeonSharedComposedLayerMapSize));
-    }
-    if (!gDirectNeonClockFullMask) {
-        gDirectNeonClockFullMask = static_cast<uint8_t *>(malloc(glyphMaskBytes));
-    }
-    if (!gDirectNeonClockCoreMask) {
-        gDirectNeonClockCoreMask = static_cast<uint8_t *>(malloc(glyphMaskBytes));
-    }
-    if (!gDirectGpsTitleFullMask) {
-        gDirectGpsTitleFullMask = static_cast<uint8_t *>(malloc(static_cast<size_t>(96 * 48)));
-    }
-    if (!gDirectGpsTitleLayerMap) {
-        gDirectGpsTitleLayerMap = static_cast<uint8_t *>(malloc(static_cast<size_t>(96 * 48)));
-    }
-
-    if (!gDirectNeonClockGlyphCache || !gDirectNeonSharedComposedLayerMap || !gDirectNeonClockPreviousComposedLayerMap ||
-        !gDirectNeonClockFullMask || !gDirectNeonClockCoreMask || !gDirectGpsTitleFullMask || !gDirectGpsTitleLayerMap) {
+    if (!workspace.ensureAllocated()) {
+        const HermesXNeonWorkspaceStatus status = workspace.status();
         const uint32_t now = millis();
         if (lastAllocFailureLogMs == 0 || now - lastAllocFailureLogMs >= 10000U) {
             lastAllocFailureLogMs = now;
-            LOG_WARN("[DirectHome] direct neon buffer alloc failed glyph=%u shared=%u prev=%u mask=%u gpsTitle=%u",
-                     gDirectNeonClockGlyphCache ? 1 : 0, gDirectNeonSharedComposedLayerMap ? 1 : 0,
-                     gDirectNeonClockPreviousComposedLayerMap ? 1 : 0,
-                     (gDirectNeonClockFullMask && gDirectNeonClockCoreMask) ? 1 : 0,
-                     (gDirectGpsTitleFullMask && gDirectGpsTitleLayerMap) ? 1 : 0);
+            LOG_WARN("[DirectHome] direct neon buffer alloc failed glyph=%u shared=%u mask=%u gpsTitle=%u",
+                     status.glyphCache ? 1 : 0, status.sharedMap ? 1 : 0, status.clockMasks ? 1 : 0,
+                     status.gpsTitleMasks ? 1 : 0);
         }
-        freeDirectNeonBuffers();
+        workspace.release();
         return false;
     }
     lastAllocFailureLogMs = 0;
@@ -1048,258 +813,41 @@ static bool ensureDirectNeonBuffers()
 
 static void logDirectHomeNeonSummary(const char *label)
 {
-    if (!gDirectNeonClockGlyphCache) {
+    auto &workspace = HermesXNeonWorkspace::instance();
+    auto *glyphCaches = workspace.glyphCaches();
+    if (!glyphCaches) {
         LOG_DEBUG("[DirectHome] %s glyphCaches=0 buffers=unallocated buildCount=%lu", label,
-                  (unsigned long)gDirectNeonClockGlyphCacheBuildCount);
+                  (unsigned long)workspace.glyphCacheBuildCount());
         logHeapSnapshot(label);
         return;
     }
     uint32_t validGlyphCaches = 0;
-    for (size_t i = 0; i < PattanakarnClock32::kGlyphCount; ++i) {
-        if (gDirectNeonClockGlyphCache[i].valid) {
+    for (size_t i = 0; i < HermesXPattanakarnNeonFont::GlyphCount; ++i) {
+        if (glyphCaches[i].valid) {
             ++validGlyphCaches;
         }
     }
     LOG_DEBUG("[DirectHome] %s glyphCaches=%lu glyphTile=%dx%d clockRegion=%dx%d buildCount=%lu", label,
               (unsigned long)validGlyphCaches, kDirectNeonClockGlyphTileW, kDirectNeonClockGlyphTileH,
-              kDirectNeonClockMaxRegionW, kDirectNeonClockMaxRegionH, (unsigned long)gDirectNeonClockGlyphCacheBuildCount);
+              kDirectNeonClockMaxRegionW, kDirectNeonClockMaxRegionH,
+              (unsigned long)workspace.glyphCacheBuildCount());
     logHeapSnapshot(label);
 }
 
-static void getHermesXHomeBatteryState(bool &hasBattery, int &batteryVoltageMv, uint8_t &batteryPercent)
+static HermesXHomeBatterySource readHermesXHomeBatterySource()
 {
-    hasBattery = false;
-    batteryVoltageMv = 0;
-    batteryPercent = 0;
-
-    if (powerStatus) {
-        const int liveVoltageMv = powerStatus->getBatteryVoltageMv();
-        const bool hasLiveReading = (liveVoltageMv > 0);
-        if (powerStatus->getHasBattery() && hasLiveReading) {
-            batteryVoltageMv = liveVoltageMv;
-            batteryPercent = estimateBatteryPercentFromVoltageMv(batteryVoltageMv);
-            gHermesXBatteryCache.valid = true;
-            gHermesXBatteryCache.voltageMv = batteryVoltageMv;
-            gHermesXBatteryCache.percent = batteryPercent;
-            hasBattery = true;
-        } else if (hasLiveReading) {
-            batteryVoltageMv = liveVoltageMv;
-            batteryPercent = estimateBatteryPercentFromVoltageMv(batteryVoltageMv);
-            gHermesXBatteryCache.valid = true;
-            gHermesXBatteryCache.voltageMv = batteryVoltageMv;
-            gHermesXBatteryCache.percent = batteryPercent;
-            hasBattery = true;
-        } else if (gHermesXBatteryCache.valid) {
-            batteryVoltageMv = gHermesXBatteryCache.voltageMv;
-            batteryPercent = gHermesXBatteryCache.percent;
-            hasBattery = true;
-        }
-    } else if (gHermesXBatteryCache.valid) {
-        batteryVoltageMv = gHermesXBatteryCache.voltageMv;
-        batteryPercent = gHermesXBatteryCache.percent;
-        hasBattery = true;
-    }
+    HermesXHomeBatterySource source;
+    source.available = powerStatus != nullptr;
+    source.voltageMv = powerStatus ? powerStatus->getBatteryVoltageMv() : 0;
+    return source;
 }
 
-static bool formatHermesXHomeTimeDate(char *timeBuf, size_t timeBufSize, char *dateBuf, size_t dateBufSize)
+static bool isDirectHomePresentationAvailable(OLEDDisplay *display)
 {
-    const uint32_t rtcSec = getValidTime(RTCQuality::RTCQualityNTP, true);
-    if (rtcSec > 0) {
-        time_t t = rtcSec;
-        tm *localTm = gmtime(&t);
-        static const char *kWeekdays[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
-        if (localTm) {
-            snprintf(timeBuf, timeBufSize, "%02d:%02d:%02d", localTm->tm_hour, localTm->tm_min, localTm->tm_sec);
-            const char *weekday =
-                (localTm->tm_wday >= 0 && localTm->tm_wday <= 6) ? kWeekdays[localTm->tm_wday] : "---";
-            snprintf(dateBuf, dateBufSize, "%04d/%02d/%02d %s", localTm->tm_year + 1900, localTm->tm_mon + 1,
-                     localTm->tm_mday, weekday);
-            return true;
-        }
-    }
-
-    snprintf(timeBuf, timeBufSize, "--:--:--");
-    snprintf(dateBuf, dateBufSize, "等待授時");
-    return false;
+    return display && !gLowMemoryProtectionActive && supportsDirectTftOverlayRendering(display) &&
+           HermesXHomeDirectPresenter::supportsLayout(display->getWidth(), display->getHeight());
 }
 
-static constexpr const char *kHermesXHomeQuotes[] = {
-    u8"別慌，有我在",
-    u8"HermesX帥吧？",
-    u8"狗哥爆肝中",
-    u8"我其實是狗哥養的狗",
-    u8"我叫小威",
-    u8"你今天好嗎？",
-    u8"祝你有個開心的一天",
-    u8"壞心情退散！",
-    u8"好玩吧？",
-    u8"出發囉！！",
-    u8"狗哥有點小餓",
-};
-static constexpr uint8_t kHermesXHomeQuoteCount = sizeof(kHermesXHomeQuotes) / sizeof(kHermesXHomeQuotes[0]);
-static void startHermesXHomeQuote()
-{
-    if (kHermesXHomeQuoteCount == 0) {
-        return;
-    }
-    gHermesXHomeQuoteIndex = static_cast<uint8_t>(random(kHermesXHomeQuoteCount));
-    gHermesXHomeQuoteActive = true;
-}
-
-static const char *getHermesXHomeQuote()
-{
-    if (!gHermesXHomeQuoteActive || kHermesXHomeQuoteCount == 0) {
-        startHermesXHomeQuote();
-    }
-    return kHermesXHomeQuotes[gHermesXHomeQuoteIndex % kHermesXHomeQuoteCount];
-}
-
-static void drawHermesXHomeQuote(OLEDDisplay *display,
-                                 int16_t x,
-                                 int16_t y,
-                                 int16_t width,
-                                 int16_t height)
-{
-    if (!display || width <= 0 || height <= 0) {
-        return;
-    }
-
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-    display->setFont(FONT_SMALL);
-    const int16_t lineHeight = 13;
-    const std::vector<String> lines =
-        buildMixedWrappedLines(display, getHermesXHomeQuote(), width, graphics::HermesX_zh::GLYPH_WIDTH);
-    if (lines.empty()) {
-        return;
-    }
-
-    const size_t visibleLineCount = std::min<size_t>(2, lines.size());
-    const int16_t totalHeight = static_cast<int16_t>(visibleLineCount * lineHeight);
-    const int16_t firstY = y + std::max<int16_t>(0, (height - totalHeight) / 2);
-    for (size_t lineIndex = 0; lineIndex < visibleLineCount; ++lineIndex) {
-        const char *line = lines[lineIndex].c_str();
-        const int16_t lineW = graphics::HermesX_zh::stringAdvance(line, graphics::HermesX_zh::GLYPH_WIDTH, display);
-        const int16_t drawX = x + std::max<int16_t>(0, (width - lineW) / 2);
-        graphics::HermesX_zh::drawMixedBounded(*display,
-                                               drawX,
-                                               firstY + static_cast<int16_t>(lineIndex * lineHeight),
-                                               x + width - drawX,
-                                               line,
-                                               graphics::HermesX_zh::GLYPH_WIDTH,
-                                               lineHeight,
-                                               nullptr);
-    }
-}
-
-static void drawHermesXHomeDog(OLEDDisplay *display, int16_t width, int16_t timeY, bool compactLayout)
-{
-    if (!display) {
-        return;
-    }
-
-    const int16_t areaX = 10;
-    const int16_t areaW = width - 20;
-    if (areaW <= 24) {
-        return;
-    }
-
-    const uint32_t phase = (millis() / 150U);
-    const int16_t dogW = compactLayout ? 36 : 46;
-    const int16_t maxTravel = std::max<int16_t>(0, areaW - dogW);
-    int16_t stride = 0;
-    bool facingRight = true;
-    if (maxTravel > 0) {
-        const int16_t cycle = maxTravel * 2;
-        const int16_t offset = static_cast<int16_t>(phase % static_cast<uint32_t>(cycle > 0 ? cycle : 1));
-        if (offset >= maxTravel) {
-            stride = cycle - offset;
-            facingRight = false;
-        } else {
-            stride = offset;
-        }
-    }
-
-    const int16_t dogX = areaX + stride;
-    const int16_t dogY = timeY + (compactLayout ? 7 : 7);
-    const int16_t bodyW = compactLayout ? 16 : 22;
-    const int16_t bodyH = compactLayout ? 6 : 8;
-    const int16_t neckW = compactLayout ? 4 : 6;
-    const int16_t headW = compactLayout ? 10 : 12;
-    const int16_t headH = compactLayout ? 7 : 9;
-    const int16_t legH = compactLayout ? 7 : 9;
-    const int16_t bodyY = dogY + 4;
-    const int16_t bodyX = facingRight ? dogX + 8 : dogX + 12;
-    const int16_t chestX = facingRight ? bodyX + bodyW - 1 : bodyX - neckW + 1;
-    const int16_t chestY = bodyY + 1;
-    const int16_t headX = facingRight ? bodyX + bodyW + neckW - 1 : dogX;
-    const int16_t headY = dogY;
-    const uint8_t gaitFrame = static_cast<uint8_t>(phase % 4U);
-    const bool altStep = (gaitFrame == 0U || gaitFrame == 2U);
-
-    for (int16_t gx = areaX; gx < (areaX + areaW); gx += 4) {
-        display->setPixel(gx, bodyY + bodyH + legH + 1);
-    }
-
-    display->fillRect(bodyX, bodyY, bodyW, bodyH);
-    if (facingRight) {
-        display->drawLine(bodyX, bodyY + 1, bodyX - 3, bodyY);
-        display->drawLine(bodyX - 3, bodyY, bodyX - 6, bodyY - 2);
-        display->drawLine(bodyX - 6, bodyY - 2, bodyX - 7, bodyY - 5);
-    } else {
-        const int16_t tailX = bodyX + bodyW - 1;
-        display->drawLine(tailX, bodyY + 1, tailX + 3, bodyY);
-        display->drawLine(tailX + 3, bodyY, tailX + 6, bodyY - 2);
-        display->drawLine(tailX + 6, bodyY - 2, tailX + 7, bodyY - 5);
-    }
-
-    display->drawLine(bodyX + bodyW - 1, bodyY, chestX, chestY);
-    display->drawLine(bodyX + bodyW - 1, bodyY + bodyH - 1, chestX, chestY + bodyH);
-    display->fillRect(facingRight ? bodyX + bodyW - 1 : bodyX - neckW + 1, chestY, neckW, bodyH);
-    display->fillRect(headX, headY, headW, headH);
-
-    if (facingRight) {
-        display->drawLine(headX + 2, headY, headX + 2, headY - 3);
-        display->drawLine(headX + 5, headY, headX + 6, headY - 4);
-        display->drawLine(headX + headW - 1, headY + 3, headX + headW + 3, headY + 4);
-        display->setPixel(headX + 5, headY + 3);
-    } else {
-        display->drawLine(headX + headW - 3, headY, headX + headW - 3, headY - 3);
-        display->drawLine(headX + headW - 6, headY, headX + headW - 7, headY - 4);
-        display->drawLine(headX, headY + 3, headX - 4, headY + 4);
-        display->setPixel(headX + 2, headY + 3);
-    }
-
-    const int16_t legY1 = bodyY + bodyH;
-    const int16_t frontLegX = facingRight ? (bodyX + bodyW + 1) : (bodyX - 1);
-    const int16_t frontLeg2X = facingRight ? (bodyX + bodyW - 2) : (bodyX + 2);
-    const int16_t rearLegX = bodyX + 2;
-    const int16_t rearLeg2X = bodyX + bodyW - 2;
-    display->drawLine(frontLegX, legY1, frontLegX, legY1 + legH - (altStep ? 0 : 1));
-    display->drawLine(frontLeg2X, legY1, frontLeg2X, legY1 + legH - (altStep ? 1 : 0));
-    display->drawLine(rearLegX, legY1, rearLegX, legY1 + legH - (altStep ? 1 : 0));
-    display->drawLine(rearLeg2X, legY1, rearLeg2X, legY1 + legH - (altStep ? 0 : 1));
-
-    display->setPixel(frontLegX + (facingRight ? 1 : -1), legY1 + legH - (altStep ? 0 : 1));
-    display->setPixel(rearLeg2X + 1, legY1 + legH - (altStep ? 0 : 1));
-}
-
-static bool canUseDirectHermesXHomeClock(OLEDDisplay *display)
-{
-    if (gLowMemoryProtectionActive) {
-        return false;
-    }
-    if (!supportsDirectTftClockRendering(display) || !display) {
-        return false;
-    }
-
-    const int16_t width = display->getWidth();
-    const int16_t height = display->getHeight();
-    const bool compactLayout = (width < 200 || height < 120);
-    const int16_t contentW = width - 8;
-    const int16_t customTimeMaxW = measurePattanakarnClockText("88:88:88");
-    const bool useCustomTimeFont = (contentW > 0) && (customTimeMaxW > 0) && (customTimeMaxW <= contentW);
-    return compactLayout && useCustomTimeFont;
-}
 
 static void addTftColorZone(OLEDDisplay *display, int16_t x, int16_t y, int16_t width, int16_t height, uint16_t fg, uint16_t bg)
 {
@@ -1321,240 +869,7 @@ static void addTftColorZone(OLEDDisplay *display, int16_t x, int16_t y, int16_t 
 #endif
 }
 
-static const PattanakarnClock32::GlyphInfo *findPattanakarnClockGlyph(char ch)
-{
-    for (std::size_t i = 0; i < PattanakarnClock32::kGlyphCount; ++i) {
-        if (PattanakarnClock32::kGlyphs[i].ch == ch) {
-            return &PattanakarnClock32::kGlyphs[i];
-        }
-    }
-    return nullptr;
-}
-
-static int16_t measurePattanakarnClockText(const char *text)
-{
-    if (!text) {
-        return 0;
-    }
-
-    int16_t width = 0;
-    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
-        const auto *glyph = findPattanakarnClockGlyph(*cursor);
-        if (!glyph) {
-            return 0;
-        }
-        width += glyph->width;
-    }
-    return width;
-}
-
-static constexpr int16_t kPattanakarnClockHalfHeight = (PattanakarnClock32::kGlyphHeight + 1) / 2;
-
-static bool isPattanakarnClockGlyphPixelOn(const PattanakarnClock32::GlyphInfo *glyph, std::uint8_t row, std::uint8_t col)
-{
-    if (!glyph || row >= PattanakarnClock32::kGlyphHeight || col >= glyph->width) {
-        return false;
-    }
-    const std::uint8_t byteIndex = static_cast<std::uint8_t>(col / 8);
-    const std::uint8_t bitIndex = static_cast<std::uint8_t>(col % 8);
-    const std::uint8_t rowBits = pgm_read_byte(glyph->bitmap + row * glyph->bytesPerRow + byteIndex);
-    return (rowBits & (0x80 >> bitIndex)) != 0;
-}
-
-static int16_t measurePattanakarnClockTextHalf(const char *text)
-{
-    if (!text) {
-        return 0;
-    }
-
-    int16_t width = 0;
-    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
-        const auto *glyph = findPattanakarnClockGlyph(*cursor);
-        if (!glyph) {
-            return 0;
-        }
-        width += static_cast<int16_t>((glyph->width + 1) / 2);
-    }
-    return width;
-}
-
-static void drawPattanakarnClockTextHalf(OLEDDisplay *display, int16_t x, int16_t y, const char *text)
-{
-    if (!display || !text) {
-        return;
-    }
-
-    int16_t cursorX = x;
-    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
-        const auto *glyph = findPattanakarnClockGlyph(*cursor);
-        if (!glyph) {
-            continue;
-        }
-
-        const int16_t halfW = static_cast<int16_t>((glyph->width + 1) / 2);
-        for (int16_t dy = 0; dy < kPattanakarnClockHalfHeight; ++dy) {
-            const std::uint8_t srcY = static_cast<std::uint8_t>(std::min<int16_t>(PattanakarnClock32::kGlyphHeight - 1, dy * 2));
-            for (int16_t dx = 0; dx < halfW; ++dx) {
-                const std::uint8_t srcX = static_cast<std::uint8_t>(std::min<int16_t>(glyph->width - 1, dx * 2));
-                bool on = isPattanakarnClockGlyphPixelOn(glyph, srcY, srcX);
-                if (!on && (srcX + 1) < glyph->width) {
-                    on = isPattanakarnClockGlyphPixelOn(glyph, srcY, static_cast<std::uint8_t>(srcX + 1));
-                }
-                if (!on && (srcY + 1) < PattanakarnClock32::kGlyphHeight) {
-                    on = isPattanakarnClockGlyphPixelOn(glyph, static_cast<std::uint8_t>(srcY + 1), srcX);
-                }
-                if (!on && (srcY + 1) < PattanakarnClock32::kGlyphHeight && (srcX + 1) < glyph->width) {
-                    on = isPattanakarnClockGlyphPixelOn(glyph, static_cast<std::uint8_t>(srcY + 1), static_cast<std::uint8_t>(srcX + 1));
-                }
-                if (on) {
-                    display->setPixel(cursorX + dx, y + dy);
-                }
-            }
-        }
-
-        cursorX += halfW;
-    }
-}
-
-static void drawPattanakarnClockTextHalfOutsideRect(OLEDDisplay *display,
-                                                    int16_t x,
-                                                    int16_t y,
-                                                    const char *text,
-                                                    int16_t excludeX,
-                                                    int16_t excludeY,
-                                                    int16_t excludeW,
-                                                    int16_t excludeH)
-{
-    if (!display || !text) {
-        return;
-    }
-
-    const int16_t excludeX2 = excludeX + excludeW;
-    const int16_t excludeY2 = excludeY + excludeH;
-
-    int16_t cursorX = x;
-    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
-        const auto *glyph = findPattanakarnClockGlyph(*cursor);
-        if (!glyph) {
-            continue;
-        }
-
-        const int16_t halfW = static_cast<int16_t>((glyph->width + 1) / 2);
-        for (int16_t dy = 0; dy < kPattanakarnClockHalfHeight; ++dy) {
-            const std::uint8_t srcY = static_cast<std::uint8_t>(std::min<int16_t>(PattanakarnClock32::kGlyphHeight - 1, dy * 2));
-            const int16_t py = y + dy;
-            for (int16_t dx = 0; dx < halfW; ++dx) {
-                const std::uint8_t srcX = static_cast<std::uint8_t>(std::min<int16_t>(glyph->width - 1, dx * 2));
-                bool on = isPattanakarnClockGlyphPixelOn(glyph, srcY, srcX);
-                if (!on && (srcX + 1) < glyph->width) {
-                    on = isPattanakarnClockGlyphPixelOn(glyph, srcY, static_cast<std::uint8_t>(srcX + 1));
-                }
-                if (!on && (srcY + 1) < PattanakarnClock32::kGlyphHeight) {
-                    on = isPattanakarnClockGlyphPixelOn(glyph, static_cast<std::uint8_t>(srcY + 1), srcX);
-                }
-                if (!on && (srcY + 1) < PattanakarnClock32::kGlyphHeight && (srcX + 1) < glyph->width) {
-                    on = isPattanakarnClockGlyphPixelOn(glyph, static_cast<std::uint8_t>(srcY + 1), static_cast<std::uint8_t>(srcX + 1));
-                }
-                if (!on) {
-                    continue;
-                }
-
-                const int16_t px = cursorX + dx;
-                if (px >= excludeX && py >= excludeY && px < excludeX2 && py < excludeY2) {
-                    continue;
-                }
-                display->setPixel(px, py);
-            }
-        }
-
-        cursorX += halfW;
-    }
-}
-
-static void drawPattanakarnClockText(OLEDDisplay *display, int16_t x, int16_t y, const char *text)
-{
-    if (!display || !text) {
-        return;
-    }
-
-    int16_t cursorX = x;
-    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
-        const auto *glyph = findPattanakarnClockGlyph(*cursor);
-        if (!glyph) {
-            continue;
-        }
-
-        for (std::uint8_t row = 0; row < PattanakarnClock32::kGlyphHeight; ++row) {
-            for (std::uint8_t byteIndex = 0; byteIndex < glyph->bytesPerRow; ++byteIndex) {
-                const std::uint8_t rowBits =
-                    pgm_read_byte(glyph->bitmap + row * glyph->bytesPerRow + byteIndex);
-                for (std::uint8_t bit = 0; bit < 8; ++bit) {
-                    const std::uint8_t col = static_cast<std::uint8_t>(byteIndex * 8 + bit);
-                    if (col >= glyph->width) {
-                        break;
-                    }
-                    if (rowBits & (0x80 >> bit)) {
-                        display->setPixel(cursorX + col, y + row);
-                    }
-                }
-            }
-        }
-
-        cursorX += glyph->width;
-    }
-}
-
-static void drawPattanakarnClockTextOutsideRect(OLEDDisplay *display,
-                                                int16_t x,
-                                                int16_t y,
-                                                const char *text,
-                                                int16_t excludeX,
-                                                int16_t excludeY,
-                                                int16_t excludeW,
-                                                int16_t excludeH)
-{
-    if (!display || !text) {
-        return;
-    }
-
-    const int16_t excludeX2 = excludeX + excludeW;
-    const int16_t excludeY2 = excludeY + excludeH;
-
-    int16_t cursorX = x;
-    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
-        const auto *glyph = findPattanakarnClockGlyph(*cursor);
-        if (!glyph) {
-            continue;
-        }
-
-        for (std::uint8_t row = 0; row < PattanakarnClock32::kGlyphHeight; ++row) {
-            for (std::uint8_t byteIndex = 0; byteIndex < glyph->bytesPerRow; ++byteIndex) {
-                const std::uint8_t rowBits =
-                    pgm_read_byte(glyph->bitmap + row * glyph->bytesPerRow + byteIndex);
-                for (std::uint8_t bit = 0; bit < 8; ++bit) {
-                    const std::uint8_t col = static_cast<std::uint8_t>(byteIndex * 8 + bit);
-                    if (col >= glyph->width) {
-                        break;
-                    }
-                    if (!(rowBits & (0x80 >> bit))) {
-                        continue;
-                    }
-
-                    const int16_t px = cursorX + col;
-                    const int16_t py = y + row;
-                    if (px >= excludeX && py >= excludeY && px < excludeX2 && py < excludeY2) {
-                        continue;
-                    }
-                    display->setPixel(px, py);
-                }
-            }
-        }
-
-        cursorX += glyph->width;
-    }
-}
-
-static bool supportsDirectTftClockRendering(OLEDDisplay *display)
+static bool supportsDirectTftOverlayRendering(OLEDDisplay *display)
 {
 #if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
     defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
@@ -1565,2504 +880,41 @@ static bool supportsDirectTftClockRendering(OLEDDisplay *display)
 #endif
 }
 
-static void stampPattanakarnClockMask(uint8_t *mask,
-                                      int16_t maskW,
-                                      int16_t maskH,
-                                      int16_t x,
-                                      int16_t y,
-                                      const char *text,
-                                      uint8_t value)
+static void initializeDisplayUi(void *context)
 {
-    if (!mask || !text || maskW <= 0 || maskH <= 0) {
-        return;
-    }
-
-    int16_t cursorX = x;
-    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
-        const auto *glyph = findPattanakarnClockGlyph(*cursor);
-        if (!glyph) {
-            continue;
-        }
-
-        for (std::uint8_t row = 0; row < PattanakarnClock32::kGlyphHeight; ++row) {
-            const int16_t py = y + static_cast<int16_t>(row);
-            if (py < 0 || py >= maskH) {
-                continue;
-            }
-            for (std::uint8_t byteIndex = 0; byteIndex < glyph->bytesPerRow; ++byteIndex) {
-                const std::uint8_t rowBits =
-                    pgm_read_byte(glyph->bitmap + row * glyph->bytesPerRow + byteIndex);
-                for (std::uint8_t bit = 0; bit < 8; ++bit) {
-                    const std::uint8_t col = static_cast<std::uint8_t>(byteIndex * 8 + bit);
-                    if (col >= glyph->width) {
-                        break;
-                    }
-                    if (!(rowBits & (0x80 >> bit))) {
-                        continue;
-                    }
-
-                    const int16_t px = cursorX + static_cast<int16_t>(col);
-                    if (px < 0 || px >= maskW) {
-                        continue;
-                    }
-                    mask[py * maskW + px] = value;
-                }
-            }
-        }
-
-        cursorX += glyph->width;
+    auto *displayUi = static_cast<OLEDDisplayUi *>(context);
+    if (displayUi) {
+        displayUi->init();
     }
 }
 
-static bool hasMaskPixelInRadius(const uint8_t *mask, int16_t maskW, int16_t maskH, int16_t x, int16_t y, int16_t radius)
+
+static HermesXGpsPosterLayers getDirectGpsPosterLayers()
 {
-    if (!mask || radius < 0) {
-        return false;
-    }
-
-    const int16_t minY = std::max<int16_t>(0, y - radius);
-    const int16_t maxY = std::min<int16_t>(maskH - 1, y + radius);
-    const int16_t minX = std::max<int16_t>(0, x - radius);
-    const int16_t maxX = std::min<int16_t>(maskW - 1, x + radius);
-    const int32_t radiusSq = static_cast<int32_t>(radius) * static_cast<int32_t>(radius);
-
-    for (int16_t yy = minY; yy <= maxY; ++yy) {
-        const int32_t dy = static_cast<int32_t>(yy - y);
-        const int32_t dySq = dy * dy;
-        const int16_t rowBase = yy * maskW;
-        for (int16_t xx = minX; xx <= maxX; ++xx) {
-            if (!mask[rowBase + xx]) {
-                continue;
-            }
-
-            const int32_t dx = static_cast<int32_t>(xx - x);
-            if ((dx * dx) + dySq <= radiusSq) {
-                return true;
-            }
-        }
-    }
-    return false;
+    HermesXGpsPosterLayers layers;
+    layers.title = kEnableDirectGpsPosterTitleNeon;
+    layers.decor = kEnableDirectGpsPosterDecorNeon;
+    layers.coordinates = kEnableDirectGpsPosterCoordinateNeon;
+    return layers;
 }
 
-static bool isMaskInteriorPixel(const uint8_t *mask, int16_t maskW, int16_t maskH, int16_t x, int16_t y)
+static HermesXGpsStateSnapshot collectDirectGpsState(int16_t width, int16_t height, const GPSStatus *gps)
 {
-    if (!mask || x <= 0 || y <= 0 || x >= (maskW - 1) || y >= (maskH - 1)) {
-        return false;
-    }
-
-    for (int16_t yy = y - 1; yy <= y + 1; ++yy) {
-        const int16_t rowBase = yy * maskW;
-        for (int16_t xx = x - 1; xx <= x + 1; ++xx) {
-            if (!mask[rowBase + xx]) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
-static uint16_t mapDirectNeonClockLayerColor(uint8_t value)
-{
-    switch (value) {
-    case 1:
-        return TFTDisplay::rgb565(0x03, 0x09, 0x1F);
-    case 2:
-        return TFTDisplay::rgb565(0x04, 0x12, 0x3D);
-    case 3:
-        return TFTDisplay::rgb565(0x06, 0x24, 0x72);
-    case 4:
-        return TFTDisplay::rgb565(0x0C, 0x54, 0xC8);
-    case 5:
-        return TFTDisplay::rgb565(0x36, 0xC5, 0xFF);
-    case 6:
-        return TFTDisplay::rgb565(0xAC, 0xF6, 0xFF);
-    case 7:
-        return TFTDisplay::rgb565(0xFF, 0xFF, 0xFF);
-    default:
-        return TFTDisplay::rgb565(0x00, 0x00, 0x00);
-    }
-}
-
-static int16_t getDirectNeonClockSlotWidth(size_t slotIndex)
-{
-    return (slotIndex == 2 || slotIndex == 5) ? 7 : kDirectNeonClockGlyphMaxW;
-}
-
-static int16_t getDirectNeonClockFrameWidth()
-{
-    int16_t width = 0;
-    for (size_t i = 0; i < kDirectNeonClockSlotCount; ++i) {
-        width += getDirectNeonClockSlotWidth(i);
-    }
-    return width;
-}
-
-static DirectNeonClockGlyphCache *getDirectNeonClockGlyphCache(char ch)
-{
-    const auto *glyph = findPattanakarnClockGlyph(ch);
-    if (!glyph) {
-        return nullptr;
-    }
-
-    const std::size_t glyphIndex = static_cast<std::size_t>(glyph - &PattanakarnClock32::kGlyphs[0]);
-    if (glyphIndex >= PattanakarnClock32::kGlyphCount) {
-        return nullptr;
-    }
-    if (!ensureDirectNeonBuffers()) {
-        return nullptr;
-    }
-
-    auto &cache = gDirectNeonClockGlyphCache[glyphIndex];
-    if (cache.valid) {
-        return &cache;
-    }
-
-    uint8_t *fullMask = gDirectNeonClockFullMask;
-    uint8_t *coreMask = gDirectNeonClockCoreMask;
-    if (!fullMask || !coreMask) {
-        return nullptr;
-    }
-    memset(fullMask, 0, static_cast<size_t>(kDirectNeonClockGlyphTileW) * static_cast<size_t>(kDirectNeonClockGlyphTileH));
-    memset(coreMask, 0, static_cast<size_t>(kDirectNeonClockGlyphTileW) * static_cast<size_t>(kDirectNeonClockGlyphTileH));
-    memset(cache.layerMap, 0, sizeof(cache.layerMap));
-
-    const char glyphText[2] = {ch, '\0'};
-    stampPattanakarnClockMask(fullMask,
-                              kDirectNeonClockGlyphTileW,
-                              kDirectNeonClockGlyphTileH,
-                              kDirectNeonClockMargin,
-                              kDirectNeonClockMargin,
-                              glyphText,
-                              1);
-
-    for (int16_t yy = 0; yy < kDirectNeonClockGlyphTileH; ++yy) {
-        for (int16_t xx = 0; xx < kDirectNeonClockGlyphTileW; ++xx) {
-            if (!fullMask[(yy * kDirectNeonClockGlyphTileW) + xx]) {
-                continue;
-            }
-            if (isMaskInteriorPixel(fullMask, kDirectNeonClockGlyphTileW, kDirectNeonClockGlyphTileH, xx, yy)) {
-                coreMask[(yy * kDirectNeonClockGlyphTileW) + xx] = 1;
-            }
-        }
-    }
-
-    for (int16_t yy = 0; yy < kDirectNeonClockGlyphTileH; ++yy) {
-        for (int16_t xx = 0; xx < kDirectNeonClockGlyphTileW; ++xx) {
-            const int16_t idx = (yy * kDirectNeonClockGlyphTileW) + xx;
-            uint8_t value = 0;
-            if (coreMask[idx]) {
-                value = 7;
-            } else if (fullMask[idx]) {
-                value = 6;
-            } else if (hasMaskPixelInRadius(fullMask,
-                                            kDirectNeonClockGlyphTileW,
-                                            kDirectNeonClockGlyphTileH,
-                                            xx,
-                                            yy,
-                                            1)) {
-                value = 5;
-            } else if (hasMaskPixelInRadius(fullMask,
-                                            kDirectNeonClockGlyphTileW,
-                                            kDirectNeonClockGlyphTileH,
-                                            xx,
-                                            yy,
-                                            2)) {
-                value = 4;
-            } else if (hasMaskPixelInRadius(fullMask,
-                                            kDirectNeonClockGlyphTileW,
-                                            kDirectNeonClockGlyphTileH,
-                                            xx,
-                                            yy,
-                                            3)) {
-                value = 3;
-            } else if (hasMaskPixelInRadius(fullMask,
-                                            kDirectNeonClockGlyphTileW,
-                                            kDirectNeonClockGlyphTileH,
-                                            xx,
-                                            yy,
-                                            4)) {
-                value = 2;
-            } else if (hasMaskPixelInRadius(fullMask,
-                                            kDirectNeonClockGlyphTileW,
-                                            kDirectNeonClockGlyphTileH,
-                                            xx,
-                                            yy,
-                                            kDirectNeonClockGlowRadiusOuter)) {
-                value = 1;
-            }
-            cache.layerMap[idx] = value;
-        }
-    }
-
-    cache.valid = true;
-    cache.ch = ch;
-    cache.coreW = glyph->width;
-    cache.tileW = glyph->width + (kDirectNeonClockMargin * 2);
-    cache.tileH = kDirectNeonClockGlyphTileH;
-    ++gDirectNeonClockGlyphCacheBuildCount;
-    LOG_DEBUG("[DirectHome] build glyph cache ch='%c' index=%u coreW=%u tile=%ux%u bytes=%u", ch, (unsigned)glyphIndex,
-              (unsigned)cache.coreW, (unsigned)cache.tileW, (unsigned)cache.tileH, (unsigned)sizeof(cache.layerMap));
-    logDirectHomeNeonSummary("DirectHome glyph cache built");
-    return &cache;
-}
-
-static void blitDirectNeonClockGlyph(TFTDisplay *tft, int16_t x, int16_t y, const DirectNeonClockGlyphCache *cache)
-{
-    if (!tft || !cache || !cache->valid || cache->tileW <= 0 || cache->tileH <= 0) {
-        return;
-    }
-
-    const uint16_t black = TFTDisplay::rgb565(0x00, 0x00, 0x00);
-    for (int16_t row = 0; row < cache->tileH; ++row) {
-        int16_t runStart = -1;
-        uint16_t runColor = 0;
-        for (int16_t col = 0; col <= cache->tileW; ++col) {
-            const bool atEnd = (col == cache->tileW);
-            const uint16_t color = atEnd ? 0 : mapDirectNeonClockLayerColor(cache->layerMap[(row * kDirectNeonClockGlyphTileW) + col]);
-            if (color == black) {
-                if (runStart >= 0) {
-                    tft->fillRect565(x + runStart, y + row, col - runStart, 1, runColor);
-                    runStart = -1;
-                }
-                continue;
-            }
-
-            if (runStart < 0) {
-                runStart = col;
-                runColor = color;
-                continue;
-            }
-
-            if (color != runColor) {
-                tft->fillRect565(x + runStart, y + row, col - runStart, 1, runColor);
-                runStart = col;
-                runColor = color;
-            }
-        }
-    }
-}
-
-static void clearDirectNeonClockRegion(TFTDisplay *tft, int16_t displayW, int16_t originY = 0)
-{
-    if (!tft || displayW <= 0) {
-        return;
-    }
-
-    const int16_t frameW = getDirectNeonClockFrameWidth();
-    const int16_t glyphH = PattanakarnClock32::kGlyphHeight;
-    if (frameW <= 0 || frameW > (displayW - 4)) {
-        return;
-    }
-
-    const int16_t timeY = originY + 8;
-    const int16_t frameX = (displayW - frameW) / 2;
-    const int16_t regionX = frameX - kDirectNeonClockMargin;
-    const int16_t regionY = timeY - kDirectNeonClockMargin;
-    const int16_t regionW = frameW + (kDirectNeonClockMargin * 2);
-    const int16_t regionH = glyphH + (kDirectNeonClockMargin * 2);
-    if (regionW <= 0 || regionH <= 0) {
-        return;
-    }
-
-    tft->fillRect565(regionX, regionY, regionW, regionH, TFTDisplay::rgb565(0x00, 0x00, 0x00));
-}
-
-static bool getDirectNeonClockRegionRect(int16_t displayW,
-                                         int16_t originY,
-                                         int16_t &regionX,
-                                         int16_t &regionY,
-                                         int16_t &regionW,
-                                         int16_t &regionH,
-                                         int16_t &frameX)
-{
-    if (displayW <= 0) {
-        return false;
-    }
-
-    const int16_t frameW = getDirectNeonClockFrameWidth();
-    const int16_t glyphH = PattanakarnClock32::kGlyphHeight;
-    if (frameW <= 0 || frameW > (displayW - 4)) {
-        return false;
-    }
-
-    const int16_t timeY = originY + 8;
-    frameX = (displayW - frameW) / 2;
-    regionX = frameX - kDirectNeonClockMargin;
-    regionY = timeY - kDirectNeonClockMargin;
-    regionW = frameW + (kDirectNeonClockMargin * 2);
-    regionH = glyphH + (kDirectNeonClockMargin * 2);
-    if (regionW <= 0 || regionH <= 0 || regionW > kDirectNeonClockMaxRegionW || regionH > kDirectNeonClockMaxRegionH) {
-        return false;
-    }
-    return true;
-}
-
-static void renderDirectHomeDog(TFTDisplay *tft,
-                                int16_t displayW,
-                                int16_t displayH,
-                                uint16_t dogFrame,
-                                uint8_t dogPose)
-{
-    if (!tft) {
-        return;
-    }
-
-    static constexpr int16_t kDogSpriteW = 24;
-    static constexpr int16_t kDogSpriteH = 24;
-    static constexpr int16_t kDogScale = 2;
-    static constexpr int16_t kDogDrawW = kDogSpriteW * kDogScale;
-    static constexpr int16_t kDogDrawH = kDogSpriteH * kDogScale;
-    if (displayW <= 0 || displayH <= 0 || displayW < kDogDrawW || displayH < kDogDrawH) {
-        return;
-    }
-
-    static constexpr uint8_t kDogLyingFrameCount = 4;
-    static constexpr uint8_t kDogSittingFrameCount = 4;
-    static constexpr const char *kDogLyingFrames[kDogLyingFrameCount][kDogSpriteH] = {
-        {
-            "...............O....O...",
-            "..............OTO..OHO..",
-            "..............OLO..OHO..",
-            "..............OLO..OHO..",
-            "..............OHT..HLO..",
-            "..............OHTOOHLO..",
-            ".............OOLTHHHHO..",
-            ".............OOLHHTHHO..",
-            ".............OSLHHOHHO..",
-            ".............SSHHHOHHS..",
-            ".............SOHHHHHHHO.",
-            "...........OSOHHHHHHSOO.",
-            ".....OSOOOOOOSSHHHOOOSOO",
-            "TOOOOOSSSSOOSSSOHHOOSSSO",
-            ".OHLLOSSSSSSSSOHHHOOOO..",
-            "..OSTOSHHSSSLOSOHHHHHO..",
-            "...OOOHHHLTHLHHOHHHHHO..",
-            "......HHHTOHLHHHH..LSO..",
-            "......HHHTOTTHHHHHHLLO..",
-            "......HHHTSTTHHHHHLLOOO.",
-            ".OTLOHHHOOTTTHHHOOOOHHHS",
-            "..TLOHHHTLSTSHHHHHHHOHLO",
-            "..WWOHHHHHLOOHHHHHHHTHLO",
-            ".....OOOOOOO.OOOOOOOOO..",
-        },
-        {
-            "...............O....O...",
-            "..............OTO..OHO..",
-            "..............OLO..OHO..",
-            "..............OLO..OHO..",
-            "..............OHT..HLO..",
-            "..............OHTOOHLO..",
-            ".............OOLTHHHHO..",
-            ".............OOLHHTHHO..",
-            ".............OSLHHOHHO..",
-            ".............SSHHHOHHS..",
-            ".............SOHHHHHHHO.",
-            "...........OSOHHHHHHSOO.",
-            "....OOSOOOOOOSSHHHOOOSOO",
-            ".TOOOOSSSSOOSSSOHHOOSSSO",
-            "..OHLOSSSSSSSSOHHHOOOO..",
-            "...OSTSHHSSSLOSOHHHHHO..",
-            "....OOHHHLTHLHHOHHHHHO..",
-            "......HHHTOHLHHHH..LSO..",
-            "......HHHTOTTHHHHHHLLO..",
-            "......HHHTSTTHHHHHLLOOO.",
-            ".OTLOHHHOOTTTHHHOOOOHHHS",
-            "..TLOHHHTLSTSHHHHHHHOHLO",
-            "..WWOHHHHHLOOHHHHHHHTHLO",
-            ".....OOOOOOO.OOOOOOOOO..",
-        },
-        {
-            "...............O....O...",
-            "..............OTO..OHO..",
-            "..............OLO..OHO..",
-            "..............OLO..OHO..",
-            "..............OHT..HLO..",
-            "..............OHTOOHLO..",
-            ".............OOLTHHHHO..",
-            ".............OOLHHTHHO..",
-            ".............OSLHHOHHO..",
-            ".............SSHHHOHHS..",
-            ".............SOHHHHHHHO.",
-            "...........OSOHHHHHHSOO.",
-            ".....OSOOOOOOSSHHHOOOSOO",
-            "....TOSSSSOOSSSOHHOOSSSO",
-            "...OHOSSSSSSSSOHHHOOOO..",
-            "....OSTHHSSSLOSOHHHHHO..",
-            ".....OHHHLTHLHHOHHHHHO..",
-            "......HHHTOHLHHHH..LSO..",
-            "......HHHTOTTHHHHHHLLO..",
-            "......HHHTSTTHHHHHLLOOO.",
-            ".OTLOHHHOOTTTHHHOOOOHHHS",
-            "..TLOHHHTLSTSHHHHHHHOHLO",
-            "..WWOHHHHHLOOHHHHHHHTHLO",
-            ".....OOOOOOO.OOOOOOOOO..",
-        },
-        {
-            "...............O....O...",
-            "..............OTO..OHO..",
-            "..............OLO..OHO..",
-            "..............OLO..OHO..",
-            "..............OHT..HLO..",
-            "..............OHTOOHLO..",
-            ".............OOLTHHHHO..",
-            ".............OOLHHTHHO..",
-            ".............OSLHHOHHO..",
-            ".............SSHHHOHHS..",
-            ".............SOHHHHHHHO.",
-            "...........OSOHHHHHHSOO.",
-            "....OOSOOOOOOSSHHHOOOSOO",
-            ".TOOOOSSSSOOSSSOHHOOSSSO",
-            "..OHLOSSSSSSSSOHHHOOOO..",
-            "...OSTSHHSSSLOSOHHHHHO..",
-            "....OOHHHLTHLHHOHHHHHO..",
-            "......HHHTOHLHHHH..LSO..",
-            "......HHHTOTTHHHHHHLLO..",
-            "......HHHTSTTHHHHHLLOOO.",
-            ".OTLOHHHOOTTTHHHOOOOHHHS",
-            "..TLOHHHTLSTSHHHHHHHOHLO",
-            "..WWOHHHHHLOOHHHHHHHTHLO",
-            ".....OOOOOOO.OOOOOOOOO..",
-        },
-    };
-    static constexpr const char *kDogSittingFrames[kDogSittingFrameCount][kDogSpriteH] = {
-        {
-            "..............OO...OO...",
-            "..............TS...HT...",
-            "..............LTO.OHTO..",
-            "..............LTOOOTTO..",
-            ".............OTLHHHHHO..",
-            ".............OTLHOOHHT..",
-            ".............OTTHOOHHOOO",
-            ".............OHHHHHHSSOO",
-            ".............OHHHOOOSSSO",
-            "............OOHHHOOSTL..",
-            "............OOOHHHOHHT..",
-            "............OSOHHHHOOO..",
-            "...........OOOSLHHHHHO..",
-            "..........OSSSSLLSHHHO..",
-            "..........OSSSSTLS.HHO..",
-            ".........OOOSHHHHS..H...",
-            ".........OSSSHHHHH.HHG..",
-            "........OSSSSTTHHTHTTG..",
-            "........OSHHOSHHHTHTHG..",
-            "TSOOO...OLHHHOOHHSSHHG..",
-            ".OHLSS..HHHHHOOHHTSHHG..",
-            "..OSTO..HHHHOOOHHOOHHG..",
-            ".....OOOHHHHHHOHHHOHHHO.",
-            ".........OOOOOOOOOOOOOO.",
-        },
-        {
-            "..............OO...OO...",
-            "..............TS...HT...",
-            "..............LTO.OHTO..",
-            "..............LTOOOTTO..",
-            ".............OTLHHHHHO..",
-            ".............OTLHOOHHT..",
-            ".............OTTHOOHHOOO",
-            ".............OHHHHHHSSOO",
-            ".............OHHHOOOSSSO",
-            "............OOHHHOOSTL..",
-            "............OOOHHHOHHT..",
-            "............OSOHHHHOOO..",
-            "...........OOOSLHHHHHO..",
-            "..........OSSSSLLSHHHO..",
-            "..........OSSSSTLS.HHO..",
-            ".........OOOSHHHHS..H...",
-            ".........OSSSHHHHH.HHG..",
-            "........OSSSSTTHHTHTTG..",
-            "........OSHHOSHHHTHTHG..",
-            "..TSOO..OLHHHOOHHSSHHG..",
-            "..OHLSO.HHHHHOOHHTSHHG..",
-            "...OST..HHHHOOOHHOOHHG..",
-            ".....OOOHHHHHHOHHHOHHHO.",
-            ".........OOOOOOOOOOOOOO.",
-        },
-        {
-            "..............OO...OO...",
-            "..............TS...HT...",
-            "..............LTO.OHTO..",
-            "..............LTOOOTTO..",
-            ".............OTLHHHHHO..",
-            ".............OTLHOOHHT..",
-            ".............OTTHOOHHOOO",
-            ".............OHHHHHHSSOO",
-            ".............OHHHOOOSSSO",
-            "............OOHHHOOSTL..",
-            "............OOOHHHOHHT..",
-            "............OSOHHHHOOO..",
-            "...........OOOSLHHHHHO..",
-            "..........OSSSSLLSHHHO..",
-            "..........OSSSSTLS.HHO..",
-            ".........OOOSHHHHS..H...",
-            ".........OSSSHHHHH.HHG..",
-            "........OSSSSTTHHTHTTG..",
-            "........OSHHOSHHHTHTHG..",
-            "....TSOOOLHHHOOHHSSHHG..",
-            "...OHLSOHHHHHOOHHTSHHG..",
-            "....OST.HHHHOOOHHOOHHG..",
-            ".....OOOHHHHHHOHHHOHHHO.",
-            ".........OOOOOOOOOOOOOO.",
-        },
-        {
-            "..............OO...OO...",
-            "..............TS...HT...",
-            "..............LTO.OHTO..",
-            "..............LTOOOTTO..",
-            ".............OTLHHHHHO..",
-            ".............OTLHOOHHT..",
-            ".............OTTHOOHHOOO",
-            ".............OHHHHHHSSOO",
-            ".............OHHHOOOSSSO",
-            "............OOHHHOOSTL..",
-            "............OOOHHHOHHT..",
-            "............OSOHHHHOOO..",
-            "...........OOOSLHHHHHO..",
-            "..........OSSSSLLSHHHO..",
-            "..........OSSSSTLS.HHO..",
-            ".........OOOSHHHHS..H...",
-            ".........OSSSHHHHH.HHG..",
-            "........OSSSSTTHHTHTTG..",
-            "........OSHHOSHHHTHTHG..",
-            "..TSOO..OLHHHOOHHSSHHG..",
-            "..OHLSO.HHHHHOOHHTSHHG..",
-            "...OST..HHHHOOOHHOOHHG..",
-            ".....OOOHHHHHHOHHHOHHHO.",
-            ".........OOOOOOOOOOOOOO.",
-        },
-    };
-
-    const uint16_t outline = TFTDisplay::rgb565(0x18, 0x18, 0x1C);
-    const uint16_t saddle = TFTDisplay::rgb565(0x4A, 0x49, 0x46);
-    const uint16_t tan = TFTDisplay::rgb565(0xA7, 0x74, 0x55);
-    const uint16_t tanHi = TFTDisplay::rgb565(0xD4, 0xA5, 0x80);
-    const uint16_t chest = TFTDisplay::rgb565(0xF8, 0xF7, 0xF8);
-    const uint16_t tongue = TFTDisplay::rgb565(0xBC, 0x55, 0x51);
-    const uint16_t ground = TFTDisplay::rgb565(0xC6, 0xB8, 0xBB);
-    const uint16_t bg = TFTDisplay::rgb565(0x00, 0x00, 0x00);
-    const uint8_t tailPhase = static_cast<uint8_t>(dogFrame % 6U);
-
-    int16_t clockRegionX = 0;
-    int16_t clockRegionY = 0;
-    int16_t clockRegionW = 0;
-    int16_t clockRegionH = 0;
-    int16_t frameX = 0;
-    const bool hasClockRegion =
-        getDirectNeonClockRegionRect(displayW, 0, clockRegionX, clockRegionY, clockRegionW, clockRegionH, frameX);
-    const int16_t dogX = 2;
-    const int16_t dogY =
-        hasClockRegion ? std::max<int16_t>(0, clockRegionY + std::max<int16_t>(0, (clockRegionH - kDogDrawH) / 2))
-                       : std::max<int16_t>(0, (displayH - kDogDrawH) / 2);
-    const int16_t previousDogX = gHermesXDirectHomeUiCache.lastDogX;
-    const int16_t previousDogY = gHermesXDirectHomeUiCache.lastDogY;
-    const int16_t previousDogW = gHermesXDirectHomeUiCache.lastDogW;
-    const int16_t previousDogH = gHermesXDirectHomeUiCache.lastDogH;
-    const bool fullDogRepaint = !gHermesXDirectHomeUiCache.lastDogValid || previousDogX != dogX || previousDogY != dogY ||
-                                previousDogW != kDogDrawW || previousDogH != kDogDrawH ||
-                                gHermesXDirectHomeUiCache.lastDogPose != dogPose;
-    int16_t clearX = dogX;
-    int16_t clearY = dogY;
-    int16_t clearX2 = dogX + kDogDrawW;
-    int16_t clearY2 = dogY + kDogDrawH;
-    if (fullDogRepaint && gHermesXDirectHomeUiCache.lastDogValid && previousDogW > 0 && previousDogH > 0) {
-        clearX = std::min<int16_t>(clearX, previousDogX);
-        clearY = std::min<int16_t>(clearY, previousDogY);
-        clearX2 = std::max<int16_t>(clearX2, static_cast<int16_t>(previousDogX + previousDogW));
-        clearY2 = std::max<int16_t>(clearY2, static_cast<int16_t>(previousDogY + previousDogH));
-    }
-    clearX = std::max<int16_t>(0, clearX);
-    clearY = std::max<int16_t>(0, clearY);
-    clearX2 = std::min<int16_t>(displayW, clearX2);
-    clearY2 = std::min<int16_t>(displayH, clearY2);
-    const int16_t clearW = clearX2 - clearX;
-    const int16_t clearH = clearY2 - clearY;
-    if (fullDogRepaint && clearW > 0 && clearH > 0) {
-        tft->fillRect565(clearX, clearY, clearW, clearH, bg);
-        tft->overlayBufferForegroundRect565(clearX, clearY, clearW, clearH);
-    }
-
-    DirectDrawClipRect clip{};
-    if (!makeDirectDrawClipRect(dogX, dogY, kDogDrawW, kDogDrawH, displayW, displayH, clip)) {
-        return;
-    }
-
-    const uint8_t spriteFrame = (dogPose == 0) ? static_cast<uint8_t>(tailPhase % kDogLyingFrameCount)
-                                               : static_cast<uint8_t>(tailPhase % kDogSittingFrameCount);
-    const char *const *sprite = (dogPose == 0) ? kDogLyingFrames[spriteFrame] : kDogSittingFrames[spriteFrame];
-    const char *const *previousSprite = nullptr;
-    if (!fullDogRepaint) {
-        const uint8_t previousTailPhase = static_cast<uint8_t>(gHermesXDirectHomeUiCache.lastDogFrame % 6U);
-        const uint8_t previousSpriteFrame =
-            (dogPose == 0) ? static_cast<uint8_t>(previousTailPhase % kDogLyingFrameCount)
-                           : static_cast<uint8_t>(previousTailPhase % kDogSittingFrameCount);
-        previousSprite = (dogPose == 0) ? kDogLyingFrames[previousSpriteFrame] : kDogSittingFrames[previousSpriteFrame];
-    }
-    auto colorFor = [&](char token) -> uint16_t {
-        switch (token) {
-        case 'O':
-            return outline;
-        case 'H':
-            return tanHi;
-        case 'S':
-            return saddle;
-        case 'T':
-            return tan;
-        case 'L':
-            return tongue;
-        case 'W':
-            return chest;
-        case 'G':
-            return ground;
-        default:
-            return bg;
-        }
-    };
-
-    for (int16_t sy = 0; sy < kDogSpriteH; ++sy) {
-        const char *row = sprite[sy];
-        const char *previousRow = previousSprite ? previousSprite[sy] : nullptr;
-        for (int16_t sx = 0; sx < kDogSpriteW; ++sx) {
-            const char token = row[sx];
-            if (previousRow && previousRow[sx] == token) {
-                continue;
-            }
-            if (token == '.') {
-                if (previousRow) {
-                    directFillRect565Clipped(tft,
-                                             displayW,
-                                             displayH,
-                                             dogX + (sx * kDogScale),
-                                             dogY + (sy * kDogScale),
-                                             kDogScale,
-                                             kDogScale,
-                                             bg,
-                                             &clip);
-                }
-                continue;
-            }
-            directFillRect565Clipped(tft,
-                                     displayW,
-                                     displayH,
-                                     dogX + (sx * kDogScale),
-                                     dogY + (sy * kDogScale),
-                                     kDogScale,
-                                     kDogScale,
-                                     colorFor(token),
-                                     &clip);
-        }
-    }
-
-    gHermesXDirectHomeUiCache.lastDogX = dogX;
-    gHermesXDirectHomeUiCache.lastDogY = dogY;
-    gHermesXDirectHomeUiCache.lastDogW = kDogDrawW;
-    gHermesXDirectHomeUiCache.lastDogH = kDogDrawH;
-}
-
-static void renderDirectNeonClock(TFTDisplay *tft,
-                                  int16_t width,
-                                  int16_t originY,
-                                  const char *timeBuf,
-                                  bool forceFullRedraw = false,
-                                  bool clearBackground = true)
-{
-    if (!tft || !timeBuf) {
-        return;
-    }
-
-    int16_t regionX = 0;
-    int16_t regionY = 0;
-    int16_t regionW = 0;
-    int16_t regionH = 0;
-    int16_t frameX = 0;
-    if (!getDirectNeonClockRegionRect(width, originY, regionX, regionY, regionW, regionH, frameX)) {
-        return;
-    }
-    if (!ensureDirectNeonBuffers() || !gDirectNeonSharedComposedLayerMap || !gDirectNeonClockPreviousComposedLayerMap) {
-        return;
-    }
-    const uint16_t black = TFTDisplay::rgb565(0x00, 0x00, 0x00);
-
-    static char previousTimeBuf[16] = {0};
-    static bool previousValid = false;
-    static int16_t previousRegionX = 0;
-    static int16_t previousRegionY = 0;
-    static int16_t previousRegionW = 0;
-    static int16_t previousRegionH = 0;
-    static uint32_t previousBufferGeneration = 0;
-    uint8_t *previousComposedLayerMap = gDirectNeonClockPreviousComposedLayerMap;
-
-    if (previousBufferGeneration != gDirectNeonBufferGeneration) {
-        previousValid = false;
-        previousBufferGeneration = gDirectNeonBufferGeneration;
-    }
-
-    const bool geometryChanged = !previousValid || previousRegionX != regionX || previousRegionY != regionY ||
-                                 previousRegionW != regionW || previousRegionH != regionH;
-
-    if (clearBackground && geometryChanged && previousValid) {
-        tft->fillRect565(previousRegionX, previousRegionY, previousRegionW, previousRegionH, black);
-    }
-
-    const bool timeChanged = !previousValid || strcmp(previousTimeBuf, timeBuf) != 0;
-    if (!geometryChanged && !forceFullRedraw && !timeChanged) {
-        return;
-    }
-    LOG_DEBUG("[DirectHome] renderDirectNeonClock geometryChanged=%d forceFullRedraw=%d timeChanged=%d region=%dx%d",
-              geometryChanged ? 1 : 0, forceFullRedraw ? 1 : 0, timeChanged ? 1 : 0, regionW, regionH);
-
-    int16_t slotStartX[kDirectNeonClockSlotCount + 1];
-    slotStartX[0] = frameX;
-    for (size_t slotIndex = 0; slotIndex < kDirectNeonClockSlotCount; ++slotIndex) {
-        slotStartX[slotIndex + 1] = slotStartX[slotIndex] + getDirectNeonClockSlotWidth(slotIndex);
-    }
-
-    uint8_t *composedLayerMap = gDirectNeonSharedComposedLayerMap;
-    memset(composedLayerMap, 0, static_cast<size_t>(regionW * regionH));
-
-    const auto composeSlot = [&](size_t slotIndex) {
-        const char ch = timeBuf[slotIndex];
-        if (ch == '\0') {
-            return;
-        }
-        if (auto *cache = getDirectNeonClockGlyphCache(ch)) {
-            const int16_t slotW = getDirectNeonClockSlotWidth(slotIndex);
-            const int16_t drawX = slotStartX[slotIndex] + ((slotW - cache->coreW) / 2) - kDirectNeonClockMargin;
-            for (int16_t row = 0; row < cache->tileH; ++row) {
-                const int16_t py = regionY + row;
-                if (py < regionY || py >= (regionY + regionH)) {
-                    continue;
-                }
-                for (int16_t col = 0; col < cache->tileW; ++col) {
-                    const int16_t px = drawX + col;
-                    if (px < regionX || px >= (regionX + regionW)) {
-                        continue;
-                    }
-                    const uint8_t value = cache->layerMap[(row * kDirectNeonClockGlyphTileW) + col];
-                    if (!value) {
-                        continue;
-                    }
-                    const int16_t idx = ((py - regionY) * regionW) + (px - regionX);
-                    if (value > composedLayerMap[idx]) {
-                        composedLayerMap[idx] = value;
-                    }
-                }
-            }
-        }
-    };
-
-    for (size_t slotIndex = 0; slotIndex < kDirectNeonClockSlotCount; ++slotIndex) {
-        if (timeBuf[slotIndex] == '\0') {
-            break;
-        }
-        composeSlot(slotIndex);
-    }
-
-    const bool fullRepaintRequired = geometryChanged || forceFullRedraw || !previousValid;
-    if (fullRepaintRequired) {
-        if (clearBackground) {
-            tft->fillRect565(regionX, regionY, regionW, regionH, black);
-        }
-        for (int16_t row = 0; row < regionH; ++row) {
-            int16_t runStart = -1;
-            uint8_t runValue = 0xFF;
-            for (int16_t col = 0; col <= regionW; ++col) {
-                const uint8_t value = (col < regionW) ? composedLayerMap[(row * regionW) + col] : 0xFF;
-                if (value == runValue) {
-                    continue;
-                }
-                if (runStart >= 0 && runValue > 0) {
-                    tft->fillRect565(regionX + runStart,
-                                     regionY + row,
-                                     col - runStart,
-                                     1,
-                                     mapDirectNeonClockLayerColor(runValue));
-                }
-                runValue = value;
-                runStart = (col < regionW) ? col : -1;
-            }
-        }
-    } else {
-        for (int16_t row = 0; row < regionH; ++row) {
-            int16_t runStart = -1;
-            uint8_t runValue = 0xFF;
-            for (int16_t col = 0; col <= regionW; ++col) {
-                bool changed = false;
-                uint8_t value = 0xFF;
-                if (col < regionW) {
-                    const int16_t idx = (row * regionW) + col;
-                    changed = previousComposedLayerMap[idx] != composedLayerMap[idx];
-                    value = composedLayerMap[idx];
-                }
-
-                if (!changed || value != runValue) {
-                    if (runStart >= 0) {
-                        if (runValue == 0 && !clearBackground) {
-                            runStart = -1;
-                            continue;
-                        }
-                        const uint16_t color = (runValue > 0) ? mapDirectNeonClockLayerColor(runValue) : black;
-                        tft->fillRect565(regionX + runStart, regionY + row, col - runStart, 1, color);
-                        runStart = -1;
-                    }
-                }
-
-                if (changed) {
-                    if (runStart < 0) {
-                        runStart = col;
-                        runValue = value;
-                    }
-                } else {
-                    runValue = 0xFF;
-                }
-            }
-        }
-    }
-
-    strlcpy(previousTimeBuf, timeBuf, sizeof(previousTimeBuf));
-    memcpy(previousComposedLayerMap, composedLayerMap, static_cast<size_t>(regionW * regionH));
-    previousRegionX = regionX;
-    previousRegionY = regionY;
-    previousRegionW = regionW;
-    previousRegionH = regionH;
-    previousValid = true;
-}
-
-static int16_t measurePattanakarnClockTextTracked(const char *text, bool halfScale, int16_t tracking)
-{
-    if (!text) {
-        return 0;
-    }
-
-    int16_t width = 0;
-    bool hasGlyph = false;
-    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
-        const auto *glyph = findPattanakarnClockGlyph(*cursor);
-        if (!glyph) {
-            continue;
-        }
-        if (hasGlyph) {
-            width += tracking;
-        }
-        width += halfScale ? static_cast<int16_t>((glyph->width + 1) / 2) : static_cast<int16_t>(glyph->width);
-        hasGlyph = true;
-    }
-    return width;
-}
-
-static bool renderDirectNeonPattanakarnText(TFTDisplay *tft,
-                                            int16_t drawX,
-                                            int16_t drawY,
-                                            const char *text,
-                                            bool halfScale,
-                                            uint16_t (*layerColorFn)(uint8_t) = nullptr,
-                                            bool clearBackground = true,
-                                            int16_t tracking = 0,
-                                            int16_t marginOverride = -1)
-{
-    if (!tft || !text || !*text) {
-        return false;
-    }
-    if (!layerColorFn) {
-        layerColorFn = mapDirectNeonClockLayerColor;
-    }
-    if (!ensureDirectNeonBuffers() || !gDirectNeonSharedComposedLayerMap) {
-        return false;
-    }
-
-    const int16_t coreW = measurePattanakarnClockTextTracked(text, halfScale, tracking);
-    if (coreW <= 0) {
-        return false;
-    }
-
-    const int16_t coreH = halfScale ? kPattanakarnClockHalfHeight : PattanakarnClock32::kGlyphHeight;
-    int16_t margin = halfScale ? static_cast<int16_t>((kDirectNeonClockMargin + 1) / 2) : kDirectNeonClockMargin;
-    if (marginOverride >= 0) {
-        margin = std::max<int16_t>(0, std::min<int16_t>(margin, marginOverride));
-    }
-    const int16_t regionX = drawX - margin;
-    const int16_t regionY = drawY - margin;
-    const int16_t regionW = coreW + (margin * 2);
-    const int16_t regionH = coreH + (margin * 2);
-    if (regionW <= 0 || regionH <= 0 || regionW > kDirectNeonTextMaxW || regionH > kDirectNeonTextMaxH) {
-        return false;
-    }
-    LOG_DEBUG("[DirectHome] direct neon text text='%s' half=%d tracking=%d margin=%d region=%dx%d", text, halfScale ? 1 : 0,
-              tracking, margin, regionW, regionH);
-
-    uint8_t *composedLayerMap = gDirectNeonSharedComposedLayerMap;
-    memset(composedLayerMap, 0, static_cast<size_t>(regionW * regionH));
-
-    int16_t cursorX = drawX;
-    bool hasGlyph = false;
-    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
-        auto *cache = getDirectNeonClockGlyphCache(*cursor);
-        if (!cache) {
-            continue;
-        }
-        if (hasGlyph) {
-            cursorX += tracking;
-        }
-
-        const int16_t glyphX = cursorX - margin;
-        const int16_t glyphY = drawY - margin;
-        for (int16_t row = 0; row < cache->tileH; ++row) {
-            const int16_t py = glyphY + (halfScale ? (row / 2) : row);
-            if (py < regionY || py >= (regionY + regionH)) {
-                continue;
-            }
-            for (int16_t col = 0; col < cache->tileW; ++col) {
-                const uint8_t value = cache->layerMap[(row * kDirectNeonClockGlyphTileW) + col];
-                if (!value) {
-                    continue;
-                }
-
-                const int16_t px = glyphX + (halfScale ? (col / 2) : col);
-                if (px < regionX || px >= (regionX + regionW)) {
-                    continue;
-                }
-
-                const int16_t idx = ((py - regionY) * regionW) + (px - regionX);
-                if (value > composedLayerMap[idx]) {
-                    composedLayerMap[idx] = value;
-                }
-            }
-        }
-
-        cursorX += halfScale ? static_cast<int16_t>((cache->coreW + 1) / 2) : cache->coreW;
-        hasGlyph = true;
-    }
-
-    const uint16_t black = TFTDisplay::rgb565(0x00, 0x00, 0x00);
-    if (clearBackground) {
-        tft->fillRect565(regionX, regionY, regionW, regionH, black);
-    }
-    for (int16_t row = 0; row < regionH; ++row) {
-        int16_t runStart = -1;
-        uint8_t runValue = 0xFF;
-        for (int16_t col = 0; col <= regionW; ++col) {
-            const uint8_t value = (col < regionW) ? composedLayerMap[(row * regionW) + col] : 0xFF;
-            if (value == runValue) {
-                continue;
-            }
-            if (runStart >= 0 && runValue > 0) {
-                tft->fillRect565(regionX + runStart, regionY + row, col - runStart, 1, layerColorFn(runValue));
-            }
-            runValue = value;
-            runStart = (col < regionW) ? col : -1;
-        }
-    }
-
-    return true;
-}
-
-struct DirectGpsPosterLayout {
-    bool tiny = false;
-    int16_t leftX = 0;
-    int16_t leftW = 0;
-    int16_t titleY = 0;
-    int16_t coordY1 = 0;
-    int16_t coordY2 = 0;
-    int16_t altitudeY = 0;
-    int16_t globeCx = 0;
-    int16_t globeCy = 0;
-    int16_t globeR = 0;
-    int16_t mountainX = 0;
-    int16_t mountainY = 0;
-    int16_t mountainW = 0;
-    int16_t mountainH = 0;
-};
-
-static DirectGpsPosterLayout makeDirectGpsPosterLayout(int16_t width, int16_t height)
-{
-    DirectGpsPosterLayout layout;
-    layout.tiny = (width <= 176 || height <= 96);
-
-    layout.globeR = (height * (layout.tiny ? 33 : 44)) / 100;
-    if (layout.globeR < (layout.tiny ? 20 : 28)) {
-        layout.globeR = layout.tiny ? 20 : 28;
-    }
-    layout.globeCx = (width * (layout.tiny ? 84 : 77)) / 100;
-    const int16_t globeCxMin = layout.globeR + 2;
-    const int16_t globeCxMax = width - std::max<int16_t>(2, layout.globeR / 5);
-    if (layout.globeCx < globeCxMin) {
-        layout.globeCx = globeCxMin;
-    }
-    if (layout.globeCx > globeCxMax) {
-        layout.globeCx = globeCxMax;
-    }
-
-    layout.globeCy = (height * (layout.tiny ? 52 : 53)) / 100;
-    const int16_t globeCyMin = layout.globeR + 2;
-    const int16_t globeCyMax = height - std::max<int16_t>(2, layout.globeR / 6);
-    if (layout.globeCy < globeCyMin) {
-        layout.globeCy = globeCyMin;
-    }
-    if (layout.globeCy > globeCyMax) {
-        layout.globeCy = globeCyMax;
-    }
-
-    layout.leftX = layout.tiny ? 4 : 10;
-    int16_t leftRight = layout.globeCx - layout.globeR - (layout.tiny ? 2 : 10);
-    if (leftRight < layout.leftX + 40) {
-        leftRight = layout.leftX + 40;
-    }
-    if (leftRight > width - 4) {
-        leftRight = width - 4;
-    }
-    layout.leftW = leftRight - layout.leftX;
-    if (layout.leftW < 38) {
-        layout.leftW = 38;
-    }
-
-    layout.titleY = (height * (layout.tiny ? 8 : 12)) / 100;
-    layout.coordY1 = layout.titleY + (layout.tiny ? 19 : 26);
-    layout.coordY2 = layout.coordY1 + (layout.tiny ? 18 : 28);
-    layout.altitudeY = layout.coordY2 + (layout.tiny ? 18 : 22);
-    const int16_t maxAltitudeY = height - (layout.tiny ? 15 : 20);
-    if (layout.altitudeY > maxAltitudeY) {
-        const int16_t shiftUp = layout.altitudeY - maxAltitudeY;
-        layout.coordY1 -= shiftUp;
-        layout.coordY2 -= shiftUp;
-        layout.altitudeY -= shiftUp;
-    }
-    const int16_t minCoordY1 = layout.titleY + (layout.tiny ? 16 : 22);
-    if (layout.coordY1 < minCoordY1) {
-        const int16_t shiftDown = minCoordY1 - layout.coordY1;
-        layout.coordY1 += shiftDown;
-        layout.coordY2 += shiftDown;
-        layout.altitudeY += shiftDown;
-    }
-
-    layout.mountainW = layout.tiny ? 30 : 46;
-    layout.mountainH = layout.tiny ? 14 : 22;
-    layout.mountainX = layout.leftX + (layout.tiny ? 2 : 4);
-    const int16_t altitudeVisualH = kPattanakarnClockHalfHeight;
-    // Vertically align the mountain icon with the altitude text row.
-    layout.mountainY = layout.altitudeY + ((altitudeVisualH - layout.mountainH) / 2) + (layout.tiny ? 1 : 2);
-    const int16_t minMountainY = layout.coordY2 + (layout.tiny ? 10 : 14);
-    if (layout.mountainY < minMountainY) {
-        layout.mountainY = minMountainY;
-    }
-    const int16_t maxMountainY = std::max<int16_t>(0, height - layout.mountainH - 1);
-    if (layout.mountainY > maxMountainY) {
-        layout.mountainY = maxMountainY;
-    }
-
-    return layout;
-}
-
-static void renderDirectGpsPosterCoordinateNeon(TFTDisplay *tft, int16_t width, int16_t height, const GPSStatus *gps)
-{
-    if (!tft || width <= 0 || height <= 0) {
-        return;
-    }
-
-    const DirectGpsPosterLayout layout = makeDirectGpsPosterLayout(width, height);
-    const bool tinyPosterLayout = layout.tiny;
-    const bool gpsEnabled = config.position.gps_mode == meshtastic_Config_PositionConfig_GpsMode_ENABLED;
-    const bool hasGpsCoordinates =
-        gps && gpsEnabled && (config.position.fixed_position || (gps->getIsConnected() && gps->getHasLock()));
-    // Keep WGS84-style full decimal coordinates readable on small TFT by shrinking glyph size only.
-    const int16_t coordTracking = 0;
-    const int16_t altitudeTracking = tinyPosterLayout ? 1 : 1;
-    const bool coordHalfScale = true;
-    const bool altitudeHalfScale = true;
-    const int16_t neonMargin = 0;
-    const int16_t altitudeMargin = tinyPosterLayout ? 1 : 2;
-    const int16_t leftRegionMinX = layout.leftX + neonMargin;
-    const int16_t leftRegionMaxX = layout.leftX + layout.leftW - neonMargin;
-    const int16_t leftCenterX = layout.leftX + (layout.leftW / 2);
-
-    double lat = 0.0;
-    double lon = 0.0;
-    if (hasGpsCoordinates) {
-        lat = static_cast<double>(gps->getLatitude()) * 1e-7;
-        lon = static_cast<double>(gps->getLongitude()) * 1e-7;
-    }
-
-    char lonLine[24];
-    char latLine[24];
-    char altitudeLine[16];
-    auto writeCoordPlaceholder = [](char *out, size_t outSize, int wholeDigits, int decimals) {
-        if (!out || outSize == 0) {
-            return;
-        }
-        size_t pos = 0;
-        for (int i = 0; i < wholeDigits && pos < (outSize - 1); ++i) {
-            out[pos++] = '-';
-        }
-        if (pos < (outSize - 1)) {
-            out[pos++] = '.';
-        }
-        for (int i = 0; i < decimals && pos < (outSize - 1); ++i) {
-            out[pos++] = '-';
-        }
-        out[pos] = '\0';
-    };
-
-    int16_t lonClockW = 0;
-    int16_t latClockW = 0;
-    const int16_t coordUsableW = std::max<int16_t>(44, layout.leftW - (neonMargin * 2));
-    auto measureCoordText = [&](const char *line) { return measurePattanakarnClockTextTracked(line, coordHalfScale, coordTracking); };
-    if (hasGpsCoordinates) {
-        int coordDecimals = -1;
-        for (int decimals = 7; decimals >= 2; --decimals) {
-            snprintf(lonLine, sizeof(lonLine), "%.*f", decimals, lon);
-            snprintf(latLine, sizeof(latLine), "%.*f", decimals, lat);
-            lonClockW = measureCoordText(lonLine);
-            latClockW = measureCoordText(latLine);
-            if (lonClockW > 0 && latClockW > 0 && lonClockW <= coordUsableW && latClockW <= coordUsableW) {
-                coordDecimals = decimals;
-                break;
-            }
-        }
-        if (coordDecimals < 0) {
-            snprintf(lonLine, sizeof(lonLine), "%.2f", lon);
-            snprintf(latLine, sizeof(latLine), "%.2f", lat);
-            lonClockW = measureCoordText(lonLine);
-            latClockW = measureCoordText(latLine);
-        }
-    } else {
-        writeCoordPlaceholder(lonLine, sizeof(lonLine), 2, 2);
-        writeCoordPlaceholder(latLine, sizeof(latLine), 2, 2);
-        lonClockW = measureCoordText(lonLine);
-        latClockW = measureCoordText(latLine);
-    }
-
-    if (lonClockW <= 0 || latClockW <= 0) {
-        return;
-    }
-
-    const int32_t altitudeMeters = (hasGpsCoordinates && gps) ? gps->getAltitude() : INT32_MIN;
-    if (altitudeMeters == INT32_MIN) {
-        snprintf(altitudeLine, sizeof(altitudeLine), "--m");
-    } else {
-        snprintf(altitudeLine, sizeof(altitudeLine), "%ldm", static_cast<long>(altitudeMeters));
-    }
-    const int16_t altitudeW = measurePattanakarnClockTextTracked(altitudeLine, altitudeHalfScale, altitudeTracking);
-
-    auto clampLineX = [&](int16_t wantedX, int16_t lineW) {
-        const int16_t minX = leftRegionMinX;
-        const int16_t maxX = leftRegionMaxX - lineW;
-        if (maxX <= minX) {
-            return minX;
-        }
-        if (wantedX < minX) {
-            return minX;
-        }
-        if (wantedX > maxX) {
-            return maxX;
-        }
-        return wantedX;
-    };
-
-    const int16_t lonX = clampLineX(leftCenterX - (lonClockW / 2), lonClockW);
-    const int16_t latX = clampLineX(leftCenterX - (latClockW / 2), latClockW);
-
-    int16_t altitudeX = clampLineX(layout.mountainX + layout.mountainW + (tinyPosterLayout ? 6 : 8), altitudeW);
-    if (altitudeW > 0 && (altitudeX + altitudeW) > leftRegionMaxX) {
-        altitudeX = clampLineX(leftCenterX - (altitudeW / 2), altitudeW);
-    }
-
-    // Decor is fully repainted before text, so keep background intact to preserve raster lines behind neon.
-
-    renderDirectNeonPattanakarnText(
-        tft, lonX, layout.coordY1, lonLine, coordHalfScale, mapDirectGpsWarmLayerColor, false, coordTracking);
-    renderDirectNeonPattanakarnText(
-        tft, latX, layout.coordY2, latLine, coordHalfScale, mapDirectGpsWarmLayerColor, false, coordTracking);
-    if (altitudeW > 0) {
-        renderDirectNeonPattanakarnText(
-            tft, altitudeX, layout.altitudeY, altitudeLine, altitudeHalfScale, mapDirectGpsWarmLayerColor, false, altitudeTracking,
-            altitudeMargin);
-    }
-}
-
-static void directFillCircle565(TFTDisplay *tft, int16_t displayW, int16_t displayH, int16_t cx, int16_t cy, int16_t radius, uint16_t color)
-{
-    if (!tft || radius <= 0 || displayW <= 0 || displayH <= 0) {
-        return;
-    }
-
-    const int32_t rr = static_cast<int32_t>(radius) * static_cast<int32_t>(radius);
-    for (int16_t yy = -radius; yy <= radius; ++yy) {
-        const int16_t py = cy + yy;
-        if (py < 0 || py >= displayH) {
-            continue;
-        }
-        const int32_t dy2 = static_cast<int32_t>(yy) * static_cast<int32_t>(yy);
-        const int32_t dx2 = rr - dy2;
-        if (dx2 < 0) {
-            continue;
-        }
-        int16_t dx = static_cast<int16_t>(sqrtf(static_cast<float>(dx2)));
-        int16_t x0 = cx - dx;
-        int16_t x1 = cx + dx;
-        if (x1 < 0 || x0 >= displayW) {
-            continue;
-        }
-        if (x0 < 0) {
-            x0 = 0;
-        }
-        if (x1 >= displayW) {
-            x1 = displayW - 1;
-        }
-        const int16_t runW = x1 - x0 + 1;
-        if (runW > 0) {
-            tft->fillRect565(x0, py, runW, 1, color);
-        }
-    }
-}
-
-static void directDrawLine565(TFTDisplay *tft,
-                              int16_t displayW,
-                              int16_t displayH,
-                              int16_t x0,
-                              int16_t y0,
-                              int16_t x1,
-                              int16_t y1,
-                              uint16_t color)
-{
-    if (!tft) {
-        return;
-    }
-
-    int16_t x = x0;
-    int16_t y = y0;
-    const int16_t dx = std::abs(x1 - x0);
-    const int16_t sx = (x0 < x1) ? 1 : -1;
-    const int16_t dy = -std::abs(y1 - y0);
-    const int16_t sy = (y0 < y1) ? 1 : -1;
-    int16_t err = dx + dy;
-
-    while (true) {
-        if (x >= 0 && x < displayW && y >= 0 && y < displayH) {
-            tft->drawPixel565(x, y, color);
-        }
-        if (x == x1 && y == y1) {
-            break;
-        }
-        const int16_t e2 = static_cast<int16_t>(2 * err);
-        if (e2 >= dy) {
-            err += dy;
-            x += sx;
-        }
-        if (e2 <= dx) {
-            err += dx;
-            y += sy;
-        }
-    }
-}
-
-static void directDrawThickLine565(TFTDisplay *tft,
-                                   int16_t displayW,
-                                   int16_t displayH,
-                                   int16_t x0,
-                                   int16_t y0,
-                                   int16_t x1,
-                                   int16_t y1,
-                                   int16_t thickness,
-                                   uint16_t color)
-{
-    if (!tft || thickness <= 0) {
-        return;
-    }
-
-    if (thickness <= 1) {
-        directDrawLine565(tft, displayW, displayH, x0, y0, x1, y1, color);
-        return;
-    }
-
-    const int16_t dx = x1 - x0;
-    const int16_t dy = y1 - y0;
-    const int16_t steps = std::max<int16_t>(std::abs(dx), std::abs(dy));
-    const int16_t dotR = std::max<int16_t>(1, thickness / 2);
-    if (steps <= 0) {
-        directFillCircle565(tft, displayW, displayH, x0, y0, dotR, color);
-        return;
-    }
-
-    for (int16_t i = 0; i <= steps; ++i) {
-        const int16_t px = x0 + (dx * i) / steps;
-        const int16_t py = y0 + (dy * i) / steps;
-        directFillCircle565(tft, displayW, displayH, px, py, dotR, color);
-    }
-}
-
-static void directDrawNeonLine565(TFTDisplay *tft,
-                                  int16_t displayW,
-                                  int16_t displayH,
-                                  int16_t x0,
-                                  int16_t y0,
-                                  int16_t x1,
-                                  int16_t y1,
-                                  uint16_t coreColor,
-                                  uint16_t glowNearColor,
-                                  uint16_t glowFarColor,
-                                  int16_t coreThickness,
-                                  int16_t glowNearThickness,
-                                  int16_t glowFarThickness)
-{
-    if (!tft) {
-        return;
-    }
-    if (glowFarThickness > 0) {
-        directDrawThickLine565(tft, displayW, displayH, x0, y0, x1, y1, glowFarThickness, glowFarColor);
-    }
-    if (glowNearThickness > 0) {
-        directDrawThickLine565(tft, displayW, displayH, x0, y0, x1, y1, glowNearThickness, glowNearColor);
-    }
-    if (coreThickness > 0) {
-        directDrawThickLine565(tft, displayW, displayH, x0, y0, x1, y1, coreThickness, coreColor);
-    }
-}
-
-static bool makeDirectDrawClipRect(int16_t x,
-                                   int16_t y,
-                                   int16_t w,
-                                   int16_t h,
-                                   int16_t displayW,
-                                   int16_t displayH,
-                                   DirectDrawClipRect &outClip)
-{
-    if (w <= 0 || h <= 0 || displayW <= 0 || displayH <= 0) {
-        outClip.enabled = false;
-        return false;
-    }
-    int16_t minX = x;
-    int16_t minY = y;
-    int16_t maxX = x + w - 1;
-    int16_t maxY = y + h - 1;
-    if (maxX < 0 || maxY < 0 || minX >= displayW || minY >= displayH) {
-        outClip.enabled = false;
-        return false;
-    }
-    if (minX < 0) {
-        minX = 0;
-    }
-    if (minY < 0) {
-        minY = 0;
-    }
-    if (maxX >= displayW) {
-        maxX = displayW - 1;
-    }
-    if (maxY >= displayH) {
-        maxY = displayH - 1;
-    }
-    outClip.enabled = true;
-    outClip.minX = minX;
-    outClip.maxX = maxX;
-    outClip.minY = minY;
-    outClip.maxY = maxY;
-    return true;
-}
-
-static bool directClipContains(const DirectDrawClipRect *clip, int16_t x, int16_t y)
-{
-    if (!clip || !clip->enabled) {
-        return true;
-    }
-    return x >= clip->minX && x <= clip->maxX && y >= clip->minY && y <= clip->maxY;
-}
-
-static void directFillCircle565Clipped(TFTDisplay *tft,
-                                       int16_t displayW,
-                                       int16_t displayH,
-                                       int16_t cx,
-                                       int16_t cy,
-                                       int16_t radius,
-                                       uint16_t color,
-                                       const DirectDrawClipRect *clip)
-{
-    if (!tft || radius <= 0 || displayW <= 0 || displayH <= 0) {
-        return;
-    }
-
-    const int32_t rr = static_cast<int32_t>(radius) * static_cast<int32_t>(radius);
-    for (int16_t yy = -radius; yy <= radius; ++yy) {
-        const int16_t py = cy + yy;
-        if (py < 0 || py >= displayH) {
-            continue;
-        }
-        if (clip && clip->enabled && (py < clip->minY || py > clip->maxY)) {
-            continue;
-        }
-
-        const int32_t dy2 = static_cast<int32_t>(yy) * static_cast<int32_t>(yy);
-        const int32_t dx2 = rr - dy2;
-        if (dx2 < 0) {
-            continue;
-        }
-        int16_t dx = static_cast<int16_t>(sqrtf(static_cast<float>(dx2)));
-        int16_t x0 = cx - dx;
-        int16_t x1 = cx + dx;
-        if (x1 < 0 || x0 >= displayW) {
-            continue;
-        }
-        if (x0 < 0) {
-            x0 = 0;
-        }
-        if (x1 >= displayW) {
-            x1 = displayW - 1;
-        }
-        if (clip && clip->enabled) {
-            if (x1 < clip->minX || x0 > clip->maxX) {
-                continue;
-            }
-            if (x0 < clip->minX) {
-                x0 = clip->minX;
-            }
-            if (x1 > clip->maxX) {
-                x1 = clip->maxX;
-            }
-        }
-        const int16_t runW = x1 - x0 + 1;
-        if (runW > 0) {
-            tft->fillRect565(x0, py, runW, 1, color);
-        }
-    }
-}
-
-static void directFillRect565Clipped(TFTDisplay *tft,
-                                     int16_t displayW,
-                                     int16_t displayH,
-                                     int16_t x,
-                                     int16_t y,
-                                     int16_t w,
-                                     int16_t h,
-                                     uint16_t color,
-                                     const DirectDrawClipRect *clip)
-{
-    if (!tft || displayW <= 0 || displayH <= 0 || w <= 0 || h <= 0) {
-        return;
-    }
-
-    int16_t x0 = x;
-    int16_t y0 = y;
-    int16_t x1 = x + w - 1;
-    int16_t y1 = y + h - 1;
-    if (clip && clip->enabled) {
-        x0 = std::max<int16_t>(x0, clip->minX);
-        y0 = std::max<int16_t>(y0, clip->minY);
-        x1 = std::min<int16_t>(x1, clip->maxX);
-        y1 = std::min<int16_t>(y1, clip->maxY);
-    }
-    x0 = std::max<int16_t>(0, x0);
-    y0 = std::max<int16_t>(0, y0);
-    x1 = std::min<int16_t>(static_cast<int16_t>(displayW - 1), x1);
-    y1 = std::min<int16_t>(static_cast<int16_t>(displayH - 1), y1);
-    if (x0 > x1 || y0 > y1) {
-        return;
-    }
-    tft->fillRect565(x0, y0, x1 - x0 + 1, y1 - y0 + 1, color);
-}
-
-static void directDrawLine565Clipped(TFTDisplay *tft,
-                                     int16_t displayW,
-                                     int16_t displayH,
-                                     int16_t x0,
-                                     int16_t y0,
-                                     int16_t x1,
-                                     int16_t y1,
-                                     uint16_t color,
-                                     const DirectDrawClipRect *clip)
-{
-    if (!tft) {
-        return;
-    }
-
-    int16_t x = x0;
-    int16_t y = y0;
-    const int16_t dx = std::abs(x1 - x0);
-    const int16_t sx = (x0 < x1) ? 1 : -1;
-    const int16_t dy = -std::abs(y1 - y0);
-    const int16_t sy = (y0 < y1) ? 1 : -1;
-    int16_t err = dx + dy;
-
-    while (true) {
-        if (x >= 0 && x < displayW && y >= 0 && y < displayH && directClipContains(clip, x, y)) {
-            tft->drawPixel565(x, y, color);
-        }
-        if (x == x1 && y == y1) {
-            break;
-        }
-        const int16_t e2 = static_cast<int16_t>(2 * err);
-        if (e2 >= dy) {
-            err += dy;
-            x += sx;
-        }
-        if (e2 <= dx) {
-            err += dx;
-            y += sy;
-        }
-    }
-}
-
-static void directDrawThickLine565Clipped(TFTDisplay *tft,
-                                          int16_t displayW,
-                                          int16_t displayH,
-                                          int16_t x0,
-                                          int16_t y0,
-                                          int16_t x1,
-                                          int16_t y1,
-                                          int16_t thickness,
-                                          uint16_t color,
-                                          const DirectDrawClipRect *clip)
-{
-    if (!tft || thickness <= 0) {
-        return;
-    }
-
-    if (thickness <= 1) {
-        directDrawLine565Clipped(tft, displayW, displayH, x0, y0, x1, y1, color, clip);
-        return;
-    }
-
-    const int16_t dx = x1 - x0;
-    const int16_t dy = y1 - y0;
-    const int16_t steps = std::max<int16_t>(std::abs(dx), std::abs(dy));
-    const int16_t dotR = std::max<int16_t>(1, thickness / 2);
-    if (steps <= 0) {
-        directFillCircle565Clipped(tft, displayW, displayH, x0, y0, dotR, color, clip);
-        return;
-    }
-
-    for (int16_t i = 0; i <= steps; ++i) {
-        const int16_t px = x0 + (dx * i) / steps;
-        const int16_t py = y0 + (dy * i) / steps;
-        directFillCircle565Clipped(tft, displayW, displayH, px, py, dotR, color, clip);
-    }
-}
-
-static void directDrawNeonLine565Clipped(TFTDisplay *tft,
-                                         int16_t displayW,
-                                         int16_t displayH,
-                                         int16_t x0,
-                                         int16_t y0,
-                                         int16_t x1,
-                                         int16_t y1,
-                                         uint16_t coreColor,
-                                         uint16_t glowNearColor,
-                                         uint16_t glowFarColor,
-                                         int16_t coreThickness,
-                                         int16_t glowNearThickness,
-                                         int16_t glowFarThickness,
-                                         const DirectDrawClipRect *clip)
-{
-    if (!tft) {
-        return;
-    }
-    if (glowFarThickness > 0) {
-        directDrawThickLine565Clipped(tft, displayW, displayH, x0, y0, x1, y1, glowFarThickness, glowFarColor, clip);
-    }
-    if (glowNearThickness > 0) {
-        directDrawThickLine565Clipped(tft, displayW, displayH, x0, y0, x1, y1, glowNearThickness, glowNearColor, clip);
-    }
-    if (coreThickness > 0) {
-        directDrawThickLine565Clipped(tft, displayW, displayH, x0, y0, x1, y1, coreThickness, coreColor, clip);
-    }
-}
-
-struct DirectHomeOrbLayout {
-    bool tiny = false;
-    int16_t boxX = 0;
-    int16_t boxY = 0;
-    int16_t boxW = 0;
-    int16_t boxH = 0;
-    int16_t cx = 0;
-    int16_t cy = 0;
-    int16_t boundsX = 0;
-    int16_t boundsY = 0;
-    int16_t boundsW = 0;
-    int16_t boundsH = 0;
-};
-
-static DirectHomeOrbLayout makeDirectHomeOrbLayout(int16_t width, int16_t height)
-{
-    DirectHomeOrbLayout out;
-    out.tiny = (width <= 176 || height <= 96);
-    // Keep the mesh in a fixed right-bottom box so it never drifts into other UI areas.
-    out.boxW = out.tiny ? 54 : 108;
-    out.boxH = out.tiny ? 42 : 92;
-    out.boxX = width - out.boxW - (out.tiny ? 4 : 10);
-    out.boxY = height - out.boxH - (out.tiny ? 4 : 10);
-    if (out.boxX < 2) {
-        out.boxX = 2;
-    }
-    if (out.boxY < 2) {
-        out.boxY = 2;
-    }
-
-    out.cx = out.boxX + (out.boxW / 2);
-    out.cy = out.boxY + (out.boxH / 2);
-
-    const int16_t glowPad = out.tiny ? 5 : 7;
-    const int16_t halfWPeak = static_cast<int16_t>(((static_cast<int32_t>(out.boxW) * 130) + 99) / 200);
-    const int16_t halfHPeak = static_cast<int16_t>(((static_cast<int32_t>(out.boxH) * 130) + 99) / 200);
-    out.boundsX = out.cx - halfWPeak - glowPad;
-    out.boundsY = out.cy - halfHPeak - glowPad;
-    out.boundsW = (halfWPeak + glowPad) * 2 + 1;
-    out.boundsH = (halfHPeak + glowPad) * 2 + 1;
-    return out;
-}
-
-static bool getDirectHomeOrbBoundsRect(int16_t width, int16_t height, int16_t &x, int16_t &y, int16_t &w, int16_t &h)
-{
-    if (width <= 0 || height <= 0) {
-        return false;
-    }
-    const DirectHomeOrbLayout layout = makeDirectHomeOrbLayout(width, height);
-    DirectDrawClipRect clip;
-    if (!makeDirectDrawClipRect(layout.boundsX, layout.boundsY, layout.boundsW, layout.boundsH, width, height, clip)) {
-        return false;
-    }
-    x = clip.minX;
-    y = clip.minY;
-    w = clip.maxX - clip.minX + 1;
-    h = clip.maxY - clip.minY + 1;
-    return w > 0 && h > 0;
-}
-
-static void renderDirectHomeOrangeMesh(TFTDisplay *tft,
-                                       int16_t width,
-                                       int16_t height,
-                                       const DirectDrawClipRect *clip = nullptr,
-                                       bool clearClip = false,
-                                       uint8_t pulsePercent = 100)
-{
-    if (!tft || width <= 0 || height <= 0) {
-        return;
-    }
-
-    const uint16_t black = TFTDisplay::rgb565(0x00, 0x00, 0x00);
-    const DirectHomeOrbLayout layout = makeDirectHomeOrbLayout(width, height);
-    if (layout.boxW <= 0 || layout.boxH <= 0) {
-        return;
-    }
-
-    if (clip && clip->enabled) {
-        const int16_t bx1 = layout.boundsX + layout.boundsW - 1;
-        const int16_t by1 = layout.boundsY + layout.boundsH - 1;
-        if (bx1 < clip->minX || layout.boundsX > clip->maxX || by1 < clip->minY || layout.boundsY > clip->maxY) {
-            return;
-        }
-    }
-
-    if (clearClip) {
-        if (clip && clip->enabled) {
-            const int16_t clipW = clip->maxX - clip->minX + 1;
-            const int16_t clipH = clip->maxY - clip->minY + 1;
-            if (clipW > 0 && clipH > 0) {
-                tft->fillRect565(clip->minX, clip->minY, clipW, clipH, black);
-            }
-        } else {
-            DirectDrawClipRect clearRect;
-            if (makeDirectDrawClipRect(layout.boundsX, layout.boundsY, layout.boundsW, layout.boundsH, width, height, clearRect)) {
-                tft->fillRect565(clearRect.minX, clearRect.minY, clearRect.maxX - clearRect.minX + 1, clearRect.maxY - clearRect.minY + 1, black);
-            }
-        }
-    }
-
-    if (pulsePercent < 100) {
-        pulsePercent = 100;
-    }
-    if (pulsePercent > 130) {
-        pulsePercent = 130;
-    }
-    const int16_t orbR = std::max<int16_t>(4, (std::min<int16_t>(layout.boxW, layout.boxH) * pulsePercent) / 280);
-
-    static constexpr int16_t kBloomLayers = 20;
-    static constexpr int16_t kBloomOuterPercent = 5;
-    static constexpr int16_t kBloomInnerPercent = 34;
-    const int16_t innerExtra = layout.tiny ? 1 : 2;
-    const int16_t extraStep = 1;
-    for (int16_t layer = kBloomLayers - 1; layer >= 0; --layer) {
-        const int16_t radius = orbR + innerExtra + (layer * extraStep);
-        const int16_t numerator = (kBloomInnerPercent - kBloomOuterPercent) * (kBloomLayers - 1 - layer);
-        const int16_t percent =
-            static_cast<int16_t>(kBloomOuterPercent + ((numerator + ((kBloomLayers - 1) / 2)) / (kBloomLayers - 1)));
-        const uint8_t r = static_cast<uint8_t>((0xFFU * percent) / 100U);
-        const uint8_t g = static_cast<uint8_t>((0x8AU * percent) / 100U);
-        const uint8_t b = static_cast<uint8_t>((0x1FU * percent) / 100U);
-        directFillCircle565Clipped(tft, width, height, layout.cx, layout.cy, radius, TFTDisplay::rgb565(r, g, b), clip);
-    }
-
-    struct OrbPoint {
-        int8_t x;
-        int8_t y;
-    };
-    // Hand-traced from the provided reference polyhedron.
-    static constexpr OrbPoint kPts[] = {
-        {0, 42},   // 0 left-mid
-        {7, 94},   // 1 left-bottom
-        {21, 15},  // 2 top-left
-        {36, 24},  // 3 upper-mid
-        {43, 51},  // 4 center
-        {35, 62},  // 5 mid-left-lower
-        {45, 86},  // 6 bottom-mid
-        {78, 0},   // 7 top-right
-        {63, 42},  // 8 center-right
-        {78, 31},  // 9 right-upper-mid
-        {88, 56},  // 10 right-mid
-        {77, 67},  // 11 right-mid-lower
-        {76, 100}, // 12 bottom-right
-    };
-    struct OrbEdge {
-        uint8_t a;
-        uint8_t b;
-    };
-    static constexpr OrbEdge kEdges[] = {
-        {0, 1},  {1, 12}, {12, 7}, {7, 2},  {2, 0}, // outer shell
-        {7, 9},  {9, 11}, {11, 12},                  // right spine
-        {2, 3},  {3, 7},  {2, 9},  {3, 9},           // top cap
-        {0, 4},  {0, 8},                              // left fan
-        {2, 4},  {2, 5},                              // upper-left internals
-        {3, 4},                                       // crown bridge
-        {4, 5},  {5, 6},  {4, 6},                     // center pillar
-        {4, 8},  {4, 9},  {4, 10}, {4, 12},           // center to right
-        {5, 1},  {6, 1},                              // left-bottom ties
-        {6, 12},                                      // bottom tie
-        {8, 9},  {8, 10}, {8, 11},                    // right upper web
-        {10, 11}, {10, 12}, {11, 12},                 // right lower web
-        {3, 6},                                       // long diagonal
-    };
-
-    const uint16_t edgeCore = TFTDisplay::rgb565(0xF7, 0x8A, 0x1F);
-    const uint16_t edgeGlowNear = TFTDisplay::rgb565(0xC4, 0x62, 0x16);
-    const uint16_t edgeGlowFar = TFTDisplay::rgb565(0x6A, 0x2E, 0x0B);
-    int16_t sx[sizeof(kPts) / sizeof(kPts[0])] = {0};
-    int16_t sy[sizeof(kPts) / sizeof(kPts[0])] = {0};
-    for (size_t i = 0; i < (sizeof(kPts) / sizeof(kPts[0])); ++i) {
-        const int16_t px = layout.boxX + static_cast<int16_t>((static_cast<int32_t>(layout.boxW) * kPts[i].x) / 100);
-        const int16_t py = layout.boxY + static_cast<int16_t>((static_cast<int32_t>(layout.boxH) * kPts[i].y) / 100);
-        sx[i] = layout.cx + static_cast<int16_t>((static_cast<int32_t>(px - layout.cx) * pulsePercent) / 100);
-        sy[i] = layout.cy + static_cast<int16_t>((static_cast<int32_t>(py - layout.cy) * pulsePercent) / 100);
-    }
-    for (size_t i = 0; i < (sizeof(kEdges) / sizeof(kEdges[0])); ++i) {
-        const OrbEdge &e = kEdges[i];
-        directDrawNeonLine565Clipped(tft, width, height, sx[e.a], sy[e.a], sx[e.b], sy[e.b], edgeCore, edgeGlowNear, edgeGlowFar, 1, 1, 2, clip);
-        if ((i & 0x07) == 0) {
-            yield();
-            esp_task_wdt_reset();
-        }
-    }
-
-    const uint16_t nodeCore = TFTDisplay::rgb565(0xD8, 0xFF, 0x00);
-    const uint16_t nodeGlow = TFTDisplay::rgb565(0x7A, 0x8E, 0x10);
-    const int16_t nodeR = layout.tiny ? 2 : 3;
-    const int16_t nodeGlowR = nodeR + 1;
-    for (size_t i = 0; i < (sizeof(kPts) / sizeof(kPts[0])); ++i) {
-        directFillCircle565Clipped(tft, width, height, sx[i], sy[i], nodeGlowR, nodeGlow, clip);
-        directFillCircle565Clipped(tft, width, height, sx[i], sy[i], nodeR, nodeCore, clip);
-    }
-}
-
-static bool repaintDirectHomeClockMeshRegion(TFTDisplay *tft, int16_t width, int16_t height, int16_t originY)
-{
-    if (!tft || width <= 0 || height <= 0) {
-        return false;
-    }
-
-    int16_t regionX = 0;
-    int16_t regionY = 0;
-    int16_t regionW = 0;
-    int16_t regionH = 0;
-    int16_t frameX = 0;
-    if (!getDirectNeonClockRegionRect(width, originY, regionX, regionY, regionW, regionH, frameX)) {
-        return false;
-    }
-
-    // Home mesh is constrained to the lower band; timer region on top never needs mesh repaint.
-    const int16_t meshTopY = static_cast<int16_t>((height * 52) / 100);
-    if ((regionY + regionH) <= meshTopY) {
-        return false;
-    }
-
-    DirectDrawClipRect clip;
-    if (!makeDirectDrawClipRect(regionX, regionY, regionW, regionH, width, height, clip)) {
-        return false;
-    }
-    renderDirectHomeOrangeMesh(tft, width, height, &clip, false);
-    return true;
-}
-
-static void renderDirectGpsGlobeBloom(TFTDisplay *tft,
-                                      int16_t width,
-                                      int16_t height,
-                                      int16_t globeCx,
-                                      int16_t globeCy,
-                                      int16_t globeR,
-                                      bool tinyLayout)
-{
-    if (!tft || width <= 0 || height <= 0 || globeR <= 6) {
-        return;
-    }
-
-    // Dense white bloom: 40 layers with very soft falloff to 1% at the outer rim.
-    static constexpr int kBloomLayers = 40;
-    const int16_t innerExtra = tinyLayout ? 5 : 8;
-    const int16_t extraStep = tinyLayout ? 1 : 2;
-
-    static constexpr int16_t kBloomInnerPercent = 72;
-    static constexpr int16_t kBloomOuterPercent = 1;
-    for (int layer = kBloomLayers - 1; layer >= 0; --layer) { // draw outer -> inner
-        const int16_t radius = globeR + innerExtra + (layer * extraStep);
-        if (radius <= 0) {
-            continue;
-        }
-        const int16_t numerator = (kBloomInnerPercent - kBloomOuterPercent) * (kBloomLayers - 1 - layer);
-        const int16_t percent = static_cast<int16_t>(kBloomOuterPercent + ((numerator + ((kBloomLayers - 1) / 2)) / (kBloomLayers - 1)));
-        const uint8_t v = static_cast<uint8_t>((255U * percent) / 100U);
-        const uint16_t color = TFTDisplay::rgb565(v, v, v);
-        directFillCircle565(tft, width, height, globeCx, globeCy, radius, color);
-    }
-}
-
-static void renderDirectGpsWireGlobe(TFTDisplay *tft,
-                                     int16_t width,
-                                     int16_t height,
-                                     int16_t globeCx,
-                                     int16_t globeCy,
-                                     int16_t globeR,
-                                     bool tinyLayout)
-{
-    if (!tft || width <= 0 || height <= 0 || globeR <= 6) {
-        return;
-    }
-
-    static constexpr int kMaxLonSegments = 14;
-    static constexpr int kMaxLatSegments = 8;
-    const int kLonSegments = tinyLayout ? 10 : kMaxLonSegments;
-    const int kLatSegments = tinyLayout ? 6 : kMaxLatSegments;
-    struct Point3D {
-        int16_t x = 0;
-        int16_t y = 0;
-        float z = 0.0f;
-    };
-    static Point3D pts[kMaxLatSegments + 1][kMaxLonSegments];
-
-    const float rotY = -0.55f;
-    const float tiltX = 0.45f;
-    const float cosY = cosf(rotY);
-    const float sinY = sinf(rotY);
-    const float cosX = cosf(tiltX);
-    const float sinX = sinf(tiltX);
-
-    const uint16_t lineCoreFront = TFTDisplay::rgb565(0xFF, 0xFF, 0xFF);
-    const uint16_t lineCoreBack = TFTDisplay::rgb565(0xD8, 0xDE, 0xE8);
-    const uint16_t nodeCore = TFTDisplay::rgb565(0xFF, 0xFF, 0xFF);
-
-    for (int latIdx = 0; latIdx <= kLatSegments; ++latIdx) {
-        const float v = static_cast<float>(latIdx) / static_cast<float>(kLatSegments);
-        const float lat = (-0.5f * PI) + (v * PI);
-        const float cosLat = cosf(lat);
-        const float sinLat = sinf(lat);
-        for (int lonIdx = 0; lonIdx < kLonSegments; ++lonIdx) {
-            const float u = static_cast<float>(lonIdx) / static_cast<float>(kLonSegments);
-            const float lon = u * 2.0f * PI;
-
-            float x = cosLat * cosf(lon);
-            float y = sinLat;
-            float z = cosLat * sinf(lon);
-
-            const float xr = (x * cosY) + (z * sinY);
-            const float zr = (-x * sinY) + (z * cosY);
-            const float yr = (y * cosX) - (zr * sinX);
-            const float zz = (y * sinX) + (zr * cosX);
-
-            pts[latIdx][lonIdx].x = globeCx + static_cast<int16_t>(lrintf(xr * globeR));
-            pts[latIdx][lonIdx].y = globeCy + static_cast<int16_t>(lrintf(yr * globeR));
-            pts[latIdx][lonIdx].z = zz;
-        }
-        yield();
-    }
-
-    auto drawEdge = [&](const Point3D &a, const Point3D &b) {
-        const float zAvg = (a.z + b.z) * 0.5f;
-        const bool backFace = zAvg < -0.12f;
-        const uint16_t core = backFace ? lineCoreBack : lineCoreFront;
-        directDrawLine565(tft, width, height, a.x, a.y, b.x, b.y, core);
-    };
-
-    for (int latIdx = 0; latIdx <= kLatSegments; ++latIdx) {
-        for (int lonIdx = 0; lonIdx < kLonSegments; ++lonIdx) {
-            const int nextLon = (lonIdx + 1) % kLonSegments;
-            drawEdge(pts[latIdx][lonIdx], pts[latIdx][nextLon]);
-            if (latIdx < kLatSegments) {
-                drawEdge(pts[latIdx][lonIdx], pts[latIdx + 1][lonIdx]);
-                drawEdge(pts[latIdx][lonIdx], pts[latIdx + 1][nextLon]);
-            }
-        }
-        yield();
-    }
-
-    for (int latIdx = 0; latIdx <= kLatSegments; ++latIdx) {
-        for (int lonIdx = 0; lonIdx < kLonSegments; ++lonIdx) {
-            const Point3D &p = pts[latIdx][lonIdx];
-            if (p.x < -2 || p.x > (width + 2) || p.y < -2 || p.y > (height + 2)) {
-                continue;
-            }
-            tft->drawPixel565(p.x, p.y, nodeCore);
-        }
-        yield();
-    }
-}
-
-static uint16_t mapDirectGpsWarmLayerColor(uint8_t value)
-{
-    switch (value) {
-    case 1:
-        return TFTDisplay::rgb565(0x1A, 0x07, 0x00);
-    case 2:
-        return TFTDisplay::rgb565(0x34, 0x10, 0x00);
-    case 3:
-        return TFTDisplay::rgb565(0x64, 0x1E, 0x00);
-    case 4:
-        return TFTDisplay::rgb565(0xA8, 0x36, 0x00);
-    case 5:
-        return TFTDisplay::rgb565(0xFF, 0x6A, 0x00);
-    case 6:
-        return TFTDisplay::rgb565(0xFF, 0x9E, 0x4A);
-    case 7:
-        return TFTDisplay::rgb565(0xFF, 0xF2, 0xE6);
-    default:
-        return TFTDisplay::rgb565(0x00, 0x00, 0x00);
-    }
-}
-
-static uint16_t mapDirectGpsCoolLayerColor(uint8_t value)
-{
-    switch (value) {
-    case 1:
-        return TFTDisplay::rgb565(0x03, 0x12, 0x2D);
-    case 2:
-        return TFTDisplay::rgb565(0x05, 0x30, 0x6B);
-    case 3:
-        return TFTDisplay::rgb565(0x00, 0x5E, 0xB6);
-    case 4:
-        return TFTDisplay::rgb565(0x20, 0xA6, 0xFF);
-    case 5:
-        return TFTDisplay::rgb565(0x73, 0xE6, 0xFF);
-    case 6:
-        return TFTDisplay::rgb565(0xCC, 0xFB, 0xFF);
-    case 7:
-        return TFTDisplay::rgb565(0xF6, 0xFF, 0xFF);
-    default:
-        return TFTDisplay::rgb565(0x00, 0x00, 0x00);
-    }
-}
-
-static uint16_t mapDirectGpsAlertLayerColor(uint8_t value)
-{
-    switch (value) {
-    case 1:
-        return TFTDisplay::rgb565(0x28, 0x09, 0x0E);
-    case 2:
-        return TFTDisplay::rgb565(0x4E, 0x12, 0x1F);
-    case 3:
-        return TFTDisplay::rgb565(0x7E, 0x1B, 0x34);
-    case 4:
-        return TFTDisplay::rgb565(0xBE, 0x2D, 0x50);
-    case 5:
-        return TFTDisplay::rgb565(0xFF, 0x5E, 0x86);
-    case 6:
-        return TFTDisplay::rgb565(0xFF, 0xB4, 0xC8);
-    case 7:
-        return TFTDisplay::rgb565(0xFF, 0xEF, 0xF3);
-    default:
-        return TFTDisplay::rgb565(0x00, 0x00, 0x00);
-    }
-}
-
-struct DirectGpsTitleGlyphPattern {
-    char ch;
-    const char *rows[7];
-};
-
-static const DirectGpsTitleGlyphPattern kDirectGpsTitleGlyphs[] = {
-    {'G', {" ### ", "#   #", "#    ", "# ###", "#   #", "#   #", " ### "}},
-    {'P', {"#### ", "#   #", "#   #", "#### ", "#    ", "#    ", "#    "}},
-    {'S', {" ####", "#    ", "#    ", " ### ", "    #", "    #", "#### "}},
-    {'O', {" ### ", "#   #", "#   #", "#   #", "#   #", "#   #", " ### "}},
-    {'N', {"#   #", "##  #", "# # #", "#  ##", "#   #", "#   #", "#   #"}},
-    {'F', {"#####", "#    ", "#    ", "#### ", "#    ", "#    ", "#    "}},
-};
-
-static const DirectGpsTitleGlyphPattern *findDirectGpsTitleGlyph(char ch)
-{
-    for (const auto &glyph : kDirectGpsTitleGlyphs) {
-        if (glyph.ch == ch) {
-            return &glyph;
-        }
-    }
-    return nullptr;
-}
-
-static int16_t measureDirectGpsTitleText(const char *text, int16_t scale, int16_t spacing)
-{
-    if (!text || scale <= 0) {
-        return 0;
-    }
-
-    int16_t width = 0;
-    bool hasGlyph = false;
-    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
-        if (*cursor == ' ') {
-            width += scale * 3;
-            continue;
-        }
-        const auto *glyph = findDirectGpsTitleGlyph(*cursor);
-        if (!glyph) {
-            continue;
-        }
-        if (hasGlyph) {
-            width += spacing;
-        }
-        width += scale * 5;
-        hasGlyph = true;
-    }
-    return width;
-}
-
-static void stampDirectGpsTitleMask(uint8_t *mask,
-                                    int16_t maskW,
-                                    int16_t maskH,
-                                    int16_t x,
-                                    int16_t y,
-                                    const char *text,
-                                    int16_t scale,
-                                    int16_t spacing)
-{
-    if (!mask || !text || maskW <= 0 || maskH <= 0 || scale <= 0) {
-        return;
-    }
-
-    int16_t cursorX = x;
-    bool hasGlyph = false;
-    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
-        const char ch = *cursor;
-        if (ch == ' ') {
-            cursorX += scale * 3;
-            continue;
-        }
-        const auto *glyph = findDirectGpsTitleGlyph(ch);
-        if (!glyph) {
-            continue;
-        }
-
-        if (hasGlyph) {
-            cursorX += spacing;
-        }
-
-        for (int16_t row = 0; row < 7; ++row) {
-            const char *line = glyph->rows[row];
-            if (!line) {
-                continue;
-            }
-            for (int16_t col = 0; col < 5; ++col) {
-                if (line[col] == ' ') {
-                    continue;
-                }
-                const int16_t px0 = cursorX + (col * scale);
-                const int16_t py0 = y + (row * scale);
-                for (int16_t sy = 0; sy < scale; ++sy) {
-                    const int16_t py = py0 + sy;
-                    if (py < 0 || py >= maskH) {
-                        continue;
-                    }
-                    const int16_t rowBase = py * maskW;
-                    for (int16_t sx = 0; sx < scale; ++sx) {
-                        const int16_t px = px0 + sx;
-                        if (px < 0 || px >= maskW) {
-                            continue;
-                        }
-                        mask[rowBase + px] = 1;
-                    }
-                }
-            }
-        }
-
-        cursorX += scale * 5;
-        hasGlyph = true;
-    }
-}
-
-static void renderDirectGpsPosterTitleWord(TFTDisplay *tft,
-                                           int16_t displayW,
-                                           int16_t displayH,
-                                           int16_t drawX,
-                                           int16_t drawY,
-                                           const char *text,
-                                           int16_t scale,
-                                           uint16_t (*layerColorFn)(uint8_t))
-{
-    if (!tft || !text || !*text || !layerColorFn || scale <= 0) {
-        return;
-    }
-
-    // Title words are only "GPS"/"ON"/"OFF" with scale 2-3, so we can keep a tight mask
-    // budget and avoid ~47KB of always-on static BSS.
-    static constexpr int16_t kMaxW = 96;
-    static constexpr int16_t kMaxH = 48;
-    if (!ensureDirectNeonBuffers() || !gDirectGpsTitleFullMask || !gDirectGpsTitleLayerMap) {
-        return;
-    }
-    uint8_t *fullMask = gDirectGpsTitleFullMask;
-    uint8_t *layerMap = gDirectGpsTitleLayerMap;
-
-    const int16_t spacing = std::max<int16_t>(1, scale / 2);
-    const int16_t coreW = measureDirectGpsTitleText(text, scale, spacing);
-    const int16_t coreH = scale * 7;
-    const int16_t margin = std::max<int16_t>(4, scale + 1);
-    const int16_t regionX = drawX - margin;
-    const int16_t regionY = drawY - margin;
-    const int16_t regionW = coreW + (margin * 2);
-    const int16_t regionH = coreH + (margin * 2);
-    if (coreW <= 0 || coreH <= 0 || regionW <= 0 || regionH <= 0 || regionW > kMaxW || regionH > kMaxH) {
-        return;
-    }
-    LOG_DEBUG("[DirectHome] gps title neon text='%s' scale=%d spacing=%d region=%dx%d", text, scale, spacing, regionW, regionH);
-
-    memset(fullMask, 0, static_cast<size_t>(regionW * regionH));
-    memset(layerMap, 0, static_cast<size_t>(regionW * regionH));
-
-    stampDirectGpsTitleMask(fullMask, regionW, regionH, margin, margin, text, scale, spacing);
-
-    const int16_t outerRadius = std::max<int16_t>(3, scale + 1);
-    for (int16_t yy = 0; yy < regionH; ++yy) {
-        for (int16_t xx = 0; xx < regionW; ++xx) {
-            const int16_t idx = (yy * regionW) + xx;
-            uint8_t value = 0;
-            if (fullMask[idx] && isMaskInteriorPixel(fullMask, regionW, regionH, xx, yy)) {
-                value = 7;
-            } else if (fullMask[idx]) {
-                value = 6;
-            } else if (hasMaskPixelInRadius(fullMask, regionW, regionH, xx, yy, 1)) {
-                value = 5;
-            } else if (hasMaskPixelInRadius(fullMask, regionW, regionH, xx, yy, 2)) {
-                value = 4;
-            } else if (hasMaskPixelInRadius(fullMask, regionW, regionH, xx, yy, 3)) {
-                value = 3;
-            } else if (hasMaskPixelInRadius(fullMask, regionW, regionH, xx, yy, 4)) {
-                value = 2;
-            } else if (hasMaskPixelInRadius(fullMask, regionW, regionH, xx, yy, outerRadius)) {
-                value = 1;
-            }
-            layerMap[idx] = value;
-        }
-    }
-
-    for (int16_t row = 0; row < regionH; ++row) {
-        const int16_t py = regionY + row;
-        if (py < 0 || py >= displayH) {
-            continue;
-        }
-        int16_t runStart = -1;
-        uint8_t runValue = 0xFF;
-        for (int16_t col = 0; col <= regionW; ++col) {
-            const uint8_t value = (col < regionW) ? layerMap[(row * regionW) + col] : 0xFF;
-            if (value == runValue) {
-                continue;
-            }
-            if (runStart >= 0 && runValue > 0) {
-                int16_t x0 = regionX + runStart;
-                int16_t x1 = regionX + col - 1;
-                if (!(x1 < 0 || x0 >= displayW)) {
-                    if (x0 < 0) {
-                        x0 = 0;
-                    }
-                    if (x1 >= displayW) {
-                        x1 = displayW - 1;
-                    }
-                    const int16_t runW = x1 - x0 + 1;
-                    if (runW > 0) {
-                        tft->fillRect565(x0, py, runW, 1, layerColorFn(runValue));
-                    }
-                }
-            }
-            runValue = value;
-            runStart = (col < regionW) ? col : -1;
-        }
-    }
-}
-
-static void renderDirectGpsPosterTitleNeon(TFTDisplay *tft, int16_t width, int16_t height)
-{
-    if (!tft || width <= 0 || height <= 0) {
-        return;
-    }
-
-    const DirectGpsPosterLayout layout = makeDirectGpsPosterLayout(width, height);
-    const bool tinyPosterLayout = layout.tiny;
-    const bool gpsEnabled = config.position.gps_mode == meshtastic_Config_PositionConfig_GpsMode_ENABLED;
-    const char *gpsWord = "GPS";
-    const char *stateWord = gpsEnabled ? "ON" : "OFF";
-
-    // Small TFT title should be more compact (about 70% of previous size).
-    const int16_t scale = tinyPosterLayout ? 2 : 3;
-    const int16_t spacing = std::max<int16_t>(1, scale / 2);
-    const int16_t gpsW = measureDirectGpsTitleText(gpsWord, scale, spacing);
-    const int16_t stateW = measureDirectGpsTitleText(stateWord, scale, spacing);
-    if (gpsW <= 0 || stateW <= 0) {
-        return;
-    }
-
-    int16_t titleGap = width / 30;
-    if (titleGap < (tinyPosterLayout ? 4 : 6)) {
-        titleGap = tinyPosterLayout ? 4 : 6;
-    }
-    const int16_t titleW = gpsW + titleGap + stateW;
-    const int16_t leftCenterX = layout.leftX + (layout.leftW / 2);
-    int16_t titleX = leftCenterX - (titleW / 2);
-    if (titleX < layout.leftX) {
-        titleX = layout.leftX;
-    }
-    const int16_t maxTitleX = std::max<int16_t>(layout.leftX, layout.leftX + layout.leftW - titleW);
-    if (titleX > maxTitleX) {
-        titleX = maxTitleX;
-    }
-    const int16_t titleY = layout.titleY;
-    // Do not hard-clear title background here; keep poster raster/waves visible behind neon, including GPS OFF.
-    renderDirectGpsPosterTitleWord(tft, width, height, titleX, titleY, gpsWord, scale, mapDirectGpsWarmLayerColor);
-    renderDirectGpsPosterTitleWord(
-        tft, width, height, titleX + gpsW + titleGap, titleY, stateWord, scale, gpsEnabled ? mapDirectGpsCoolLayerColor : mapDirectGpsAlertLayerColor);
-}
-
-static void renderDirectGpsPosterDecor(TFTDisplay *tft, int16_t width, int16_t height, const GPSStatus *gps)
-{
-    if (!tft || width <= 0 || height <= 0) {
-        return;
-    }
-
-    const DirectGpsPosterLayout layout = makeDirectGpsPosterLayout(width, height);
-    const bool tinyPosterLayout = layout.tiny;
-    const uint16_t black = TFTDisplay::rgb565(0x00, 0x00, 0x00);
-    const uint16_t waveCore = TFTDisplay::rgb565(0x1D, 0xD7, 0xFF);
-    const uint16_t waveGlowNear = TFTDisplay::rgb565(0x08, 0x67, 0xC8);
-    const uint16_t waveGlowFar = TFTDisplay::rgb565(0x03, 0x23, 0x75);
-    const uint16_t mountainCore = TFTDisplay::rgb565(0xFF, 0xFF, 0xFF);
-    const uint16_t mountainGlowNear = TFTDisplay::rgb565(0x88, 0xDE, 0xFF);
-    const uint16_t mountainGlowFar = TFTDisplay::rgb565(0x0A, 0x2E, 0x74);
-
-    tft->fillRect565(0, 0, width, height, black);
-
-    // Draw bloom before raster lines so wave details stay visible on top.
-    renderDirectGpsGlobeBloom(tft, width, height, layout.globeCx, layout.globeCy, layout.globeR, layout.tiny);
-
-    // Blue wave bundle: from lower-left to the right side, converging through the globe region.
-    const int16_t waveLines = tinyPosterLayout ? 8 : 10;
-    const int16_t waveSegments = tinyPosterLayout ? 22 : 24;
-    const int16_t waveCoreThickness = 1;
-    const int16_t waveNearThickness = tinyPosterLayout ? 0 : 1;
-    const int16_t waveFarThickness = tinyPosterLayout ? 0 : 2;
-    const int16_t waveTargetY = layout.globeCy + layout.globeR / 4;
-    for (int16_t i = 0; i < waveLines; ++i) {
-        const float spread = static_cast<float>(i - (waveLines / 2));
-        const int16_t startY = height - 1 - (i * (tinyPosterLayout ? 3 : 5));
-        const int16_t endY = waveTargetY + static_cast<int16_t>(spread * (tinyPosterLayout ? 2.2f : 1.9f));
-        int16_t prevX = 0;
-        int16_t prevY = startY;
-        for (int16_t seg = 1; seg <= waveSegments; ++seg) {
-            const float t = static_cast<float>(seg) / static_cast<float>(waveSegments);
-            const int16_t x = static_cast<int16_t>(lrintf((width - 1) * t));
-            const float baseY = static_cast<float>(startY) * (1.0f - t) + static_cast<float>(endY) * t;
-            const float amp = (tinyPosterLayout ? 1.4f : 3.2f) * (1.0f - t);
-            const float wave = sinf((t * (tinyPosterLayout ? 2.1f : 2.5f) * PI) + (i * 0.32f)) * amp;
-            const int16_t y = static_cast<int16_t>(lrintf(baseY + wave));
-            directDrawNeonLine565(
-                tft, width, height, prevX, prevY, x, y, waveCore, waveGlowNear, waveGlowFar, waveCoreThickness, waveNearThickness, waveFarThickness);
-            prevX = x;
-            prevY = y;
-            if ((seg & 0x03) == 0) {
-                yield();
-            }
-        }
-        yield();
-    }
-
-    // Upper-right curved streaks.
-    const int16_t topArcLines = tinyPosterLayout ? 5 : 6;
-    const int16_t topArcSegments = tinyPosterLayout ? 16 : 16;
-    const int16_t topArcCoreThickness = 1;
-    const int16_t topArcNearThickness = tinyPosterLayout ? 0 : 1;
-    const int16_t topArcFarThickness = tinyPosterLayout ? 0 : 2;
-    for (int16_t i = 0; i < topArcLines; ++i) {
-        const int16_t startX = width - 1;
-        const int16_t startY = -4 + (i * (tinyPosterLayout ? 3 : 4));
-        const int16_t endX = layout.globeCx - (layout.globeR / 3) + (i / 2);
-        const int16_t endY = layout.globeCy - (layout.globeR / 2) + (i * (tinyPosterLayout ? 2 : 3));
-        int16_t prevX = startX;
-        int16_t prevY = startY;
-        for (int16_t seg = 1; seg <= topArcSegments; ++seg) {
-            const float t = static_cast<float>(seg) / static_cast<float>(topArcSegments);
-            const float curve = (1.0f - t) * t;
-            const int16_t x = static_cast<int16_t>(lrintf((startX * (1.0f - t)) + (endX * t) - curve * (tinyPosterLayout ? 18.0f : 28.0f)));
-            const int16_t y = static_cast<int16_t>(lrintf((startY * (1.0f - t)) + (endY * t) + sinf((t + (i * 0.06f)) * PI) * 2.0f));
-            directDrawNeonLine565(
-                tft, width, height, prevX, prevY, x, y, waveCore, waveGlowNear, waveGlowFar, topArcCoreThickness, topArcNearThickness,
-                topArcFarThickness);
-            prevX = x;
-            prevY = y;
-            if ((seg & 0x03) == 0) {
-                yield();
-            }
-        }
-        yield();
-    }
-
-    // Mountain outline icon (white core with blue neon halo).
-    const int16_t mx = layout.mountainX;
-    const int16_t my = layout.mountainY;
-    const int16_t mw = layout.mountainW;
-    const int16_t mh = layout.mountainH;
-    const int16_t mLx = mx;
-    const int16_t mLy = my + mh;
-    const int16_t mPx = mx + (mw * 40) / 100;
-    const int16_t mPy = my;
-    const int16_t mRx = mx + mw;
-    const int16_t mRy = my + mh;
-    const int16_t sLx = mx + (mw * 20) / 100;
-    const int16_t sLy = my + mh;
-    const int16_t sPx = mx + (mw * 47) / 100;
-    const int16_t sPy = my + (mh * 44) / 100;
-    const int16_t sRx = mx + (mw * 72) / 100;
-    const int16_t sRy = my + mh;
-    directDrawNeonLine565(tft, width, height, mLx, mLy, mPx, mPy, mountainCore, mountainGlowNear, mountainGlowFar, 1, 2, 3);
-    directDrawNeonLine565(tft, width, height, mPx, mPy, mRx, mRy, mountainCore, mountainGlowNear, mountainGlowFar, 1, 2, 3);
-    directDrawNeonLine565(tft, width, height, mLx, mLy, mRx, mRy, mountainCore, mountainGlowNear, mountainGlowFar, 1, 2, 3);
-    directDrawNeonLine565(tft, width, height, sLx, sLy, sPx, sPy, mountainCore, mountainGlowNear, mountainGlowFar, 1, 2, 3);
-    directDrawNeonLine565(tft, width, height, sPx, sPy, sRx, sRy, mountainCore, mountainGlowNear, mountainGlowFar, 1, 2, 3);
-
-    // Right-side neon wireframe globe.
-    renderDirectGpsWireGlobe(tft, width, height, layout.globeCx, layout.globeCy, layout.globeR, layout.tiny);
-
-    // Center number in globe = current satellite count.
-    uint8_t satCount = 0;
-    if (gps && gps->getIsConnected()) {
-        satCount = static_cast<uint8_t>(std::min<uint32_t>(99, gps->getNumSatellites()));
-    }
-    char satCountLine[4];
-    snprintf(satCountLine, sizeof(satCountLine), "%u", static_cast<unsigned>(satCount));
-    const bool satHalfScale = true;
-    const int16_t satTracking = tinyPosterLayout ? 1 : 2;
-    const int16_t satTextW = measurePattanakarnClockTextTracked(satCountLine, satHalfScale, satTracking);
-    const int16_t satTextH = kPattanakarnClockHalfHeight;
-    if (satTextW > 0) {
-        int16_t satX = layout.globeCx - (satTextW / 2);
-        int16_t satY = layout.globeCy - (satTextH / 2);
-        const int16_t neonMargin = static_cast<int16_t>((kDirectNeonClockMargin + 1) / 2);
-        const int16_t minX = 2 + neonMargin;
-        const int16_t maxX = width - satTextW - 2 - neonMargin;
-        const int16_t minY = 2 + neonMargin;
-        const int16_t maxY = height - satTextH - 2 - neonMargin;
-        satX = std::max<int16_t>(minX, std::min<int16_t>(satX, maxX));
-        satY = std::max<int16_t>(minY, std::min<int16_t>(satY, maxY));
-        renderDirectNeonPattanakarnText(
-            tft, satX, satY, satCountLine, satHalfScale, mapDirectGpsWarmLayerColor, false, satTracking);
-    }
-}
-
-static void drawHermesXBatteryIcon(OLEDDisplay *display, int16_t x, int16_t y, int16_t width, int16_t height, uint8_t percent)
-{
-    if (!display || width < 16 || height < 24) {
-        return;
-    }
-
-    if (percent > 100) {
-        percent = 100;
-    }
-
-    int16_t capW = width / 3;
-    int16_t capH = height / 10;
-    if (capW < 6) {
-        capW = 6;
-    }
-    if (capH < 3) {
-        capH = 3;
-    }
-
-    const int16_t bodyY = y + capH;
-    const int16_t bodyH = height - capH;
-    if (bodyH < 12) {
-        return;
-    }
-
-    const int16_t capX = x + (width - capW) / 2;
-    display->drawRect(x, bodyY, width, bodyH);
-    if (width > 20 && bodyH > 20) {
-        display->drawRect(x + 1, bodyY + 1, width - 2, bodyH - 2);
-    }
-    display->drawRect(capX, y, capW, capH + 1);
-
-    const int16_t inset = (width >= 28 && bodyH >= 36) ? 3 : 2;
-    const int16_t innerX = x + inset;
-    const int16_t innerY = bodyY + inset;
-    const int16_t innerW = width - inset * 2;
-    const int16_t innerH = bodyH - inset * 2;
-    if (innerW <= 0 || innerH <= 0) {
-        return;
-    }
-
-    int16_t fillH = (innerH * percent) / 100;
-    if (percent > 0 && fillH < 1) {
-        fillH = 1;
-    }
-    if (fillH > 0) {
-        addTftColorZone(display, innerX, innerY + innerH - fillH, innerW, fillH, TFTDisplay::rgb565(0xB5, 0xED, 0x00), 0x0000);
-        display->fillRect(innerX, innerY + innerH - fillH, innerW, fillH);
-    }
-}
-
-static void drawHermesXBatteryIconHorizontal(OLEDDisplay *display, int16_t x, int16_t y, int16_t width, int16_t height,
-                                             uint8_t percent)
-{
-    if (!display || width < 20 || height < 12) {
-        return;
-    }
-
-    if (percent > 100) {
-        percent = 100;
-    }
-
-    int16_t capW = width / 10;
-    if (capW < 3) {
-        capW = 3;
-    }
-    int16_t capH = height / 2;
-    if (capH < 4) {
-        capH = 4;
-    }
-
-    const int16_t bodyW = width - capW - 1;
-    if (bodyW < 12) {
-        return;
-    }
-
-    const int16_t bodyY = y;
-    const int16_t capX = x + bodyW;
-    const int16_t capY = y + (height - capH) / 2;
-
-    display->drawRect(x, bodyY, bodyW, height);
-    if (bodyW > 16 && height > 12) {
-        display->drawRect(x + 1, bodyY + 1, bodyW - 2, height - 2);
-    }
-    display->drawRect(capX, capY, capW, capH);
-
-    const int16_t inset = (bodyW >= 26 && height >= 16) ? 3 : 2;
-    const int16_t innerX = x + inset;
-    const int16_t innerY = bodyY + inset;
-    const int16_t innerW = bodyW - inset * 2;
-    const int16_t innerH = height - inset * 2;
-    if (innerW <= 0 || innerH <= 0) {
-        return;
-    }
-
-    int16_t fillW = (innerW * percent) / 100;
-    if (percent > 0 && fillW < 1) {
-        fillW = 1;
-    }
-    if (fillW > 0) {
-        addTftColorZone(display, innerX, innerY, fillW, innerH, TFTDisplay::rgb565(0xB5, 0xED, 0x00), 0x0000);
-        display->fillRect(innerX, innerY, fillW, innerH);
-    }
+    HermesXGpsStateInput input;
+    input.width = width;
+    input.height = height;
+    input.sourceAvailable = gps != nullptr;
+    input.gpsEnabled = config.position.gps_mode == meshtastic_Config_PositionConfig_GpsMode_ENABLED;
+    input.fixedPosition = config.position.fixed_position;
+    if (gps) {
+        input.gpsConnected = gps->getIsConnected();
+        input.gpsHasLock = gps->getHasLock();
+        input.satelliteCount = gps->getNumSatellites();
+        input.latitudeE7 = gps->getLatitude();
+        input.longitudeE7 = gps->getLongitude();
+        input.altitude = gps->getAltitude();
+    }
+    return HermesXGpsStateCollector::collect(input, getDirectGpsPosterLayers());
 }
 
 #if defined(DISPLAY_CLOCK_FRAME)
@@ -4576,253 +1428,48 @@ bool deltaToTimestamp(uint32_t secondsAgo, uint8_t *hours, uint8_t *minutes, int
     return validCached;
 }
 
-static constexpr uint8_t kRecentTextMessageCapacity = 8;
 static constexpr uint32_t kIncomingTextPopupMs = 3000;
-static constexpr uint32_t kIncomingNodePopupMs = 3500;
 static constexpr const char *kIncomingTextPopupEnabledFile = "/prefs/hermesx_msg_popup_enabled.txt";
+static auto &gRecentTextMessageState = HermesXMessageUiModel::instance().recentState();
 
-struct RecentTextMessageState {
-    meshtastic_MeshPacket packets[kRecentTextMessageCapacity];
-    uint8_t count = 0;
-    uint8_t listCursor = 0;
-    uint8_t selectedIndex = 0;
-    uint8_t detailIndex = 0;
-    uint16_t detailScrollY = 0;
-    uint16_t detailMaxScrollY = 0;
-};
-static RecentTextMessageState gRecentTextMessageState;
+static auto &gNodeBrowserUiModel = HermesXNodeBrowserUiModel::instance();
+static auto &gNodeBrowserDataSource = HermesXNodeBrowserDataSource::instance();
+static auto &gOnlineNodeState = gNodeBrowserUiModel.onlineState();
+static auto &gTraceRouteBindings = HermesXTraceRouteBindings::instance();
 
-static constexpr uint16_t kOnlineNodeCapacity = 250;
-static constexpr uint8_t kTraceRouteBoundNodeCapacity = 16;
-static constexpr const char *kTraceRouteBoundNodesFile = "/prefs/hermesx_tr_bound_nodes.txt";
-
-struct OnlineNodeState {
-    uint16_t order[kOnlineNodeCapacity]{};
-    uint8_t count = 0;
-    uint8_t listCursor = 0;
-    uint8_t selectedIndex = 0;
-    uint8_t detailCursor = 0;
-};
-static OnlineNodeState gOnlineNodeState;
-static OnlineNodeState gTraceRouteNodeState;
-
-enum class TraceRouteUiMode : uint8_t {
-    Menu,
-    BindOnline,
-    BoundRoutes,
-};
-
-struct TraceRouteBoundState {
-    NodeNum nodes[kTraceRouteBoundNodeCapacity]{};
-    uint8_t count = 0;
-    uint8_t menuCursor = 1;
-    uint8_t bindCursor = 0;
-    uint8_t bindSelectedIndex = 0;
-    uint8_t boundCursor = 0;
-    uint8_t boundSelectedIndex = 0;
-    bool confirmVisible = false;
-    uint8_t confirmSelected = 1;
-    NodeNum confirmNode = 0;
-    bool deferredShortVisible = false;
-    uint8_t deferredShortCursor = 0;
-    NodeNum deferredShortNode = 0;
-    bool deferredRouteVisible = false;
-    uint8_t deferredRouteCursor = 0;
-    NodeNum deferredRouteNode = 0;
-};
-static TraceRouteUiMode gTraceRouteUiMode = TraceRouteUiMode::Menu;
-static TraceRouteBoundState gTraceRouteBoundState;
-static bool gTraceRouteBoundNodesLoaded = false;
-
-struct TraceRouteSearchState {
-    bool active = false;
-    bool resultVisible = false;
-    bool resultFound = false;
-    NodeNum resultNode = 0;
-    uint8_t resultCursor = 0;
-    String draft;
-    String resultQuery;
-    String toast;
-    uint32_t toastUntilMs = 0;
-    uint8_t keyRow = 0;
-    uint8_t keyCol = 0;
-};
-static TraceRouteSearchState gTraceRouteSearchState;
-static const char *kTraceRouteSearchKeyRows[][10] = {
-    {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"},
-    {"Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"},
-    {"A", "S", "D", "F", "G", "H", "J", "K", "L", nullptr},
-    {"Z", "X", "C", "V", "B", "N", "M", nullptr, nullptr, nullptr},
-    {"EXIT", "DEL", "OK", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr},
-};
-static const uint8_t kTraceRouteSearchKeyRowLengths[] = {10, 10, 9, 7, 3};
-static constexpr uint8_t kTraceRouteSearchKeyRowCount =
-    sizeof(kTraceRouteSearchKeyRowLengths) / sizeof(kTraceRouteSearchKeyRowLengths[0]);
+static auto &gTraceRouteSearchState = HermesXTraceRouteUiModel::instance().searchState();
+static auto &gTraceRouteNavigationState = HermesXTraceRouteUiModel::instance().navigationState();
 static constexpr uint8_t kTraceRouteBindSearchRow = 0;
 static constexpr uint8_t kTraceRouteBindBackRow = 1;
 static constexpr uint8_t kTraceRouteBindFirstNodeRow = 2;
 static const char *getSetupRoleLabel(meshtastic_Config_DeviceConfig_Role role);
 static String formatOnlineNodeSeenAgo(const meshtastic_NodeInfoLite &node);
 
-struct FinderNodeState {
-    uint16_t order[kOnlineNodeCapacity]{};
-    uint8_t count = 0;
-    uint8_t listCursor = 0;
-    uint8_t selectedIndex = 0;
-    uint8_t detailCursor = 0;
-};
-static FinderNodeState gFinderNodeState;
+static auto &gFinderNodeState = gNodeBrowserUiModel.finderState();
+static auto &gGroupNodeState = gNodeBrowserUiModel.groupState();
+static auto &gFinderPulseState = gNodeBrowserUiModel.finderPulseState();
 
-struct GroupNodeState {
-    uint8_t menuCursor = 0;
-    bool nodeListVisible = false;
-    uint8_t listCursor = 0;
-    uint8_t selectedIndex = 0;
-    uint8_t detailCursor = 0;
-};
-static GroupNodeState gGroupNodeState;
-
-struct DirectMessageComposerState {
-    bool active = false;
-    bool fromGroupDetail = false;
-    NodeNum dest = 0;
-    String draft;
-    String toast;
-    uint32_t toastUntilMs = 0;
-    uint8_t keyRow = 0;
-    uint8_t keyCol = 0;
-    bool lowercase = false;
-    bool bopomofoMode = false;
-    bool candidateMode = false;
-    uint8_t candidateCursor = 0;
-    hermesx_bpmf::HermesXBpmfEngine bpmf;
-};
-static DirectMessageComposerState gDirectMessageComposerState;
-static const char *kDirectMessageKeyRowsUpper[][10] = {
-    {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"},
-    {"Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"},
-    {"A", "S", "D", "F", "G", "H", "J", "K", "L", "Aa"},
-    {"Z", "X", "C", "V", "B", "N", "M", ".", "-", "_"},
-    {"EXIT", "SP", "DEL", u8"中", "OK", nullptr, nullptr, nullptr, nullptr, nullptr},
-};
-static const char *kDirectMessageKeyRowsLower[][10] = {
-    {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"},
-    {"q", "w", "e", "r", "t", "y", "u", "i", "o", "p"},
-    {"a", "s", "d", "f", "g", "h", "j", "k", "l", "Aa"},
-    {"z", "x", "c", "v", "b", "n", "m", ".", "-", "_"},
-    {"EXIT", "SP", "DEL", u8"中", "OK", nullptr, nullptr, nullptr, nullptr, nullptr},
-};
-static const char *kDirectMessageKeyRowsBopomofo[][10] = {
-    {u8"ㄅ", u8"ㄉ", u8"ˇ", u8"ˋ", u8"ㄓ", u8"ˊ", u8"ㄚ", u8"ㄞ", u8"ㄢ", u8"ㄦ"},
-    {u8"ㄆ", u8"ㄊ", u8"ㄍ", u8"ㄐ", u8"ㄔ", u8"ㄗ", u8"ㄧ", u8"ㄛ", u8"ㄟ", u8"ㄣ"},
-    {u8"ㄇ", u8"ㄋ", u8"ㄎ", u8"ㄑ", u8"ㄕ", u8"ㄘ", u8"ㄨ", u8"ㄜ", u8"ㄠ", u8"ㄤ"},
-    {u8"ㄈ", u8"ㄌ", u8"ㄏ", u8"ㄒ", u8"ㄖ", u8"ㄙ", u8"ㄩ", u8"ㄝ", u8"ㄡ", u8"ㄥ"},
-    {"EXIT", "SP", "DEL", "Aa", u8"˙", "EN", "OK", nullptr, nullptr, nullptr},
-};
-static const char kDirectMessageBopomofoScreenKeys[][10] = {
-    {'1', '2', '3', '4', '5', '6', '7', '8', '9', '0'},
-    {'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'},
-    {'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';'},
-    {'z', 'x', 'c', 'v', 'b', 'n', 'm', '.', ',', '?'},
-};
-static const uint8_t kDirectMessageKeyRowLengthsEnglish[] = {10, 10, 10, 10, 5};
-static const uint8_t kDirectMessageKeyRowLengthsBopomofo[] = {10, 10, 10, 10, 7};
-static const uint8_t kDirectMessageKeyRowCount =
-    sizeof(kDirectMessageKeyRowLengthsEnglish) / sizeof(kDirectMessageKeyRowLengthsEnglish[0]);
-static void drawSetupKeyboardPage(OLEDDisplay *display,
-                                  int16_t width,
-                                  int16_t height,
-                                  const char *header,
-                                  const String &draft,
-                                  const char *const (*rows)[10],
-                                  const uint8_t *rowLengths,
-                                  uint8_t rowCount,
-                                  uint8_t selectedRow,
-                                  uint8_t selectedCol,
-                                  String &toast,
-                                  uint32_t &toastUntilMs);
-static void drawDirectMessageCandidatePage(OLEDDisplay *display, int16_t width, int16_t height);
-
-struct IncomingTextPopupState {
-    meshtastic_MeshPacket packet{};
-    bool pending = false;
-    bool visible = false;
-    uint8_t selectedOption = 0;
-    uint32_t untilMs = 0;
-};
-static IncomingTextPopupState gIncomingTextPopupState;
-static bool gIncomingTextPopupPaletteResetNeeded = false;
+static auto &gDirectMessageComposer = HermesXDirectMessageComposer::instance();
+static auto &gIncomingTextPopupState = HermesXMessageUiModel::instance().popupState();
 static bool gIncomingTextPopupEnabled = true;
 static bool gIncomingTextPopupEnabledLoaded = false;
 
-struct IncomingNodePopupState {
-    meshtastic_NodeInfoLite node{};
-    bool pending = false;
-    bool visible = false;
-    uint32_t untilMs = 0;
-};
-static IncomingNodePopupState gIncomingNodePopupState;
-
-struct TraceRoutePopupState {
-    String title;
-    String body;
-    bool visible = false;
-    uint16_t scrollY = 0;
-    uint16_t maxScrollY = 0;
-    uint32_t shownAtMs = 0;
-};
-static TraceRoutePopupState gTraceRoutePopupState;
+static auto &gTraceRoutePopupState = HermesXTraceRouteUiModel::instance().popupState();
 static constexpr uint32_t kTraceRoutePopupDismissGuardMs = 250;
 
-struct SetupDetailPopupState {
-    String title;
-    String body;
-    bool visible = false;
-    uint16_t scrollY = 0;
-    uint16_t maxScrollY = 0;
-    uint32_t shownAtMs = 0;
-};
-static SetupDetailPopupState gSetupDetailPopupState;
-static constexpr uint32_t kSetupDetailPopupDismissGuardMs = 250;
+static auto &gSetupDetailPopupState = HermesXDetailPopupModel::instance().state();
 
-struct TraceRouteRequestState {
-    NodeNum destNode = 0;
-    uint32_t requestId = 0;
-    bool pending = false;
-    uint32_t startedMs = 0;
-};
-static TraceRouteRequestState gTraceRouteRequestState;
+static auto &gTraceRouteRequestState = HermesXTraceRouteUiModel::instance().requestState();
 static constexpr uint32_t kTraceRouteResultTimeoutMs = 30000;
 
 static void dismissIncomingTextPopup()
 {
-    const bool wasActive = gIncomingTextPopupState.pending || gIncomingTextPopupState.visible;
-    gIncomingTextPopupState.pending = false;
-    gIncomingTextPopupState.visible = false;
-    gIncomingTextPopupState.selectedOption = 0;
-    gIncomingTextPopupState.untilMs = 0;
-#if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
-    defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
-    if (wasActive) {
-        gIncomingTextPopupPaletteResetNeeded = true;
-    }
-#endif
+    HermesXMessageUiController::instance().dismissPopup();
 }
 
 static bool loadIncomingTextPopupEnabledPreference()
 {
-    if (!FSCom.exists(kIncomingTextPopupEnabledFile)) {
-        return true;
-    }
-
-    auto f = FSCom.open(kIncomingTextPopupEnabledFile, FILE_O_READ);
-    if (!f) {
-        return true;
-    }
-
-    String raw = f.readStringUntil('\n');
-    raw.trim();
-    return raw != "0";
+    return HermesXPreferences::loadBool(kIncomingTextPopupEnabledFile, true);
 }
 
 static bool isIncomingTextPopupEnabled()
@@ -4836,19 +1483,9 @@ static bool isIncomingTextPopupEnabled()
 
 static void saveIncomingTextPopupEnabledPreference(bool enabled)
 {
-    if (!FSCom.exists("/prefs")) {
-        FSCom.mkdir("/prefs");
-    }
-    if (FSCom.exists(kIncomingTextPopupEnabledFile)) {
-        FSCom.remove(kIncomingTextPopupEnabledFile);
-    }
-
-    auto f = FSCom.open(kIncomingTextPopupEnabledFile, FILE_O_WRITE);
-    if (!f) {
+    if (!HermesXPreferences::saveBool(kIncomingTextPopupEnabledFile, enabled)) {
         LOG_WARN("[Screen] Failed to save incoming text popup preference");
-        return;
     }
-    f.print(enabled ? "1\n" : "0\n");
 }
 
 static void setIncomingTextPopupEnabled(bool enabled)
@@ -4871,46 +1508,14 @@ static bool isIncomingTextPopupActive()
     return gIncomingTextPopupState.pending || isIncomingTextPopupVisible();
 }
 
-static void dismissIncomingNodePopup()
-{
-    gIncomingNodePopupState.pending = false;
-    gIncomingNodePopupState.visible = false;
-    gIncomingNodePopupState.untilMs = 0;
-}
-
-static bool isIncomingNodePopupVisible()
-{
-    return gIncomingNodePopupState.visible;
-}
-
-static bool isIncomingNodePopupActive()
-{
-    return gIncomingNodePopupState.pending || gIncomingNodePopupState.visible;
-}
-
 static void dismissTraceRoutePopup()
 {
-    gTraceRoutePopupState.title = "";
-    gTraceRoutePopupState.body = "";
-    gTraceRoutePopupState.visible = false;
-    gTraceRoutePopupState.scrollY = 0;
-    gTraceRoutePopupState.maxScrollY = 0;
-    gTraceRoutePopupState.shownAtMs = 0;
+    HermesXTraceRouteUiModel::instance().dismissPopup();
 }
 
 static bool isTraceRoutePopupVisible()
 {
     return gTraceRoutePopupState.visible;
-}
-
-static void dismissSetupDetailPopup()
-{
-    gSetupDetailPopupState.title = "";
-    gSetupDetailPopupState.body = "";
-    gSetupDetailPopupState.visible = false;
-    gSetupDetailPopupState.scrollY = 0;
-    gSetupDetailPopupState.maxScrollY = 0;
-    gSetupDetailPopupState.shownAtMs = 0;
 }
 
 static bool isSetupDetailPopupVisible()
@@ -4920,23 +1525,13 @@ static bool isSetupDetailPopupVisible()
 
 static void showTraceRoutePopup(const char *title, const char *body)
 {
-    gTraceRoutePopupState.title = (title && title[0] != '\0') ? String(title) : String("TraceRoute");
-    gTraceRoutePopupState.body = (body && body[0] != '\0') ? String(body) : String(u8"沒有可顯示的路徑資料");
-    gTraceRoutePopupState.visible = true;
-    gTraceRoutePopupState.scrollY = 0;
-    gTraceRoutePopupState.maxScrollY = 0;
-    gTraceRoutePopupState.shownAtMs = millis();
+    HermesXTraceRouteUiModel::instance().showPopup(title, body, millis());
     fastUntilMs = millis() + 1200;
 }
 
 static void showSetupDetailPopup(const char *title, const String &body)
 {
-    gSetupDetailPopupState.title = (title && title[0] != '\0') ? String(title) : String(u8"詳細資訊");
-    gSetupDetailPopupState.body = body.isEmpty() ? String(u8"無") : body;
-    gSetupDetailPopupState.visible = true;
-    gSetupDetailPopupState.scrollY = 0;
-    gSetupDetailPopupState.maxScrollY = 0;
-    gSetupDetailPopupState.shownAtMs = millis();
+    HermesXDetailPopupModel::instance().show(title, body, millis());
     fastUntilMs = millis() + 1200;
 }
 
@@ -4945,24 +1540,17 @@ static void drawSetupDetailPopupOverlay(OLEDDisplay *display, OLEDDisplayUiState
 
 static void startTraceRoutePending(NodeNum destNode, uint32_t requestId)
 {
-    gTraceRouteRequestState.destNode = destNode;
-    gTraceRouteRequestState.requestId = requestId;
-    gTraceRouteRequestState.pending = true;
-    gTraceRouteRequestState.startedMs = millis();
+    HermesXTraceRouteUiModel::instance().startRequest(destNode, requestId, millis());
 }
 
 static void clearTraceRoutePending()
 {
-    gTraceRouteRequestState.destNode = 0;
-    gTraceRouteRequestState.requestId = 0;
-    gTraceRouteRequestState.pending = false;
-    gTraceRouteRequestState.startedMs = 0;
+    HermesXTraceRouteUiModel::instance().clearRequest();
 }
 
 static bool isExpectedTraceRouteResult(NodeNum fromNode, uint32_t requestId)
 {
-    return gTraceRouteRequestState.pending && fromNode != 0 && requestId != 0 &&
-           gTraceRouteRequestState.destNode == fromNode && gTraceRouteRequestState.requestId == requestId;
+    return HermesXTraceRouteUiModel::instance().isExpectedResult(fromNode, requestId);
 }
 
 static void armIncomingTextPopup(const meshtastic_MeshPacket &packet)
@@ -4976,19 +1564,6 @@ static void armIncomingTextPopup(const meshtastic_MeshPacket &packet)
         gIncomingTextPopupState.visible = false;
         gIncomingTextPopupState.untilMs = 0;
     }
-}
-
-static void armIncomingNodePopup(const meshtastic_NodeInfoLite &node)
-{
-    if (node.num == 0 || node.num == nodeDB->getNodeNum()) {
-        return;
-    }
-
-    gIncomingNodePopupState.node = node;
-    gIncomingNodePopupState.pending = true;
-    gIncomingNodePopupState.visible = false;
-    gIncomingNodePopupState.untilMs = 0;
-    gDirectIncomingNodePopupRenderCache.valid = false;
 }
 
 void Screen::maybeArmIncomingTextPopup(const meshtastic_MeshPacket &packet)
@@ -5012,7 +1587,7 @@ bool Screen::showTraceRouteResultPopup(NodeNum fromNode, uint32_t requestId, con
     if (!isExpectedTraceRouteResult(fromNode, requestId)) {
         LOG_DEBUG("[Screen] Ignore TraceRoute result from=%08lx req=%08lx pending=%u dest=%08lx pending_req=%08lx",
                   static_cast<unsigned long>(fromNode), static_cast<unsigned long>(requestId),
-                  gTraceRouteRequestState.pending ? 1 : 0, static_cast<unsigned long>(gTraceRouteRequestState.destNode),
+                  gTraceRouteRequestState.pending ? 1 : 0, static_cast<unsigned long>(gTraceRouteRequestState.destination),
                   static_cast<unsigned long>(gTraceRouteRequestState.requestId));
         return false;
     }
@@ -5023,132 +1598,7 @@ bool Screen::showTraceRouteResultPopup(NodeNum fromNode, uint32_t requestId, con
 
 static bool hasRecentTextMessages()
 {
-    return gRecentTextMessageState.count > 0;
-}
-
-static bool isOnlineNodeCandidate(const meshtastic_NodeInfoLite &node)
-{
-    if (node.num == 0 || nodeDB == nullptr || node.num == nodeDB->getNodeNum()) {
-        return false;
-    }
-    if (node.last_heard == 0) {
-        return false;
-    }
-    return sinceLastSeen(&node) < (60U * 60U * 2U);
-}
-
-static bool isFinderNodeCandidate(const meshtastic_NodeInfoLite &node)
-{
-    if (node.num == 0 || nodeDB == nullptr || node.num == nodeDB->getNodeNum()) {
-        return false;
-    }
-    if (!lighthouseModule || !lighthouseModule->didNodeRespondToLastPositionPulse(node.num)) {
-        return false;
-    }
-    meshtastic_NodeInfoLite *mutableNode = const_cast<meshtastic_NodeInfoLite *>(&node);
-    return nodeDB->hasValidPosition(mutableNode);
-}
-
-static void rebuildOnlineNodeOrder()
-{
-    gOnlineNodeState.count = 0;
-    if (!nodeDB || !nodeDB->meshNodes) {
-        return;
-    }
-
-    for (uint16_t i = 0; i < nodeDB->getNumMeshNodes() && gOnlineNodeState.count < kOnlineNodeCapacity; ++i) {
-        const meshtastic_NodeInfoLite &node = nodeDB->meshNodes->at(i);
-        if (!isOnlineNodeCandidate(node)) {
-            continue;
-        }
-        gOnlineNodeState.order[gOnlineNodeState.count++] = i;
-    }
-
-    for (uint8_t i = 0; i < gOnlineNodeState.count; ++i) {
-        for (uint8_t j = i + 1; j < gOnlineNodeState.count; ++j) {
-            const auto &a = nodeDB->meshNodes->at(gOnlineNodeState.order[i]);
-            const auto &b = nodeDB->meshNodes->at(gOnlineNodeState.order[j]);
-            if (b.last_heard > a.last_heard) {
-                const uint16_t tmp = gOnlineNodeState.order[i];
-                gOnlineNodeState.order[i] = gOnlineNodeState.order[j];
-                gOnlineNodeState.order[j] = tmp;
-            }
-        }
-    }
-
-    if (gOnlineNodeState.count == 0) {
-        gOnlineNodeState.listCursor = 0;
-        gOnlineNodeState.selectedIndex = 0;
-        gOnlineNodeState.detailCursor = 0;
-        return;
-    }
-
-    // List cursor includes the leading "Back" row, so its valid range is 0..count.
-    if (gOnlineNodeState.listCursor > gOnlineNodeState.count) {
-        gOnlineNodeState.listCursor = gOnlineNodeState.count;
-    }
-    if (gOnlineNodeState.selectedIndex >= gOnlineNodeState.count) {
-        gOnlineNodeState.selectedIndex = gOnlineNodeState.count - 1;
-    }
-}
-
-static void rebuildTraceRouteNodeOrder()
-{
-    gTraceRouteNodeState.count = 0;
-    if (!nodeDB || !nodeDB->meshNodes) {
-        return;
-    }
-
-    for (uint16_t i = 0; i < nodeDB->getNumMeshNodes() && gTraceRouteNodeState.count < kOnlineNodeCapacity; ++i) {
-        const auto &node = nodeDB->meshNodes->at(i);
-        if (!isOnlineNodeCandidate(node)) {
-            continue;
-        }
-        gTraceRouteNodeState.order[gTraceRouteNodeState.count++] = i;
-    }
-
-    for (uint8_t i = 0; i < gTraceRouteNodeState.count; ++i) {
-        for (uint8_t j = i + 1; j < gTraceRouteNodeState.count; ++j) {
-            const auto &a = nodeDB->meshNodes->at(gTraceRouteNodeState.order[i]);
-            const auto &b = nodeDB->meshNodes->at(gTraceRouteNodeState.order[j]);
-            if (a.last_heard < b.last_heard) {
-                const uint16_t tmp = gTraceRouteNodeState.order[i];
-                gTraceRouteNodeState.order[i] = gTraceRouteNodeState.order[j];
-                gTraceRouteNodeState.order[j] = tmp;
-            }
-        }
-    }
-
-    if (gTraceRouteNodeState.count == 0) {
-        gTraceRouteNodeState.listCursor = 0;
-        gTraceRouteNodeState.selectedIndex = 0;
-        gTraceRouteNodeState.detailCursor = 0;
-        return;
-    }
-    if (gTraceRouteNodeState.listCursor > gTraceRouteNodeState.count) {
-        gTraceRouteNodeState.listCursor = gTraceRouteNodeState.count;
-    }
-    if (gTraceRouteNodeState.selectedIndex >= gTraceRouteNodeState.count) {
-        gTraceRouteNodeState.selectedIndex = gTraceRouteNodeState.count - 1;
-    }
-}
-
-static const meshtastic_NodeInfoLite *getOnlineNodeAt(uint8_t index)
-{
-    rebuildOnlineNodeOrder();
-    if (!nodeDB || index >= gOnlineNodeState.count) {
-        return nullptr;
-    }
-    return &nodeDB->meshNodes->at(gOnlineNodeState.order[index]);
-}
-
-static const meshtastic_NodeInfoLite *getTraceRouteNodeAt(uint8_t index)
-{
-    rebuildTraceRouteNodeOrder();
-    if (!nodeDB || index >= gTraceRouteNodeState.count) {
-        return nullptr;
-    }
-    return &nodeDB->meshNodes->at(gTraceRouteNodeState.order[index]);
+    return HermesXMessageUiModel::instance().hasRecentMessages();
 }
 
 static bool isTraceRouteBindNodeRow(uint8_t cursor)
@@ -5161,192 +1611,50 @@ static uint8_t traceRouteBindNodeIndex(uint8_t cursor)
     return cursor - kTraceRouteBindFirstNodeRow;
 }
 
-static meshtastic_NodeInfoLite *getNodeByNum(NodeNum nodeNum)
-{
-    return nodeDB ? nodeDB->getMeshNode(nodeNum) : nullptr;
-}
-
-static void loadTraceRouteBoundNodes()
-{
-    if (gTraceRouteBoundNodesLoaded) {
-        return;
-    }
-    gTraceRouteBoundNodesLoaded = true;
-
-    if (!FSCom.exists(kTraceRouteBoundNodesFile)) {
-        return;
-    }
-
-    auto f = FSCom.open(kTraceRouteBoundNodesFile, FILE_O_READ);
-    if (!f) {
-        LOG_WARN("[Screen] Failed to load TraceRoute bound nodes");
-        return;
-    }
-
-    while (f.available() && gTraceRouteBoundState.count < kTraceRouteBoundNodeCapacity) {
-        String raw = f.readStringUntil('\n');
-        raw.trim();
-        if (raw.isEmpty()) {
-            continue;
-        }
-
-        const NodeNum nodeNum = static_cast<NodeNum>(strtoul(raw.c_str(), nullptr, 16));
-        if (nodeNum == 0) {
-            continue;
-        }
-
-        bool duplicate = false;
-        for (uint8_t i = 0; i < gTraceRouteBoundState.count; ++i) {
-            if (gTraceRouteBoundState.nodes[i] == nodeNum) {
-                duplicate = true;
-                break;
-            }
-        }
-        if (!duplicate) {
-            gTraceRouteBoundState.nodes[gTraceRouteBoundState.count++] = nodeNum;
-        }
-    }
-    LOG_INFO("[Screen] Loaded %u TraceRoute bound nodes", static_cast<unsigned>(gTraceRouteBoundState.count));
-}
-
-static bool saveTraceRouteBoundNodes()
-{
-    if (!FSCom.exists("/prefs")) {
-        FSCom.mkdir("/prefs");
-    }
-    if (FSCom.exists(kTraceRouteBoundNodesFile)) {
-        FSCom.remove(kTraceRouteBoundNodesFile);
-    }
-
-    auto f = FSCom.open(kTraceRouteBoundNodesFile, FILE_O_WRITE);
-    if (!f) {
-        LOG_WARN("[Screen] Failed to save TraceRoute bound nodes");
-        return false;
-    }
-
-    char nodeId[12];
-    for (uint8_t i = 0; i < gTraceRouteBoundState.count; ++i) {
-        snprintf(nodeId, sizeof(nodeId), "%08lx\n", static_cast<unsigned long>(gTraceRouteBoundState.nodes[i]));
-        f.print(nodeId);
-    }
-    return true;
-}
-
 static bool isTraceRouteNodeBound(NodeNum nodeNum)
 {
-    loadTraceRouteBoundNodes();
-    if (nodeNum == 0) {
-        return false;
-    }
-    for (uint8_t i = 0; i < gTraceRouteBoundState.count; ++i) {
-        if (gTraceRouteBoundState.nodes[i] == nodeNum) {
-            return true;
-        }
-    }
-    return false;
+    return gTraceRouteBindings.contains(nodeNum);
 }
 
 static bool bindTraceRouteNode(NodeNum nodeNum)
 {
-    loadTraceRouteBoundNodes();
-    if (nodeNum == 0 || isTraceRouteNodeBound(nodeNum) ||
-        gTraceRouteBoundState.count >= kTraceRouteBoundNodeCapacity) {
-        return false;
-    }
-    gTraceRouteBoundState.nodes[gTraceRouteBoundState.count++] = nodeNum;
-    saveTraceRouteBoundNodes();
-    return true;
+    return gTraceRouteBindings.bind(nodeNum);
 }
 
 static bool unbindTraceRouteNodeAt(uint8_t index)
 {
-    loadTraceRouteBoundNodes();
-    if (index >= gTraceRouteBoundState.count) {
-        return false;
-    }
-    for (uint8_t i = index; i + 1 < gTraceRouteBoundState.count; ++i) {
-        gTraceRouteBoundState.nodes[i] = gTraceRouteBoundState.nodes[i + 1];
-    }
-    gTraceRouteBoundState.nodes[gTraceRouteBoundState.count - 1] = 0;
-    --gTraceRouteBoundState.count;
-    if (gTraceRouteBoundState.boundCursor > gTraceRouteBoundState.count) {
-        gTraceRouteBoundState.boundCursor = gTraceRouteBoundState.count;
-    }
-    if (gTraceRouteBoundState.count == 0) {
-        gTraceRouteBoundState.boundSelectedIndex = 0;
-    } else if (gTraceRouteBoundState.boundSelectedIndex >= gTraceRouteBoundState.count) {
-        gTraceRouteBoundState.boundSelectedIndex = gTraceRouteBoundState.count - 1;
-    }
-    saveTraceRouteBoundNodes();
-    return true;
+    const bool removed = gTraceRouteBindings.unbindAt(index);
+    HermesXTraceRouteUiModel::instance().clampBoundSelection(gTraceRouteBindings.count());
+    return removed;
 }
 
-static void compactTraceRouteBoundNodes()
+static void syncTraceRouteBoundSelection()
 {
-    loadTraceRouteBoundNodes();
-    uint8_t write = 0;
-    for (uint8_t read = 0; read < gTraceRouteBoundState.count; ++read) {
-        const NodeNum nodeNum = gTraceRouteBoundState.nodes[read];
-        if (nodeNum == 0) {
-            continue;
-        }
-        bool duplicate = false;
-        for (uint8_t i = 0; i < write; ++i) {
-            if (gTraceRouteBoundState.nodes[i] == nodeNum) {
-                duplicate = true;
-                break;
-            }
-        }
-        if (duplicate) {
-            continue;
-        }
-        gTraceRouteBoundState.nodes[write++] = nodeNum;
-    }
-    for (uint8_t i = write; i < gTraceRouteBoundState.count; ++i) {
-        gTraceRouteBoundState.nodes[i] = 0;
-    }
-    gTraceRouteBoundState.count = write;
-    if (gTraceRouteBoundState.boundCursor > gTraceRouteBoundState.count) {
-        gTraceRouteBoundState.boundCursor = gTraceRouteBoundState.count;
-    }
-    if (gTraceRouteBoundState.count == 0) {
-        gTraceRouteBoundState.boundSelectedIndex = 0;
-    } else if (gTraceRouteBoundState.boundSelectedIndex >= gTraceRouteBoundState.count) {
-        gTraceRouteBoundState.boundSelectedIndex = gTraceRouteBoundState.count - 1;
-    }
+    HermesXTraceRouteUiModel::instance().clampBoundSelection(gTraceRouteBindings.count());
 }
 
 static const meshtastic_NodeInfoLite *getBoundTraceRouteNodeAt(uint8_t index)
 {
-    compactTraceRouteBoundNodes();
-    if (index >= gTraceRouteBoundState.count) {
+    syncTraceRouteBoundSelection();
+    if (index >= gTraceRouteBindings.count()) {
         return nullptr;
     }
-    return getNodeByNum(gTraceRouteBoundState.nodes[index]);
-}
-
-static const meshtastic_NodeInfoLite *getSelectedOnlineNode()
-{
-    rebuildOnlineNodeOrder();
-    if (gOnlineNodeState.selectedIndex >= gOnlineNodeState.count) {
-        return nullptr;
-    }
-    return getOnlineNodeAt(gOnlineNodeState.selectedIndex);
+    return gNodeBrowserDataSource.nodeByNum(gTraceRouteBindings.nodeAt(index));
 }
 
 static const meshtastic_NodeInfoLite *getSelectedTraceRouteNode()
 {
-    if (gTraceRouteUiMode == TraceRouteUiMode::BoundRoutes) {
-        if (gTraceRouteBoundState.boundSelectedIndex >= gTraceRouteBoundState.count) {
+    if (gTraceRouteNavigationState.mode == HermesXTraceRouteUiMode::BoundRoutes) {
+        if (gTraceRouteNavigationState.boundSelectedIndex >= gTraceRouteBindings.count()) {
             return nullptr;
         }
-        return getBoundTraceRouteNodeAt(gTraceRouteBoundState.boundSelectedIndex);
+        return getBoundTraceRouteNodeAt(gTraceRouteNavigationState.boundSelectedIndex);
     }
-    rebuildTraceRouteNodeOrder();
-    if (gTraceRouteBoundState.bindSelectedIndex >= gTraceRouteNodeState.count) {
+    gNodeBrowserDataSource.refreshTraceRoute();
+    if (gTraceRouteNavigationState.bindSelectedIndex >= gNodeBrowserDataSource.traceRouteCount()) {
         return nullptr;
     }
-    return getTraceRouteNodeAt(gTraceRouteBoundState.bindSelectedIndex);
+    return gNodeBrowserDataSource.traceRouteNodeAt(gTraceRouteNavigationState.bindSelectedIndex);
 }
 
 static String buildTraceRouteNodeInfoBody(const meshtastic_NodeInfoLite &node)
@@ -5361,154 +1669,77 @@ static String buildTraceRouteNodeInfoBody(const meshtastic_NodeInfoLite &node)
 
 static void cancelDeferredTraceRouteBindShortPress()
 {
-    gTraceRouteBoundState.deferredShortVisible = false;
-    gTraceRouteBoundState.deferredShortCursor = 0;
-    gTraceRouteBoundState.deferredShortNode = 0;
+    HermesXTraceRouteUiModel::instance().cancelDeferredBindShortPress();
 }
 
 static void cancelDeferredTraceRouteBoundShortPress()
 {
-    gTraceRouteBoundState.deferredRouteVisible = false;
-    gTraceRouteBoundState.deferredRouteCursor = 0;
-    gTraceRouteBoundState.deferredRouteNode = 0;
+    HermesXTraceRouteUiModel::instance().cancelDeferredRouteShortPress();
 }
 
 static bool showTraceRouteBindInfoForSelectedNode()
 {
-    if (!isTraceRouteBindNodeRow(gTraceRouteBoundState.bindCursor)) {
+    if (!isTraceRouteBindNodeRow(gTraceRouteNavigationState.bindCursor)) {
         return false;
     }
-    gTraceRouteBoundState.bindSelectedIndex = traceRouteBindNodeIndex(gTraceRouteBoundState.bindCursor);
+    gTraceRouteNavigationState.bindSelectedIndex = traceRouteBindNodeIndex(gTraceRouteNavigationState.bindCursor);
     const meshtastic_NodeInfoLite *node = getSelectedTraceRouteNode();
     if (!node) {
         LOG_WARN("[Screen] TraceRoute bind short info missing node cursor=%u count=%u",
-                 static_cast<unsigned>(gTraceRouteBoundState.bindCursor), static_cast<unsigned>(gTraceRouteNodeState.count));
+                 static_cast<unsigned>(gTraceRouteNavigationState.bindCursor),
+                 static_cast<unsigned>(gNodeBrowserDataSource.traceRouteCount()));
         return false;
     }
 
     LOG_INFO("[Screen] TraceRoute bind short info node=%08lx cursor=%u",
-             static_cast<unsigned long>(node->num), static_cast<unsigned>(gTraceRouteBoundState.bindCursor));
+             static_cast<unsigned long>(node->num), static_cast<unsigned>(gTraceRouteNavigationState.bindCursor));
     showSetupDetailPopup("TraceRoute", buildTraceRouteNodeInfoBody(*node));
     return true;
 }
 
 static void deferTraceRouteBindShortPressForSelectedNode()
 {
-    if (gTraceRouteUiMode != TraceRouteUiMode::BindOnline ||
-        !isTraceRouteBindNodeRow(gTraceRouteBoundState.bindCursor)) {
+    if (gTraceRouteNavigationState.mode != HermesXTraceRouteUiMode::BindOnline ||
+        !isTraceRouteBindNodeRow(gTraceRouteNavigationState.bindCursor)) {
         cancelDeferredTraceRouteBindShortPress();
         return;
     }
 
-    gTraceRouteBoundState.bindSelectedIndex = traceRouteBindNodeIndex(gTraceRouteBoundState.bindCursor);
+    gTraceRouteNavigationState.bindSelectedIndex = traceRouteBindNodeIndex(gTraceRouteNavigationState.bindCursor);
     const meshtastic_NodeInfoLite *node = getSelectedTraceRouteNode();
     if (!node) {
         cancelDeferredTraceRouteBindShortPress();
         LOG_WARN("[Screen] TraceRoute bind deferred short missing node cursor=%u count=%u",
-                 static_cast<unsigned>(gTraceRouteBoundState.bindCursor), static_cast<unsigned>(gTraceRouteNodeState.count));
+                 static_cast<unsigned>(gTraceRouteNavigationState.bindCursor),
+                 static_cast<unsigned>(gNodeBrowserDataSource.traceRouteCount()));
         return;
     }
 
-    gTraceRouteBoundState.deferredShortVisible = true;
-    gTraceRouteBoundState.deferredShortCursor = gTraceRouteBoundState.bindCursor;
-    gTraceRouteBoundState.deferredShortNode = node->num;
+    HermesXTraceRouteUiModel::instance().deferBindShortPress(gTraceRouteNavigationState.bindCursor, node->num);
     LOG_INFO("[Screen] TraceRoute bind defer short node=%08lx cursor=%u",
-             static_cast<unsigned long>(node->num), static_cast<unsigned>(gTraceRouteBoundState.bindCursor));
+             static_cast<unsigned long>(node->num), static_cast<unsigned>(gTraceRouteNavigationState.bindCursor));
 }
 
 static void openTraceRouteBindConfirmForSelectedNode()
 {
     cancelDeferredTraceRouteBindShortPress();
-    if (gTraceRouteUiMode != TraceRouteUiMode::BindOnline ||
-        !isTraceRouteBindNodeRow(gTraceRouteBoundState.bindCursor)) {
+    if (gTraceRouteNavigationState.mode != HermesXTraceRouteUiMode::BindOnline ||
+        !isTraceRouteBindNodeRow(gTraceRouteNavigationState.bindCursor)) {
         return;
     }
 
-    gTraceRouteBoundState.bindSelectedIndex = traceRouteBindNodeIndex(gTraceRouteBoundState.bindCursor);
+    gTraceRouteNavigationState.bindSelectedIndex = traceRouteBindNodeIndex(gTraceRouteNavigationState.bindCursor);
     const meshtastic_NodeInfoLite *node = getSelectedTraceRouteNode();
     if (!node) {
         LOG_WARN("[Screen] TraceRoute bind confirm missing node cursor=%u count=%u",
-                 static_cast<unsigned>(gTraceRouteBoundState.bindCursor), static_cast<unsigned>(gTraceRouteNodeState.count));
+                 static_cast<unsigned>(gTraceRouteNavigationState.bindCursor),
+                 static_cast<unsigned>(gNodeBrowserDataSource.traceRouteCount()));
         return;
     }
 
-    gTraceRouteBoundState.confirmNode = node->num;
-    gTraceRouteBoundState.confirmSelected = 1;
-    gTraceRouteBoundState.confirmVisible = true;
+    HermesXTraceRouteUiModel::instance().showBindConfirm(node->num);
     LOG_INFO("[Screen] TraceRoute bind confirm node=%08lx cursor=%u",
-             static_cast<unsigned long>(node->num), static_cast<unsigned>(gTraceRouteBoundState.bindCursor));
-}
-
-static float getFinderNodeDistanceScore(const meshtastic_NodeInfoLite &node)
-{
-    meshtastic_NodeInfoLite *ourNode = nodeDB ? nodeDB->getMeshNode(nodeDB->getNodeNum()) : nullptr;
-    meshtastic_NodeInfoLite *mutableNode = const_cast<meshtastic_NodeInfoLite *>(&node);
-    if (!ourNode || !nodeDB->hasValidPosition(ourNode) || !nodeDB->hasValidPosition(mutableNode)) {
-        return 1.0e12f;
-    }
-    return GeoCoord::latLongToMeter(ourNode->position.latitude_i * 1e-7f, ourNode->position.longitude_i * 1e-7f,
-                                    node.position.latitude_i * 1e-7f, node.position.longitude_i * 1e-7f);
-}
-
-static void rebuildFinderNodeOrder()
-{
-    gFinderNodeState.count = 0;
-    if (!nodeDB || !nodeDB->meshNodes) {
-        return;
-    }
-
-    for (uint16_t i = 0; i < nodeDB->getNumMeshNodes() && gFinderNodeState.count < kOnlineNodeCapacity; ++i) {
-        const meshtastic_NodeInfoLite &node = nodeDB->meshNodes->at(i);
-        if (!isFinderNodeCandidate(node)) {
-            continue;
-        }
-        gFinderNodeState.order[gFinderNodeState.count++] = i;
-    }
-
-    for (uint8_t i = 0; i < gFinderNodeState.count; ++i) {
-        for (uint8_t j = i + 1; j < gFinderNodeState.count; ++j) {
-            const auto &a = nodeDB->meshNodes->at(gFinderNodeState.order[i]);
-            const auto &b = nodeDB->meshNodes->at(gFinderNodeState.order[j]);
-            const float ad = getFinderNodeDistanceScore(a);
-            const float bd = getFinderNodeDistanceScore(b);
-            if (bd < ad || (bd == ad && b.last_heard > a.last_heard)) {
-                const uint16_t tmp = gFinderNodeState.order[i];
-                gFinderNodeState.order[i] = gFinderNodeState.order[j];
-                gFinderNodeState.order[j] = tmp;
-            }
-        }
-    }
-
-    if (gFinderNodeState.count == 0) {
-        gFinderNodeState.listCursor = 0;
-        gFinderNodeState.selectedIndex = 0;
-        gFinderNodeState.detailCursor = 0;
-        return;
-    }
-    if (gFinderNodeState.listCursor > gFinderNodeState.count) {
-        gFinderNodeState.listCursor = gFinderNodeState.count;
-    }
-    if (gFinderNodeState.selectedIndex >= gFinderNodeState.count) {
-        gFinderNodeState.selectedIndex = gFinderNodeState.count - 1;
-    }
-}
-
-static const meshtastic_NodeInfoLite *getFinderNodeAt(uint8_t index)
-{
-    rebuildFinderNodeOrder();
-    if (!nodeDB || index >= gFinderNodeState.count) {
-        return nullptr;
-    }
-    return &nodeDB->meshNodes->at(gFinderNodeState.order[index]);
-}
-
-static const meshtastic_NodeInfoLite *getSelectedFinderNode()
-{
-    rebuildFinderNodeOrder();
-    if (gFinderNodeState.selectedIndex >= gFinderNodeState.count) {
-        return nullptr;
-    }
-    return getFinderNodeAt(gFinderNodeState.selectedIndex);
+             static_cast<unsigned long>(node->num), static_cast<unsigned>(gTraceRouteNavigationState.bindCursor));
 }
 
 static int getGroupNodeCount()
@@ -5518,19 +1749,7 @@ static int getGroupNodeCount()
 
 static void clampGroupNodeState()
 {
-    const int count = getGroupNodeCount();
-    if (count <= 0) {
-        gGroupNodeState.listCursor = 0;
-        gGroupNodeState.selectedIndex = 0;
-        gGroupNodeState.detailCursor = 0;
-        return;
-    }
-    if (gGroupNodeState.listCursor > count) {
-        gGroupNodeState.listCursor = static_cast<uint8_t>(count);
-    }
-    if (gGroupNodeState.selectedIndex >= count) {
-        gGroupNodeState.selectedIndex = static_cast<uint8_t>(count - 1);
-    }
+    gNodeBrowserUiModel.clampGroup(static_cast<uint8_t>(std::max(0, getGroupNodeCount())));
 }
 
 static const HermesXEmUiModule::EmInfoNodeStatus *getGroupNodeAt(uint8_t index)
@@ -5571,7 +1790,6 @@ static String getGroupNodeDisplayName(const HermesXEmUiModule::EmInfoNodeStatus 
     return String(buf);
 }
 
-static constexpr uint8_t kGroupDetailBackRow = 0;
 static constexpr uint8_t kGroupDetailMessageRow = 1;
 static constexpr uint8_t kGroupDetailTraceRouteRow = 2;
 
@@ -5655,19 +1873,19 @@ static bool sendOnlineNodeTraceRoute(NodeNum nodeNum)
 
 static bool sendTraceRouteForSelectedBoundNode()
 {
-    if (gTraceRouteUiMode != TraceRouteUiMode::BoundRoutes || gTraceRouteBoundState.boundCursor == 0) {
+    if (gTraceRouteNavigationState.mode != HermesXTraceRouteUiMode::BoundRoutes || gTraceRouteNavigationState.boundCursor == 0) {
         return false;
     }
-    compactTraceRouteBoundNodes();
-    if (gTraceRouteBoundState.boundCursor == 0 || gTraceRouteBoundState.boundCursor > gTraceRouteBoundState.count) {
+    syncTraceRouteBoundSelection();
+    if (gTraceRouteNavigationState.boundCursor == 0 || gTraceRouteNavigationState.boundCursor > gTraceRouteBindings.count()) {
         return false;
     }
 
-    gTraceRouteBoundState.boundSelectedIndex = gTraceRouteBoundState.boundCursor - 1;
+    gTraceRouteNavigationState.boundSelectedIndex = gTraceRouteNavigationState.boundCursor - 1;
     const meshtastic_NodeInfoLite *node = getSelectedTraceRouteNode();
     if (!node) {
         LOG_WARN("[Screen] TraceRoute bound short missing node cursor=%u count=%u",
-                 static_cast<unsigned>(gTraceRouteBoundState.boundCursor), static_cast<unsigned>(gTraceRouteBoundState.count));
+                 static_cast<unsigned>(gTraceRouteNavigationState.boundCursor), static_cast<unsigned>(gTraceRouteBindings.count()));
         return false;
     }
     if (node->via_mqtt) {
@@ -5683,50 +1901,48 @@ static bool sendTraceRouteForSelectedBoundNode()
 
 static void deferTraceRouteBoundShortPressForSelectedNode()
 {
-    if (gTraceRouteUiMode != TraceRouteUiMode::BoundRoutes || gTraceRouteBoundState.boundCursor == 0) {
+    if (gTraceRouteNavigationState.mode != HermesXTraceRouteUiMode::BoundRoutes || gTraceRouteNavigationState.boundCursor == 0) {
         cancelDeferredTraceRouteBoundShortPress();
         return;
     }
-    compactTraceRouteBoundNodes();
-    if (gTraceRouteBoundState.boundCursor == 0 || gTraceRouteBoundState.boundCursor > gTraceRouteBoundState.count) {
+    syncTraceRouteBoundSelection();
+    if (gTraceRouteNavigationState.boundCursor == 0 || gTraceRouteNavigationState.boundCursor > gTraceRouteBindings.count()) {
         cancelDeferredTraceRouteBoundShortPress();
         return;
     }
 
-    gTraceRouteBoundState.boundSelectedIndex = gTraceRouteBoundState.boundCursor - 1;
+    gTraceRouteNavigationState.boundSelectedIndex = gTraceRouteNavigationState.boundCursor - 1;
     const meshtastic_NodeInfoLite *node = getSelectedTraceRouteNode();
     if (!node) {
         cancelDeferredTraceRouteBoundShortPress();
         LOG_WARN("[Screen] TraceRoute bound deferred short missing node cursor=%u count=%u",
-                 static_cast<unsigned>(gTraceRouteBoundState.boundCursor), static_cast<unsigned>(gTraceRouteBoundState.count));
+                 static_cast<unsigned>(gTraceRouteNavigationState.boundCursor), static_cast<unsigned>(gTraceRouteBindings.count()));
         return;
     }
 
-    gTraceRouteBoundState.deferredRouteVisible = true;
-    gTraceRouteBoundState.deferredRouteCursor = gTraceRouteBoundState.boundCursor;
-    gTraceRouteBoundState.deferredRouteNode = node->num;
+    HermesXTraceRouteUiModel::instance().deferRouteShortPress(gTraceRouteNavigationState.boundCursor, node->num);
     LOG_INFO("[Screen] TraceRoute bound defer short node=%08lx cursor=%u",
-             static_cast<unsigned long>(node->num), static_cast<unsigned>(gTraceRouteBoundState.boundCursor));
+             static_cast<unsigned long>(node->num), static_cast<unsigned>(gTraceRouteNavigationState.boundCursor));
 }
 
 static bool unbindSelectedTraceRouteBoundNode()
 {
     cancelDeferredTraceRouteBoundShortPress();
-    if (gTraceRouteUiMode != TraceRouteUiMode::BoundRoutes || gTraceRouteBoundState.boundCursor == 0) {
+    if (gTraceRouteNavigationState.mode != HermesXTraceRouteUiMode::BoundRoutes || gTraceRouteNavigationState.boundCursor == 0) {
         return false;
     }
-    compactTraceRouteBoundNodes();
-    if (gTraceRouteBoundState.boundCursor == 0 || gTraceRouteBoundState.boundCursor > gTraceRouteBoundState.count) {
+    syncTraceRouteBoundSelection();
+    if (gTraceRouteNavigationState.boundCursor == 0 || gTraceRouteNavigationState.boundCursor > gTraceRouteBindings.count()) {
         return false;
     }
 
-    const uint8_t removeIndex = gTraceRouteBoundState.boundCursor - 1;
-    const NodeNum nodeNum = gTraceRouteBoundState.nodes[removeIndex];
+    const uint8_t removeIndex = gTraceRouteNavigationState.boundCursor - 1;
+    const NodeNum nodeNum = gTraceRouteBindings.nodeAt(removeIndex);
     if (!unbindTraceRouteNodeAt(removeIndex)) {
         return false;
     }
     LOG_INFO("[Screen] TraceRoute bound unbind node=%08lx cursor=%u",
-             static_cast<unsigned long>(nodeNum), static_cast<unsigned>(gTraceRouteBoundState.boundCursor));
+             static_cast<unsigned long>(nodeNum), static_cast<unsigned>(gTraceRouteNavigationState.boundCursor));
     showTraceRoutePopup("TraceRoute", u8"已解除綁定");
     return true;
 }
@@ -5749,6 +1965,65 @@ static String getOnlineNodeShortId(const meshtastic_NodeInfoLite &node)
     char buf[20];
     snprintf(buf, sizeof(buf), "!%08lx", static_cast<unsigned long>(node.num));
     return String(buf);
+}
+
+static bool getOnlineBrowserRenderRow(void *, uint8_t index, String &label, String &status)
+{
+    const meshtastic_NodeInfoLite *node = gNodeBrowserDataSource.onlineNodeAt(index);
+    if (!node) {
+        return false;
+    }
+    label = getOnlineNodeDisplayName(*node) + " " + getOnlineNodeShortId(*node);
+    status = formatOnlineNodeSeenAgo(*node);
+    return true;
+}
+
+static bool getFinderBrowserRenderRow(void *, uint8_t index, String &label, String &status)
+{
+    const meshtastic_NodeInfoLite *node = gNodeBrowserDataSource.finderNodeAt(index);
+    if (!node) {
+        return false;
+    }
+    label = getOnlineNodeDisplayName(*node) + " " + getOnlineNodeShortId(*node);
+    status = formatOnlineNodeSeenAgo(*node);
+    return true;
+}
+
+static bool getGroupBrowserRenderRow(void *, uint8_t index, String &label, String &status)
+{
+    const auto *entry = getGroupNodeAt(index);
+    if (!entry) {
+        return false;
+    }
+    label = getGroupNodeDisplayName(*entry);
+    if (entry->state[0]) {
+        label += " ";
+        label += entry->state;
+    }
+    status = hermesXEmUiModule ? String(hermesXEmUiModule->getNodePresenceLabel(*entry)) : String(u8"未知");
+    return true;
+}
+
+static bool getTraceRouteBindRenderRow(void *, uint8_t index, String &label, String &status)
+{
+    const meshtastic_NodeInfoLite *node = gNodeBrowserDataSource.traceRouteNodeAt(index);
+    if (!node) {
+        return false;
+    }
+    label = getOnlineNodeDisplayName(*node) + " " + getOnlineNodeShortId(*node);
+    status = isTraceRouteNodeBound(node->num) ? String(u8"已綁") : String("");
+    return true;
+}
+
+static bool getTraceRouteBoundRenderRow(void *, uint8_t index, String &label, String &status)
+{
+    const meshtastic_NodeInfoLite *node = getBoundTraceRouteNodeAt(index);
+    if (!node) {
+        return false;
+    }
+    label = getOnlineNodeDisplayName(*node) + " " + getOnlineNodeShortId(*node);
+    status = node->via_mqtt ? "--" : "TR";
+    return true;
 }
 
 static String getDirectMessageTargetName(NodeNum nodeNum)
@@ -5774,36 +2049,12 @@ static void startDirectMessageComposer(NodeNum destNode, bool fromGroupDetail)
     if (destNode == 0 || destNode == NODENUM_BROADCAST) {
         return;
     }
-    gDirectMessageComposerState.active = true;
-    gDirectMessageComposerState.fromGroupDetail = fromGroupDetail;
-    gDirectMessageComposerState.dest = destNode;
-    gDirectMessageComposerState.draft = "";
-    gDirectMessageComposerState.toast = "";
-    gDirectMessageComposerState.toastUntilMs = 0;
-    gDirectMessageComposerState.keyRow = 0;
-    gDirectMessageComposerState.keyCol = 0;
-    gDirectMessageComposerState.lowercase = false;
-    gDirectMessageComposerState.bopomofoMode = false;
-    gDirectMessageComposerState.candidateMode = false;
-    gDirectMessageComposerState.candidateCursor = 0;
-    gDirectMessageComposerState.bpmf = hermesx_bpmf::HermesXBpmfEngine();
-    gDirectMessageComposerState.bpmf.setMaxCandidates(8);
+    gDirectMessageComposer.start(destNode, fromGroupDetail);
 }
 
 static void stopDirectMessageComposer()
 {
-    gDirectMessageComposerState.active = false;
-    gDirectMessageComposerState.dest = 0;
-    gDirectMessageComposerState.draft = "";
-    gDirectMessageComposerState.toast = "";
-    gDirectMessageComposerState.toastUntilMs = 0;
-    gDirectMessageComposerState.keyRow = 0;
-    gDirectMessageComposerState.keyCol = 0;
-    gDirectMessageComposerState.lowercase = false;
-    gDirectMessageComposerState.bopomofoMode = false;
-    gDirectMessageComposerState.candidateMode = false;
-    gDirectMessageComposerState.candidateCursor = 0;
-    gDirectMessageComposerState.bpmf = hermesx_bpmf::HermesXBpmfEngine();
+    gDirectMessageComposer.stop();
 }
 
 static bool sendDirectTextMessage(NodeNum destNode, const String &message)
@@ -5828,40 +2079,6 @@ static bool sendDirectTextMessage(NodeNum destNode, const String &message)
     return true;
 }
 
-static const char *const (*getDirectMessageKeyRows())[10]
-{
-    if (gDirectMessageComposerState.bopomofoMode) {
-        return kDirectMessageKeyRowsBopomofo;
-    }
-    return gDirectMessageComposerState.lowercase ? kDirectMessageKeyRowsLower : kDirectMessageKeyRowsUpper;
-}
-
-static const uint8_t *getDirectMessageKeyRowLengths()
-{
-    return gDirectMessageComposerState.bopomofoMode ? kDirectMessageKeyRowLengthsBopomofo
-                                                    : kDirectMessageKeyRowLengthsEnglish;
-}
-
-static void removeLastUtf8Character(String &text)
-{
-    if (text.length() == 0) {
-        return;
-    }
-    int index = static_cast<int>(text.length()) - 1;
-    while (index > 0 && (static_cast<uint8_t>(text[index]) & 0xC0u) == 0x80u) {
-        --index;
-    }
-    text.remove(static_cast<unsigned int>(index));
-}
-
-static String getDirectMessageCompositionText()
-{
-    if (!gDirectMessageComposerState.bopomofoMode || !gDirectMessageComposerState.bpmf.composing()) {
-        return String();
-    }
-    return String(gDirectMessageComposerState.bpmf.composingText().c_str());
-}
-
 static void drawDirectMessageComposerFrame(OLEDDisplay *display, int16_t x, int16_t y)
 {
     if (!display) {
@@ -5872,18 +2089,18 @@ static void drawDirectMessageComposerFrame(OLEDDisplay *display, int16_t x, int1
     (void)y;
     const int16_t width = display->getWidth();
     const int16_t height = display->getHeight();
-    if (gDirectMessageComposerState.candidateMode) {
-        drawDirectMessageCandidatePage(display, width, height);
+    if (gDirectMessageComposer.candidateMode()) {
+        HermesXMessageUiRenderer::drawComposerCandidates(
+            display, width, height, gDirectMessageComposer.previewText(), gDirectMessageComposer.candidates(),
+            gDirectMessageComposer.candidateCursor());
         return;
     }
-    String header = String("MSG ") + getDirectMessageTargetName(gDirectMessageComposerState.dest);
-    String draft = gDirectMessageComposerState.draft;
-    draft += getDirectMessageCompositionText();
-    draft += "_";
-    drawSetupKeyboardPage(display, width, height, header.c_str(), draft, getDirectMessageKeyRows(),
-                          getDirectMessageKeyRowLengths(), kDirectMessageKeyRowCount, gDirectMessageComposerState.keyRow,
-                          gDirectMessageComposerState.keyCol, gDirectMessageComposerState.toast,
-                          gDirectMessageComposerState.toastUntilMs);
+    String header = String("MSG ") + getDirectMessageTargetName(gDirectMessageComposer.destination());
+    const String draft = gDirectMessageComposer.previewText();
+    HermesXFastSetupUiRenderer::drawKeyboardPage(
+        display, width, height, header.c_str(), draft, gDirectMessageComposer.keyRows(),
+        gDirectMessageComposer.keyRowLengths(), gDirectMessageComposer.keyRowCount(), gDirectMessageComposer.keyRow(),
+        gDirectMessageComposer.keyCol(), gDirectMessageComposer.toast(), gDirectMessageComposer.toastUntilMs());
 }
 
 static String formatOnlineNodeSeenAgo(const meshtastic_NodeInfoLite &node)
@@ -5900,7 +2117,6 @@ static String formatOnlineNodeSeenAgo(const meshtastic_NodeInfoLite &node)
     return String(buf);
 }
 
-static constexpr uint8_t kOnlineDetailBackRow = 0;
 static constexpr uint8_t kOnlineDetailMessageRow = 1;
 static constexpr uint8_t kOnlineDetailTraceRouteRow = 2;
 
@@ -5969,43 +2185,11 @@ static uint8_t buildOnlineNodeDetailRows(const meshtastic_NodeInfoLite &node, bo
     return rowCount;
 }
 
-static uint8_t getRecentTextMessageListEntryCount()
-{
-    return gRecentTextMessageState.count + 1; // Includes the leading "Back" row.
-}
-
-static int findRecentTextMessageIndex(const meshtastic_MeshPacket &packet);
 static bool isHermesXRecentMessagePageActive();
 
 static void clampRecentTextMessageIndices()
 {
-    const uint8_t lastCursor = getRecentTextMessageListEntryCount() - 1;
-    if (gRecentTextMessageState.listCursor > lastCursor) {
-        gRecentTextMessageState.listCursor = lastCursor;
-    }
-
-    if (gRecentTextMessageState.count == 0) {
-        gRecentTextMessageState.selectedIndex = 0;
-        gRecentTextMessageState.detailIndex = 0;
-        return;
-    }
-
-    const uint8_t lastIndex = gRecentTextMessageState.count - 1;
-    if (gRecentTextMessageState.selectedIndex > lastIndex) {
-        gRecentTextMessageState.selectedIndex = lastIndex;
-    }
-    if (gRecentTextMessageState.detailIndex > lastIndex) {
-        gRecentTextMessageState.detailIndex = lastIndex;
-    }
-}
-
-static const meshtastic_MeshPacket *getRecentTextMessageAt(uint8_t index)
-{
-    clampRecentTextMessageIndices();
-    if (index >= gRecentTextMessageState.count) {
-        return nullptr;
-    }
-    return &gRecentTextMessageState.packets[index];
+    HermesXMessageUiModel::instance().clampRecentIndices();
 }
 
 static const meshtastic_MeshPacket *getActiveTextMessageForDisplay()
@@ -6022,190 +2206,12 @@ static const meshtastic_MeshPacket *getActiveTextMessageForDisplay()
 
 static void setRecentTextMessageDetailToSelected()
 {
-    clampRecentTextMessageIndices();
-    gRecentTextMessageState.detailIndex = gRecentTextMessageState.selectedIndex;
-    gRecentTextMessageState.detailScrollY = 0;
+    HermesXMessageUiModel::instance().selectDetailFromList();
 }
 
 static void storeRecentTextMessage(const meshtastic_MeshPacket &packet)
 {
-    if (packet.from == 0) {
-        return;
-    }
-
-    const bool preserveCurrentView = isHermesXRecentMessagePageActive();
-    meshtastic_MeshPacket selectedPacket{};
-    meshtastic_MeshPacket detailPacket{};
-    const bool hadSelectedPacket = preserveCurrentView && gRecentTextMessageState.count > 0 &&
-                                   gRecentTextMessageState.selectedIndex < gRecentTextMessageState.count;
-    const bool hadDetailPacket = preserveCurrentView && gRecentTextMessageState.count > 0 &&
-                                 gRecentTextMessageState.detailIndex < gRecentTextMessageState.count;
-    const bool listWasOnBack = preserveCurrentView && gRecentTextMessageState.listCursor == 0;
-    if (hadSelectedPacket) {
-        selectedPacket = gRecentTextMessageState.packets[gRecentTextMessageState.selectedIndex];
-    }
-    if (hadDetailPacket) {
-        detailPacket = gRecentTextMessageState.packets[gRecentTextMessageState.detailIndex];
-    }
-    const uint16_t previousDetailScrollY = gRecentTextMessageState.detailScrollY;
-
-    uint8_t existingIndex = gRecentTextMessageState.count;
-    for (uint8_t i = 0; i < gRecentTextMessageState.count; ++i) {
-        const meshtastic_MeshPacket &candidate = gRecentTextMessageState.packets[i];
-        if (candidate.from == packet.from && candidate.id == packet.id) {
-            existingIndex = i;
-            break;
-        }
-    }
-
-    if (existingIndex == gRecentTextMessageState.count) {
-        if (gRecentTextMessageState.count < kRecentTextMessageCapacity) {
-            ++gRecentTextMessageState.count;
-        }
-        existingIndex = gRecentTextMessageState.count - 1;
-    }
-
-    for (uint8_t i = existingIndex; i > 0; --i) {
-        gRecentTextMessageState.packets[i] = gRecentTextMessageState.packets[i - 1];
-    }
-
-    gRecentTextMessageState.packets[0] = packet;
-    if (preserveCurrentView) {
-        const int selectedIndex = hadSelectedPacket ? findRecentTextMessageIndex(selectedPacket) : -1;
-        const int detailIndex = hadDetailPacket ? findRecentTextMessageIndex(detailPacket) : -1;
-        if (selectedIndex >= 0) {
-            gRecentTextMessageState.selectedIndex = static_cast<uint8_t>(selectedIndex);
-            gRecentTextMessageState.listCursor = listWasOnBack ? 0 : static_cast<uint8_t>(selectedIndex + 1);
-        } else {
-            gRecentTextMessageState.selectedIndex = 0;
-            gRecentTextMessageState.listCursor = listWasOnBack ? 0 : 1;
-        }
-        if (detailIndex >= 0) {
-            gRecentTextMessageState.detailIndex = static_cast<uint8_t>(detailIndex);
-            gRecentTextMessageState.detailScrollY = previousDetailScrollY;
-        } else {
-            gRecentTextMessageState.detailIndex = 0;
-            gRecentTextMessageState.detailScrollY = 0;
-        }
-    } else {
-        gRecentTextMessageState.listCursor = 1;
-        gRecentTextMessageState.selectedIndex = 0;
-        gRecentTextMessageState.detailIndex = 0;
-        gRecentTextMessageState.detailScrollY = 0;
-        gRecentTextMessageState.detailMaxScrollY = 0;
-    }
-}
-
-static size_t utf8SequenceLength(uint8_t firstByte)
-{
-    if ((firstByte & 0x80u) == 0) {
-        return 1;
-    }
-    if ((firstByte & 0xE0u) == 0xC0u) {
-        return 2;
-    }
-    if ((firstByte & 0xF0u) == 0xE0u) {
-        return 3;
-    }
-    if ((firstByte & 0xF8u) == 0xF0u) {
-        return 4;
-    }
-    return 1;
-}
-
-static void copyUtf8Snippet(const char *src, size_t srcLen, char *out, size_t outSize, size_t maxCodepoints)
-{
-    if (!out || outSize == 0) {
-        return;
-    }
-
-    out[0] = '\0';
-    if (!src || srcLen == 0 || maxCodepoints == 0) {
-        return;
-    }
-
-    size_t srcPos = 0;
-    size_t dstPos = 0;
-    size_t copiedCodepoints = 0;
-    bool truncated = false;
-
-    while (srcPos < srcLen && dstPos + 1 < outSize && copiedCodepoints < maxCodepoints) {
-        const uint8_t firstByte = static_cast<uint8_t>(src[srcPos]);
-        size_t seqLen = utf8SequenceLength(firstByte);
-        if (seqLen == 0) {
-            seqLen = 1;
-        }
-        if (srcPos + seqLen > srcLen || dstPos + seqLen >= outSize) {
-            truncated = true;
-            break;
-        }
-
-        bool allZero = true;
-        for (size_t i = 0; i < seqLen; ++i) {
-            if (src[srcPos + i] != '\0') {
-                allZero = false;
-                break;
-            }
-        }
-        if (allZero) {
-            break;
-        }
-
-        if (seqLen == 1 && (src[srcPos] == '\n' || src[srcPos] == '\r' || src[srcPos] == '\t')) {
-            out[dstPos++] = ' ';
-            ++srcPos;
-            ++copiedCodepoints;
-            continue;
-        }
-
-        memcpy(out + dstPos, src + srcPos, seqLen);
-        dstPos += seqLen;
-        srcPos += seqLen;
-        ++copiedCodepoints;
-    }
-
-    if (srcPos < srcLen) {
-        truncated = true;
-    }
-
-    if (truncated && outSize >= 4) {
-        while (dstPos > 0 && (static_cast<uint8_t>(out[dstPos - 1]) & 0xC0u) == 0x80u) {
-            --dstPos;
-        }
-        if (dstPos + 3 < outSize) {
-            out[dstPos++] = '.';
-            out[dstPos++] = '.';
-            out[dstPos++] = '.';
-        }
-    }
-
-    out[dstPos] = '\0';
-}
-
-static void makeTextMessageSnippet(const meshtastic_MeshPacket &packet, char *out, size_t outSize, size_t maxCodepoints)
-{
-    copyUtf8Snippet(reinterpret_cast<const char *>(packet.decoded.payload.bytes), packet.decoded.payload.size, out, outSize, maxCodepoints);
-}
-
-static void copyTextMessagePayload(const meshtastic_MeshPacket &packet, char *out, size_t outSize)
-{
-    if (!out || outSize == 0) {
-        return;
-    }
-    const size_t payloadLen = std::min<size_t>(packet.decoded.payload.size, outSize - 1);
-    memcpy(out, packet.decoded.payload.bytes, payloadLen);
-    out[payloadLen] = '\0';
-}
-
-static int findRecentTextMessageIndex(const meshtastic_MeshPacket &packet)
-{
-    for (uint8_t i = 0; i < gRecentTextMessageState.count; ++i) {
-        const meshtastic_MeshPacket &candidate = gRecentTextMessageState.packets[i];
-        if (candidate.from == packet.from && candidate.id == packet.id) {
-            return i;
-        }
-    }
-    return -1;
+    HermesXMessageUiModel::instance().storeRecentMessage(packet, isHermesXRecentMessagePageActive());
 }
 
 static bool isHermesXRecentMessagePageActive()
@@ -6213,892 +2219,151 @@ static bool isHermesXRecentMessagePageActive()
     return screen && (screen->isRecentTextMessagesPageActive() || screen->isRecentTextMessageDetailPageActive());
 }
 
-static uint8_t readHermesXGlyphByte(const uint8_t *ptr)
-{
-#if defined(ARDUINO_ARCH_AVR)
-    return pgm_read_byte(ptr);
-#else
-    return *ptr;
-#endif
-}
-
-static void drawScaledHanzi(OLEDDisplay &display, int16_t x, int16_t y, int glyphIndex, uint8_t scale)
-{
-    const uint8_t *glyph = graphics::HermesX_zh::glyphData(glyphIndex);
-    if (!glyph || scale == 0) {
-        return;
-    }
-
-    const OLEDDISPLAY_COLOR color = display.getColor();
-    for (uint8_t row = 0; row < graphics::HermesX_zh::GLYPH_HEIGHT; ++row) {
-        for (uint8_t col = 0; col < graphics::HermesX_zh::GLYPH_WIDTH; ++col) {
-            const int bitIndex = row * graphics::HermesX_zh::GLYPH_STRIDE_BITS + col;
-            const int byteIndex = bitIndex >> 3;
-            const int bitInByte = 7 - (bitIndex & 7);
-            if (((readHermesXGlyphByte(glyph + byteIndex) >> bitInByte) & 0x1u) == 0) {
-                continue;
-            }
-            for (uint8_t dy = 0; dy < scale; ++dy) {
-                for (uint8_t dx = 0; dx < scale; ++dx) {
-                    display.setPixelColor(x + col * scale + dx, y + row * scale + dy, color);
-                }
-            }
-        }
-    }
-}
-
-static uint8_t getRecentTextMessageBodyHanziPixelSize()
-{
-    return static_cast<uint8_t>(std::min<int>(18, std::max<int>(14, FONT_HEIGHT_MEDIUM - 3)));
-}
-
-static void drawSizedHanzi(OLEDDisplay &display, int16_t x, int16_t y, int glyphIndex, uint8_t targetSize)
-{
-    const uint8_t *glyph = graphics::HermesX_zh::glyphData(glyphIndex);
-    if (!glyph || targetSize == 0) {
-        return;
-    }
-
-    const OLEDDISPLAY_COLOR color = display.getColor();
-    for (uint8_t dy = 0; dy < targetSize; ++dy) {
-        const uint8_t srcRow = (static_cast<uint16_t>(dy) * graphics::HermesX_zh::GLYPH_HEIGHT) / targetSize;
-        for (uint8_t dx = 0; dx < targetSize; ++dx) {
-            const uint8_t srcCol = (static_cast<uint16_t>(dx) * graphics::HermesX_zh::GLYPH_WIDTH) / targetSize;
-            const int bitIndex = srcRow * graphics::HermesX_zh::GLYPH_STRIDE_BITS + srcCol;
-            const int byteIndex = bitIndex >> 3;
-            const int bitInByte = 7 - (bitIndex & 7);
-            if (((readHermesXGlyphByte(glyph + byteIndex) >> bitInByte) & 0x1u) != 0) {
-                display.setPixelColor(x + dx, y + dy, color);
-            }
-        }
-    }
-}
-
-static void drawLargeMixedLine(OLEDDisplay &display, int16_t x, int16_t y, int16_t maxWidth, const char *text, uint8_t hanziScale)
-{
-    if (!text || maxWidth <= 0 || hanziScale == 0) {
-        return;
-    }
-
-    const int16_t originX = x;
-    const char *cursor = text;
-    const char *end = cursor + std::strlen(text);
-    while (cursor < end) {
-        uint32_t cp = graphics::HermesX_zh::nextCodepoint(cursor, end);
-        if (cp == 0 || cp == '\n' || cp == '\r') {
-            continue;
-        }
-        if (cp >= 0x20u && cp < 0x7Fu) {
-            String asciiChar(static_cast<char>(cp));
-            const int glyphWidth = std::max<int>(1, display.getStringWidth(asciiChar));
-            if (x + glyphWidth > originX + maxWidth) {
-                break;
-            }
-            display.drawString(x, y, asciiChar);
-            x += glyphWidth;
-            continue;
-        }
-
-        int glyphIndex = graphics::HermesX_zh::locateCodepoint(cp);
-        if (glyphIndex < 0) {
-            graphics::HermesX_zh::incrementMissingGlyph();
-            glyphIndex = graphics::HermesX_zh::fallbackIndex();
-        }
-        const int glyphWidth = graphics::HermesX_zh::GLYPH_WIDTH * hanziScale;
-        if (x + glyphWidth > originX + maxWidth) {
-            break;
-        }
-        drawScaledHanzi(display, x, y, glyphIndex, hanziScale);
-        x += glyphWidth;
-    }
-}
-
-static void drawSizedMixedLine(OLEDDisplay &display, int16_t x, int16_t y, int16_t maxWidth, const char *text, uint8_t hanziSize)
-{
-    if (!text || maxWidth <= 0 || hanziSize == 0) {
-        return;
-    }
-
-    const int16_t originX = x;
-    const char *cursor = text;
-    const char *end = cursor + std::strlen(text);
-    while (cursor < end) {
-        uint32_t cp = graphics::HermesX_zh::nextCodepoint(cursor, end);
-        if (cp == 0 || cp == '\n' || cp == '\r') {
-            continue;
-        }
-        if (cp >= 0x20u && cp < 0x7Fu) {
-            String asciiChar(static_cast<char>(cp));
-            const int glyphWidth = std::max<int>(1, display.getStringWidth(asciiChar));
-            if (x + glyphWidth > originX + maxWidth) {
-                break;
-            }
-            display.drawString(x, y, asciiChar);
-            x += glyphWidth;
-            continue;
-        }
-
-        int glyphIndex = graphics::HermesX_zh::locateCodepoint(cp);
-        if (glyphIndex < 0) {
-            graphics::HermesX_zh::incrementMissingGlyph();
-            glyphIndex = graphics::HermesX_zh::fallbackIndex();
-        }
-        if (x + hanziSize > originX + maxWidth) {
-            break;
-        }
-        drawSizedHanzi(display, x, y, glyphIndex, hanziSize);
-        x += hanziSize;
-    }
-}
-
-static uint16_t measureMixedWrappedTextHeight(OLEDDisplay *display, const char *text, int16_t maxWidth, int lineHeight,
-                                              int advanceX = graphics::HermesX_zh::GLYPH_WIDTH)
-{
-    if (!display || !text || maxWidth <= 0) {
-        return static_cast<uint16_t>(std::max(lineHeight, 0));
-    }
-
-    int x = 0;
-    int lines = 1;
-    const char *cursor = text;
-    const char *end = cursor + std::strlen(text);
-    while (cursor < end) {
-        std::uint32_t cp = graphics::HermesX_zh::nextCodepoint(cursor, end);
-        if (cp == 0) {
-            break;
-        }
-        if (cp == '\r') {
-            continue;
-        }
-        if (cp == '\n') {
-            x = 0;
-            ++lines;
-            continue;
-        }
-        if (cp >= 0x20u && cp < 0x7Fu) {
-            String asciiChar(static_cast<char>(cp));
-            int glyphWidth = static_cast<int>(display->getStringWidth(asciiChar));
-            if (glyphWidth <= 0) {
-                glyphWidth = advanceX;
-            }
-            if (x + glyphWidth > maxWidth) {
-                x = 0;
-                ++lines;
-            }
-            x += glyphWidth;
-        } else {
-            if (x + advanceX > maxWidth) {
-                x = 0;
-                ++lines;
-            }
-            x += advanceX;
-        }
-    }
-
-    return static_cast<uint16_t>(std::max(lines * lineHeight, lineHeight));
-}
-
-static String substringAsStringLocal(const char *start, size_t length)
-{
-    String result;
-    result.reserve(length);
-    for (size_t i = 0; i < length; ++i) {
-        result += start[i];
-    }
-    return result;
-}
-
-static void appendWrappedMixedLines(std::vector<String> &lines, OLEDDisplay *display, const char *text, int16_t maxWidth,
-                                    int advanceX = graphics::HermesX_zh::GLYPH_WIDTH)
-{
-    if (!display || !text || maxWidth <= 0) {
-        lines.push_back(String());
-        return;
-    }
-
-    String currentLine;
-    int lineWidth = 0;
-
-    auto flushLine = [&]() {
-        lines.push_back(currentLine);
-        currentLine = "";
-        lineWidth = 0;
-    };
-
-    const char *cursor = text;
-    const char *end = cursor + std::strlen(text);
-    while (cursor < end) {
-        const char *cpStart = cursor;
-        std::uint32_t cp = graphics::HermesX_zh::nextCodepoint(cursor, end);
-        if (cp == 0) {
-            break;
-        }
-        if (cp == '\r') {
-            continue;
-        }
-        if (cp == '\n') {
-            flushLine();
-            continue;
-        }
-
-        int glyphWidth = advanceX;
-        if (cp >= 0x20u && cp < 0x7Fu) {
-            String asciiChar(static_cast<char>(cp));
-            glyphWidth = static_cast<int>(display->getStringWidth(asciiChar));
-            if (glyphWidth <= 0) {
-                glyphWidth = advanceX;
-            }
-        }
-
-        if (lineWidth > 0 && lineWidth + glyphWidth > maxWidth) {
-            flushLine();
-        }
-
-        currentLine += substringAsStringLocal(cpStart, static_cast<size_t>(cursor - cpStart));
-        lineWidth += glyphWidth;
-    }
-
-    flushLine();
-}
-
-static std::vector<String> buildMixedWrappedLines(OLEDDisplay *display, const char *text, int16_t maxWidth,
-                                                  int advanceX = graphics::HermesX_zh::GLYPH_WIDTH)
-{
-    std::vector<String> lines;
-    appendWrappedMixedLines(lines, display, text, maxWidth, advanceX);
-    if (lines.empty()) {
-        lines.push_back(String());
-    }
-    return lines;
-}
-
-static void drawMixedSingleLineBounded(OLEDDisplay *display, int16_t x, int16_t y, int16_t maxWidth, const char *text,
-                                       int lineHeight, int advanceX = graphics::HermesX_zh::GLYPH_WIDTH)
-{
-    if (!display || !text || maxWidth <= 0) {
-        return;
-    }
-
-    const std::vector<String> lines = buildMixedWrappedLines(display, text, maxWidth, advanceX);
-    if (!lines.empty()) {
-        graphics::HermesX_zh::drawMixedBounded(*display, x, y, maxWidth, lines.front().c_str(), advanceX, lineHeight, nullptr);
-    }
-}
-
-static void drawVisibleWrappedLines(OLEDDisplay *display, const std::vector<String> &lines, int16_t x, int16_t y, int16_t maxWidth,
-                                    int16_t bodyH, int lineHeight, uint16_t scrollY,
-                                    int advanceX = graphics::HermesX_zh::GLYPH_WIDTH, uint8_t hanziScale = 1,
-                                    uint8_t hanziTargetSize = 0)
-{
-    if (!display || bodyH <= 0 || lineHeight <= 0) {
-        return;
-    }
-
-    const uint16_t firstVisibleLine = static_cast<uint16_t>(scrollY / lineHeight);
-    const uint16_t lineOffset = static_cast<uint16_t>(scrollY % lineHeight);
-    const uint16_t maxVisibleLines = static_cast<uint16_t>(std::max<int>(1, bodyH / lineHeight) + 1);
-
-    for (uint16_t i = 0; i < maxVisibleLines; ++i) {
-        const uint16_t lineIndex = firstVisibleLine + i;
-        if (lineIndex >= lines.size()) {
-            break;
-        }
-        const int16_t drawY = y + static_cast<int16_t>(i * lineHeight) - static_cast<int16_t>(lineOffset);
-        if (drawY >= y + bodyH) {
-            break;
-        }
-        if (drawY + lineHeight <= y) {
-            continue;
-        }
-        if (hanziTargetSize > 0) {
-            drawSizedMixedLine(*display, x, drawY, maxWidth, lines[lineIndex].c_str(), hanziTargetSize);
-        } else if (hanziScale > 1) {
-            drawLargeMixedLine(*display, x, drawY, maxWidth, lines[lineIndex].c_str(), hanziScale);
-        } else {
-            HermesX_zh::drawMixedBounded(*display, x, drawY, maxWidth, lines[lineIndex].c_str(), advanceX, lineHeight, nullptr);
-        }
-    }
-}
-
-static void formatIncomingNodePopupShortId(const meshtastic_NodeInfoLite &node, char *out, size_t outSize)
-{
-    if (!out || outSize == 0) {
-        return;
-    }
-
-    out[0] = '\0';
-    if (node.has_user && node.user.short_name[0] != '\0') {
-        copyUtf8Snippet(node.user.short_name, strnlen(node.user.short_name, sizeof(node.user.short_name)), out, outSize, 4);
-    }
-    if (out[0] == '\0') {
-        snprintf(out, outSize, "%04x", static_cast<unsigned>(node.num & 0xFFFFu));
-    }
-}
-
-static void formatIncomingNodePopupName(const meshtastic_NodeInfoLite &node, char *out, size_t outSize, size_t maxCodepoints)
-{
-    if (!out || outSize == 0) {
-        return;
-    }
-
-    out[0] = '\0';
-    if (node.has_user && node.user.long_name[0] != '\0') {
-        copyUtf8Snippet(node.user.long_name, strnlen(node.user.long_name, sizeof(node.user.long_name)), out, outSize, maxCodepoints);
-    } else if (node.has_user && node.user.short_name[0] != '\0') {
-        copyUtf8Snippet(node.user.short_name, strnlen(node.user.short_name, sizeof(node.user.short_name)), out, outSize, maxCodepoints);
-    }
-
-    if (out[0] == '\0') {
-        snprintf(out, outSize, "Node %04x", static_cast<unsigned>(node.num & 0xFFFFu));
-    }
-}
-
-static bool canRenderIncomingNodePopupTimerText(const char *text);
-static int16_t measureIncomingNodePopupTimerText(const char *text, bool halfScale = false);
-static void drawIncomingNodePopupTimerText(OLEDDisplay *display, int16_t x, int16_t y, const char *text, bool halfScale = false);
-static void drawIncomingNodePopupBannerText(OLEDDisplay *display, int16_t x, int16_t y, int16_t maxWidth, const char *text);
+static meshtastic_NodeInfoLite *resolveMessageNode(const meshtastic_MeshPacket &packet);
 
 static void drawIncomingTextPopupOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
 {
-    (void)state;
     if (!display || !isIncomingTextPopupVisible()) {
         return;
     }
-
-    const meshtastic_MeshPacket &packet = gIncomingTextPopupState.packet;
-    if (packet.from == 0) {
-        return;
-    }
-
-    const int16_t width = display->getWidth();
-    const int16_t height = display->getHeight();
-    const bool compactLayout = (width < 200 || height < 120);
-    const bool largePopupLayout = height >= 110;
-    const int16_t boxX = 3;
-    const int16_t boxY = 2;
-    const int16_t boxW = width - 6;
-    const int16_t boxH = height - 4;
-#if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
-    defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
-    auto *tft = static_cast<TFTDisplay *>(display);
-    tft->clearColorPaletteZones();
-    tft->setColorPaletteDefaults(0xFFFF, 0x0000);
-#endif
-
-    display->setFont(largePopupLayout ? FONT_MEDIUM : FONT_SMALL_LOCAL);
-    const uint8_t hanziScale = largePopupLayout ? 2 : 1;
-    const int16_t lineHeight =
-        std::max<int16_t>(largePopupLayout ? FONT_HEIGHT_MEDIUM : _fontHeight(FONT_SMALL_LOCAL),
-                          graphics::HermesX_zh::GLYPH_HEIGHT * hanziScale);
-    const int16_t titleBarH = lineHeight;
-    const int16_t optionH = lineHeight + 2;
-    const int16_t optionY = boxY + boxH - optionH - 2;
-
-#if defined(USE_EINK)
-    const auto dialogBg = EINK_WHITE;
-    const auto dialogFg = EINK_BLACK;
-#else
-    const auto dialogBg = OLEDDISPLAY_COLOR::WHITE;
-    const auto dialogFg = OLEDDISPLAY_COLOR::BLACK;
-#endif
-
-    display->setColor(dialogBg);
-    display->fillRect(boxX, boxY, boxW, boxH);
-    display->setColor(dialogFg);
-    display->drawRect(boxX, boxY, boxW, boxH);
-    display->fillRect(boxX + 1, boxY + 1, boxW - 2, titleBarH);
-    display->setColor(dialogBg);
-
-    meshtastic_NodeInfoLite *node = nodeDB->getMeshNode(getFrom(&packet));
-    char shortId[16];
-    shortId[0] = '\0';
-    if (node && node->has_user && node->user.short_name[0] != '\0') {
-        copyUtf8Snippet(node->user.short_name, strnlen(node->user.short_name, sizeof(node->user.short_name)), shortId,
-                        sizeof(shortId), 6);
-    }
-    if (shortId[0] == '\0') {
-        snprintf(shortId, sizeof(shortId), "%04lx", static_cast<unsigned long>(getFrom(&packet) & 0xFFFFu));
-    }
-
-    char snippetBuf[96];
-    makeTextMessageSnippet(packet, snippetBuf, sizeof(snippetBuf), compactLayout ? 18 : 36);
-    if (snippetBuf[0] == '\0') {
-        strlcpy(snippetBuf, u8"(空白訊息)", sizeof(snippetBuf));
-    }
-
-    const char *title = "NEW MSG";
-    const int titleW = graphics::HermesX_zh::stringAdvance(title, graphics::HermesX_zh::GLYPH_WIDTH, display);
-    int16_t titleX = boxX + (boxW - titleW) / 2;
-    if (titleX < boxX + 2) {
-        titleX = boxX + 2;
-    }
-    drawLargeMixedLine(*display, titleX, boxY + 1, boxW - 4, title, hanziScale);
-    display->setColor(dialogFg);
-
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-
-    const int16_t bodyX = boxX + 5;
-    const int16_t bodyW = boxW - 10;
-    const int16_t bodyY = boxY + titleBarH + 1;
-    const int advance = graphics::HermesX_zh::GLYPH_WIDTH * hanziScale;
-    String fromLine = String("FROM \"") + shortId + "\"";
-    drawLargeMixedLine(*display, bodyX, bodyY, bodyW, fromLine.c_str(), hanziScale);
-
-    const int16_t snippetY = bodyY + lineHeight + 1;
-    const int16_t snippetH = std::max<int16_t>(0, optionY - snippetY - 1);
-    const std::vector<String> snippetLines = buildMixedWrappedLines(display, snippetBuf, bodyW, advance);
-    if (snippetH >= graphics::HermesX_zh::GLYPH_HEIGHT * hanziScale) {
-        drawVisibleWrappedLines(display, snippetLines, bodyX, snippetY, bodyW, snippetH, lineHeight, 0, advance, hanziScale);
-    }
-
-    display->setColor(dialogFg);
-    const int16_t optionW = (boxW - 13) / 2;
-    const int16_t viewX = boxX + 4;
-    const int16_t skipX = viewX + optionW + 5;
-    auto drawOption = [&](int16_t optionX, const char *label, bool selected) {
-        if (selected) {
-            display->fillRect(optionX, optionY, optionW, optionH);
-            display->setColor(dialogBg);
-        } else {
-            display->drawRect(optionX, optionY, optionW, optionH);
-            display->setColor(dialogFg);
-        }
-        const int textW = graphics::HermesX_zh::stringAdvance(label, advance, display);
-        int16_t textX = optionX + (optionW - textW) / 2;
-        if (textX < optionX + 1) {
-            textX = optionX + 1;
-        }
-        const int16_t textY = optionY + std::max<int16_t>(1, (optionH - lineHeight) / 2);
-        drawLargeMixedLine(*display, textX, textY, optionW - 2, label, hanziScale);
-        display->setColor(dialogFg);
-    };
-    drawOption(viewX, u8"查看", gIncomingTextPopupState.selectedOption == 0);
-    drawOption(skipX, u8"略過", gIncomingTextPopupState.selectedOption == 1);
-
-    display->setColor(WHITE);
+    HermesXMessageRenderContext context;
+    context.resolveNode = resolveMessageNode;
+    HermesXMessageUiRenderer::drawIncomingPopup(display, state, context);
 }
 
-static void drawIncomingNodePopupOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
+static meshtastic_NodeInfoLite *resolveMessageNode(const meshtastic_MeshPacket &packet)
 {
-    (void)state;
-    if (!display || !isIncomingNodePopupVisible()) {
-        return;
+    return nodeDB->getMeshNode(getFrom(&packet));
+}
+
+static const char *resolveMessageChannelName(uint8_t channel)
+{
+    return channels.getName(channel);
+}
+
+static bool drawMessageEmoji(OLEDDisplay *display,
+                             int16_t x,
+                             int16_t y,
+                             int16_t width,
+                             int16_t height,
+                             const char *payload)
+{
+#ifndef EXCLUDE_EMOJI
+    if (!display || !payload) {
+        return false;
     }
-
-#if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
-    defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
-    if (supportsDirectTftClockRendering(display)) {
-        return;
-    }
-#endif
-
-    const meshtastic_NodeInfoLite &node = gIncomingNodePopupState.node;
-    char shortId[12];
-    char nameBuf[64];
-    formatIncomingNodePopupShortId(node, shortId, sizeof(shortId));
-    formatIncomingNodePopupName(node, nameBuf, sizeof(nameBuf), 14);
-
-    const int16_t width = display->getWidth();
-    const int16_t height = display->getHeight();
-    const bool compactLayout = (width < 200 || height < 120);
-    const int16_t textX = compactLayout ? 10 : 18;
-    const int16_t textW = std::max<int16_t>(40, (width / 2) - textX);
-    const int16_t titleY = compactLayout ? 22 : 30;
-    const int16_t idY = compactLayout ? 62 : 82;
-    const int16_t bannerH = compactLayout ? 18 : 22;
-    const int16_t bannerY = height - bannerH;
-    const int16_t nameY = bannerY + std::max<int16_t>(1, (bannerH - 14) / 2);
-
-#if defined(USE_EINK)
-    display->setColor(EINK_WHITE);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-    display->fillRect(0, 0, width, height);
-#if defined(USE_EINK)
-    display->setColor(EINK_BLACK);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-    display->setFont(FONT_SMALL);
-    HermesX_zh::drawMixedBounded(*display, textX, titleY, textW, u8"發現新節點！", HermesX_zh::GLYPH_WIDTH, compactLayout ? 16 : 20, nullptr);
-
-    if (canRenderIncomingNodePopupTimerText(shortId)) {
-        const int16_t shortIdW = measureIncomingNodePopupTimerText(shortId);
-        const int16_t shortIdX = std::max<int16_t>(textX, textX + ((textW - shortIdW) / 2));
-        drawIncomingNodePopupTimerText(display, shortIdX, idY - 4, shortId);
-    } else {
-        display->setFont(compactLayout ? FONT_MEDIUM : FONT_LARGE);
-        HermesX_zh::drawMixedBounded(*display, textX + (compactLayout ? 18 : 26), idY, textW - (compactLayout ? 14 : 22), shortId,
-                                     HermesX_zh::GLYPH_WIDTH, compactLayout ? 16 : 20, nullptr);
-    }
-
-    display->drawRect(0, bannerY, width, bannerH);
-    display->setFont(compactLayout ? FONT_SMALL : FONT_MEDIUM);
-    drawIncomingNodePopupBannerText(display, textX, nameY, width - (textX * 2), nameBuf);
-
-    auto drawArcApprox = [&](int16_t cx, int16_t cy, int16_t radius, float startDeg, float endDeg, uint8_t thickness) {
-        if (radius <= 0) {
-            return;
-        }
-        if (thickness == 0) {
-            thickness = 1;
-        }
-        const int steps = (radius < 8) ? 8 : (radius * 2);
-        for (uint8_t t = 0; t < thickness; ++t) {
-            const int16_t rr = radius - static_cast<int16_t>(t);
-            bool hasPrev = false;
-            int16_t px = 0;
-            int16_t py = 0;
-            for (int i = 0; i <= steps; ++i) {
-                const float u = static_cast<float>(i) / static_cast<float>(steps);
-                const float deg = startDeg + (endDeg - startDeg) * u;
-                const float a = deg * PI / 180.0f;
-                const int16_t x = cx + static_cast<int16_t>(cosf(a) * rr);
-                const int16_t y = cy + static_cast<int16_t>(sinf(a) * rr);
-                if (hasPrev) {
-                    display->drawLine(px, py, x, y);
-                }
-                px = x;
-                py = y;
-                hasPrev = true;
-            }
-        }
+    auto drawIcon = [&](const uint8_t *icon, int16_t iconWidth, int16_t iconHeight, int16_t extraY = 5) {
+        display->drawXbm(x + (width - iconWidth) / 2,
+                         y + (height - FONT_HEIGHT_MEDIUM - iconHeight) / 2 + 2 + extraY, iconWidth, iconHeight, icon);
     };
-
-    const int16_t dotR = compactLayout ? 10 : 14;
-    const int16_t outerR = compactLayout ? (height * 58) / 100 : (height * 60) / 100;
-    const int16_t innerR = (outerR * 2) / 3;
-    const int16_t iconCx = width - outerR - (compactLayout ? 10 : 16);
-    const int16_t iconCy = height - dotR - (compactLayout ? 18 : 22);
-    drawArcApprox(iconCx, iconCy, outerR, -90.0f, 0.0f, compactLayout ? 10 : 14);
-    drawArcApprox(iconCx, iconCy, innerR, -90.0f, 0.0f, compactLayout ? 9 : 12);
-    display->fillCircle(iconCx, iconCy, dotR);
+    if (strcmp(payload, "\U0001F44D") == 0) {
+        drawIcon(thumbup, thumbs_width, thumbs_height);
+    } else if (strcmp(payload, "\U0001F44E") == 0) {
+        drawIcon(thumbdown, thumbs_width, thumbs_height);
+    } else if (strcmp(payload, "\U0001F60A") == 0 || strcmp(payload, "\U0001F600") == 0 ||
+               strcmp(payload, "\U0001F642") == 0 || strcmp(payload, "\U0001F609") == 0 ||
+               strcmp(payload, "\U0001F601") == 0) {
+        drawIcon(smiley, smiley_width, smiley_height);
+    } else if (strcmp(payload, "\xE2\x80\xBC") == 0) {
+        drawIcon(question, question_width, question_height);
+    } else if (strcmp(payload, "\xE2\x80\xBC\xEF\xB8\x8F") == 0) {
+        drawIcon(bang, bang_width, bang_height);
+    } else if (strcmp(payload, "\U0001F4A9") == 0) {
+        drawIcon(poo, poo_width, poo_height);
+    } else if (strcmp(payload, "\U0001F923") == 0) {
+        drawIcon(haha, haha_width, haha_height);
+    } else if (strcmp(payload, "\U0001F44B") == 0) {
+        drawIcon(wave_icon, wave_icon_width, wave_icon_height);
+    } else if (strcmp(payload, "\U0001F920") == 0) {
+        drawIcon(cowboy, cowboy_width, cowboy_height);
+    } else if (strcmp(payload, "\U0001F42D") == 0) {
+        drawIcon(deadmau5, deadmau5_width, deadmau5_height);
+    } else if (strcmp(payload, "\xE2\x98\x80\xEF\xB8\x8F") == 0) {
+        drawIcon(sun, sun_width, sun_height);
+    } else if (strcmp(payload, "\u2614") == 0) {
+        drawIcon(rain, rain_width, rain_height, 10);
+    } else if (strcmp(payload, "\u2601") == 0) {
+        drawIcon(cloud, cloud_width, cloud_height);
+    } else if (strcmp(payload, "\U0001F32B") == 0) {
+        drawIcon(fog, fog_width, fog_height);
+    } else if (strcmp(payload, "\U0001F608") == 0) {
+        drawIcon(devil, devil_width, devil_height);
+    } else if (strcmp(payload, "\xE2\x9D\xA4") == 0 || strcmp(payload, "\xE2\x9D\xA4\xEF\xB8\x8F") == 0 ||
+               strcmp(payload, "\U0001F9E1") == 0 || strcmp(payload, "\u2763") == 0 ||
+               strcmp(payload, "\U00002764") == 0 || strcmp(payload, "\U0001F495") == 0 ||
+               strcmp(payload, "\U0001F496") == 0 || strcmp(payload, "\U0001F497") == 0 ||
+               strcmp(payload, "\U0001F498") == 0) {
+        drawIcon(heart, heart_width, heart_height);
+    } else {
+        return false;
+    }
+    return true;
+#else
+    (void)display;
+    (void)x;
+    (void)y;
+    (void)width;
+    (void)height;
+    (void)payload;
+    return false;
+#endif
 }
 
 static void drawRecentTextMessagesFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
 {
-    (void)state;
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-    display->setFont(FONT_SMALL);
-
-    if (config.display.displaymode == meshtastic_Config_DisplayConfig_DisplayMode_INVERTED) {
-        display->fillRect(x, y, x + display->getWidth(), y + FONT_HEIGHT_SMALL);
-        display->setColor(BLACK);
-    }
-
-    display->drawString(x, y, "Recent Send");
-    display->setColor(WHITE);
-
-    clampRecentTextMessageIndices();
-    const int16_t width = display->getWidth();
-    const int16_t rowH = FONT_HEIGHT_SMALL + 3;
-    const int16_t listTop = y + FONT_HEIGHT_SMALL + 2;
-    int8_t visibleRows = (display->getHeight() - listTop - 1) / rowH;
-    if (visibleRows < 1) {
-        visibleRows = 1;
-    }
-    if (visibleRows > 3) {
-        visibleRows = 3;
-    }
-
-    const uint8_t totalRows = getRecentTextMessageListEntryCount();
-    uint8_t startCursor = 0;
-    if (gRecentTextMessageState.listCursor >= static_cast<uint8_t>(visibleRows)) {
-        startCursor = gRecentTextMessageState.listCursor - static_cast<uint8_t>(visibleRows) + 1;
-    }
-
-    for (int8_t row = 0; row < visibleRows; ++row) {
-        const uint8_t cursorIndex = startCursor + row;
-        if (cursorIndex >= totalRows) {
-            break;
-        }
-
-        const int16_t rowY = listTop + row * rowH;
-        const bool selected = (cursorIndex == gRecentTextMessageState.listCursor);
-        if (selected) {
-            display->drawRect(x, rowY - 1, width - 2, rowH);
-        }
-
-        if (cursorIndex == 0) {
-            graphics::HermesX_zh::drawMixedBounded(*display, x + 2, rowY, width - 4, u8"返回",
-                                                   graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
-            continue;
-        }
-
-        const uint8_t packetIndex = cursorIndex - 1;
-        const meshtastic_MeshPacket *packet = getRecentTextMessageAt(packetIndex);
-        if (!packet) {
-            continue;
-        }
-
-        meshtastic_NodeInfoLite *node = nodeDB->getMeshNode(getFrom(packet));
-        char senderBuf[24];
-        senderBuf[0] = '\0';
-        if (node && node->has_user) {
-            if (node->user.short_name[0] != '\0') {
-                copyUtf8Snippet(node->user.short_name, strnlen(node->user.short_name, sizeof(node->user.short_name)), senderBuf,
-                                sizeof(senderBuf), 8);
-            } else if (node->user.long_name[0] != '\0') {
-                copyUtf8Snippet(node->user.long_name, strnlen(node->user.long_name, sizeof(node->user.long_name)), senderBuf,
-                                sizeof(senderBuf), 8);
-            }
-        }
-        if (senderBuf[0] == '\0') {
-            strlcpy(senderBuf, "???", sizeof(senderBuf));
-        }
-
-        char preview[40];
-        makeTextMessageSnippet(*packet, preview, sizeof(preview), 14);
-
-        char channelBuf[20];
-        snprintf(channelBuf, sizeof(channelBuf), "#%s", channels.getName(packet->channel));
-        const int16_t channelW = display->getStringWidth(channelBuf);
-        const int16_t channelX = x + width - channelW - 2;
-        display->drawString(channelX, rowY, channelBuf);
-
-        char lineBuf[96];
-        snprintf(lineBuf, sizeof(lineBuf), "%s: %s", senderBuf, preview);
-        const int16_t textWidth = channelX - x - 4;
-        HermesX_zh::drawMixedBounded(*display, x + 2, rowY, textWidth > 0 ? textWidth : width - 4, lineBuf,
-                                     HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
-    }
-
-    if (!hasRecentTextMessages() && visibleRows > 1) {
-        display->drawString(x + 2, listTop + rowH, "No messages");
-    }
+    HermesXMessageRenderContext context;
+    context.inverted = config.display.displaymode == meshtastic_Config_DisplayConfig_DisplayMode_INVERTED;
+    context.resolveNode = resolveMessageNode;
+    context.channelName = resolveMessageChannelName;
+    HermesXMessageUiRenderer::drawRecentList(display, state, x, y, context);
 }
 
 void Screen::drawOnlineNodeListFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
 {
     (void)state;
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-    display->setFont(FONT_SMALL);
-
-    graphics::HermesX_zh::drawMixedBounded(*display, x, y, display->getWidth() - 2, "ONLINE",
-                                           graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-    rebuildOnlineNodeOrder();
-
-    const int16_t width = display->getWidth();
-    const int16_t rowH = FONT_HEIGHT_SMALL + 3;
-    const int16_t listTop = y + FONT_HEIGHT_SMALL + 2;
-    int8_t visibleRows = (display->getHeight() - listTop - 1) / rowH;
-    if (visibleRows < 1) {
-        visibleRows = 1;
-    }
-    if (visibleRows > 3) {
-        visibleRows = 3;
-    }
-
-    const uint8_t totalRows = gOnlineNodeState.count + 1;
-    uint8_t startCursor = 0;
-    if (gOnlineNodeState.listCursor >= static_cast<uint8_t>(visibleRows)) {
-        startCursor = gOnlineNodeState.listCursor - static_cast<uint8_t>(visibleRows) + 1;
-    }
-
-    for (int8_t row = 0; row < visibleRows; ++row) {
-        const uint8_t cursorIndex = startCursor + row;
-        if (cursorIndex >= totalRows) {
-            break;
-        }
-
-        const int16_t rowY = listTop + row * rowH;
-        if (cursorIndex == gOnlineNodeState.listCursor) {
-            display->drawRect(x, rowY - 1, width - 2, rowH);
-        }
-
-        if (cursorIndex == 0) {
-            graphics::HermesX_zh::drawMixedBounded(*display, x + 2, rowY, width - 4, u8"返回",
-                                                   graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
-            continue;
-        }
-
-        const meshtastic_NodeInfoLite *node = getOnlineNodeAt(cursorIndex - 1);
-        if (!node) {
-            continue;
-        }
-
-        const String seenAgo = formatOnlineNodeSeenAgo(*node);
-        const int16_t seenW = display->getStringWidth(seenAgo);
-        const int16_t seenX = x + width - seenW - 2;
-        display->drawString(seenX, rowY, seenAgo);
-
-        String line = getOnlineNodeDisplayName(*node) + " " + getOnlineNodeShortId(*node);
-        const int16_t textWidth = seenX - x - 4;
-        graphics::HermesX_zh::drawMixedBounded(*display, x + 2, rowY, textWidth > 0 ? textWidth : width - 4, line.c_str(),
-                                               graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
-    }
-
-    if (gOnlineNodeState.count == 0 && visibleRows > 1) {
-        graphics::HermesX_zh::drawMixedBounded(*display, x + 2, listTop + rowH, width - 4, u8"沒有在線節點",
-                                               graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
-    }
+    gNodeBrowserDataSource.refreshOnline();
+    const HermesXNodeBrowserRowSource rows(gOnlineNodeState.count, nullptr, getOnlineBrowserRenderRow);
+    HermesXNodeBrowserUiRenderer::drawList(
+        display, x, y, "ONLINE", u8"返回", u8"沒有在線節點", gOnlineNodeState.listCursor, rows, 3, false);
 }
 
 void Screen::drawFinderNodeListFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
 {
     (void)state;
-    const int16_t width = display->getWidth();
-    const int16_t height = display->getHeight();
-#if defined(USE_EINK)
-    display->setColor(EINK_WHITE);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-    display->fillRect(x, y, width, height);
-#if defined(USE_EINK)
-    display->setColor(EINK_BLACK);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-    display->setFont(FONT_SMALL);
     if (screen && screen->hermesFinderUiMode == Screen::HermesFinderUiMode::Menu) {
-        static uint8_t lastMenuSelected = 0xFF;
-        if (lastMenuSelected != screen->hermesFinderMenuSelected) {
-            lastMenuSelected = screen->hermesFinderMenuSelected;
-            LOG_INFO("[Screen] draw FINDER menu selected=%u", static_cast<unsigned>(screen->hermesFinderMenuSelected));
-        }
-        graphics::HermesX_zh::drawMixedBounded(*display, x, y, display->getWidth() - 2, u8"尋人模式",
-                                               graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-        const char *items[3] = {u8"離開", u8"發送尋人訊號", u8"節點列表"};
-        const int16_t rowH = FONT_HEIGHT_SMALL + 4;
-        const int16_t listTop = y + FONT_HEIGHT_SMALL + 6;
-        for (uint8_t i = 0; i < 3; ++i) {
-            const int16_t rowY = listTop + i * rowH;
-            if (screen->hermesFinderMenuSelected == i) {
-                display->drawRect(x, rowY - 1, width - 2, rowH);
-            }
-            graphics::HermesX_zh::drawMixedBounded(*display, x + 2, rowY, width - 4, items[i],
-                                                   graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
-        }
+        static const char *items[] = {u8"離開", u8"發送尋人訊號", u8"節點列表"};
+        HermesXNodeBrowserUiRenderer::drawMenu(
+            display, x, y, u8"尋人模式", items, 3, screen->hermesFinderMenuSelected, true, 4, 6);
         return;
     }
 
-    graphics::HermesX_zh::drawMixedBounded(*display, x, y, display->getWidth() - 2, u8"尋人清單",
-                                           graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-    rebuildFinderNodeOrder();
-    static uint8_t lastListCount = 0xFF;
-    static uint8_t lastListCursor = 0xFF;
-    if (lastListCount != gFinderNodeState.count || lastListCursor != gFinderNodeState.listCursor) {
-        lastListCount = gFinderNodeState.count;
-        lastListCursor = gFinderNodeState.listCursor;
-        LOG_INFO("[Screen] draw FINDER list count=%u cursor=%u selected=%u",
-                 static_cast<unsigned>(gFinderNodeState.count), static_cast<unsigned>(gFinderNodeState.listCursor),
-                 static_cast<unsigned>(gFinderNodeState.selectedIndex));
-    }
-
-    const int16_t rowH = FONT_HEIGHT_SMALL + 3;
-    const int16_t listTop = y + FONT_HEIGHT_SMALL + 2;
-    int8_t visibleRows = (display->getHeight() - listTop - 1) / rowH;
-    if (visibleRows < 1) {
-        visibleRows = 1;
-    }
-    if (visibleRows > 3) {
-        visibleRows = 3;
-    }
-
-    const uint8_t totalRows = gFinderNodeState.count + 1;
-    uint8_t startCursor = 0;
-    const uint8_t listCursor = gFinderNodeState.listCursor;
-    if (listCursor >= static_cast<uint8_t>(visibleRows)) {
-        startCursor = listCursor - static_cast<uint8_t>(visibleRows) + 1;
-    }
-
-    for (int8_t row = 0; row < visibleRows; ++row) {
-        const uint8_t cursorIndex = startCursor + row;
-        if (cursorIndex >= totalRows) {
-            break;
-        }
-
-        const int16_t rowY = listTop + row * rowH;
-        const bool selected = (cursorIndex == listCursor);
-        if (selected) {
-            display->drawRect(x, rowY - 1, width - 2, rowH);
-        }
-
-        if (cursorIndex == 0) {
-            graphics::HermesX_zh::drawMixedBounded(*display, x + 2, rowY, width - 4, u8"離開",
-                                                   graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
-            continue;
-        }
-
-        const meshtastic_NodeInfoLite *node = getFinderNodeAt(cursorIndex - 1);
-        if (!node) {
-            continue;
-        }
-
-        const String seenAgo = formatOnlineNodeSeenAgo(*node);
-        const int16_t seenW = display->getStringWidth(seenAgo);
-        const int16_t seenX = x + width - seenW - 2;
-        display->drawString(seenX, rowY, seenAgo);
-
-        String line = getOnlineNodeDisplayName(*node) + " " + getOnlineNodeShortId(*node);
-        const int16_t textWidth = seenX - x - 4;
-        graphics::HermesX_zh::drawMixedBounded(*display, x + 2, rowY, textWidth > 0 ? textWidth : width - 4, line.c_str(),
-                                               graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
-    }
-
-    if (gFinderNodeState.count == 0 && visibleRows > 1) {
-        graphics::HermesX_zh::drawMixedBounded(*display, x + 2, listTop + rowH, width - 4, u8"沒有節點",
-                                               graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
-    }
+    gNodeBrowserDataSource.refreshFinder();
+    const HermesXNodeBrowserRowSource rows(gFinderNodeState.count, nullptr, getFinderBrowserRenderRow);
+    HermesXNodeBrowserUiRenderer::drawList(
+        display, x, y, u8"尋人清單", u8"離開", u8"沒有節點", gFinderNodeState.listCursor, rows, 3, true);
 }
 
 void Screen::drawOnlineNodeDetailFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
 {
     (void)state;
-    if (gDirectMessageComposerState.active && !gDirectMessageComposerState.fromGroupDetail) {
+    if (gDirectMessageComposer.active() && !gDirectMessageComposer.fromGroupDetail()) {
         drawDirectMessageComposerFrame(display, x, y);
         return;
     }
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-    display->setFont(FONT_SMALL);
-    graphics::HermesX_zh::drawMixedBounded(*display, x, y, display->getWidth() - 2, "ONLINE DETAIL",
-                                           graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-
-    const meshtastic_NodeInfoLite *node = getSelectedOnlineNode();
+    const meshtastic_NodeInfoLite *node = gNodeBrowserDataSource.selectedOnlineNode();
     if (!node) {
-        display->drawString(x + 2, y + FONT_HEIGHT_SMALL + 4, "No node");
+        HermesXNodeBrowserUiRenderer::drawDetail(
+            display, x, y, "ONLINE DETAIL", "No node", nullptr, 0, gOnlineNodeState.detailCursor, false);
         return;
     }
 
     String rows[12];
     const uint8_t rowCount = buildOnlineNodeDetailRows(*node, false, rows, sizeof(rows) / sizeof(rows[0]));
-
-    uint8_t &detailCursor = gOnlineNodeState.detailCursor;
-    if (detailCursor >= rowCount) {
-        detailCursor = rowCount - 1;
+    if (rowCount > 0 && gOnlineNodeState.detailCursor >= rowCount) {
+        gOnlineNodeState.detailCursor = rowCount - 1;
     }
-
-    const int16_t width = display->getWidth();
-    const int16_t rowH = FONT_HEIGHT_SMALL + 3;
-    const int16_t listTop = y + FONT_HEIGHT_SMALL + 2;
-    int8_t visibleRows = (display->getHeight() - listTop - 1) / rowH;
-    if (visibleRows < 1) {
-        visibleRows = 1;
-    }
-    if (visibleRows > 4) {
-        visibleRows = 4;
-    }
-    uint8_t startCursor = 0;
-    if (detailCursor >= static_cast<uint8_t>(visibleRows)) {
-        startCursor = detailCursor - static_cast<uint8_t>(visibleRows) + 1;
-    }
-
-    for (int8_t row = 0; row < visibleRows; ++row) {
-        const uint8_t rowIndex = startCursor + row;
-        if (rowIndex >= rowCount) {
-            break;
-        }
-        const int16_t rowY = listTop + row * rowH;
-        if (rowIndex == detailCursor) {
-            display->drawRect(x, rowY - 1, width - 2, rowH);
-        }
-        graphics::HermesX_zh::drawMixedBounded(*display, x + 2, rowY, width - 4, rows[rowIndex].c_str(),
-                                               graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
-    }
+    HermesXNodeBrowserUiRenderer::drawDetail(
+        display, x, y, "ONLINE DETAIL", "No node", rows, rowCount, gOnlineNodeState.detailCursor, false);
 }
 
 void Screen::drawTraceRouteNodeListFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
@@ -7107,243 +2372,47 @@ void Screen::drawTraceRouteNodeListFrame(OLEDDisplay *display, OLEDDisplayUiStat
     display->setTextAlignment(TEXT_ALIGN_LEFT);
     display->setFont(FONT_SMALL);
 
-    const int16_t width = std::max<int16_t>(display->getWidth() - x, 1);
     if (gTraceRouteSearchState.active) {
         const String preview = gTraceRouteSearchState.draft.length() == 0
                                    ? String("_")
                                    : gTraceRouteSearchState.draft + "_";
-        drawSetupKeyboardPage(display, display->getWidth(), display->getHeight(), u8"搜尋裝置 ShortName", preview,
-                              kTraceRouteSearchKeyRows, kTraceRouteSearchKeyRowLengths,
-                              kTraceRouteSearchKeyRowCount, gTraceRouteSearchState.keyRow,
-                              gTraceRouteSearchState.keyCol, gTraceRouteSearchState.toast,
-                              gTraceRouteSearchState.toastUntilMs);
+        HermesXFastSetupUiRenderer::drawKeyboardPage(
+            display, display->getWidth(), display->getHeight(), u8"搜尋裝置 ShortName", preview,
+            HermesXTraceRouteUiController::instance().searchKeyRows(),
+            HermesXTraceRouteUiController::instance().searchKeyRowLengths(),
+            HermesXTraceRouteUiController::instance().searchKeyRowCount(), gTraceRouteSearchState.keyRow,
+            gTraceRouteSearchState.keyCol, gTraceRouteSearchState.toast, gTraceRouteSearchState.toastUntilMs);
         return;
     }
 
     if (gTraceRouteSearchState.resultVisible) {
-        drawMixedSingleLineBounded(display, x, y, width - 2, u8"搜尋結果", FONT_HEIGHT_SMALL);
-
         const meshtastic_NodeInfoLite *resultNode =
-            gTraceRouteSearchState.resultFound ? getNodeByNum(gTraceRouteSearchState.resultNode) : nullptr;
-        const int16_t contentX = x + 2;
-        const int16_t contentW = std::max<int16_t>(width - 4, 1);
-        const int16_t lineH = FONT_HEIGHT_SMALL + 1;
-        int16_t contentY = y + FONT_HEIGHT_SMALL + 3;
-
-        if (resultNode) {
-            const String shortName = String("ShortName: ") +
-                                     (resultNode->user.short_name[0] ? String(resultNode->user.short_name) : String("--"));
-            drawMixedSingleLineBounded(display, contentX, contentY, contentW, shortName.c_str(), lineH);
-            contentY += lineH;
-
-            const String longName = String("LongName: ") +
-                                    (resultNode->user.long_name[0] ? String(resultNode->user.long_name) : String("--"));
-            const std::vector<String> longNameLines = buildMixedWrappedLines(
-                display, longName.c_str(), contentW, graphics::HermesX_zh::GLYPH_WIDTH);
-            const int16_t buttonH = FONT_HEIGHT_SMALL + 4;
-            const int16_t buttonY = y + display->getHeight() - buttonH - 2;
-            const int16_t availableLines = std::max<int16_t>((buttonY - contentY - 2) / lineH, 1);
-            const int16_t linesToDraw = std::min<int16_t>(static_cast<int16_t>(longNameLines.size()), availableLines);
-            for (int16_t i = 0; i < linesToDraw; ++i) {
-                drawMixedSingleLineBounded(display, contentX, contentY + i * lineH, contentW,
-                                           longNameLines[i].c_str(), lineH);
-            }
-
-            const int16_t gap = 8;
-            const int16_t buttonW = std::min<int16_t>((contentW - gap) / 2, 58);
-            const int16_t buttonsW = buttonW * 2 + gap;
-            const int16_t bindX = x + (width - buttonsW) / 2;
-            const int16_t backX = bindX + buttonW + gap;
-            const int16_t selectedX = gTraceRouteSearchState.resultCursor == 0 ? bindX : backX;
-            display->drawRect(selectedX, buttonY, buttonW, buttonH);
-
-            const int16_t bindTextW =
-                graphics::HermesX_zh::stringAdvance(u8"綁定", graphics::HermesX_zh::GLYPH_WIDTH, display);
-            const int16_t backTextW =
-                graphics::HermesX_zh::stringAdvance(u8"返回", graphics::HermesX_zh::GLYPH_WIDTH, display);
-            drawMixedSingleLineBounded(display, bindX + (buttonW - bindTextW) / 2, buttonY + 1, bindTextW,
-                                       u8"綁定", FONT_HEIGHT_SMALL + 2);
-            drawMixedSingleLineBounded(display, backX + (buttonW - backTextW) / 2, buttonY + 1, backTextW,
-                                       u8"返回", FONT_HEIGHT_SMALL + 2);
-        } else {
-            drawMixedSingleLineBounded(display, contentX, contentY, contentW, u8"找不到裝置", lineH);
-            contentY += lineH;
-            const String query = String("ShortName: ") + gTraceRouteSearchState.resultQuery;
-            drawMixedSingleLineBounded(display, contentX, contentY, contentW, query.c_str(), lineH);
-
-            const int16_t buttonW = 58;
-            const int16_t buttonH = FONT_HEIGHT_SMALL + 4;
-            const int16_t buttonX = x + (width - buttonW) / 2;
-            const int16_t buttonY = y + display->getHeight() - buttonH - 2;
-            display->drawRect(buttonX, buttonY, buttonW, buttonH);
-            const int16_t backTextW =
-                graphics::HermesX_zh::stringAdvance(u8"返回", graphics::HermesX_zh::GLYPH_WIDTH, display);
-            drawMixedSingleLineBounded(display, buttonX + (buttonW - backTextW) / 2, buttonY + 1, backTextW,
-                                       u8"返回", FONT_HEIGHT_SMALL + 2);
-        }
+            gTraceRouteSearchState.resultFound ? gNodeBrowserDataSource.nodeByNum(gTraceRouteSearchState.resultNode) : nullptr;
+        const String shortName = resultNode ? String(resultNode->user.short_name) : String();
+        const String longName = resultNode ? String(resultNode->user.long_name) : String();
+        HermesXTraceRouteUiRenderer::drawSearchResult(display, x, y, resultNode != nullptr, shortName, longName);
         return;
     }
 
-    drawMixedSingleLineBounded(display, x, y, width - 2, "TraceRoute", FONT_HEIGHT_SMALL);
-
-    if (gTraceRouteUiMode == TraceRouteUiMode::Menu) {
-        const char *items[] = {u8"返回", u8"綁定節點", "TraceRoute"};
-        const int16_t rowH = FONT_HEIGHT_SMALL + 4;
-        const int16_t listTop = y + FONT_HEIGHT_SMALL + 6;
-        for (uint8_t i = 0; i < 3; ++i) {
-            const int16_t rowY = listTop + i * rowH;
-            if (gTraceRouteBoundState.menuCursor == i) {
-                display->drawRect(x, rowY - 1, width - 2, rowH);
-            }
-            drawMixedSingleLineBounded(display, x + 2, rowY, width - 4, items[i], rowH);
-        }
+    if (gTraceRouteNavigationState.mode == HermesXTraceRouteUiMode::Menu) {
+        HermesXTraceRouteUiRenderer::drawMenu(display, x, y);
         drawSetupDetailPopupOverlay(display, state);
         drawTraceRoutePopupOverlay(display, state);
         return;
     }
 
-    rebuildTraceRouteNodeOrder();
-
-    const int16_t rowH = FONT_HEIGHT_SMALL + 3;
-    const int16_t listTop = y + FONT_HEIGHT_SMALL + 2;
-    int8_t visibleRows = (display->getHeight() - listTop - 1) / rowH;
-    if (visibleRows < 1) {
-        visibleRows = 1;
-    }
-    if (visibleRows > 3) {
-        visibleRows = 3;
-    }
-
-    const uint8_t totalRows = gTraceRouteNodeState.count + kTraceRouteBindFirstNodeRow;
-    uint8_t startCursor = 0;
-    if (gTraceRouteBoundState.bindCursor >= static_cast<uint8_t>(visibleRows)) {
-        startCursor = gTraceRouteBoundState.bindCursor - static_cast<uint8_t>(visibleRows) + 1;
-    }
-
-    for (int8_t row = 0; row < visibleRows; ++row) {
-        const uint8_t cursorIndex = startCursor + row;
-        if (cursorIndex >= totalRows) {
-            break;
-        }
-
-        const int16_t rowY = listTop + row * rowH;
-        if (cursorIndex == gTraceRouteBoundState.bindCursor) {
-            display->drawRect(x, rowY - 1, width - 2, rowH);
-        }
-
-        if (cursorIndex == kTraceRouteBindSearchRow) {
-            drawMixedSingleLineBounded(display, x + 2, rowY, width - 4, u8"搜尋裝置", rowH);
-            continue;
-        }
-        if (cursorIndex == kTraceRouteBindBackRow) {
-            drawMixedSingleLineBounded(display, x + 2, rowY, width - 4, u8"返回", rowH);
-            continue;
-        }
-
-        const meshtastic_NodeInfoLite *node = getTraceRouteNodeAt(traceRouteBindNodeIndex(cursorIndex));
-        if (!node) {
-            continue;
-        }
-
-        String routeState = isTraceRouteNodeBound(node->num) ? String(u8"已綁") : String("");
-        const int16_t stateW = display->getStringWidth(routeState);
-        const int16_t stateX = x + width - stateW - 2;
-        display->drawString(stateX, rowY, routeState);
-
-        String line = getOnlineNodeDisplayName(*node) + " " + getOnlineNodeShortId(*node);
-        const int16_t textWidth = stateX - x - 4;
-        drawMixedSingleLineBounded(display, x + 2, rowY, textWidth > 0 ? textWidth : width - 4, line.c_str(), rowH);
-    }
-
-    if (gTraceRouteNodeState.count == 0 && visibleRows > 2) {
-        drawMixedSingleLineBounded(display, x + 2, listTop + rowH * 2, width - 4, u8"沒有在線節點", rowH);
-    }
-
-    if (gTraceRouteBoundState.confirmVisible) {
-#if defined(USE_EINK)
-        display->setColor(EINK_WHITE);
-#else
-        display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-        const int16_t boxW = std::min<int16_t>(width - 12, 116);
-        const int16_t boxH = 42;
-        const int16_t boxX = x + (width - boxW) / 2;
-        const int16_t boxY = y + (display->getHeight() - boxH) / 2;
-        display->fillRect(boxX, boxY, boxW, boxH);
-#if defined(USE_EINK)
-        display->setColor(EINK_BLACK);
-#else
-        display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-        display->drawRect(boxX, boxY, boxW, boxH);
-        drawMixedSingleLineBounded(display, boxX + 6, boxY + 5, boxW - 12, u8"是否綁定？", FONT_HEIGHT_SMALL + 2);
-        const int16_t optionY = boxY + 24;
-        if (gTraceRouteBoundState.confirmSelected == 0) {
-            display->drawRect(boxX + 10, optionY - 1, 36, FONT_HEIGHT_SMALL + 4);
-        } else {
-            display->drawRect(boxX + boxW - 46, optionY - 1, 36, FONT_HEIGHT_SMALL + 4);
-        }
-        drawMixedSingleLineBounded(display, boxX + 20, optionY, 22, u8"是", FONT_HEIGHT_SMALL + 2);
-        drawMixedSingleLineBounded(display, boxX + boxW - 36, optionY, 22, u8"否", FONT_HEIGHT_SMALL + 2);
-    }
+    gNodeBrowserDataSource.refreshTraceRoute();
+    const HermesXTraceRouteRowSource rows{gNodeBrowserDataSource.traceRouteCount(), nullptr, getTraceRouteBindRenderRow};
+    HermesXTraceRouteUiRenderer::drawBindList(display, x, y, rows);
     drawSetupDetailPopupOverlay(display, state);
     drawTraceRoutePopupOverlay(display, state);
 }
 
 void Screen::drawTraceRouteNodeDetailFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
 {
-    (void)state;
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-    display->setFont(FONT_SMALL);
-    const int16_t width = std::max<int16_t>(display->getWidth() - x, 1);
-    drawMixedSingleLineBounded(display, x, y, width - 2, "TraceRoute", FONT_HEIGHT_SMALL);
-    compactTraceRouteBoundNodes();
-
-    const int16_t rowH = FONT_HEIGHT_SMALL + 3;
-    const int16_t listTop = y + FONT_HEIGHT_SMALL + 2;
-    int8_t visibleRows = (display->getHeight() - listTop - 1) / rowH;
-    if (visibleRows < 1) {
-        visibleRows = 1;
-    }
-    if (visibleRows > 4) {
-        visibleRows = 4;
-    }
-
-    const uint8_t totalRows = gTraceRouteBoundState.count + 1;
-    uint8_t startCursor = 0;
-    if (gTraceRouteBoundState.boundCursor >= static_cast<uint8_t>(visibleRows)) {
-        startCursor = gTraceRouteBoundState.boundCursor - static_cast<uint8_t>(visibleRows) + 1;
-    }
-
-    for (int8_t row = 0; row < visibleRows; ++row) {
-        const uint8_t rowIndex = startCursor + row;
-        if (rowIndex >= totalRows) {
-            break;
-        }
-        const int16_t rowY = listTop + row * rowH;
-        if (rowIndex == gTraceRouteBoundState.boundCursor) {
-            display->drawRect(x, rowY - 1, width - 2, rowH);
-        }
-        if (rowIndex == 0) {
-            drawMixedSingleLineBounded(display, x + 2, rowY, width - 4, u8"返回", rowH);
-            continue;
-        }
-        const meshtastic_NodeInfoLite *node = getBoundTraceRouteNodeAt(rowIndex - 1);
-        if (!node) {
-            continue;
-        }
-        String routeState = node->via_mqtt ? "--" : "TR";
-        const int16_t stateW = display->getStringWidth(routeState);
-        const int16_t stateX = x + width - stateW - 2;
-        display->drawString(stateX, rowY, routeState);
-        String line = getOnlineNodeDisplayName(*node) + " " + getOnlineNodeShortId(*node);
-        const int16_t textWidth = stateX - x - 4;
-        drawMixedSingleLineBounded(display, x + 2, rowY, textWidth > 0 ? textWidth : width - 4, line.c_str(), rowH);
-    }
-
-    if (gTraceRouteBoundState.count == 0 && visibleRows > 1) {
-        drawMixedSingleLineBounded(display, x + 2, listTop + rowH, width - 4, u8"尚未綁定節點", rowH);
-    }
+    syncTraceRouteBoundSelection();
+    const HermesXTraceRouteRowSource rows{gTraceRouteBindings.count(), nullptr, getTraceRouteBoundRenderRow};
+    HermesXTraceRouteUiRenderer::drawBoundList(display, x, y, rows);
     drawSetupDetailPopupOverlay(display, state);
     drawTraceRoutePopupOverlay(display, state);
 }
@@ -7351,167 +2420,50 @@ void Screen::drawTraceRouteNodeDetailFrame(OLEDDisplay *display, OLEDDisplayUiSt
 void Screen::drawFinderNodeDetailFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
 {
     (void)state;
-    const int16_t width = display->getWidth();
-    const int16_t height = display->getHeight();
-#if defined(USE_EINK)
-    display->setColor(EINK_WHITE);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-    display->fillRect(x, y, width, height);
-#if defined(USE_EINK)
-    display->setColor(EINK_BLACK);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-    display->setFont(FONT_SMALL);
-    graphics::HermesX_zh::drawMixedBounded(*display, x, y, display->getWidth() - 2, u8"尋人清單",
-                                           graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-
-    const meshtastic_NodeInfoLite *node = getSelectedFinderNode();
+    const meshtastic_NodeInfoLite *node = gNodeBrowserDataSource.selectedFinderNode();
     if (!node) {
-        display->drawString(x + 2, y + FONT_HEIGHT_SMALL + 4, "No node");
+        HermesXNodeBrowserUiRenderer::drawDetail(
+            display, x, y, u8"尋人清單", "No node", nullptr, 0, gFinderNodeState.detailCursor, true);
         return;
     }
 
     String rows[12];
     const uint8_t rowCount = buildOnlineNodeDetailRows(*node, true, rows, sizeof(rows) / sizeof(rows[0]));
-    uint8_t &detailCursor = gFinderNodeState.detailCursor;
-    if (detailCursor >= rowCount) {
-        detailCursor = rowCount - 1;
+    if (rowCount > 0 && gFinderNodeState.detailCursor >= rowCount) {
+        gFinderNodeState.detailCursor = rowCount - 1;
     }
-
-    const int16_t rowH = FONT_HEIGHT_SMALL + 3;
-    const int16_t listTop = y + FONT_HEIGHT_SMALL + 2;
-    int8_t visibleRows = (display->getHeight() - listTop - 1) / rowH;
-    if (visibleRows < 1) {
-        visibleRows = 1;
-    }
-    if (visibleRows > 4) {
-        visibleRows = 4;
-    }
-    uint8_t startCursor = 0;
-    if (detailCursor >= static_cast<uint8_t>(visibleRows)) {
-        startCursor = detailCursor - static_cast<uint8_t>(visibleRows) + 1;
-    }
-
-    for (int8_t row = 0; row < visibleRows; ++row) {
-        const uint8_t rowIndex = startCursor + row;
-        if (rowIndex >= rowCount) {
-            break;
-        }
-        const int16_t rowY = listTop + row * rowH;
-        if (rowIndex == detailCursor) {
-            display->drawRect(x, rowY - 1, width - 2, rowH);
-        }
-        graphics::HermesX_zh::drawMixedBounded(*display, x + 2, rowY, width - 4, rows[rowIndex].c_str(),
-                                               graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
-    }
+    HermesXNodeBrowserUiRenderer::drawDetail(
+        display, x, y, u8"尋人清單", "No node", rows, rowCount, gFinderNodeState.detailCursor, true);
 }
 
 void Screen::drawGroupNodeListFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
 {
     (void)state;
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-    display->setFont(FONT_SMALL);
-    graphics::HermesX_zh::drawMixedBounded(*display, x, y, display->getWidth() - 2, "GROUP",
-                                           graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-
-    const int16_t width = display->getWidth();
-    const int16_t rowH = FONT_HEIGHT_SMALL + 3;
-    const int16_t listTop = y + FONT_HEIGHT_SMALL + 2;
-    int8_t visibleRows = (display->getHeight() - listTop - 1) / rowH;
-    if (visibleRows < 1) {
-        visibleRows = 1;
-    }
-    if (visibleRows > 4) {
-        visibleRows = 4;
-    }
-
     if (!gGroupNodeState.nodeListVisible) {
         static const char *kGroupMenuItems[] = {u8"返回", u8"GROUP設定", u8"節點列表"};
-        constexpr uint8_t kGroupMenuCount = sizeof(kGroupMenuItems) / sizeof(kGroupMenuItems[0]);
-        if (gGroupNodeState.menuCursor >= kGroupMenuCount) {
-            gGroupNodeState.menuCursor = kGroupMenuCount - 1;
-        }
-        for (uint8_t row = 0; row < visibleRows && row < kGroupMenuCount; ++row) {
-            const int16_t rowY = listTop + row * rowH;
-            if (row == gGroupNodeState.menuCursor) {
-                display->drawRect(x, rowY - 1, width - 2, rowH);
-            }
-            graphics::HermesX_zh::drawMixedBounded(*display, x + 2, rowY, width - 4, kGroupMenuItems[row],
-                                                   graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
-        }
+        HermesXNodeBrowserUiRenderer::drawMenu(
+            display, x, y, "GROUP", kGroupMenuItems, 3, gGroupNodeState.menuCursor, false, 3, 2);
         return;
     }
 
     clampGroupNodeState();
-
-    const int total = getGroupNodeCount();
-    const int totalRows = total + 1;
-    uint8_t startCursor = 0;
-    if (gGroupNodeState.listCursor >= static_cast<uint8_t>(visibleRows)) {
-        startCursor = gGroupNodeState.listCursor - static_cast<uint8_t>(visibleRows) + 1;
-    }
-
-    for (int8_t row = 0; row < visibleRows; ++row) {
-        const uint8_t cursorIndex = startCursor + row;
-        if (cursorIndex >= totalRows) {
-            break;
-        }
-        const int16_t rowY = listTop + row * rowH;
-        const bool selected = cursorIndex == gGroupNodeState.listCursor;
-        if (selected) {
-            display->drawRect(x, rowY - 1, width - 2, rowH);
-        }
-        if (cursorIndex == 0) {
-            graphics::HermesX_zh::drawMixedBounded(*display, x + 2, rowY, width - 4, u8"返回",
-                                                   graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
-            continue;
-        }
-        const auto *entry = getGroupNodeAt(cursorIndex - 1);
-        if (!entry) {
-            continue;
-        }
-        const String presence = hermesXEmUiModule ? String(hermesXEmUiModule->getNodePresenceLabel(*entry)) : String(u8"未知");
-        const int16_t presenceW = graphics::HermesX_zh::stringAdvance(presence.c_str(), graphics::HermesX_zh::GLYPH_WIDTH, display);
-        const int16_t presenceX = x + width - presenceW - 2;
-        graphics::HermesX_zh::drawMixedBounded(*display, presenceX, rowY, presenceW + 2, presence.c_str(),
-                                               graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
-
-        String line = getGroupNodeDisplayName(*entry);
-        if (entry->state[0]) {
-            line += " ";
-            line += entry->state;
-        }
-        const int16_t textWidth = presenceX - x - 4;
-        graphics::HermesX_zh::drawMixedBounded(*display, x + 2, rowY, textWidth > 0 ? textWidth : width - 4, line.c_str(),
-                                               graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
-    }
-
-    if (total == 0 && visibleRows > 1) {
-        graphics::HermesX_zh::drawMixedBounded(*display, x + 2, listTop + rowH, width - 4, u8"沒有已配對節點",
-                                               graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
-    }
+    const uint8_t count = static_cast<uint8_t>(std::max(0, getGroupNodeCount()));
+    const HermesXNodeBrowserRowSource rows(count, nullptr, getGroupBrowserRenderRow, true);
+    HermesXNodeBrowserUiRenderer::drawList(
+        display, x, y, "GROUP", u8"返回", u8"沒有已配對節點", gGroupNodeState.listCursor, rows, 4, false);
 }
 
 void Screen::drawGroupNodeDetailFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
 {
     (void)state;
-    if (gDirectMessageComposerState.active && gDirectMessageComposerState.fromGroupDetail) {
+    if (gDirectMessageComposer.active() && gDirectMessageComposer.fromGroupDetail()) {
         drawDirectMessageComposerFrame(display, x, y);
         return;
     }
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-    display->setFont(FONT_SMALL);
-    graphics::HermesX_zh::drawMixedBounded(*display, x, y, display->getWidth() - 2, "GROUP DETAIL",
-                                           graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-
     const auto *entry = getSelectedGroupNode();
     if (!entry) {
-        graphics::HermesX_zh::drawMixedBounded(*display, x + 2, y + FONT_HEIGHT_SMALL + 4, display->getWidth() - 4,
-                                               u8"無節點資料", graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
+        HermesXNodeBrowserUiRenderer::drawDetail(
+            display, x, y, "GROUP DETAIL", u8"無節點資料", nullptr, 0, gGroupNodeState.detailCursor, false);
         return;
     }
 
@@ -7521,217 +2473,38 @@ void Screen::drawGroupNodeDetailFrame(OLEDDisplay *display, OLEDDisplayUiState *
         gGroupNodeState.detailCursor = rowCount > 0 ? rowCount - 1 : 0;
     }
 
-    const int16_t width = display->getWidth();
-    const int16_t rowH = FONT_HEIGHT_SMALL + 3;
-    const int16_t listTop = y + FONT_HEIGHT_SMALL + 2;
-    int8_t visibleRows = (display->getHeight() - listTop - 1) / rowH;
-    if (visibleRows < 1) {
-        visibleRows = 1;
-    }
-    if (visibleRows > 4) {
-        visibleRows = 4;
-    }
-
-    uint8_t startCursor = 0;
-    if (gGroupNodeState.detailCursor >= static_cast<uint8_t>(visibleRows)) {
-        startCursor = gGroupNodeState.detailCursor - static_cast<uint8_t>(visibleRows) + 1;
-    }
-
-    for (int8_t row = 0; row < visibleRows; ++row) {
-        const uint8_t rowIndex = startCursor + row;
-        if (rowIndex >= rowCount) {
-            break;
-        }
-        const int16_t rowY = listTop + row * rowH;
-        if (rowIndex == gGroupNodeState.detailCursor) {
-            display->drawRect(x, rowY - 1, width - 2, rowH);
-        }
-        graphics::HermesX_zh::drawMixedBounded(*display, x + 2, rowY, width - 4, rows[rowIndex].c_str(),
-                                               graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
-    }
+    HermesXNodeBrowserUiRenderer::drawDetail(
+        display, x, y, "GROUP DETAIL", u8"無節點資料", rows, rowCount, gGroupNodeState.detailCursor, false);
 }
 
 /// Draw the last text message we received
 static void drawTextMessageFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
 {
-    // the max length of this buffer is much longer than we can possibly print
-    static char tempBuf[237];
-
     const meshtastic_MeshPacket *packet = getActiveTextMessageForDisplay();
-    if (!packet) {
-        display->setTextAlignment(TEXT_ALIGN_LEFT);
-        display->setFont(FONT_SMALL);
-        display->drawString(x, y, "No message");
-        return;
-    }
-
-    const meshtastic_MeshPacket &mp = *packet;
-    meshtastic_NodeInfoLite *node = nodeDB->getMeshNode(getFrom(packet));
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-    display->setFont(FONT_SMALL);
-
-    const int16_t width = display->getWidth();
-    const int16_t height = display->getHeight();
-    const int16_t headerLineHeight = FONT_HEIGHT_SMALL;
-    const int16_t headerGap = 2;
-    const int16_t dividerY = y + headerLineHeight * 2 + headerGap;
-    const int16_t bodyTop = dividerY + 2;
-    const int16_t scrollbarW = 4;
-    const int16_t bodyW = std::max<int16_t>(width - scrollbarW - 3, 12);
-    const int16_t bodyH = std::max<int16_t>(height - bodyTop - 1, headerLineHeight);
-    const int16_t bodyX = x;
-    const uint8_t bodyHanziPixelSize = getRecentTextMessageBodyHanziPixelSize();
-    const int bodyAdvance = bodyHanziPixelSize;
-    const int lineHeight = std::max<int>(FONT_HEIGHT_MEDIUM, bodyHanziPixelSize) + 2;
-
-    if (config.display.displaymode == meshtastic_Config_DisplayConfig_DisplayMode_INVERTED) {
-        display->fillRect(x, y, width, dividerY - y);
-        display->setColor(BLACK);
-    }
-
-    char senderBuf[24];
-    senderBuf[0] = '\0';
-    if (node && node->has_user) {
-        if (node->user.short_name[0] != '\0') {
-            copyUtf8Snippet(node->user.short_name, strnlen(node->user.short_name, sizeof(node->user.short_name)), senderBuf,
-                            sizeof(senderBuf), 10);
-        } else if (node->user.long_name[0] != '\0') {
-            copyUtf8Snippet(node->user.long_name, strnlen(node->user.long_name, sizeof(node->user.long_name)), senderBuf,
-                            sizeof(senderBuf), 10);
-        }
-    }
-    if (senderBuf[0] == '\0') {
-        strlcpy(senderBuf, "???", sizeof(senderBuf));
-    }
-
-    const uint32_t seconds = sinceReceived(&mp);
-    const uint32_t minutes = seconds / 60;
-    const uint32_t hours = minutes / 60;
-    const uint32_t days = hours / 24;
-    uint8_t timestampHours, timestampMinutes;
-    int32_t daysAgo;
-    const bool useTimestamp = deltaToTimestamp(seconds, &timestampHours, &timestampMinutes, &daysAgo);
-
-    char headerLine1[48];
-    snprintf(headerLine1, sizeof(headerLine1), "%s", senderBuf);
-    char headerLine2[64];
-    if (useTimestamp && minutes >= 15 && daysAgo == 0) {
-        snprintf(headerLine2, sizeof(headerLine2), "At %02hu:%02hu", timestampHours, timestampMinutes);
-    } else if (useTimestamp && daysAgo == 1 && width >= 200) {
-        snprintf(headerLine2, sizeof(headerLine2), "Yesterday %02hu:%02hu", timestampHours, timestampMinutes);
-    } else {
-        snprintf(headerLine2, sizeof(headerLine2), "%s ago", screen->drawTimeDelta(days, hours, minutes, seconds).c_str());
-    }
-
-    graphics::HermesX_zh::drawMixedBounded(*display, x, y, width - 1, headerLine1, graphics::HermesX_zh::GLYPH_WIDTH,
-                                           headerLineHeight, nullptr);
-    graphics::HermesX_zh::drawMixedBounded(*display, x, y + headerLineHeight, width - 1, headerLine2,
-                                           graphics::HermesX_zh::GLYPH_WIDTH, headerLineHeight, nullptr);
-    display->drawLine(x, dividerY, x + width - 1, dividerY);
-    display->setColor(WHITE);
-
-    copyTextMessagePayload(mp, tempBuf, sizeof(tempBuf));
-    display->setFont(FONT_MEDIUM);
-    const std::vector<String> bodyLines = buildMixedWrappedLines(display, tempBuf, bodyW, bodyAdvance);
-    const uint16_t contentHeight = static_cast<uint16_t>(std::max<size_t>(1, bodyLines.size()) * lineHeight);
-    const uint16_t visibleLineCount = static_cast<uint16_t>(std::max<int>(1, bodyH / lineHeight));
-    gRecentTextMessageState.detailMaxScrollY =
-        bodyLines.size() > visibleLineCount ? static_cast<uint16_t>((bodyLines.size() - visibleLineCount) * lineHeight) : 0;
-    if (gRecentTextMessageState.detailScrollY > gRecentTextMessageState.detailMaxScrollY) {
-        gRecentTextMessageState.detailScrollY = gRecentTextMessageState.detailMaxScrollY;
-    }
-
-#ifndef EXCLUDE_EMOJI
-    const char *msg = tempBuf;
-    // NOTE: Emoji comparisons below use explicit UTF-8 literals; keep this block UTF-8 encoded and do not replace with '?' placeholders
-    if (strcmp(msg, "\U0001F44D") == 0) {
-        display->drawXbm(x + (SCREEN_WIDTH - thumbs_width) / 2,
-                         y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - thumbs_height) / 2 + 2 + 5, thumbs_width, thumbs_height,
-                         thumbup);
-    } else if (strcmp(msg, "\U0001F44E") == 0) {
-        display->drawXbm(x + (SCREEN_WIDTH - thumbs_width) / 2,
-                         y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - thumbs_height) / 2 + 2 + 5, thumbs_width, thumbs_height,
-                         thumbdown);
-    } else if (strcmp(msg, "\U0001F60A") == 0 || strcmp(msg, "\U0001F600") == 0 || strcmp(msg, "\U0001F642") == 0 ||
-               strcmp(msg, "\U0001F609") == 0 ||
-               strcmp(msg, "\U0001F601") == 0) { // matches 5 different common smileys, so that the phone user doesn't have to
-                                                 // remember which one is compatible
-        display->drawXbm(x + (SCREEN_WIDTH - smiley_width) / 2,
-                         y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - smiley_height) / 2 + 2 + 5, smiley_width, smiley_height,
-                         smiley);
-    } else if (strcmp(msg, "\xE2\x80\xBC") == 0) { // U+203C DOUBLE EXCLAMATION MARK
-        display->drawXbm(x + (SCREEN_WIDTH - question_width) / 2,
-                         y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - question_height) / 2 + 2 + 5, question_width, question_height,
-                         question);
-    } else if (strcmp(msg, "\xE2\x80\xBC\xEF\xB8\x8F") == 0) { // U+203C + U+FE0F (double exclamation mark VS16)
-        display->drawXbm(x + (SCREEN_WIDTH - bang_width) / 2, y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - bang_height) / 2 + 2 + 5,
-                         bang_width, bang_height, bang);
-    } else if (strcmp(msg, "\U0001F4A9") == 0) {
-        display->drawXbm(x + (SCREEN_WIDTH - poo_width) / 2, y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - poo_height) / 2 + 2 + 5,
-                         poo_width, poo_height, poo);
-    } else if (strcmp(msg, "\U0001F923") == 0) {
-        display->drawXbm(x + (SCREEN_WIDTH - haha_width) / 2, y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - haha_height) / 2 + 2 + 5,
-                         haha_width, haha_height, haha);
-    } else if (strcmp(msg, "\U0001F44B") == 0) {
-        display->drawXbm(x + (SCREEN_WIDTH - wave_icon_width) / 2,
-                         y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - wave_icon_height) / 2 + 2 + 5, wave_icon_width,
-                         wave_icon_height, wave_icon);
-    } else if (strcmp(msg, "\U0001F920") == 0) {
-        display->drawXbm(x + (SCREEN_WIDTH - cowboy_width) / 2,
-                         y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - cowboy_height) / 2 + 2 + 5, cowboy_width, cowboy_height,
-                         cowboy);
-    } else if (strcmp(msg, "\U0001F42D") == 0) {
-        display->drawXbm(x + (SCREEN_WIDTH - deadmau5_width) / 2,
-                         y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - deadmau5_height) / 2 + 2 + 5, deadmau5_width, deadmau5_height,
-                         deadmau5);
-    } else if (strcmp(msg, "\xE2\x98\x80\xEF\xB8\x8F") == 0) {
-        display->drawXbm(x + (SCREEN_WIDTH - sun_width) / 2, y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - sun_height) / 2 + 2 + 5,
-                         sun_width, sun_height, sun);
-    } else if (strcmp(msg, "\u2614") == 0) {
-        display->drawXbm(x + (SCREEN_WIDTH - rain_width) / 2, y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - rain_height) / 2 + 2 + 10,
-                         rain_width, rain_height, rain);
-    } else if (strcmp(msg, "\u2601") == 0) {
-        display->drawXbm(x + (SCREEN_WIDTH - cloud_width) / 2,
-                         y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - cloud_height) / 2 + 2 + 5, cloud_width, cloud_height, cloud);
-    } else if (strcmp(msg, "\U0001F32B") == 0) {
-        display->drawXbm(x + (SCREEN_WIDTH - fog_width) / 2, y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - fog_height) / 2 + 2 + 5,
-                         fog_width, fog_height, fog);
-    } else if (strcmp(msg, "\U0001F608") == 0) {
-        display->drawXbm(x + (SCREEN_WIDTH - devil_width) / 2,
-                         y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - devil_height) / 2 + 2 + 5, devil_width, devil_height, devil);
-    } else if (strcmp(msg, "\xE2\x9D\xA4") == 0 || strcmp(msg, "\xE2\x9D\xA4\xEF\xB8\x8F") == 0 || strcmp(msg, "\U0001F9E1") == 0 || strcmp(msg, "\u2763") == 0 ||
-               strcmp(msg, "\U00002764") == 0 || strcmp(msg, "\U0001F495") == 0 || strcmp(msg, "\U0001F496") == 0 ||
-               strcmp(msg, "\U0001F497") == 0 || strcmp(msg, "\U0001F498") == 0) {
-        display->drawXbm(x + (SCREEN_WIDTH - heart_width) / 2,
-                         y + (SCREEN_HEIGHT - FONT_HEIGHT_MEDIUM - heart_height) / 2 + 2 + 5, heart_width, heart_height, heart);
-    } else {
-        drawVisibleWrappedLines(display, bodyLines, bodyX, bodyTop, bodyW, bodyH, lineHeight,
-                                gRecentTextMessageState.detailScrollY, bodyAdvance, 1, bodyHanziPixelSize);
-    }
-#else
-    drawVisibleWrappedLines(display, bodyLines, bodyX, bodyTop, bodyW, bodyH, lineHeight,
-                            gRecentTextMessageState.detailScrollY, bodyAdvance, 1, bodyHanziPixelSize);
-#endif
-
-    if (gRecentTextMessageState.detailMaxScrollY > 0) {
-        const int16_t trackX = x + width - scrollbarW;
-        display->drawRect(trackX, bodyTop, scrollbarW, bodyH);
-        const int16_t thumbH =
-            std::max<int16_t>(6, static_cast<int16_t>((static_cast<int32_t>(bodyH) * bodyH) / contentHeight));
-        const int16_t thumbTravel = std::max<int16_t>(bodyH - thumbH - 2, 0);
-        const int16_t thumbY =
-            bodyTop + 1 +
-            static_cast<int16_t>((static_cast<int32_t>(thumbTravel) * gRecentTextMessageState.detailScrollY) /
-                                 gRecentTextMessageState.detailMaxScrollY);
-        if (config.display.displaymode == meshtastic_Config_DisplayConfig_DisplayMode_INVERTED) {
-            display->fillRect(trackX + 1, thumbY, scrollbarW - 2, thumbH);
-            display->setColor(BLACK);
-            display->fillRect(trackX + 1, thumbY, scrollbarW - 2, thumbH);
-            display->setColor(WHITE);
+    char timeLabel[64] = {0};
+    if (packet) {
+        const uint32_t seconds = sinceReceived(packet);
+        const uint32_t minutes = seconds / 60;
+        const uint32_t hours = minutes / 60;
+        const uint32_t days = hours / 24;
+        uint8_t timestampHours = 0;
+        uint8_t timestampMinutes = 0;
+        int32_t daysAgo = 0;
+        const bool useTimestamp = deltaToTimestamp(seconds, &timestampHours, &timestampMinutes, &daysAgo);
+        if (useTimestamp && minutes >= 15 && daysAgo == 0) {
+            snprintf(timeLabel, sizeof(timeLabel), "At %02hu:%02hu", timestampHours, timestampMinutes);
+        } else if (useTimestamp && daysAgo == 1 && display && display->getWidth() >= 200) {
+            snprintf(timeLabel, sizeof(timeLabel), "Yesterday %02hu:%02hu", timestampHours, timestampMinutes);
         } else {
-            display->fillRect(trackX + 1, thumbY, scrollbarW - 2, thumbH);
+            snprintf(timeLabel, sizeof(timeLabel), "%s ago", screen->drawTimeDelta(days, hours, minutes, seconds).c_str());
         }
     }
+
+    HermesXMessageRenderContext context;
+    context.inverted = config.display.displaymode == meshtastic_Config_DisplayConfig_DisplayMode_INVERTED;
+    context.resolveNode = resolveMessageNode;
+    context.drawEmoji = drawMessageEmoji;
+    HermesXMessageUiRenderer::drawDetail(display, state, x, y, packet, timeLabel, context);
 }
 
 /// Draw a series of fields in a column, wrapping to multiple columns if needed
@@ -7916,218 +2689,10 @@ static void drawGPScoordinates(OLEDDisplay *display, int16_t x, int16_t y, const
     }
 }
 
-static void drawThickLine(OLEDDisplay *display, int16_t x0, int16_t y0, int16_t x1, int16_t y1, int16_t thickness)
-{
-    if (thickness <= 1) {
-        display->drawLine(x0, y0, x1, y1);
-        return;
-    }
-
-    const int16_t half = thickness / 2;
-    for (int16_t offset = -half; offset <= half; ++offset) {
-        display->drawLine(x0 + offset, y0, x1 + offset, y1);
-        display->drawLine(x0, y0 + offset, x1, y1 + offset);
-    }
-}
-
-static void drawHermesGpsSatelliteIcon(OLEDDisplay *display, int16_t x, int16_t y, int16_t size)
-{
-    if (size < 24) {
-        size = 24;
-    }
-
-    const int16_t cx = x + size / 2;
-    const int16_t topY = y + 1;
-
-    int16_t bodyW = size / 7;
-    int16_t bodyH = size / 4;
-    int16_t panelW = size / 4;
-    int16_t panelH = size / 8;
-    int16_t panelGap = size / 12;
-    int16_t mastH = size / 5;
-    int16_t arcR1 = size / 7;
-    int16_t arcR2 = size / 5;
-
-    if (bodyW < 4)
-        bodyW = 4;
-    if (bodyH < 8)
-        bodyH = 8;
-    if (panelW < 6)
-        panelW = 6;
-    if (panelH < 3)
-        panelH = 3;
-    if (panelGap < 2)
-        panelGap = 2;
-    if (mastH < 4)
-        mastH = 4;
-    if (arcR1 < 4)
-        arcR1 = 4;
-    if (arcR2 < 6)
-        arcR2 = 6;
-
-    const int16_t bodyX = cx - bodyW / 2;
-    const int16_t bodyY = topY + size / 8;
-    const int16_t panelY = bodyY + 1;
-    const int16_t leftPanelX = bodyX - panelGap - panelW;
-    const int16_t rightPanelX = bodyX + bodyW + panelGap;
-
-    display->drawRect(bodyX, bodyY, bodyW, bodyH);
-    display->drawRect(leftPanelX, panelY, panelW, panelH);
-    display->drawRect(rightPanelX, panelY, panelW, panelH);
-    display->drawLine(leftPanelX + panelW / 2, panelY, leftPanelX + panelW / 2, panelY + panelH - 1);
-    display->drawLine(rightPanelX + panelW / 2, panelY, rightPanelX + panelW / 2, panelY + panelH - 1);
-    display->drawLine(leftPanelX, panelY + panelH / 2, leftPanelX + panelW - 1, panelY + panelH / 2);
-    display->drawLine(rightPanelX, panelY + panelH / 2, rightPanelX + panelW - 1, panelY + panelH / 2);
-
-    const int16_t mastY1 = bodyY + bodyH;
-    const int16_t mastY2 = mastY1 + mastH;
-    display->drawLine(cx, mastY1, cx, mastY2);
-
-    const int16_t dishY = mastY2 + 2;
-    display->drawCircle(cx, dishY, 1);
-
-    auto drawSignalArc = [&](int16_t radius, int16_t thickness) {
-        const int16_t p1x = cx - radius;
-        const int16_t p1y = dishY + 1;
-        const int16_t p2x = cx - (radius * 2) / 3;
-        const int16_t p2y = dishY + radius / 2;
-        const int16_t p3x = cx;
-        const int16_t p3y = dishY + (radius * 2) / 3;
-        const int16_t p4x = cx + (radius * 2) / 3;
-        const int16_t p4y = dishY + radius / 2;
-        const int16_t p5x = cx + radius;
-        const int16_t p5y = dishY + 1;
-
-        for (int16_t o = 0; o < thickness; ++o) {
-            const int16_t yo = o - (thickness / 2);
-            display->drawLine(p1x, p1y + yo, p2x, p2y + yo);
-            display->drawLine(p2x, p2y + yo, p3x, p3y + yo);
-            display->drawLine(p3x, p3y + yo, p4x, p4y + yo);
-            display->drawLine(p4x, p4y + yo, p5x, p5y + yo);
-        }
-    };
-
-    drawSignalArc(arcR1, 1);
-    drawSignalArc(arcR2, (size >= 40) ? 2 : 1);
-}
-
-static void drawHermesGpsPosterSatelliteMark(OLEDDisplay *display, int16_t cx, int16_t cy, int16_t size)
-{
-    if (!display) {
-        return;
-    }
-
-    if (size < 30) {
-        size = 30;
-    }
-
-    int16_t hubRadius = size / 6;
-    if (hubRadius < 8) {
-        hubRadius = 8;
-    }
-
-    int16_t armSpan = size / 2;
-    if (armSpan < hubRadius + 8) {
-        armSpan = hubRadius + 8;
-    }
-
-    int16_t armThickness = size / 8;
-    if (armThickness < 4) {
-        armThickness = 4;
-    }
-
-    drawThickLine(display, cx - armSpan, cy + armSpan, cx - hubRadius, cy + hubRadius, armThickness);
-    drawThickLine(display, cx + hubRadius, cy - hubRadius, cx + armSpan, cy - armSpan, armThickness);
-    display->fillCircle(cx, cy, hubRadius);
-
-    const int16_t dishRadius = hubRadius / 2;
-    const int16_t dishCx = cx + hubRadius + dishRadius + 6;
-    const int16_t dishCy = cy + hubRadius - 1;
-    display->fillCircle(dishCx, dishCy, dishRadius);
-    display->setColor(BLACK);
-    display->fillCircle(dishCx + dishRadius / 2 + 1, dishCy, dishRadius);
-    display->setColor(WHITE);
-}
-
 static void drawTraceRoutePopupOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
 {
     (void)state;
-    if (!display || !isTraceRoutePopupVisible()) {
-        return;
-    }
-
-    const int16_t width = display->getWidth();
-    const int16_t height = display->getHeight();
-    const bool compactLayout = (width < 200 || height < 120);
-    const int16_t marginX = compactLayout ? 5 : 12;
-    const int16_t marginY = compactLayout ? 6 : 12;
-    const int16_t boxX = marginX;
-    const int16_t boxY = marginY;
-    const int16_t boxW = std::max<int16_t>(width - marginX * 2, 40);
-    const int16_t boxH = std::max<int16_t>(height - marginY * 2, 40);
-    const int16_t titlePadX = compactLayout ? 4 : 6;
-    const int16_t titlePadY = compactLayout ? 2 : 4;
-    const int16_t titleH = compactLayout ? 16 : 18;
-    const int16_t footerH = compactLayout ? 14 : 18;
-    const int16_t dividerY = boxY + titleH + titlePadY * 2;
-    const int16_t footerY = boxY + boxH - footerH;
-    const int16_t bodyX = boxX + titlePadX;
-    const int16_t bodyY = dividerY + 3;
-    const int16_t scrollbarW = 4;
-    const int16_t bodyW = std::max<int16_t>(boxW - titlePadX * 2 - scrollbarW - 2, 20);
-    const int16_t bodyH = std::max<int16_t>(footerY - bodyY - 2, titleH);
-    const int16_t lineHeight = compactLayout ? 12 : 14;
-
-#if defined(USE_EINK)
-    display->setColor(EINK_WHITE);
-#else
-    display->setColor(BLACK);
-#endif
-    display->fillRect(boxX, boxY, boxW, boxH);
-#if defined(USE_EINK)
-    display->setColor(EINK_BLACK);
-#else
-    display->setColor(WHITE);
-#endif
-    display->drawRect(boxX, boxY, boxW, boxH);
-
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-    display->setFont(FONT_SMALL);
-    HermesX_zh::drawMixedBounded(*display, bodyX, boxY + titlePadY, boxW - titlePadX * 2, gTraceRoutePopupState.title.c_str(),
-                                 HermesX_zh::GLYPH_WIDTH, titleH, nullptr);
-    display->drawLine(boxX, dividerY, boxX + boxW - 1, dividerY);
-    display->drawLine(boxX, footerY - 1, boxX + boxW - 1, footerY - 1);
-
-    const uint16_t contentHeight =
-        measureMixedWrappedTextHeight(display, gTraceRoutePopupState.body.c_str(), bodyW, lineHeight);
-    gTraceRoutePopupState.maxScrollY = (contentHeight > bodyH) ? (contentHeight - bodyH) : 0;
-    if (gTraceRoutePopupState.scrollY > gTraceRoutePopupState.maxScrollY) {
-        gTraceRoutePopupState.scrollY = gTraceRoutePopupState.maxScrollY;
-    }
-
-    const std::vector<String> wrappedLines =
-        buildMixedWrappedLines(display, gTraceRoutePopupState.body.c_str(), bodyW, HermesX_zh::GLYPH_WIDTH);
-    drawVisibleWrappedLines(display, wrappedLines, bodyX, bodyY, bodyW, bodyH, lineHeight, gTraceRoutePopupState.scrollY,
-                            HermesX_zh::GLYPH_WIDTH);
-
-    if (gTraceRoutePopupState.maxScrollY > 0) {
-        const int16_t trackX = boxX + boxW - scrollbarW;
-        display->drawRect(trackX, bodyY, scrollbarW, bodyH);
-        const int16_t thumbH =
-            std::max<int16_t>(6, static_cast<int16_t>((static_cast<int32_t>(bodyH) * bodyH) / contentHeight));
-        const int16_t thumbTravel = std::max<int16_t>(bodyH - thumbH - 2, 0);
-        const int16_t thumbY =
-            bodyY + 1 + static_cast<int16_t>((static_cast<int32_t>(thumbTravel) * gTraceRoutePopupState.scrollY) /
-                                             gTraceRoutePopupState.maxScrollY);
-        display->fillRect(trackX + 1, thumbY, scrollbarW - 2, thumbH);
-    }
-
-    const int16_t exitTextY = footerY + std::max<int16_t>(0, (footerH - FONT_HEIGHT_SMALL) / 2);
-    const char *exitLabel = u8"退出";
-    const int16_t exitW = display->getStringWidth(exitLabel);
-    const int16_t exitX = boxX + std::max<int16_t>(2, (boxW - exitW) / 2);
-    display->drawRect(exitX - 4, footerY + 1, exitW + 8, footerH - 3);
-    HermesX_zh::drawMixedBounded(*display, exitX, exitTextY, exitW + 2, exitLabel, HermesX_zh::GLYPH_WIDTH, lineHeight, nullptr);
+    HermesXTraceRouteUiRenderer::drawPopup(display);
 }
 
 static void drawSetupDetailPopupOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
@@ -8136,1354 +2701,34 @@ static void drawSetupDetailPopupOverlay(OLEDDisplay *display, OLEDDisplayUiState
     if (!display || !isSetupDetailPopupVisible()) {
         return;
     }
-
-    const int16_t width = display->getWidth();
-    const int16_t height = display->getHeight();
-    const bool compactLayout = (width < 200 || height < 120);
-    const int16_t boxX = 0;
-    const int16_t boxY = 0;
-    const int16_t boxW = width;
-    const int16_t boxH = height;
-    const int16_t titlePadX = compactLayout ? 4 : 6;
-    const int16_t titlePadY = compactLayout ? 3 : 4;
-    const int16_t titleH = compactLayout ? 16 : 18;
-    const int16_t footerH = compactLayout ? 14 : 18;
-    const int16_t dividerY = boxY + titleH + titlePadY * 2;
-    const int16_t footerY = boxY + boxH - footerH;
-    const int16_t bodyX = boxX + titlePadX;
-    const int16_t bodyY = dividerY + 3;
-    const int16_t scrollbarW = 4;
-    const int16_t bodyW = std::max<int16_t>(boxW - titlePadX * 2 - scrollbarW - 2, 20);
-    const int16_t bodyH = std::max<int16_t>(footerY - bodyY - 2, titleH);
-    const int16_t lineHeight = compactLayout ? 12 : 14;
-
-#if defined(USE_EINK)
-    display->setColor(EINK_WHITE);
-#else
-    display->setColor(BLACK);
-#endif
-    display->fillRect(boxX, boxY, boxW, boxH);
-#if defined(USE_EINK)
-    display->setColor(EINK_BLACK);
-#else
-    display->setColor(WHITE);
-#endif
-
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-    display->setFont(FONT_SMALL);
-    HermesX_zh::drawMixedBounded(*display, bodyX, boxY + titlePadY, boxW - titlePadX * 2, gSetupDetailPopupState.title.c_str(),
-                                 HermesX_zh::GLYPH_WIDTH, titleH, nullptr);
-    display->drawLine(boxX, dividerY, boxX + boxW - 1, dividerY);
-    display->drawLine(boxX, footerY - 1, boxX + boxW - 1, footerY - 1);
-
-    const uint16_t contentHeight =
-        measureMixedWrappedTextHeight(display, gSetupDetailPopupState.body.c_str(), bodyW, lineHeight);
-    gSetupDetailPopupState.maxScrollY = (contentHeight > bodyH) ? (contentHeight - bodyH) : 0;
-    if (gSetupDetailPopupState.scrollY > gSetupDetailPopupState.maxScrollY) {
-        gSetupDetailPopupState.scrollY = gSetupDetailPopupState.maxScrollY;
-    }
-
-    const std::vector<String> wrappedLines =
-        buildMixedWrappedLines(display, gSetupDetailPopupState.body.c_str(), bodyW, HermesX_zh::GLYPH_WIDTH);
-    drawVisibleWrappedLines(display, wrappedLines, bodyX, bodyY, bodyW, bodyH, lineHeight, gSetupDetailPopupState.scrollY,
-                            HermesX_zh::GLYPH_WIDTH);
-
-    if (gSetupDetailPopupState.maxScrollY > 0) {
-        const int16_t trackX = boxX + boxW - scrollbarW;
-        display->drawRect(trackX, bodyY, scrollbarW, bodyH);
-        const int16_t thumbH =
-            std::max<int16_t>(6, static_cast<int16_t>((static_cast<int32_t>(bodyH) * bodyH) / contentHeight));
-        const int16_t thumbTravel = std::max<int16_t>(bodyH - thumbH - 2, 0);
-        const int16_t thumbY =
-            bodyY + 1 + static_cast<int16_t>((static_cast<int32_t>(thumbTravel) * gSetupDetailPopupState.scrollY) /
-                                             gSetupDetailPopupState.maxScrollY);
-        display->fillRect(trackX + 1, thumbY, scrollbarW - 2, thumbH);
-    }
-
-    const int16_t exitTextY = footerY + std::max<int16_t>(0, (footerH - FONT_HEIGHT_SMALL) / 2);
-    const char *exitLabel = u8"退出";
-    const int16_t exitW = display->getStringWidth(exitLabel);
-    const int16_t exitX = boxX + std::max<int16_t>(2, (boxW - exitW) / 2);
-    display->drawRect(exitX - 4, footerY + 1, exitW + 8, footerH - 3);
-    HermesX_zh::drawMixedBounded(*display, exitX, exitTextY, exitW + 2, exitLabel, HermesX_zh::GLYPH_WIDTH, lineHeight, nullptr);
+    HermesXFastSetupUiRenderer::drawDetailPopup(display, gSetupDetailPopupState.title, gSetupDetailPopupState.body,
+                                                gSetupDetailPopupState.scrollY, gSetupDetailPopupState.maxScrollY);
 }
-
-static void drawHermesGpsFallbackCornerMapOutline(OLEDDisplay *display, int16_t x, int16_t y, int16_t width, int16_t height)
-{
-    if (!display || width < 150 || height < 86) {
-        return;
-    }
-
-    const bool compactLayout = (width < 220 || height < 120);
-    const int16_t earthR = compactLayout ? 18 : 26;
-    const int16_t earthCx = x + width + (compactLayout ? earthR / 3 : earthR / 4);
-    const int16_t earthCy = y + height + (compactLayout ? earthR / 5 : earthR / 7);
-    const int16_t haloOuterR = earthR + (compactLayout ? 5 : 7);
-    const int16_t haloInnerR = earthR + (compactLayout ? 3 : 5);
-    const int16_t landR1 = std::max<int16_t>(2, earthR / 5);
-    const int16_t landR2 = std::max<int16_t>(2, earthR / 6);
-    const int16_t landR3 = std::max<int16_t>(2, earthR / 7);
-
-    display->drawCircle(earthCx, earthCy, haloOuterR);
-    display->drawCircle(earthCx, earthCy, haloInnerR);
-    display->drawCircle(earthCx, earthCy, earthR);
-    display->drawCircle(earthCx - earthR / 2, earthCy - earthR / 2, landR1);
-    display->drawCircle(earthCx - earthR / 3, earthCy - earthR / 8, landR2);
-    display->drawCircle(earthCx - earthR / 2, earthCy + earthR / 3, landR3);
-}
-
 void Screen::drawLowMemoryReminderOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
 {
-    if (!display || !screen || !screen->lowMemoryReminderVisible) {
-        return;
-    }
-    screen->drawLowMemoryProtectionFrame(display, state);
-}
-
-void Screen::drawLowMemoryProtectionFrame(OLEDDisplay *display, OLEDDisplayUiState *state)
-{
     (void)state;
-    if (!display) {
-        return;
-    }
-
-    const int16_t width = display->getWidth();
-    const int16_t height = display->getHeight();
-#if defined(USE_EINK)
-    display->setColor(EINK_WHITE);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-    display->fillRect(0, 0, width, height);
-#if defined(USE_EINK)
-    display->setColor(EINK_BLACK);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-
-    const int advance = graphics::HermesX_zh::GLYPH_WIDTH - 1;
-    const int16_t margin = 5;
-    const int16_t bodyW = width - margin * 2;
-    graphics::HermesX_zh::drawMixedBounded(*display, margin, 2, bodyW, u8"HEAP 保護模式", advance, 12, nullptr);
-    const char *modeLine = gLowMemoryProtectionActive ? u8"已停用HOME/GPS特效與選單" : u8"Heap 已恢復，可退出";
-    graphics::HermesX_zh::drawMixedBounded(*display, margin, 16, bodyW, modeLine, advance, 11, nullptr);
-
-    char heapBuf[48];
-    snprintf(heapBuf, sizeof(heapBuf), "Heap %lu/%lu", static_cast<unsigned long>(lowMemoryReminderTriggerFree),
-             static_cast<unsigned long>(lowMemoryReminderTriggerLargest));
-    graphics::HermesX_zh::drawMixedBounded(*display, margin, 29, bodyW, heapBuf, advance, 11, nullptr);
-
-    const char *status = lowMemoryProtectionStatus[0] ? lowMemoryProtectionStatus : u8"可清除節點資料庫釋放空間";
-    graphics::HermesX_zh::drawMixedBounded(*display, margin, 42, bodyW, status, advance, 11, nullptr);
-
-    const int16_t optionY = height - 13;
-    const int16_t optionW = (width - 14) / 2;
-    auto drawOption = [&](int16_t optionX, const char *label, bool selected) {
-        if (selected) {
-#if defined(USE_EINK)
-            display->setColor(EINK_BLACK);
-#else
-            display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-            display->fillRect(optionX, optionY, optionW, 11);
-#if defined(USE_EINK)
-            display->setColor(EINK_WHITE);
-#else
-            display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-        } else {
-#if defined(USE_EINK)
-            display->setColor(EINK_BLACK);
-#else
-            display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-            display->drawRect(optionX, optionY, optionW, 11);
-        }
-        const int16_t labelW = graphics::HermesX_zh::stringAdvance(label, graphics::HermesX_zh::GLYPH_WIDTH, display);
-        int16_t labelX = optionX + (optionW - labelW) / 2;
-        if (labelX < optionX + 1) {
-            labelX = optionX + 1;
-        }
-        graphics::HermesX_zh::drawMixedBounded(*display, labelX, optionY + 1, optionW - 2, label,
-                                               graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-#if defined(USE_EINK)
-        display->setColor(EINK_BLACK);
-#else
-        display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-    };
-
-    drawOption(4, u8"退出", lowMemoryReminderSelected == 0);
-    drawOption(10 + optionW, u8"清除節點", lowMemoryReminderSelected != 0);
+    graphics::HermesXLowMemoryUiRenderer::draw(display, gLowMemoryUiState, gLowMemoryProtectionActive);
 }
 
-static void drawHermesGpsNeonAsciiText(OLEDDisplay *display,
-                                       int16_t drawX,
-                                       int16_t drawY,
-                                       const char *text,
-                                       int16_t textH,
-                                       uint16_t glowOuterColor,
-                                       uint16_t glowInnerColor,
-                                       uint16_t coreColor)
-{
-    if (!display || !text || !*text || textH <= 0) {
-        return;
-    }
-
-    const int16_t textW = display->getStringWidth(text);
-    if (textW <= 0) {
-        return;
-    }
-
-    const int16_t outerRadius = (textH >= FONT_HEIGHT_LARGE) ? 3 : 2;
-    const int16_t innerRadius = (outerRadius > 2) ? 2 : 1;
-    addTftColorZone(display,
-                    drawX - outerRadius,
-                    drawY - outerRadius,
-                    textW + outerRadius * 2,
-                    textH + outerRadius * 2,
-                    glowOuterColor,
-                    0x0000);
-    addTftColorZone(display,
-                    drawX - innerRadius,
-                    drawY - innerRadius,
-                    textW + innerRadius * 2,
-                    textH + innerRadius * 2,
-                    glowInnerColor,
-                    0x0000);
-    addTftColorZone(display, drawX, drawY, textW, textH, coreColor, 0x0000);
-
-    auto drawGlowRing = [&](int16_t radius, bool diagonal) {
-        if (radius <= 0) {
-            return;
-        }
-        display->drawString(drawX + radius, drawY, text);
-        display->drawString(drawX - radius, drawY, text);
-        display->drawString(drawX, drawY + radius, text);
-        display->drawString(drawX, drawY - radius, text);
-        if (diagonal) {
-            display->drawString(drawX + radius, drawY + radius, text);
-            display->drawString(drawX - radius, drawY + radius, text);
-            display->drawString(drawX + radius, drawY - radius, text);
-            display->drawString(drawX - radius, drawY - radius, text);
-        }
-    };
-
-    if (outerRadius > 0) {
-        drawGlowRing(outerRadius, true);
-    }
-    if (innerRadius > 0 && innerRadius != outerRadius) {
-        drawGlowRing(innerRadius, true);
-    }
-    display->drawString(drawX, drawY, text);
-}
-
-static void drawHermesGpsNeonClockText(OLEDDisplay *display,
-                                       int16_t drawX,
-                                       int16_t drawY,
-                                       const char *text,
-                                       uint16_t glowOuterColor,
-                                       uint16_t glowInnerColor,
-                                       uint16_t coreColor)
-{
-    if (!display || !text || !*text) {
-        return;
-    }
-
-    const int16_t textW = measurePattanakarnClockText(text);
-    if (textW <= 0) {
-        return;
-    }
-
-    const int16_t glyphH = PattanakarnClock32::kGlyphHeight;
-    const int16_t coreX = drawX;
-    const int16_t coreY = drawY;
-    const int16_t coreW = textW;
-    const int16_t coreH = glyphH;
-    const int16_t outerRadius = 3;
-    const int16_t innerRadius = 1;
-
-    addTftColorZone(display,
-                    drawX - outerRadius,
-                    drawY - outerRadius,
-                    textW + outerRadius * 2,
-                    glyphH + outerRadius * 2,
-                    glowOuterColor,
-                    0x0000);
-    addTftColorZone(display,
-                    drawX - innerRadius,
-                    drawY - innerRadius,
-                    textW + innerRadius * 2,
-                    glyphH + innerRadius * 2,
-                    glowInnerColor,
-                    0x0000);
-    addTftColorZone(display, drawX, drawY, textW, glyphH, coreColor, 0x0000);
-
-    auto drawGlowRing = [&](int16_t radius, bool diagonal) {
-        if (radius <= 0) {
-            return;
-        }
-        drawPattanakarnClockTextOutsideRect(display, drawX + radius, drawY, text, coreX, coreY, coreW, coreH);
-        drawPattanakarnClockTextOutsideRect(display, drawX - radius, drawY, text, coreX, coreY, coreW, coreH);
-        drawPattanakarnClockTextOutsideRect(display, drawX, drawY + radius, text, coreX, coreY, coreW, coreH);
-        drawPattanakarnClockTextOutsideRect(display, drawX, drawY - radius, text, coreX, coreY, coreW, coreH);
-        if (diagonal) {
-            drawPattanakarnClockTextOutsideRect(display, drawX + radius, drawY + radius, text, coreX, coreY, coreW, coreH);
-            drawPattanakarnClockTextOutsideRect(display, drawX - radius, drawY + radius, text, coreX, coreY, coreW, coreH);
-            drawPattanakarnClockTextOutsideRect(display, drawX + radius, drawY - radius, text, coreX, coreY, coreW, coreH);
-            drawPattanakarnClockTextOutsideRect(display, drawX - radius, drawY - radius, text, coreX, coreY, coreW, coreH);
-        }
-    };
-
-    if (outerRadius > 0) {
-        drawGlowRing(outerRadius, outerRadius > 1);
-    }
-    if (innerRadius > 0 && innerRadius != outerRadius) {
-        drawGlowRing(innerRadius, false);
-    }
-    drawPattanakarnClockText(display, drawX, drawY, text);
-}
-
-static void drawHermesGpsNeonClockTextHalf(OLEDDisplay *display,
-                                           int16_t drawX,
-                                           int16_t drawY,
-                                           const char *text,
-                                           uint16_t glowOuterColor,
-                                           uint16_t glowInnerColor,
-                                           uint16_t coreColor)
-{
-    if (!display || !text || !*text) {
-        return;
-    }
-
-    const int16_t textW = measurePattanakarnClockTextHalf(text);
-    if (textW <= 0) {
-        return;
-    }
-
-    const int16_t glyphH = kPattanakarnClockHalfHeight;
-    const int16_t coreX = drawX;
-    const int16_t coreY = drawY;
-    const int16_t coreW = textW;
-    const int16_t coreH = glyphH;
-    const int16_t outerRadius = 2;
-    const int16_t innerRadius = 1;
-    addTftColorZone(display,
-                    drawX - outerRadius,
-                    drawY - outerRadius,
-                    textW + outerRadius * 2,
-                    glyphH + outerRadius * 2,
-                    glowOuterColor,
-                    0x0000);
-    addTftColorZone(display,
-                    drawX - innerRadius,
-                    drawY - innerRadius,
-                    textW + innerRadius * 2,
-                    glyphH + innerRadius * 2,
-                    glowInnerColor,
-                    0x0000);
-    addTftColorZone(display, drawX, drawY, textW, glyphH, coreColor, 0x0000);
-
-    auto drawGlowRing = [&](int16_t radius, bool diagonal) {
-        if (radius <= 0) {
-            return;
-        }
-        drawPattanakarnClockTextHalfOutsideRect(display, drawX + radius, drawY, text, coreX, coreY, coreW, coreH);
-        drawPattanakarnClockTextHalfOutsideRect(display, drawX - radius, drawY, text, coreX, coreY, coreW, coreH);
-        drawPattanakarnClockTextHalfOutsideRect(display, drawX, drawY + radius, text, coreX, coreY, coreW, coreH);
-        drawPattanakarnClockTextHalfOutsideRect(display, drawX, drawY - radius, text, coreX, coreY, coreW, coreH);
-        if (diagonal) {
-            drawPattanakarnClockTextHalfOutsideRect(display, drawX + radius, drawY + radius, text, coreX, coreY, coreW, coreH);
-            drawPattanakarnClockTextHalfOutsideRect(display, drawX - radius, drawY + radius, text, coreX, coreY, coreW, coreH);
-            drawPattanakarnClockTextHalfOutsideRect(display, drawX + radius, drawY - radius, text, coreX, coreY, coreW, coreH);
-            drawPattanakarnClockTextHalfOutsideRect(display, drawX - radius, drawY - radius, text, coreX, coreY, coreW, coreH);
-        }
-    };
-
-    drawGlowRing(outerRadius, true);
-    drawGlowRing(innerRadius, true);
-    drawPattanakarnClockTextHalf(display, drawX, drawY, text);
-}
-
-struct IncomingNodePopupAsciiStyle {
-    bool halfScale = false;
-    int16_t xScale = 0;
-    int16_t yScale = 0;
-    int16_t stroke = 0;
-    int16_t letterAdvance = 0;
-    int16_t narrowAdvance = 0;
-    int16_t spaceAdvance = 0;
-    int16_t punctuationAdvance = 0;
-    int16_t spacing = 0;
-    int16_t glyphHeight = 0;
-};
-
-static IncomingNodePopupAsciiStyle makeIncomingNodePopupAsciiStyle(bool halfScale)
-{
-    IncomingNodePopupAsciiStyle style;
-    style.halfScale = halfScale;
-    style.xScale = halfScale ? 2 : 4;
-    style.yScale = halfScale ? 2 : 4;
-    style.stroke = halfScale ? 2 : 3;
-    style.letterAdvance = halfScale ? 11 : 20;
-    style.narrowAdvance = halfScale ? 8 : 14;
-    style.spaceAdvance = halfScale ? 4 : 8;
-    style.punctuationAdvance = halfScale ? 9 : 15;
-    style.spacing = halfScale ? 1 : 2;
-    style.glyphHeight = halfScale ? kPattanakarnClockHalfHeight : PattanakarnClock32::kGlyphHeight;
-    return style;
-}
-
-static char normalizeIncomingNodePopupAscii(char ch)
-{
-    if (ch >= 'a' && ch <= 'z') {
-        return static_cast<char>(ch - 'a' + 'A');
-    }
-    return ch;
-}
-
-static bool isIncomingNodePopupAsciiLetter(char ch)
-{
-    const char upper = normalizeIncomingNodePopupAscii(ch);
-    return upper >= 'A' && upper <= 'Z';
-}
-
-static bool isIncomingNodePopupAsciiSymbol(char ch)
-{
-    switch (ch) {
-    case ' ':
-    case '/':
-    case '_':
-    case '+':
-        return true;
-    default:
-        return false;
-    }
-}
-
-static bool canRenderIncomingNodePopupTimerText(const char *text)
-{
-    if (!text || text[0] == '\0') {
-        return false;
-    }
-
-    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
-        if (*cursor == ' ' || findPattanakarnClockGlyph(*cursor) || isIncomingNodePopupAsciiLetter(*cursor) ||
-            isIncomingNodePopupAsciiSymbol(*cursor)) {
-            continue;
-        }
-        return false;
-    }
-    return true;
-}
-
-static int16_t measureIncomingNodePopupTimerGlyph(char ch, bool halfScale)
-{
-    const IncomingNodePopupAsciiStyle style = makeIncomingNodePopupAsciiStyle(halfScale);
-    if (ch == ' ') {
-        return style.spaceAdvance;
-    }
-
-    if (const auto *glyph = findPattanakarnClockGlyph(ch)) {
-        return halfScale ? static_cast<int16_t>((glyph->width + 1) / 2) : glyph->width;
-    }
-
-    switch (normalizeIncomingNodePopupAscii(ch)) {
-    case 'I':
-        return style.narrowAdvance;
-    case '/':
-    case '_':
-    case '+':
-        return style.punctuationAdvance;
-    default:
-        if (isIncomingNodePopupAsciiLetter(ch)) {
-            return style.letterAdvance;
-        }
-        return 0;
-    }
-}
-
-static int16_t measureIncomingNodePopupTimerText(const char *text, bool halfScale)
-{
-    if (!text || text[0] == '\0') {
-        return 0;
-    }
-
-    int16_t width = 0;
-    bool first = true;
-    const IncomingNodePopupAsciiStyle style = makeIncomingNodePopupAsciiStyle(halfScale);
-    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
-        const int16_t glyphW = measureIncomingNodePopupTimerGlyph(*cursor, halfScale);
-        if (glyphW <= 0) {
-            return 0;
-        }
-
-        if (!first) {
-            width += style.spacing;
-        }
-        width += glyphW;
-        first = false;
-    }
-    return width;
-}
-
-static void drawIncomingNodePopupStroke(OLEDDisplay *display, int16_t x0, int16_t y0, int16_t x1, int16_t y1, int16_t stroke)
-{
-    if (!display || stroke <= 0) {
-        return;
-    }
-
-    const int16_t half = stroke / 2;
-    for (int16_t dx = -half; dx <= half; ++dx) {
-        for (int16_t dy = -half; dy <= half; ++dy) {
-            display->drawLine(x0 + dx, y0 + dy, x1 + dx, y1 + dy);
-        }
-    }
-}
-
-static void drawIncomingNodePopupVectorGlyph(OLEDDisplay *display, int16_t x, int16_t y, char ch, bool halfScale)
-{
-    if (!display) {
-        return;
-    }
-
-    const IncomingNodePopupAsciiStyle style = makeIncomingNodePopupAsciiStyle(halfScale);
-    const char upper = normalizeIncomingNodePopupAscii(ch);
-    auto sx = [&](int16_t gridX) { return x + (gridX * style.xScale); };
-    auto sy = [&](int16_t gridY) { return y + (gridY * style.yScale); };
-    auto segment = [&](int16_t x0, int16_t y0, int16_t x1, int16_t y1) {
-        drawIncomingNodePopupStroke(display, sx(x0), sy(y0), sx(x1), sy(y1), style.stroke);
-    };
-
-    switch (upper) {
-    case 'A':
-        segment(0, 6, 0, 2);
-        segment(0, 2, 2, 0);
-        segment(2, 0, 4, 2);
-        segment(4, 2, 4, 6);
-        segment(1, 3, 3, 3);
-        break;
-    case 'B':
-        segment(0, 0, 0, 6);
-        segment(0, 0, 3, 0);
-        segment(0, 3, 3, 3);
-        segment(0, 6, 3, 6);
-        segment(4, 1, 4, 2);
-        segment(4, 4, 4, 5);
-        break;
-    case 'C':
-        segment(1, 0, 4, 0);
-        segment(0, 1, 0, 5);
-        segment(1, 6, 4, 6);
-        break;
-    case 'D':
-        segment(0, 0, 0, 6);
-        segment(0, 0, 3, 0);
-        segment(0, 6, 3, 6);
-        segment(4, 1, 4, 5);
-        break;
-    case 'E':
-        segment(0, 0, 4, 0);
-        segment(0, 0, 0, 6);
-        segment(0, 3, 3, 3);
-        segment(0, 6, 4, 6);
-        break;
-    case 'F':
-        segment(0, 0, 4, 0);
-        segment(0, 0, 0, 6);
-        segment(0, 3, 3, 3);
-        break;
-    case 'G':
-        segment(1, 0, 4, 0);
-        segment(0, 1, 0, 5);
-        segment(1, 6, 4, 6);
-        segment(2, 3, 4, 3);
-        segment(4, 3, 4, 5);
-        break;
-    case 'H':
-        segment(0, 0, 0, 6);
-        segment(4, 0, 4, 6);
-        segment(0, 3, 4, 3);
-        break;
-    case 'I':
-        segment(0, 0, 4, 0);
-        segment(2, 0, 2, 6);
-        segment(0, 6, 4, 6);
-        break;
-    case 'J':
-        segment(0, 0, 4, 0);
-        segment(4, 0, 4, 5);
-        segment(1, 6, 3, 6);
-        segment(0, 4, 0, 5);
-        break;
-    case 'K':
-        segment(0, 0, 0, 6);
-        segment(4, 0, 0, 3);
-        segment(0, 3, 4, 6);
-        break;
-    case 'L':
-        segment(0, 0, 0, 6);
-        segment(0, 6, 4, 6);
-        break;
-    case 'M':
-        segment(0, 6, 0, 0);
-        segment(0, 0, 2, 3);
-        segment(2, 3, 4, 0);
-        segment(4, 0, 4, 6);
-        break;
-    case 'N':
-        segment(0, 6, 0, 0);
-        segment(0, 0, 4, 6);
-        segment(4, 6, 4, 0);
-        break;
-    case 'O':
-        segment(1, 0, 3, 0);
-        segment(0, 1, 0, 5);
-        segment(4, 1, 4, 5);
-        segment(1, 6, 3, 6);
-        break;
-    case 'P':
-        segment(0, 0, 0, 6);
-        segment(0, 0, 3, 0);
-        segment(0, 3, 3, 3);
-        segment(4, 1, 4, 2);
-        break;
-    case 'Q':
-        segment(1, 0, 3, 0);
-        segment(0, 1, 0, 5);
-        segment(4, 1, 4, 5);
-        segment(1, 6, 3, 6);
-        segment(2, 4, 4, 6);
-        break;
-    case 'R':
-        segment(0, 0, 0, 6);
-        segment(0, 0, 3, 0);
-        segment(0, 3, 3, 3);
-        segment(4, 1, 4, 2);
-        segment(1, 3, 4, 6);
-        break;
-    case 'S':
-        segment(1, 0, 4, 0);
-        segment(0, 1, 0, 2);
-        segment(1, 3, 3, 3);
-        segment(4, 4, 4, 5);
-        segment(0, 6, 3, 6);
-        break;
-    case 'T':
-        segment(0, 0, 4, 0);
-        segment(2, 0, 2, 6);
-        break;
-    case 'U':
-        segment(0, 0, 0, 5);
-        segment(4, 0, 4, 5);
-        segment(1, 6, 3, 6);
-        break;
-    case 'V':
-        segment(0, 0, 2, 6);
-        segment(4, 0, 2, 6);
-        break;
-    case 'W':
-        segment(0, 0, 0, 6);
-        segment(0, 6, 2, 3);
-        segment(2, 3, 4, 6);
-        segment(4, 6, 4, 0);
-        break;
-    case 'X':
-        segment(0, 0, 4, 6);
-        segment(4, 0, 0, 6);
-        break;
-    case 'Y':
-        segment(0, 0, 2, 3);
-        segment(4, 0, 2, 3);
-        segment(2, 3, 2, 6);
-        break;
-    case 'Z':
-        segment(0, 0, 4, 0);
-        segment(4, 0, 0, 6);
-        segment(0, 6, 4, 6);
-        break;
-    case '/':
-        segment(0, 6, 4, 0);
-        break;
-    case '_':
-        segment(0, 6, 4, 6);
-        break;
-    case '+':
-        segment(2, 1, 2, 5);
-        segment(0, 3, 4, 3);
-        break;
-    default:
-        break;
-    }
-}
-
-static void drawIncomingNodePopupTimerGlyph(OLEDDisplay *display, int16_t x, int16_t y, char ch, bool halfScale)
-{
-    if (!display) {
-        return;
-    }
-
-    if (ch == ' ') {
-        return;
-    }
-
-    if (findPattanakarnClockGlyph(ch)) {
-        const char glyphText[2] = {ch, '\0'};
-        if (halfScale) {
-            drawPattanakarnClockTextHalf(display, x, y, glyphText);
-        } else {
-            drawPattanakarnClockText(display, x, y, glyphText);
-        }
-        return;
-    }
-
-    drawIncomingNodePopupVectorGlyph(display, x, y, ch, halfScale);
-}
-
-static void drawIncomingNodePopupTimerText(OLEDDisplay *display, int16_t x, int16_t y, const char *text, bool halfScale)
-{
-    if (!display || !text || text[0] == '\0') {
-        return;
-    }
-
-    int16_t cursorX = x;
-    bool first = true;
-    const IncomingNodePopupAsciiStyle style = makeIncomingNodePopupAsciiStyle(halfScale);
-    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
-        const int16_t glyphW = measureIncomingNodePopupTimerGlyph(*cursor, halfScale);
-        if (glyphW <= 0) {
-            continue;
-        }
-        if (!first) {
-            cursorX += style.spacing;
-        }
-        drawIncomingNodePopupTimerGlyph(display, cursorX, y, *cursor, halfScale);
-        cursorX += glyphW;
-        first = false;
-    }
-}
-
-static void drawIncomingNodePopupBannerText(OLEDDisplay *display, int16_t x, int16_t y, int16_t maxWidth, const char *text)
-{
-    if (!display || !text || text[0] == '\0' || maxWidth <= 0) {
-        return;
-    }
-
-    const char *cursor = text;
-    const char *end = cursor + std::strlen(text);
-    int16_t cursorX = x;
-    const int16_t maxX = x + maxWidth;
-    display->setFont(FONT_SMALL);
-
-    while (cursor < end) {
-        std::uint32_t cp = HermesX_zh::nextCodepoint(cursor, end);
-        if (cp == 0 || cp == '\n') {
-            break;
-        }
-        if (cp == '\r') {
-            continue;
-        }
-
-        int16_t advance = 0;
-        if (cp >= 0x20u && cp < 0x7Fu) {
-            const char ch = static_cast<char>(cp);
-            advance = measureIncomingNodePopupTimerGlyph(ch, true);
-            if (advance <= 0) {
-                ::String asciiString(ch);
-                advance = static_cast<int16_t>(display->getStringWidth(asciiString));
-                if (advance <= 0) {
-                    advance = 6;
-                }
-            }
-
-            if (cursorX + advance > maxX) {
-                break;
-            }
-
-            if (measureIncomingNodePopupTimerGlyph(ch, true) > 0) {
-                drawIncomingNodePopupTimerGlyph(display, cursorX, y, ch, true);
-            } else {
-                ::String asciiString(ch);
-                display->drawString(cursorX, y + 1, asciiString);
-            }
-            cursorX += advance;
-            continue;
-        }
-
-        if (cursorX + HermesX_zh::GLYPH_WIDTH > maxX) {
-            break;
-        }
-
-        int glyphIndex = HermesX_zh::locateCodepoint(cp);
-        if (glyphIndex < 0) {
-            HermesX_zh::incrementMissingGlyph();
-            glyphIndex = HermesX_zh::fallbackIndex();
-        }
-        HermesX_zh::drawHanzi12Slow(*display, cursorX, y + 1, glyphIndex);
-        cursorX += HermesX_zh::GLYPH_WIDTH;
-    }
-}
-
-struct DirectIncomingNodePopupLayout {
-    bool tiny = false;
-    int16_t textX = 0;
-    int16_t textW = 0;
-    int16_t titleY = 0;
-    int16_t idY = 0;
-    int16_t nameY = 0;
-    int16_t bannerY = 0;
-    int16_t bannerH = 0;
-    int16_t iconCx = 0;
-    int16_t iconCy = 0;
-    int16_t outerR = 0;
-    int16_t innerR = 0;
-    int16_t dotR = 0;
-};
-
-static DirectIncomingNodePopupLayout makeDirectIncomingNodePopupLayout(int16_t width, int16_t height)
-{
-    DirectIncomingNodePopupLayout layout;
-    layout.tiny = (width < 260 || height < 160);
-    layout.textX = layout.tiny ? std::max<int16_t>(10, width / 9) : std::max<int16_t>(18, width / 10);
-    layout.textW = std::max<int16_t>(48, (width * 46) / 100);
-    layout.titleY = layout.tiny ? std::max<int16_t>(20, height / 4) : std::max<int16_t>(26, height / 4);
-    layout.idY = layout.titleY + (layout.tiny ? 34 : 44);
-    layout.bannerH = layout.tiny ? 34 : 42;
-    layout.bannerY = height - layout.bannerH;
-    layout.nameY = layout.bannerY + std::max<int16_t>(8, (layout.bannerH - 14) / 2);
-    layout.dotR = layout.tiny ? std::max<int16_t>(10, height / 14) : std::max<int16_t>(14, height / 13);
-    layout.outerR = layout.tiny ? std::max<int16_t>(44, width / 3) : std::max<int16_t>(58, width / 3);
-    layout.innerR = (layout.outerR * 2) / 3;
-    layout.iconCx = width - layout.outerR - (layout.tiny ? 10 : 16);
-    layout.iconCy = layout.bannerY - layout.dotR - (layout.tiny ? 8 : 12);
-    if (layout.iconCx < (width / 2)) {
-        layout.iconCx = width / 2;
-    }
-    if (layout.iconCy < (height / 2)) {
-        layout.iconCy = height / 2;
-    }
-    return layout;
-}
-
-static void directDrawArcApprox565(TFTDisplay *tft,
-                                   int16_t displayW,
-                                   int16_t displayH,
-                                   int16_t cx,
-                                   int16_t cy,
-                                   int16_t radius,
-                                   float startDeg,
-                                   float endDeg,
-                                   int16_t thickness,
-                                   uint16_t color)
-{
-    if (!tft || radius <= 0 || thickness <= 0) {
-        return;
-    }
-
-    const int steps = std::max<int>(12, radius);
-    for (int16_t t = 0; t < thickness; ++t) {
-        const int16_t rr = radius - t;
-        if (rr <= 0) {
-            break;
-        }
-
-        bool hasPrev = false;
-        int16_t px = 0;
-        int16_t py = 0;
-        for (int i = 0; i <= steps; ++i) {
-            const float u = static_cast<float>(i) / static_cast<float>(steps);
-            const float deg = startDeg + (endDeg - startDeg) * u;
-            const float a = deg * PI / 180.0f;
-            const int16_t x = cx + static_cast<int16_t>(lrintf(cosf(a) * rr));
-            const int16_t y = cy + static_cast<int16_t>(lrintf(sinf(a) * rr));
-            if (hasPrev) {
-                directDrawLine565(tft, displayW, displayH, px, py, x, y, color);
-            }
-            px = x;
-            py = y;
-            hasPrev = true;
-        }
-    }
-}
-
-static void renderDirectIncomingNodePopupBackdrop(TFTDisplay *tft,
-                                                  int16_t width,
-                                                  int16_t height,
-                                                  const DirectIncomingNodePopupLayout &layout)
-{
-    if (!tft || width <= 0 || height <= 0) {
-        return;
-    }
-
-    const bool tiny = layout.tiny;
-    const uint16_t black = TFTDisplay::rgb565(0x00, 0x00, 0x00);
-    const uint16_t waveCore = TFTDisplay::rgb565(0x1D, 0xD7, 0xFF);
-    const uint16_t waveGlowNear = TFTDisplay::rgb565(0x08, 0x67, 0xC8);
-    const uint16_t waveGlowFar = TFTDisplay::rgb565(0x03, 0x23, 0x75);
-    tft->fillRect565(0, 0, width, height, black);
-
-    const int16_t waveLines = tiny ? 8 : 10;
-    const int16_t waveSegments = tiny ? 22 : 24;
-    const int16_t waveCoreThickness = 1;
-    const int16_t waveNearThickness = tiny ? 0 : 1;
-    const int16_t waveFarThickness = tiny ? 0 : 2;
-    const int16_t waveTargetY = layout.iconCy - (layout.outerR / 6);
-    for (int16_t i = 0; i < waveLines; ++i) {
-        const float spread = static_cast<float>(i - (waveLines / 2));
-        const int16_t startY = height - 1 - (i * (tiny ? 3 : 5));
-        const int16_t endY = waveTargetY + static_cast<int16_t>(spread * (tiny ? 2.2f : 1.9f));
-        int16_t prevX = 0;
-        int16_t prevY = startY;
-        for (int16_t seg = 1; seg <= waveSegments; ++seg) {
-            const float t = static_cast<float>(seg) / static_cast<float>(waveSegments);
-            const int16_t x = static_cast<int16_t>(lrintf((width - 1) * t));
-            const float baseY = static_cast<float>(startY) * (1.0f - t) + static_cast<float>(endY) * t;
-            const float amp = (tiny ? 1.4f : 3.2f) * (1.0f - t);
-            const float wave = sinf((t * (tiny ? 2.1f : 2.5f) * PI) + (i * 0.32f)) * amp;
-            const int16_t y = static_cast<int16_t>(lrintf(baseY + wave));
-            directDrawNeonLine565(
-                tft, width, height, prevX, prevY, x, y, waveCore, waveGlowNear, waveGlowFar, waveCoreThickness, waveNearThickness,
-                waveFarThickness);
-            prevX = x;
-            prevY = y;
-        }
-    }
-
-    const int16_t topArcLines = tiny ? 5 : 6;
-    const int16_t topArcSegments = 16;
-    const int16_t topArcCoreThickness = 1;
-    const int16_t topArcNearThickness = tiny ? 0 : 1;
-    const int16_t topArcFarThickness = tiny ? 0 : 2;
-    for (int16_t i = 0; i < topArcLines; ++i) {
-        const int16_t startX = width - 1;
-        const int16_t startY = -4 + (i * (tiny ? 3 : 4));
-        const int16_t endX = layout.iconCx - (layout.outerR / 3) + (i / 2);
-        const int16_t endY = layout.iconCy - (layout.outerR / 2) + (i * (tiny ? 2 : 3));
-        int16_t prevX = startX;
-        int16_t prevY = startY;
-        for (int16_t seg = 1; seg <= topArcSegments; ++seg) {
-            const float t = static_cast<float>(seg) / static_cast<float>(topArcSegments);
-            const float curve = (1.0f - t) * t;
-            const int16_t x = static_cast<int16_t>(lrintf((startX * (1.0f - t)) + (endX * t) - curve * (tiny ? 18.0f : 28.0f)));
-            const int16_t y = static_cast<int16_t>(lrintf((startY * (1.0f - t)) + (endY * t) + sinf((t + (i * 0.06f)) * PI) * 2.0f));
-            directDrawNeonLine565(
-                tft, width, height, prevX, prevY, x, y, waveCore, waveGlowNear, waveGlowFar, topArcCoreThickness, topArcNearThickness,
-                topArcFarThickness);
-            prevX = x;
-            prevY = y;
-        }
-    }
-
-    const uint16_t bannerBg = TFTDisplay::rgb565(0x0B, 0x11, 0x16);
-    const uint16_t bannerEdge = TFTDisplay::rgb565(0x2A, 0x39, 0x46);
-    tft->fillRect565(0, layout.bannerY, width, layout.bannerH, bannerBg);
-    tft->fillRect565(0, layout.bannerY, width, 1, bannerEdge);
-}
-
-static void renderDirectIncomingNodePopupSignalIcon(TFTDisplay *tft,
-                                                    int16_t width,
-                                                    int16_t height,
-                                                    const DirectIncomingNodePopupLayout &layout)
-{
-    if (!tft || width <= 0 || height <= 0) {
-        return;
-    }
-
-    const uint16_t core = TFTDisplay::rgb565(0xF8, 0xAB, 0x2E);
-    const uint16_t coreHi = TFTDisplay::rgb565(0xFF, 0xC8, 0x63);
-    const uint16_t bloomFar = TFTDisplay::rgb565(0x41, 0x13, 0x00);
-    const uint16_t bloomNear = TFTDisplay::rgb565(0x7A, 0x28, 0x00);
-    const int16_t bloomOuterExtra = layout.tiny ? 6 : 10;
-    const int16_t bloomInnerExtra = layout.tiny ? 3 : 5;
-
-    auto drawSoftBloomArc = [&](int16_t baseRadius, int16_t baseThickness) {
-        directDrawArcApprox565(tft,
-                               width,
-                               height,
-                               layout.iconCx,
-                               layout.iconCy,
-                               baseRadius + bloomOuterExtra,
-                               -90.0f,
-                               0.0f,
-                               baseThickness + (layout.tiny ? 4 : 6),
-                               bloomFar);
-        directDrawArcApprox565(tft,
-                               width,
-                               height,
-                               layout.iconCx,
-                               layout.iconCy,
-                               baseRadius + bloomInnerExtra,
-                               -90.0f,
-                               0.0f,
-                               baseThickness + (layout.tiny ? 2 : 4),
-                               bloomNear);
-        directDrawArcApprox565(tft,
-                               width,
-                               height,
-                               layout.iconCx,
-                               layout.iconCy,
-                               baseRadius + 1,
-                               -90.0f,
-                               0.0f,
-                               baseThickness + 1,
-                               coreHi);
-        directDrawArcApprox565(tft, width, height, layout.iconCx, layout.iconCy, baseRadius, -90.0f, 0.0f, baseThickness, core);
-    };
-
-    drawSoftBloomArc(layout.outerR, layout.tiny ? 7 : 10);
-    drawSoftBloomArc(layout.innerR, layout.tiny ? 6 : 8);
-    directFillCircle565(tft, width, height, layout.iconCx, layout.iconCy, layout.dotR + (layout.tiny ? 5 : 7), bloomFar);
-    directFillCircle565(tft, width, height, layout.iconCx, layout.iconCy, layout.dotR + (layout.tiny ? 2 : 3), bloomNear);
-    directFillCircle565(tft, width, height, layout.iconCx, layout.iconCy, layout.dotR + 1, coreHi);
-    directFillCircle565(tft, width, height, layout.iconCx, layout.iconCy, layout.dotR, core);
-}
-
-static void renderDirectIncomingNodePopupText(TFTDisplay *tft,
-                                              int16_t width,
-                                              int16_t height,
-                                              const DirectIncomingNodePopupLayout &layout,
-                                              const meshtastic_NodeInfoLite &node)
-{
-    if (!tft) {
-        return;
-    }
-
-    char shortName[12];
-    char nameBuf[64];
-    formatIncomingNodePopupShortId(node, shortName, sizeof(shortName));
-    formatIncomingNodePopupName(node, nameBuf, sizeof(nameBuf), 14);
-    const int16_t shortNameW = measureIncomingNodePopupTimerText(shortName);
-    const int16_t shortNameX = std::max<int16_t>(layout.textX, layout.textX + ((layout.textW - shortNameW) / 2));
-    const int16_t shortNameY = layout.idY - (layout.tiny ? 4 : 6);
-    const bool shortNameIsTimerText = canRenderIncomingNodePopupTimerText(shortName);
-
-    tft->clear();
-    tft->clearColorPaletteZones();
-    tft->setColorPaletteDefaults(0xFFFF, 0x0000);
-    tft->setColor(WHITE);
-    tft->setTextAlignment(TEXT_ALIGN_LEFT);
-    HermesX_zh::drawMixedBounded(*tft, layout.textX, layout.titleY, layout.textW, u8"發現新節點！", HermesX_zh::GLYPH_WIDTH,
-                                 layout.tiny ? 16 : 20, nullptr);
-
-    if (shortNameIsTimerText) {
-        drawIncomingNodePopupTimerText(tft, shortNameX, shortNameY, shortName);
-    } else {
-        tft->setFont(layout.tiny ? FONT_MEDIUM : FONT_LARGE);
-        HermesX_zh::drawMixedBounded(*tft,
-                                     layout.textX + (layout.tiny ? 18 : 26),
-                                     layout.idY,
-                                     layout.textW - (layout.tiny ? 16 : 24),
-                                     shortName,
-                                     HermesX_zh::GLYPH_WIDTH,
-                                     layout.tiny ? 16 : 20,
-                                     nullptr);
-    }
-
-    tft->setFont(layout.tiny ? FONT_SMALL : FONT_MEDIUM);
-    drawIncomingNodePopupBannerText(tft, layout.textX, layout.nameY, width - (layout.textX * 2), nameBuf);
-    tft->overlayBufferForeground565();
-}
-
-static void renderDirectIncomingNodePopup(TFTDisplay *tft, int16_t width, int16_t height, const meshtastic_NodeInfoLite &node)
-{
-    if (!tft || width <= 0 || height <= 0) {
-        return;
-    }
-
-    const DirectIncomingNodePopupLayout layout = makeDirectIncomingNodePopupLayout(width, height);
-    renderDirectIncomingNodePopupBackdrop(tft, width, height, layout);
-    renderDirectIncomingNodePopupSignalIcon(tft, width, height, layout);
-    renderDirectIncomingNodePopupText(tft, width, height, layout, node);
-}
-
-static void drawHermesGpsMonoNeonStringMaxWidth(OLEDDisplay *display,
-                                                 int16_t drawX,
-                                                 int16_t drawY,
-                                                 int16_t maxW,
-                                                 const char *text,
-                                                 int16_t outerRadius,
-                                                 int16_t innerRadius)
-{
-    if (!display || !text || !*text || maxW <= 0) {
-        return;
-    }
-
-    auto drawAt = [&](int16_t dx, int16_t dy) { display->drawStringMaxWidth(drawX + dx, drawY + dy, maxW, text); };
-    auto drawRing = [&](int16_t radius, bool diagonal) {
-        if (radius <= 0) {
-            return;
-        }
-        drawAt(radius, 0);
-        drawAt(-radius, 0);
-        drawAt(0, radius);
-        drawAt(0, -radius);
-        if (diagonal) {
-            drawAt(radius, radius);
-            drawAt(-radius, radius);
-            drawAt(radius, -radius);
-            drawAt(-radius, -radius);
-        }
-    };
-
-    if (outerRadius > innerRadius) {
-        drawRing(outerRadius, true);
-    }
-    if (innerRadius > 0) {
-        drawRing(innerRadius, true);
-    }
-    drawAt(0, 0);
-}
-
-static void drawHermesGpsMonoNeonMixedBounded(OLEDDisplay *display,
-                                               int16_t drawX,
-                                               int16_t drawY,
-                                               int16_t maxW,
-                                               const char *text,
-                                               int16_t advanceX,
-                                               int16_t lineHeight,
-                                               int16_t outerRadius,
-                                               int16_t innerRadius)
-{
-    if (!display || !text || !*text || maxW <= 0 || advanceX <= 0 || lineHeight <= 0) {
-        return;
-    }
-
-    auto drawAt = [&](int16_t dx, int16_t dy) {
-        HermesX_zh::drawMixedBounded(*display, drawX + dx, drawY + dy, maxW, text, advanceX, lineHeight, nullptr);
-    };
-    auto drawRing = [&](int16_t radius, bool diagonal) {
-        if (radius <= 0) {
-            return;
-        }
-        drawAt(radius, 0);
-        drawAt(-radius, 0);
-        drawAt(0, radius);
-        drawAt(0, -radius);
-        if (diagonal) {
-            drawAt(radius, radius);
-            drawAt(-radius, radius);
-            drawAt(radius, -radius);
-            drawAt(-radius, -radius);
-        }
-    };
-
-    if (outerRadius > innerRadius) {
-        drawRing(outerRadius, true);
-    }
-    if (innerRadius > 0) {
-        drawRing(innerRadius, true);
-    }
-    drawAt(0, 0);
-}
 
 static void drawHermesGpsHeroFrame(OLEDDisplay *display, int16_t x, int16_t y, const GPSStatus *gps)
 {
     const int16_t width = display->getWidth();
     const int16_t height = display->getHeight();
-    const bool posterTftLayout = supportsDirectTftClockRendering(display);
+    const bool posterTftLayout = supportsDirectTftOverlayRendering(display);
 
     if (posterTftLayout) {
-        if (x != 0 || y != 0) {
-            // During UI slide transitions, only clear our frame tile.
-            // Rendering full poster decorations here can leak into adjacent tiles and look like page residue.
-            display->setColor(BLACK);
-            display->fillRect(x, y, width, height);
-            display->setFont(FONT_SMALL);
-            return;
-        }
-        const bool tinyPosterLayout = (width <= 176 || height <= 96);
-
-        const uint16_t colorSatellite = TFTDisplay::rgb565(0x70, 0xB5, 0xD3);
-        const uint16_t colorEarthRedGlowOuter = TFTDisplay::rgb565(0x70, 0x08, 0x1A);
-        const uint16_t colorEarthRedGlowInner = TFTDisplay::rgb565(0xE4, 0x4C, 0x7A);
-        const uint16_t colorEarthGlowOuter = TFTDisplay::rgb565(0x1B, 0x59, 0x73);
-        const uint16_t colorEarthGlowInner = TFTDisplay::rgb565(0x67, 0xBA, 0xD7);
-        const uint16_t colorEarthBase = TFTDisplay::rgb565(0xA9, 0xD0, 0xE0);
-        const uint16_t colorEarthLand = TFTDisplay::rgb565(0x6D, 0xB1, 0xC9);
-        const uint16_t colorGpsGlowOuter = TFTDisplay::rgb565(0x8A, 0x2A, 0x00);
-        const uint16_t colorGpsGlowInner = TFTDisplay::rgb565(0xFF, 0xC5, 0x5F);
-        const uint16_t colorGpsCore = TFTDisplay::rgb565(0xFF, 0xF4, 0xDB);
-        const uint16_t colorOnGlowOuter = TFTDisplay::rgb565(0x00, 0x56, 0xAF);
-        const uint16_t colorOnGlowInner = TFTDisplay::rgb565(0x7D, 0xE5, 0xFF);
-        const uint16_t colorOnCore = TFTDisplay::rgb565(0xE4, 0xF5, 0xFF);
-        const uint16_t colorOffGlowOuter = TFTDisplay::rgb565(0x1B, 0x12, 0x12);
-        const uint16_t colorOffGlowInner = TFTDisplay::rgb565(0xA8, 0x58, 0x58);
-        const uint16_t colorOffCore = TFTDisplay::rgb565(0xFF, 0xE8, 0xE8);
         const bool gpsEnabled = config.position.gps_mode == meshtastic_Config_PositionConfig_GpsMode_ENABLED;
-
-        display->setTextAlignment(TEXT_ALIGN_LEFT);
-        display->setColor(BLACK);
-        display->fillRect(x, y, width, height);
-
-        static const uint8_t kStars[][3] = {
-            {5, 4, 2},   {17, 16, 2}, {45, 9, 2},   {65, 6, 2},  {6, 50, 2},   {38, 61, 2},
-            {58, 44, 2}, {27, 85, 2}, {2, 97, 2},   {42, 98, 2}, {58, 86, 2},  {49, 29, 2},
-        };
-        display->setColor(WHITE);
-        for (const auto &star : kStars) {
-            const int16_t sx = x + static_cast<int16_t>((width * star[0]) / 100);
-            const int16_t sy = y + static_cast<int16_t>((height * star[1]) / 100);
-            display->fillCircle(sx, sy, tinyPosterLayout ? 1 : star[2]);
-        }
-
-        int16_t satSize = (width < height) ? width : height;
-        satSize = (satSize * (tinyPosterLayout ? 58 : 52)) / 100;
-        if (satSize < (tinyPosterLayout ? 34 : 46)) {
-            satSize = tinyPosterLayout ? 34 : 46;
-        }
-        const int16_t satCx = x + (width * (tinyPosterLayout ? 16 : 18)) / 100;
-        const int16_t satCy = y + (height * (tinyPosterLayout ? 52 : 49)) / 100;
-        const int16_t satPad = tinyPosterLayout ? 9 : 12;
-        addTftColorZone(display,
-                        satCx - satSize / 2 - satPad,
-                        satCy - satSize / 2 - satPad,
-                        satSize + satPad * 2,
-                        satSize + satPad * 2,
-                        colorSatellite,
-                        0x0000);
-        drawHermesGpsPosterSatelliteMark(display, satCx, satCy, satSize);
-
-        int16_t earthR = (height * (tinyPosterLayout ? 52 : 64)) / 100;
-        if (earthR < (tinyPosterLayout ? 28 : 40)) {
-            earthR = tinyPosterLayout ? 28 : 40;
-        }
-        const int16_t earthCx = x + width + (tinyPosterLayout ? std::max<int16_t>(4, earthR / 5) : earthR / 3);
-        const int16_t earthCy = y + height + (tinyPosterLayout ? std::max<int16_t>(4, earthR / 6) : earthR / 2);
-        const int16_t earthHaloRedOuterR = earthR + (tinyPosterLayout ? 10 : 13);
-        const int16_t earthHaloRedInnerR = earthR + (tinyPosterLayout ? 7 : 9);
-        const int16_t earthHaloOuterR = earthR + (tinyPosterLayout ? 4 : 6);
-        const int16_t earthHaloInnerR = earthR + (tinyPosterLayout ? 2 : 4);
-        addTftColorZone(display,
-                        earthCx - earthHaloRedOuterR,
-                        earthCy - earthHaloRedOuterR,
-                        earthHaloRedOuterR * 2 + 2,
-                        earthHaloRedOuterR * 2 + 2,
-                        colorEarthRedGlowOuter,
-                        0x0000);
-        addTftColorZone(display,
-                        earthCx - earthHaloRedInnerR,
-                        earthCy - earthHaloRedInnerR,
-                        earthHaloRedInnerR * 2 + 2,
-                        earthHaloRedInnerR * 2 + 2,
-                        colorEarthRedGlowInner,
-                        0x0000);
-        addTftColorZone(display,
-                        earthCx - earthHaloOuterR,
-                        earthCy - earthHaloOuterR,
-                        earthHaloOuterR * 2 + 2,
-                        earthHaloOuterR * 2 + 2,
-                        colorEarthGlowOuter,
-                        0x0000);
-        addTftColorZone(display,
-                        earthCx - earthHaloInnerR,
-                        earthCy - earthHaloInnerR,
-                        earthHaloInnerR * 2 + 2,
-                        earthHaloInnerR * 2 + 2,
-                        colorEarthGlowInner,
-                        0x0000);
-        addTftColorZone(display, earthCx - earthR, earthCy - earthR, earthR * 2 + 2, earthR * 2 + 2, colorEarthBase, 0x0000);
-        addTftColorZone(display,
-                        earthCx - earthR + earthR / 2,
-                        earthCy - earthR + earthR / 4,
-                        earthR,
-                        earthR + (earthR / 2),
-                        colorEarthLand,
-                        0x0000);
-        display->setColor(WHITE);
-        display->fillCircle(earthCx, earthCy, earthHaloRedOuterR);
-        display->fillCircle(earthCx, earthCy, earthHaloRedInnerR);
-        display->fillCircle(earthCx, earthCy, earthHaloOuterR);
-        display->fillCircle(earthCx, earthCy, earthHaloInnerR);
-        display->fillCircle(earthCx, earthCy, earthR);
-        display->fillCircle(earthCx - earthR / 2, earthCy - earthR / 2, earthR / 4);
-        display->fillCircle(earthCx - earthR / 3, earthCy - earthR / 8, earthR / 5);
-        display->fillCircle(earthCx - earthR / 2, earthCy + earthR / 3, earthR / 5);
-        display->fillCircle(earthCx - earthR / 5, earthCy + earthR / 6, earthR / 7);
-
-        display->setFont(tinyPosterLayout ? FONT_MEDIUM : FONT_LARGE);
-        int16_t titleFontH = tinyPosterLayout ? FONT_HEIGHT_MEDIUM : FONT_HEIGHT_LARGE;
-        if (!tinyPosterLayout && display->getStringWidth("GPS ON") > ((width * 52) / 100)) {
-            display->setFont(FONT_MEDIUM);
-            titleFontH = FONT_HEIGHT_MEDIUM;
-        }
-        const char *gpsWord = "GPS";
-        const char *onWord = gpsEnabled ? "ON" : "OFF";
-        int16_t titleGap = width / 30;
-        if (titleGap < (tinyPosterLayout ? 4 : 6)) {
-            titleGap = tinyPosterLayout ? 4 : 6;
-        }
-        const int16_t gpsW = display->getStringWidth(gpsWord);
-        const int16_t onW = display->getStringWidth(onWord);
-        const int16_t titleY = y + (height * (tinyPosterLayout ? 9 : 17)) / 100;
-        const int16_t titleCenterX = x + (width * (tinyPosterLayout ? 60 : 58)) / 100;
-        const int16_t titleX = titleCenterX - (gpsW + titleGap + onW) / 2;
-        const uint16_t stateGlowOuter = gpsEnabled ? colorOnGlowOuter : colorOffGlowOuter;
-        const uint16_t stateGlowInner = gpsEnabled ? colorOnGlowInner : colorOffGlowInner;
-        const uint16_t stateCore = gpsEnabled ? colorOnCore : colorOffCore;
-        drawHermesGpsNeonAsciiText(
-            display, titleX, titleY, gpsWord, titleFontH, colorGpsGlowOuter, colorGpsGlowInner, colorGpsCore);
-        drawHermesGpsNeonAsciiText(
-            display, titleX + gpsW + titleGap, titleY, onWord, titleFontH, stateGlowOuter, stateGlowInner, stateCore);
+        HermesXGpsUiRenderer::drawPosterBase(display, x, y, width, height, gpsEnabled, addTftColorZone);
 
         // Coordinates are rendered after ui->update() via direct-TFT neon (same pipeline as Home timer).
         (void)gps;
 
-        display->setFont(FONT_SMALL);
         return;
     }
 
     const bool largeLayout = (width >= 240 && height >= 130);
     const bool compactLayout = (width < 220 || height < 120);
-    const int16_t compactLineH = _fontHeight(FONT_SMALL_LOCAL);
-
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-    display->setColor(BLACK);
-    display->fillRect(x, y, width, height);
-    display->setColor(WHITE);
-    display->setFont(compactLayout ? FONT_SMALL_LOCAL : FONT_SMALL);
-
-    // Reserve a bottom strip to avoid colliding with HermesX menu footer overlay.
-    const int16_t footerReserve = compactLayout ? 2 : (FONT_HEIGHT_SMALL + 4);
-    int16_t usableHeight = height - footerReserve;
-    if (usableHeight < (height / 2)) {
-        usableHeight = height;
-    }
-
-    int16_t leftPaneWidth = compactLayout ? ((width * 34) / 100) : ((width * 40) / 100);
-    if (leftPaneWidth < (compactLayout ? 50 : 72)) {
-        leftPaneWidth = compactLayout ? 50 : 72;
-    }
-    if (leftPaneWidth > width - (compactLayout ? 80 : 92)) {
-        leftPaneWidth = width - (compactLayout ? 80 : 92);
-    }
-
-    int16_t iconSize = leftPaneWidth - (compactLayout ? 8 : (largeLayout ? 16 : 12));
-    const int16_t maxIconHeight =
-        usableHeight - (compactLayout ? compactLineH : FONT_HEIGHT_SMALL) - (compactLayout ? 10 : (largeLayout ? 20 : 14));
-    if (iconSize > maxIconHeight) {
-        iconSize = maxIconHeight;
-    }
-    if (iconSize < (compactLayout ? 20 : 24)) {
-        iconSize = compactLayout ? 20 : 24;
-    }
-
-    const int16_t iconX = x + (leftPaneWidth - iconSize) / 2;
-    const int16_t iconY = y + (compactLayout ? 2 : (largeLayout ? 8 : 4));
-    drawHermesGpsSatelliteIcon(display, iconX, iconY, iconSize);
-
-    char satLine[48];
-    snprintf(satLine, sizeof(satLine), compactLayout ? u8"衛星:%u" : u8"衛星數量：%u", gps->getNumSatellites());
-    const int16_t satY = y + usableHeight - (compactLayout ? compactLineH : FONT_HEIGHT_SMALL) - 2;
-    HermesX_zh::drawMixedBounded(*display, x + 4, satY, leftPaneWidth - 8, satLine,
-                                 HermesX_zh::GLYPH_WIDTH, compactLayout ? compactLineH : FONT_HEIGHT_SMALL, nullptr);
-
-    const int16_t rightGap = compactLayout ? 6 : (largeLayout ? 10 : 8);
-    const int16_t rightX = x + leftPaneWidth + rightGap;
-    const int16_t rightWidth = width - leftPaneWidth - rightGap - 4;
-    if (rightWidth < 30) {
-        return;
-    }
-
     const bool gpsEnabled = config.position.gps_mode == meshtastic_Config_PositionConfig_GpsMode_ENABLED;
     const char *gpsTitle = gpsEnabled ? "GPS ON" : "GPS OFF";
     const char *lockStatus = u8"已停用";
@@ -9547,90 +2792,16 @@ static void drawHermesGpsHeroFrame(OLEDDisplay *display, int16_t x, int16_t y, c
         }
     }
 
-    if (compactLayout) {
-        int16_t rowY = y + 2;
-
-        display->setFont(FONT_SMALL_LOCAL);
-        drawHermesGpsMonoNeonStringMaxWidth(display, rightX, rowY, rightWidth, gpsTitle, 1, 0);
-        rowY += compactLineH + 1;
-
-        char lockLineCompact[40];
-        snprintf(lockLineCompact, sizeof(lockLineCompact), "%s%s", u8"定位:", lockStatusShort);
-        drawHermesGpsMonoNeonMixedBounded(
-            display, rightX, rowY, rightWidth, lockLineCompact, HermesX_zh::GLYPH_WIDTH, compactLineH, 1, 0);
-        rowY += compactLineH + 1;
-
-        const char *coordLabelCompact = u8"座標:";
-        const int16_t coordLabelCompactW = HermesX_zh::stringAdvance(coordLabelCompact, HermesX_zh::GLYPH_WIDTH, display);
-        const int16_t coordCompactValueX = rightX + coordLabelCompactW + 2;
-        const int16_t coordCompactValueW = rightWidth - (coordCompactValueX - rightX);
-        HermesX_zh::drawMixedBounded(*display, rightX, rowY, rightWidth, coordLabelCompact, HermesX_zh::GLYPH_WIDTH,
-                                     compactLineH, nullptr);
-        display->setFont(FONT_SMALL_LOCAL);
-        drawHermesGpsMonoNeonStringMaxWidth(display, coordCompactValueX, rowY, coordCompactValueW, lonLine, 1, 0);
-        rowY += compactLineH;
-        drawHermesGpsMonoNeonStringMaxWidth(display, coordCompactValueX, rowY, coordCompactValueW, latLine, 1, 0);
-        rowY += compactLineH + 1;
-
-        const char *timeLabelCompact = u8"時間:";
-        const int16_t timeLabelCompactW = HermesX_zh::stringAdvance(timeLabelCompact, HermesX_zh::GLYPH_WIDTH, display);
-        const int16_t timeCompactValueX = rightX + timeLabelCompactW + 2;
-        const int16_t timeCompactValueW = rightWidth - (timeCompactValueX - rightX);
-        HermesX_zh::drawMixedBounded(*display, rightX, rowY, rightWidth, timeLabelCompact, HermesX_zh::GLYPH_WIDTH,
-                                     compactLineH, nullptr);
-        drawHermesGpsMonoNeonStringMaxWidth(display, timeCompactValueX, rowY, timeCompactValueW, compactTimeLine, 1, 0);
-        display->setFont(FONT_SMALL_LOCAL);
-        return;
-    }
-
-    const int16_t valueFontHeight = largeLayout ? FONT_HEIGHT_MEDIUM : FONT_HEIGHT_SMALL;
-    const int16_t sectionGap = largeLayout ? 8 : 4;
-    const int16_t valueGap = largeLayout ? 2 : 1;
-    int16_t rowY = y + (largeLayout ? 8 : 6);
-
-    display->setFont(largeLayout ? FONT_MEDIUM : FONT_SMALL);
-    const int16_t titleLineH = largeLayout ? FONT_HEIGHT_MEDIUM : FONT_HEIGHT_SMALL;
-    drawHermesGpsMonoNeonStringMaxWidth(display, rightX, rowY, rightWidth, gpsTitle, 2, 1);
-    rowY += titleLineH + sectionGap;
-
-    char lockLine[64];
-    snprintf(lockLine, sizeof(lockLine), "%s%s", u8"衛星定位：", lockStatus);
-    drawHermesGpsMonoNeonMixedBounded(display,
-                                      rightX,
-                                      rowY,
-                                      rightWidth,
-                                      lockLine,
-                                      HermesX_zh::GLYPH_WIDTH,
-                                      largeLayout ? FONT_HEIGHT_MEDIUM : FONT_HEIGHT_SMALL,
-                                      1,
-                                      0);
-    rowY += (largeLayout ? FONT_HEIGHT_MEDIUM : FONT_HEIGHT_SMALL) + sectionGap;
-
-    const char *coordLabel = u8"座標：";
-    const int16_t coordLabelW = HermesX_zh::stringAdvance(coordLabel, HermesX_zh::GLYPH_WIDTH, display);
-    const int16_t coordValueX = rightX + coordLabelW + (largeLayout ? 8 : 4);
-    const int16_t coordValueW = rightWidth - (coordValueX - rightX);
-    HermesX_zh::drawMixedBounded(*display, rightX, rowY, rightWidth, coordLabel, HermesX_zh::GLYPH_WIDTH,
-                                 largeLayout ? FONT_HEIGHT_MEDIUM : FONT_HEIGHT_SMALL, nullptr);
-    display->setFont(largeLayout ? FONT_MEDIUM : FONT_SMALL);
-    drawHermesGpsMonoNeonStringMaxWidth(display, coordValueX, rowY, coordValueW, lonLine, 2, 1);
-    rowY += valueFontHeight + valueGap;
-    drawHermesGpsMonoNeonStringMaxWidth(display, coordValueX, rowY, coordValueW, latLine, 2, 1);
-    rowY += valueFontHeight + sectionGap;
-
-    const char *timeLabel = u8"時間：";
-    const int16_t timeLabelW = HermesX_zh::stringAdvance(timeLabel, HermesX_zh::GLYPH_WIDTH, display);
-    const int16_t timeValueX = rightX + timeLabelW + (largeLayout ? 8 : 4);
-    const int16_t timeValueW = rightWidth - (timeValueX - rightX);
-    display->setFont(FONT_SMALL);
-    HermesX_zh::drawMixedBounded(*display, rightX, rowY, rightWidth, timeLabel, HermesX_zh::GLYPH_WIDTH,
-                                 largeLayout ? FONT_HEIGHT_MEDIUM : FONT_HEIGHT_SMALL, nullptr);
-    display->setFont(largeLayout ? FONT_MEDIUM : FONT_SMALL);
-    display->drawStringMaxWidth(timeValueX, rowY, timeValueW, dateLine);
-    rowY += valueFontHeight + valueGap;
-    display->drawStringMaxWidth(timeValueX, rowY, timeValueW, timeLine);
-    drawHermesGpsFallbackCornerMapOutline(display, x, y, width, usableHeight);
-    display->setFont(FONT_SMALL);
+    const HermesXGpsStatusView view(gps->getNumSatellites(),
+                                    gpsTitle,
+                                    lockStatus,
+                                    lockStatusShort,
+                                    lonLine,
+                                    latLine,
+                                    dateLine,
+                                    timeLine,
+                                    compactTimeLine);
+    HermesXGpsUiRenderer::drawStatusFrame(display, x, y, view);
 }
 #endif
 /**
@@ -9668,7 +2839,6 @@ float Screen::estimatedHeading(double lat, double lon)
 static size_t nodeIndex;
 static int8_t prevFrame = -1;
 
-constexpr int16_t kSetupHeaderHeight = 14;
 constexpr int16_t kSetupRowHeight = 12;
 constexpr uint8_t kSetupVisibleRows = 4;
 constexpr size_t kSetupPassMaxLen = 20;
@@ -9986,31 +3156,6 @@ static String maskSetupSecret(const char *value, size_t visibleTail = 0)
 static const char *const (*getSetupWifiKeyRows(bool lowercase))[10]
 {
     return lowercase ? kSetupWifiKeyRowsLower : kSetupWifiKeyRowsUpper;
-}
-
-static String getSetupWifiStatusLabel()
-{
-#if HAS_WIFI && !defined(ARCH_PORTDUINO)
-    switch (WiFi.status()) {
-    case WL_CONNECTED:
-        return u8"已連線";
-    case WL_NO_SSID_AVAIL:
-        return u8"找不到SSID";
-    case WL_CONNECTION_LOST:
-        return u8"連線中斷";
-    case WL_CONNECT_FAILED:
-        return u8"連線失敗";
-    case WL_IDLE_STATUS:
-        return u8"連線中";
-    default:
-        if (!config.network.wifi_enabled) {
-            return u8"已關閉";
-        }
-        return u8"未連線";
-    }
-#else
-    return u8"此平台不支援";
-#endif
 }
 
 static String getSetupWifiIpLabel()
@@ -10716,27 +3861,8 @@ struct TakModeProfile {
 static TakModeProfile gTakModeProfile;
 static bool gTakModeProfileLoaded = false;
 
-enum class TakModePageView : uint8_t {
-    Main,
-    Popup,
-    Settings,
-    ChannelSelect,
-    TransitionEnter,
-    TransitionExit,
-};
-static TakModePageView gTakModePageView = TakModePageView::Main;
-static uint8_t gTakModePopupSelected = 0;
-static uint8_t gTakModePopupOffset = 0;
-static uint8_t gTakModeSettingsSelected = 0;
-static uint8_t gTakModeSettingsOffset = 0;
-static uint32_t gTakModeTransitionStartedAtMs = 0;
-
-static void drawSetupUpdateTransitionPage(OLEDDisplay *display,
-                                          int16_t width,
-                                          int16_t height,
-                                          uint32_t startedAtMs,
-                                          const char *title,
-                                          const char *status);
+static auto &gTakModeUiModel = graphics::HermesXTakModeUiModel::instance();
+static auto &gTakModeUiState = gTakModeUiModel.state();
 
 struct StealthRetainedState {
     uint32_t magic;
@@ -11762,18 +4888,13 @@ static bool disableTakMode()
     clearPersistedTakStateFile();
     clearRetainedTakState();
     gTakRuntimeState.active = false;
-    gTakModePageView = TakModePageView::Main;
+    gTakModeUiModel.showMain();
     return true;
 }
 
 static void startTakModeTransition(bool entering)
 {
-    gTakModePageView = entering ? TakModePageView::TransitionEnter : TakModePageView::TransitionExit;
-    gTakModePopupSelected = 0;
-    gTakModePopupOffset = 0;
-    gTakModeSettingsSelected = 0;
-    gTakModeSettingsOffset = 0;
-    gTakModeTransitionStartedAtMs = millis();
+    gTakModeUiModel.startTransition(entering, millis());
     if (screen) {
         screen->showHermesXMainPage();
         screen->requestImmediateRedraw();
@@ -11977,379 +5098,9 @@ static bool drawHermesXShareQrFromCache()
 }
 #endif
 
-static void drawSetupHeader(OLEDDisplay *display, int16_t width, const char *title)
-{
-#if defined(USE_EINK)
-    display->setColor(EINK_BLACK);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-    display->fillRect(0, 0, width, kSetupHeaderHeight);
-#if defined(USE_EINK)
-    display->setColor(EINK_WHITE);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-    display->setFont(FONT_SMALL);
-    graphics::HermesX_zh::drawMixed(*display, 2, 1, title, graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-}
-
-static void drawSetupNutIcon(OLEDDisplay *display, int16_t centerX, int16_t centerY, int16_t radius)
-{
-    if (!display) {
-        return;
-    }
-    if (radius < 10) {
-        radius = 10;
-    }
-
-    constexpr float kPi = 3.14159265f;
-    int16_t outerX[6] = {0};
-    int16_t outerY[6] = {0};
-    int16_t innerX[6] = {0};
-    int16_t innerY[6] = {0};
-    const int16_t innerRadius = (radius * 62) / 100;
-
-    for (uint8_t i = 0; i < 6; ++i) {
-        const float angle = (kPi / 3.0f) * static_cast<float>(i) - (kPi / 2.0f);
-        outerX[i] = centerX + static_cast<int16_t>(cosf(angle) * radius);
-        outerY[i] = centerY + static_cast<int16_t>(sinf(angle) * radius);
-        innerX[i] = centerX + static_cast<int16_t>(cosf(angle) * innerRadius);
-        innerY[i] = centerY + static_cast<int16_t>(sinf(angle) * innerRadius);
-    }
-
-    for (uint8_t i = 0; i < 6; ++i) {
-        const uint8_t next = (i + 1) % 6;
-        display->drawLine(outerX[i], outerY[i], outerX[next], outerY[next]);
-        display->drawLine(innerX[i], innerY[i], innerX[next], innerY[next]);
-        display->drawLine(outerX[i], outerY[i], innerX[i], innerY[i]);
-    }
-
-    const int16_t holeRadius = radius / 3;
-#if defined(USE_EINK)
-    display->setColor(EINK_WHITE);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-    display->fillCircle(centerX, centerY, holeRadius);
-#if defined(USE_EINK)
-    display->setColor(EINK_BLACK);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-    display->drawCircle(centerX, centerY, holeRadius);
-}
-
-static void drawSetupList(OLEDDisplay *display,
-                          int16_t width,
-                          int16_t height,
-                          const char *title,
-                          const char *const *items,
-                          int itemCount,
-                          int selectedIndex,
-                          int listOffset)
-{
-    if (!display) {
-        return;
-    }
-
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-#if defined(USE_EINK)
-    display->setColor(EINK_WHITE);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-    display->fillRect(0, 0, width, height);
-    drawSetupHeader(display, width, title);
-
-#if defined(USE_EINK)
-    display->setColor(EINK_BLACK);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-
-    const int16_t listTop = kSetupHeaderHeight + 2;
-    for (int i = 0; i < kSetupVisibleRows; ++i) {
-        const int entryIndex = listOffset + i;
-        if (entryIndex >= itemCount) {
-            break;
-        }
-        const int16_t rowY = listTop + i * kSetupRowHeight;
-        if (rowY + kSetupRowHeight > height) {
-            break;
-        }
-        if (entryIndex == selectedIndex) {
-#if defined(USE_EINK)
-            display->fillRect(0, rowY - 1, width, kSetupRowHeight);
-            display->setColor(EINK_WHITE);
-#else
-            display->setColor(OLEDDISPLAY_COLOR::WHITE);
-            display->fillRect(0, rowY - 1, width, kSetupRowHeight);
-            display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-            graphics::HermesX_zh::drawMixedBounded(*display, 4, rowY, width - 4, items[entryIndex],
-                                                   graphics::HermesX_zh::GLYPH_WIDTH, kSetupRowHeight, nullptr);
-#if defined(USE_EINK)
-            display->setColor(EINK_BLACK);
-#else
-            display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-        } else {
-            graphics::HermesX_zh::drawMixedBounded(*display, 4, rowY, width - 4, items[entryIndex],
-                                                   graphics::HermesX_zh::GLYPH_WIDTH, kSetupRowHeight, nullptr);
-        }
-    }
-}
-
-static void drawSetupToast(OLEDDisplay *display, int16_t width, int16_t height, String &toast, uint32_t &toastUntilMs)
-{
-    if (!display || toastUntilMs == 0) {
-        return;
-    }
-    if (millis() > toastUntilMs) {
-        toastUntilMs = 0;
-        toast = "";
-        return;
-    }
-    if (toast.length() == 0) {
-        return;
-    }
-    graphics::HermesX_zh::drawMixedBounded(*display, 2, height - FONT_HEIGHT_SMALL, width - 4, toast.c_str(),
-                                           graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-}
-
-static void drawSetupKeyboardPage(OLEDDisplay *display,
-                                  int16_t width,
-                                  int16_t height,
-                                  const char *header,
-                                  const String &draft,
-                                  const char *const (*rows)[10],
-                                  const uint8_t *rowLengths,
-                                  uint8_t rowCount,
-                                  uint8_t selectedRow,
-                                  uint8_t selectedCol,
-                                  String &toast,
-                                  uint32_t &toastUntilMs)
-{
-    if (!display) {
-        return;
-    }
-
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-#if defined(USE_EINK)
-    display->setColor(EINK_WHITE);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-    display->fillRect(0, 0, width, height);
-#if defined(USE_EINK)
-    display->setColor(EINK_BLACK);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-    drawSetupHeader(display, width, header);
-    display->setFont(FONT_SMALL);
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-#if defined(USE_EINK)
-    display->setColor(EINK_BLACK);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-    graphics::HermesX_zh::drawMixedBounded(*display, 2, kSetupHeaderHeight + 2, width - 4, draft.c_str(),
-                                           graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-
-    const int16_t keyTop = (FONT_HEIGHT_SMALL * 2) + 6;
-    const int16_t keyAreaHeight = height - keyTop;
-    const int16_t rowHeight = (rowCount > 0) ? keyAreaHeight / rowCount : 0;
-    display->setTextAlignment(TEXT_ALIGN_CENTER);
-
-    for (uint8_t row = 0; row < rowCount; ++row) {
-        const int rowLen = rowLengths[row];
-        if (rowLen <= 0) {
-            continue;
-        }
-        const int16_t cellWidth = width / rowLen;
-        const int16_t rowY = keyTop + row * rowHeight;
-        for (int col = 0; col < rowLen; ++col) {
-            const int16_t cellX = col * cellWidth;
-            const char *label = rows[row][col];
-            if (!label) {
-                continue;
-            }
-            const bool selected = (row == selectedRow && col == selectedCol);
-            if (selected) {
-#if defined(USE_EINK)
-                display->setColor(EINK_BLACK);
-#else
-                display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-                display->fillRect(cellX, rowY, cellWidth, rowHeight);
-#if defined(USE_EINK)
-                display->setColor(EINK_WHITE);
-#else
-                display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-            } else {
-#if defined(USE_EINK)
-                display->setColor(EINK_BLACK);
-#else
-                display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-            }
-            display->drawRect(cellX, rowY, cellWidth, rowHeight);
-            const int16_t labelWidth = graphics::HermesX_zh::stringAdvance(
-                label, graphics::HermesX_zh::GLYPH_WIDTH, display);
-            const bool hasUtf8 = strlen(label) > 0 && static_cast<uint8_t>(label[0]) >= 0x80u;
-            const int16_t labelHeight = hasUtf8 ? graphics::HermesX_zh::GLYPH_HEIGHT : FONT_HEIGHT_SMALL;
-            const int16_t labelX = cellX + std::max<int16_t>(0, (cellWidth - labelWidth) / 2);
-            const int16_t labelY = rowY + std::max<int16_t>(0, (rowHeight - labelHeight) / 2);
-            graphics::HermesX_zh::drawMixed(*display, labelX, labelY, label,
-                                            graphics::HermesX_zh::GLYPH_WIDTH, rowHeight, nullptr);
-        }
-    }
-
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-#if defined(USE_EINK)
-    display->setColor(EINK_BLACK);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-    drawSetupToast(display, width, height, toast, toastUntilMs);
-}
-
-static void drawDirectMessageCandidatePage(OLEDDisplay *display, int16_t width, int16_t height)
-{
-    if (!display) {
-        return;
-    }
-
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-#if defined(USE_EINK)
-    display->setColor(EINK_WHITE);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-    display->fillRect(0, 0, width, height);
-    drawSetupHeader(display, width, u8"注音候選");
-#if defined(USE_EINK)
-    display->setColor(EINK_BLACK);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-    display->setFont(FONT_SMALL);
-
-    String preview = gDirectMessageComposerState.draft;
-    preview += getDirectMessageCompositionText();
-    preview += "_";
-    graphics::HermesX_zh::drawMixedBounded(*display, 2, kSetupHeaderHeight + 1, width - 4, preview.c_str(),
-                                           graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-
-    const std::vector<std::string> &candidates = gDirectMessageComposerState.bpmf.candidates();
-    const uint8_t totalRows = static_cast<uint8_t>(std::min<size_t>(candidates.size() + 1, 255));
-    const int16_t listTop = kSetupHeaderHeight + FONT_HEIGHT_SMALL + 3;
-    const int16_t rowHeight = 15;
-    const uint8_t visibleRows = static_cast<uint8_t>(std::max<int16_t>(1, (height - listTop) / rowHeight));
-    uint8_t start = 0;
-    if (gDirectMessageComposerState.candidateCursor >= visibleRows) {
-        start = gDirectMessageComposerState.candidateCursor - visibleRows + 1;
-    }
-
-    for (uint8_t row = 0; row < visibleRows; ++row) {
-        const uint8_t item = start + row;
-        if (item >= totalRows) {
-            break;
-        }
-        const int16_t rowY = listTop + row * rowHeight;
-        const bool selected = item == gDirectMessageComposerState.candidateCursor;
-        if (selected) {
-            display->fillRect(0, rowY, width, rowHeight);
-#if defined(USE_EINK)
-            display->setColor(EINK_WHITE);
-#else
-            display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-        }
-
-        String label;
-        if (item == 0) {
-            label = u8"返回鍵盤";
-        } else {
-            label = String(item) + ". " + candidates[item - 1].c_str();
-        }
-        graphics::HermesX_zh::drawMixedBounded(*display, 3, rowY + 1, width - 6, label.c_str(),
-                                               graphics::HermesX_zh::GLYPH_WIDTH, rowHeight, nullptr);
-        if (selected) {
-#if defined(USE_EINK)
-            display->setColor(EINK_BLACK);
-#else
-            display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-        }
-    }
-}
-
 static void resetHermesFastSetupTftPalette(OLEDDisplay *display)
 {
-#if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
-    defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
-    if (display) {
-        auto *tft = static_cast<TFTDisplay *>(display);
-        tft->resetColorPalette(false);
-    }
-    hermesFastSetupTftPaletteState.valid = false;
-#else
-    (void)display;
-#endif
-}
-
-static void applyHermesFastSetupTftPalette(OLEDDisplay *display,
-                                           int16_t width,
-                                           int16_t height,
-                                           int itemCount,
-                                           int selectedIndex,
-                                           int listOffset,
-                                           bool showToast,
-                                           bool forceFullRedraw)
-{
-#if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
-    defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
-    (void)itemCount;
-    (void)selectedIndex;
-    (void)listOffset;
-    (void)showToast;
-
-    const bool paletteUnchanged =
-        hermesFastSetupTftPaletteState.valid && hermesFastSetupTftPaletteState.display == display &&
-        hermesFastSetupTftPaletteState.width == width && hermesFastSetupTftPaletteState.height == height;
-    if (paletteUnchanged && !forceFullRedraw) {
-        return;
-    }
-
-    // FastSetup palette reverted to monochrome: no per-zone color override.
-    auto *tft = static_cast<TFTDisplay *>(display);
-    tft->clearColorPaletteZones();
-
-    hermesFastSetupTftPaletteState.display = display;
-    hermesFastSetupTftPaletteState.width = width;
-    hermesFastSetupTftPaletteState.height = height;
-    hermesFastSetupTftPaletteState.itemCount = 0;
-    hermesFastSetupTftPaletteState.selectedIndex = 0;
-    hermesFastSetupTftPaletteState.listOffset = 0;
-    hermesFastSetupTftPaletteState.showToast = false;
-    hermesFastSetupTftPaletteState.valid = true;
-    if (forceFullRedraw) {
-        tft->markColorPaletteDirty();
-    }
-#else
-    (void)display;
-    (void)width;
-    (void)height;
-    (void)itemCount;
-    (void)selectedIndex;
-    (void)listOffset;
-    (void)showToast;
-    (void)forceFullRedraw;
-#endif
+    HermesXFastSetupUiRenderer::resetTftPalette(display);
 }
 
 // Draw the arrow pointing to a node's location
@@ -12620,309 +5371,117 @@ void Screen::drawHermesXShareChannelFrame(OLEDDisplay *display, OLEDDisplayUiSta
     screen->drawHermesXShareChannel(display, state, x, y);
 }
 
-static void drawTakShieldIcon(OLEDDisplay *display, int16_t cx, int16_t topY, int16_t w, int16_t h, uint8_t thickness)
+static bool getTakSettingsRenderRow(void *, uint8_t index, String &label)
 {
-    if (!display) {
-        return;
+    switch (index) {
+    case 0:
+        label = u8"返回";
+        return true;
+    case 1:
+        label = String(u8"裝置資訊: ") +
+                getTakOptionLabel(gTakModeProfile.nodeInfoBroadcastSecs, kTakNodeInfoOptions, kTakNodeInfoLabels,
+                                  kTakNodeInfoCount);
+        return true;
+    case 2:
+        label = String(u8"GPS刷新: ") +
+                getTakOptionLabel(gTakModeProfile.gpsUpdateIntervalSecs, kTakGpsUpdateOptions, kTakGpsUpdateLabels,
+                                  kTakGpsUpdateCount);
+        return true;
+    case 3:
+        label = String(u8"位置廣播: ") +
+                getTakOptionLabel(gTakModeProfile.positionBroadcastSecs, kTakPositionBroadcastOptions,
+                                  kTakPositionBroadcastLabels, kTakPositionBroadcastCount);
+        return true;
+    case 4:
+        label = String(u8"智慧距離: ") +
+                getTakOptionLabel(gTakModeProfile.smartMinimumDistanceMeters, kTakSmartDistanceOptions,
+                                  kTakSmartDistanceLabels, kTakSmartDistanceCount);
+        return true;
+    case 5:
+        label = String(u8"智慧間隔: ") +
+                getTakOptionLabel(gTakModeProfile.smartMinimumIntervalSecs, kTakSmartIntervalOptions,
+                                  kTakSmartIntervalLabels, kTakSmartIntervalCount);
+        return true;
+    case 6:
+        label = String(u8"智慧功率低: ") + String(static_cast<int>(getTakSmartPowerMinDbm())) + "dBm";
+        return true;
+    case 7:
+        label = String(u8"智慧功率高: ") + String(static_cast<int>(getTakSmartPowerMaxDbm())) + "dBm";
+        return true;
+    case 8:
+        label = String(u8"聲光靜默: ") + (gTakModeProfile.quietOutputs ? "ON" : "OFF");
+        return true;
+    case 9:
+        label = String("EMUI: ") + (gTakModeProfile.allowEmUi ? "ON" : "OFF");
+        return true;
+    case 10:
+        label = String(u8"尋人模組: ") + (gTakModeProfile.allowFinder ? "ON" : "OFF");
+        return true;
+    default:
+        return false;
     }
-    if (w < 18) {
-        w = 18;
-    }
-    if (h < 20) {
-        h = 20;
-    }
-    if (thickness == 0) {
-        thickness = 1;
-    }
+}
 
-    for (uint8_t t = 0; t < thickness; ++t) {
-        const int16_t left = cx - w / 2 + t;
-        const int16_t right = cx + w / 2 - t;
-        const int16_t top = topY + t;
-        const int16_t shoulderY = top + h / 5;
-        const int16_t waistY = top + (h * 2) / 3;
-        const int16_t bottom = top + h - t;
-        if (right - left < 8 || bottom - top < 8) {
-            break;
-        }
-        display->drawLine(left + 2, shoulderY, cx, top);
-        display->drawLine(cx, top, right - 2, shoulderY);
-        display->drawLine(left, shoulderY + 1, left + 4, waistY);
-        display->drawLine(right, shoulderY + 1, right - 4, waistY);
-        display->drawLine(left + 4, waistY, cx, bottom);
-        display->drawLine(right - 4, waistY, cx, bottom);
+static bool getTakChannelRenderRow(void *, uint8_t index, String &label)
+{
+    if (index == 0) {
+        label = u8"返回";
+        return true;
     }
-
-    const int16_t midY = topY + h / 2;
-    display->drawLine(cx, topY + h / 4, cx, topY + h - 5);
-    display->drawLine(cx - w / 5, midY, cx + w / 5, midY);
+    const uint8_t slotIndex = index - 1;
+    if (slotIndex >= kTakMissionSlotCount) {
+        return false;
+    }
+    label = getTakMissionSlotDisplayLabel(kTakMissionSlotOptions[slotIndex], true);
+    if (kTakMissionSlotOptions[slotIndex] == gTakModeProfile.missionSlot) {
+        label += " *";
+    }
+    return true;
 }
 
 void Screen::drawTakModeFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
 {
-    (void)state;
     if (!display) {
         return;
     }
 
-    const int16_t width = display->getWidth();
-    const int16_t height = display->getHeight();
-
     loadTakModeProfileIfNeeded();
-    const bool popupView = gTakModePageView == TakModePageView::Popup;
-    const bool settingsView = gTakModePageView == TakModePageView::Settings;
-    const bool channelView = gTakModePageView == TakModePageView::ChannelSelect;
-    const bool overlayOnly = (state == nullptr) && (popupView || settingsView || channelView);
+    graphics::HermesXTakModeRenderView view;
+    view.title = getTakExperienceTitle();
+    view.active = isTakExperienceActive();
+    view.allowEmUi = gTakModeProfile.allowEmUi;
+    view.allowFinder = gTakModeProfile.allowFinder;
+    view.settingsRows = {kTakSettingsRowCount, nullptr, getTakSettingsRenderRow};
+    view.channelRows = {static_cast<uint8_t>(kTakMissionSlotCount + 1), nullptr, getTakChannelRenderRow};
 
-    if (!overlayOnly) {
-#if defined(USE_EINK)
-        display->setColor(EINK_WHITE);
-#else
-        display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-        display->fillRect(0, 0, width, height);
-    }
-#if defined(USE_EINK)
-    display->setColor(EINK_BLACK);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-
-    display->setFont(FONT_SMALL);
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-
-    const char *title = getTakExperienceTitle();
-
-    if (!overlayOnly) {
-        const int16_t titleW = graphics::HermesX_zh::stringAdvance(title, graphics::HermesX_zh::GLYPH_WIDTH, display);
-        int16_t titleX = x + (width - titleW) / 2;
-        if (titleX < x + 2) {
-            titleX = x + 2;
-        }
-        const int16_t titleY = y + 2;
-        graphics::HermesX_zh::drawMixedBounded(*display, titleX, titleY, width - 4, title,
-                                               graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-
-        const int16_t shieldH = std::max<int16_t>(24, std::min<int16_t>(height / 2, 38));
-        const int16_t shieldW = shieldH + 8;
-        const int16_t shieldTop = y + (height - shieldH) / 2 - 5;
-        drawTakShieldIcon(display, x + width / 2, shieldTop, shieldW, shieldH, 2);
-
-        const char *status = isTakExperienceActive() ? "ON" : "OFF";
-        const int16_t statusW = graphics::HermesX_zh::stringAdvance(status, graphics::HermesX_zh::GLYPH_WIDTH, display);
-        graphics::HermesX_zh::drawMixedBounded(*display, x + (width - statusW) / 2, y + height - FONT_HEIGHT_SMALL - 3,
-                                               width - 4, status, graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL,
-                                               nullptr);
-    }
-
-    if (!overlayOnly && !popupView && !settingsView && !channelView) {
-        const float channelUtil = airTime ? airTime->channelUtilizationPercent() : 0.0f;
-        String slotLine = getTakMissionSlotDisplayLabel(config.lora.channel_num ? config.lora.channel_num : getTakEffectiveMissionSlot(), false);
+    String slotLine;
+    String utilizationLine;
+    String suggestionLine;
+    if (gTakModeUiState.page == graphics::HermesXTakModePage::Main) {
+        const float channelUtilization = airTime ? airTime->channelUtilizationPercent() : 0.0f;
+        slotLine =
+            getTakMissionSlotDisplayLabel(config.lora.channel_num ? config.lora.channel_num : getTakEffectiveMissionSlot(), false);
         if (fabsf(config.lora.override_frequency) >= 0.0001f) {
             slotLine = String(u8"手動 ") + formatSetupFrequencyLabel(config.lora.override_frequency);
         }
-        char utilBuf[32];
-        snprintf(utilBuf, sizeof(utilBuf), "ChUtil %.0f%%", channelUtil);
-        String utilLine = String(utilBuf) + " " + getTakAirtimeStatusLabel(channelUtil);
-        graphics::HermesX_zh::drawMixedBounded(*display, x + 4, y + 15, width - 8, slotLine.c_str(),
-                                               graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-        graphics::HermesX_zh::drawMixedBounded(*display, x + 4, y + height - 27, width - 8, utilLine.c_str(),
-                                               graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-        if (channelUtil >= 50.0f) {
+        char utilizationBuffer[32];
+        snprintf(utilizationBuffer, sizeof(utilizationBuffer), "ChUtil %.0f%%", channelUtilization);
+        utilizationLine = String(utilizationBuffer) + " " + getTakAirtimeStatusLabel(channelUtilization);
+        if (channelUtilization >= 50.0f) {
             const uint32_t suggestedSlot = getTakSuggestedMissionSlot();
             if (suggestedSlot != 0) {
-                String suggestLine = String(u8"建議 ") + getTakMissionSlotDisplayLabel(suggestedSlot, false);
-                graphics::HermesX_zh::drawMixedBounded(*display, x + 4, y + height - 16, width - 8, suggestLine.c_str(),
-                                                       graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
+                suggestionLine = String(u8"建議 ") + getTakMissionSlotDisplayLabel(suggestedSlot, false);
             }
         }
+        view.slotLine = &slotLine;
+        view.utilizationLine = &utilizationLine;
+        view.suggestionLine = &suggestionLine;
     }
 
-    if (popupView || settingsView || channelView) {
-        const int16_t boxX = x + 8;
-        const int16_t boxY = y + 10;
-        const int16_t boxW = width - 16;
-        const int16_t boxH = height - 18;
-#if defined(USE_EINK)
-        display->setColor(EINK_WHITE);
-#else
-        display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-        display->fillRect(boxX, boxY, boxW, boxH);
-#if defined(USE_EINK)
-        display->setColor(EINK_BLACK);
-#else
-        display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-        display->drawRect(boxX, boxY, boxW, boxH);
-
-        const char *modalTitle = settingsView ? u8"TAKMODE設定"
-                                 : channelView ? u8"頻道選擇"
-                                               : getTakExperienceTitle();
-        const int16_t modalTitleW =
-            graphics::HermesX_zh::stringAdvance(modalTitle, graphics::HermesX_zh::GLYPH_WIDTH, display);
-        graphics::HermesX_zh::drawMixedBounded(*display, boxX + std::max<int16_t>(2, (boxW - modalTitleW) / 2),
-                                               boxY + 2, boxW - 4, modalTitle,
-                                               graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-
-        const int16_t rowH = FONT_HEIGHT_SMALL + 1;
-        const int16_t listTop = boxY + FONT_HEIGHT_SMALL + 6;
-        uint8_t visibleRows = (boxY + boxH - listTop - 2) / rowH;
-        if (visibleRows < 1) {
-            visibleRows = 1;
-        }
-        if (visibleRows > 5) {
-            visibleRows = 5;
-        }
-
-        if (!settingsView && !channelView) {
-            const char *kRows[] = {getTakExperienceTitle(), u8"TAKMODE設定", u8"頻道選擇", u8"GROUP設定",
-                                   "EMUI",                 u8"尋人模組",    u8"返回主選單"};
-            if (gTakModePopupSelected >= kTakPopupRowCount) {
-                gTakModePopupSelected = 0;
-            }
-            if (visibleRows > kTakPopupRowCount) {
-                visibleRows = kTakPopupRowCount;
-            }
-            if (gTakModePopupSelected < gTakModePopupOffset) {
-                gTakModePopupOffset = gTakModePopupSelected;
-            } else if (gTakModePopupSelected >= gTakModePopupOffset + visibleRows) {
-                gTakModePopupOffset = gTakModePopupSelected - visibleRows + 1;
-            }
-            if (gTakModePopupOffset + visibleRows > kTakPopupRowCount) {
-                gTakModePopupOffset = kTakPopupRowCount - visibleRows;
-            }
-
-            for (uint8_t row = 0; row < visibleRows; ++row) {
-                const uint8_t index = gTakModePopupOffset + row;
-                if (index >= kTakPopupRowCount) {
-                    break;
-                }
-                const int16_t rowY = listTop + row * rowH;
-                const bool selected = (index == gTakModePopupSelected);
-                if (selected) {
-                    display->drawRect(boxX + 3, rowY - 1, boxW - 6, rowH);
-                }
-
-                String line = kRows[index];
-                if (index == 0) {
-                    line += isTakExperienceActive() ? ": ON" : ": OFF";
-                } else if (index == 4 && !gTakModeProfile.allowEmUi) {
-                    line += ": OFF";
-                } else if (index == 5 && !gTakModeProfile.allowFinder) {
-                    line += ": OFF";
-                }
-                graphics::HermesX_zh::drawMixedBounded(*display, boxX + 6, rowY, boxW - 12, line.c_str(),
-                                                       graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
-            }
-            return;
-        }
-
-        if (channelView) {
-            if (gTakModeSettingsSelected >= kTakMissionSlotCount + 1) {
-                gTakModeSettingsSelected = 0;
-            }
-            const uint8_t channelRowCount = kTakMissionSlotCount + 1;
-            if (visibleRows > channelRowCount) {
-                visibleRows = channelRowCount;
-            }
-            if (gTakModeSettingsSelected < gTakModeSettingsOffset) {
-                gTakModeSettingsOffset = gTakModeSettingsSelected;
-            } else if (gTakModeSettingsSelected >= gTakModeSettingsOffset + visibleRows) {
-                gTakModeSettingsOffset = gTakModeSettingsSelected - visibleRows + 1;
-            }
-            if (gTakModeSettingsOffset + visibleRows > channelRowCount) {
-                gTakModeSettingsOffset = channelRowCount - visibleRows;
-            }
-
-            for (uint8_t row = 0; row < visibleRows; ++row) {
-                const uint8_t index = gTakModeSettingsOffset + row;
-                if (index >= channelRowCount) {
-                    break;
-                }
-                const int16_t rowY = listTop + row * rowH;
-                const bool selected = index == gTakModeSettingsSelected;
-                if (selected) {
-                    display->drawRect(boxX + 3, rowY - 1, boxW - 6, rowH);
-                }
-                String line = index == 0 ? String(u8"返回")
-                                         : getTakMissionSlotDisplayLabel(kTakMissionSlotOptions[index - 1], true);
-                if (index > 0 && kTakMissionSlotOptions[index - 1] == gTakModeProfile.missionSlot) {
-                    line += " *";
-                }
-                graphics::HermesX_zh::drawMixedBounded(*display, boxX + 6, rowY, boxW - 12, line.c_str(),
-                                                       graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
-            }
-            return;
-        }
-
-        if (gTakModeSettingsSelected >= kTakSettingsRowCount) {
-            gTakModeSettingsSelected = 0;
-        }
-        if (gTakModeSettingsSelected < gTakModeSettingsOffset) {
-            gTakModeSettingsOffset = gTakModeSettingsSelected;
-        } else if (gTakModeSettingsSelected >= gTakModeSettingsOffset + visibleRows) {
-            gTakModeSettingsOffset = gTakModeSettingsSelected - visibleRows + 1;
-        }
-        if (gTakModeSettingsOffset + visibleRows > kTakSettingsRowCount) {
-            gTakModeSettingsOffset = kTakSettingsRowCount - visibleRows;
-        }
-
-        auto buildSettingRow = [&](uint8_t row) -> String {
-            switch (row) {
-            case 0:
-                return u8"返回";
-            case 1:
-                return String(u8"裝置資訊: ") +
-                       getTakOptionLabel(gTakModeProfile.nodeInfoBroadcastSecs, kTakNodeInfoOptions, kTakNodeInfoLabels,
-                                         kTakNodeInfoCount);
-            case 2:
-                return String(u8"GPS刷新: ") +
-                       getTakOptionLabel(gTakModeProfile.gpsUpdateIntervalSecs, kTakGpsUpdateOptions, kTakGpsUpdateLabels,
-                                         kTakGpsUpdateCount);
-            case 3:
-                return String(u8"位置廣播: ") +
-                       getTakOptionLabel(gTakModeProfile.positionBroadcastSecs, kTakPositionBroadcastOptions,
-                                         kTakPositionBroadcastLabels, kTakPositionBroadcastCount);
-            case 4:
-                return String(u8"智慧距離: ") +
-                       getTakOptionLabel(gTakModeProfile.smartMinimumDistanceMeters, kTakSmartDistanceOptions,
-                                         kTakSmartDistanceLabels, kTakSmartDistanceCount);
-            case 5:
-                return String(u8"智慧間隔: ") +
-                       getTakOptionLabel(gTakModeProfile.smartMinimumIntervalSecs, kTakSmartIntervalOptions,
-                                         kTakSmartIntervalLabels, kTakSmartIntervalCount);
-            case 6:
-                return String(u8"智慧功率低: ") + String(static_cast<int>(getTakSmartPowerMinDbm())) + "dBm";
-            case 7:
-                return String(u8"智慧功率高: ") + String(static_cast<int>(getTakSmartPowerMaxDbm())) + "dBm";
-            case 8:
-                return String(u8"聲光靜默: ") + (gTakModeProfile.quietOutputs ? "ON" : "OFF");
-            case 9:
-                return String("EMUI: ") + (gTakModeProfile.allowEmUi ? "ON" : "OFF");
-            case 10:
-                return String(u8"尋人模組: ") + (gTakModeProfile.allowFinder ? "ON" : "OFF");
-            default:
-                return "";
-            }
-        };
-
-        for (uint8_t row = 0; row < visibleRows; ++row) {
-            const uint8_t index = gTakModeSettingsOffset + row;
-            if (index >= kTakSettingsRowCount) {
-                break;
-            }
-            const int16_t rowY = listTop + row * rowH;
-            const bool selected = index == gTakModeSettingsSelected;
-            if (selected) {
-                display->drawRect(boxX + 3, rowY - 1, boxW - 6, rowH);
-            }
-            const String line = buildSettingRow(index);
-            graphics::HermesX_zh::drawMixedBounded(*display, boxX + 6, rowY, boxW - 12, line.c_str(),
-                                                   graphics::HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
-        }
-        return;
-    }
+    const bool modalPage = gTakModeUiState.page == graphics::HermesXTakModePage::Popup ||
+                           gTakModeUiState.page == graphics::HermesXTakModePage::Settings ||
+                           gTakModeUiState.page == graphics::HermesXTakModePage::ChannelSelect;
+    graphics::HermesXTakModeUiRenderer::draw(display, x, y, state == nullptr && modalPage, gTakModeUiState, view);
 }
 
 static void drawSmartPowerHomeFrame(OLEDDisplay *display, int16_t x, int16_t y)
@@ -12959,11 +5518,10 @@ static void drawSmartPowerHomeFrame(OLEDDisplay *display, int16_t x, int16_t y)
         hasSignal = HermesXInterfaceModule::instance->getSmartPowerLastSignal(snr, rssi, signalAgeMs);
     }
     const int groupCount = std::max<int>(0, getGroupNodeCount());
-    bool hasBattery = false;
-    int batteryVoltageMv = 0;
-    uint8_t batteryPercent = 0;
-    getHermesXHomeBatteryState(hasBattery, batteryVoltageMv, batteryPercent);
-    (void)batteryVoltageMv;
+    const HermesXHomeBatteryState battery =
+        HermesXHomeStateCollector::instance().collectBattery(readHermesXHomeBatterySource());
+    const bool hasBattery = battery.available;
+    const uint8_t batteryPercent = battery.percent;
 
     const int16_t pad = portraitLayout ? 6 : (compactLayout ? 4 : 8);
     const int16_t titleY = y + (portraitLayout ? 2 : (compactLayout ? 1 : 3));
@@ -13000,7 +5558,7 @@ static void drawSmartPowerHomeFrame(OLEDDisplay *display, int16_t x, int16_t y)
                 display->drawString(headerRight, titleY, owner.short_name);
             }
         }
-        drawHermesXBatteryIconHorizontal(display, iconX, iconY, iconW, iconH, batteryPercent);
+        HermesXHomeUiRenderer::drawHorizontalBattery(display, iconX, iconY, iconW, iconH, batteryPercent);
     }
 
     const int16_t groupW = portraitLayout ? (width - pad * 2) : (compactLayout ? 48 : 66);
@@ -13061,20 +5619,20 @@ static void drawSmartPowerHomeFrame(OLEDDisplay *display, int16_t x, int16_t y)
 
 void Screen::drawHermesXMain(OLEDDisplay *display, OLEDDisplayUiState * /*state*/, int16_t x, int16_t y)
 {
-    if (gTakModePageView == TakModePageView::TransitionEnter || gTakModePageView == TakModePageView::TransitionExit) {
-        const char *title =
-            (gTakModePageView == TakModePageView::TransitionEnter) ? u8"進入TAK模式" : u8"退出TAK模式";
-        drawSetupUpdateTransitionPage(display, display->getWidth(), display->getHeight(), gTakModeTransitionStartedAtMs,
-                                      title, "");
+    if (gTakModeUiState.page == graphics::HermesXTakModePage::TransitionEnter ||
+        gTakModeUiState.page == graphics::HermesXTakModePage::TransitionExit) {
+        graphics::HermesXTakModeUiRenderer::drawTransition(
+            display, gTakModeUiState.transitionStartedAtMs,
+            gTakModeUiState.page == graphics::HermesXTakModePage::TransitionEnter);
         return;
     }
-    if (lowMemoryReminderVisible) {
-        drawLowMemoryProtectionFrame(display, nullptr);
+    if (gLowMemoryUiState.visible) {
+        graphics::HermesXLowMemoryUiRenderer::draw(display, gLowMemoryUiState, gLowMemoryProtectionActive);
         return;
     }
     if (isSmartPowerHomeActive()) {
         drawSmartPowerHomeFrame(display, x, y);
-        if (gTakModePageView != TakModePageView::Main) {
+        if (gTakModeUiState.page != graphics::HermesXTakModePage::Main) {
             drawTakModeFrame(display, nullptr, x, y);
         }
         return;
@@ -13086,11 +5644,10 @@ void Screen::drawHermesXMain(OLEDDisplay *display, OLEDDisplayUiState * /*state*
     const int16_t height = display->getHeight();
     const int16_t originX = 0;
     const int16_t originY = 0;
-    bool hasBattery = false;
-    int batteryVoltageMv = 0;
-    uint8_t batteryPercent = 0;
-    getHermesXHomeBatteryState(hasBattery, batteryVoltageMv, batteryPercent);
-    (void)batteryVoltageMv;
+    const HermesXHomeBatteryState battery =
+        HermesXHomeStateCollector::instance().collectBattery(readHermesXHomeBatterySource());
+    const bool hasBattery = battery.available;
+    const uint8_t batteryPercent = battery.percent;
 #if defined(USE_EINK)
     display->setColor(EINK_WHITE);
 #else
@@ -13104,21 +5661,15 @@ void Screen::drawHermesXMain(OLEDDisplay *display, OLEDDisplayUiState * /*state*
 #endif
 
     const bool compactLayout = (width < 200 || height < 120);
-    const int16_t contentX = originX + (compactLayout ? 4 : 8);
     const int16_t contentW = width - 8;
     auto drawHomeLine = [&](int16_t dx, int16_t dy, const char *text) {
         const int16_t maxW = (contentW > 0) ? contentW : (width - 4);
         display->drawStringMaxWidth(dx, dy, maxW, text);
     };
-    auto drawHomeBoldLine = [&](int16_t dx, int16_t dy, const char *text) {
-        const int16_t maxW = (contentW > 0) ? contentW : (width - 4);
-        display->drawStringMaxWidth(dx, dy, maxW, text);
-        display->drawStringMaxWidth(dx + 1, dy, maxW > 1 ? (maxW - 1) : maxW, text);
-    };
-
     char timeBuf[16];
     char dateBuf[24];
-    const bool hasValidTime = formatHermesXHomeTimeDate(timeBuf, sizeof(timeBuf), dateBuf, sizeof(dateBuf));
+    const bool hasValidTime = HermesXHomeStateCollector::formatTimeDate(
+        getValidTime(RTCQuality::RTCQualityNTP, true), timeBuf, sizeof(timeBuf), dateBuf, sizeof(dateBuf));
 
     const char *roleLabel = getSetupRoleLabel(config.device.role);
     char roleUpper[24];
@@ -13135,47 +5686,50 @@ void Screen::drawHermesXMain(OLEDDisplay *display, OLEDDisplayUiState * /*state*
     display->setTextAlignment(TEXT_ALIGN_LEFT);
 
     const int16_t timeY = originY + (compactLayout ? 11 : 14);
-    const int16_t customTimeMaxW = measurePattanakarnClockText("88:88:88");
+    const int16_t customTimeMaxW = HermesXPattanakarnNeonFont::measureText("88:88:88");
     const bool useCustomTimeFont =
         !gLowMemoryProtectionActive && (contentW > 0) && (customTimeMaxW > 0) && (customTimeMaxW <= contentW);
-    const bool useDirectTftClock = canUseDirectHermesXHomeClock(display);
+    const bool useDirectHomeOverlay = isDirectHomePresentationAvailable(display);
     const uint16_t neonGlowOuterFg = TFTDisplay::rgb565(0x1A, 0x3F, 0xD6);
     const uint16_t neonGlowInnerFg = TFTDisplay::rgb565(0x4C, 0xD9, 0xFF);
     const uint16_t neonCoreFg = TFTDisplay::rgb565(0xFE, 0xFF, 0xFF);
-    const bool showHomeQuote = useDirectTftClock;
+    const bool showHomeQuote = useDirectHomeOverlay;
     if (showHomeQuote) {
         const int16_t quoteX = compactLayout ? 56 : 64;
         const int16_t quoteY = originY + (compactLayout ? 16 : 20);
         const int16_t quoteW = width - quoteX - (compactLayout ? 4 : 8);
         const int16_t quoteH = compactLayout ? 28 : 34;
-        drawHermesXHomeQuote(display, quoteX, quoteY, quoteW, quoteH);
+        HermesXHomeUiRenderer::drawQuote(display, quoteX, quoteY, quoteW, quoteH);
     }
-    if (!hasValidTime && !useDirectTftClock && !gLowMemoryProtectionActive) {
-        drawHermesXHomeDog(display, width, timeY, compactLayout);
-    } else if (useDirectTftClock) {
-        // TFT home clock is rendered after ui->update() via direct color drawing.
+    if (!hasValidTime && !useDirectHomeOverlay && !gLowMemoryProtectionActive) {
+        HermesXHomeUiRenderer::drawDog(display, width, timeY, compactLayout, millis());
+    } else if (useDirectHomeOverlay) {
+        // The direct-TFT Home dog is rendered after ui->update().
     } else if (useCustomTimeFont) {
-        const int16_t currentTimeW = measurePattanakarnClockText(timeBuf);
+        const int16_t currentTimeW = HermesXPattanakarnNeonFont::measureText(timeBuf);
         const int16_t timeFrameX = originX + ((width - customTimeMaxW) / 2);
         const int16_t drawX = timeFrameX + ((customTimeMaxW - currentTimeW) / 2);
         const int16_t coreX = drawX;
         const int16_t coreY = timeY;
         const int16_t coreW = currentTimeW;
-        const int16_t coreH = PattanakarnClock32::kGlyphHeight;
-        addTftColorZone(display, timeFrameX - 3, timeY - 3, customTimeMaxW + 6, PattanakarnClock32::kGlyphHeight + 6, neonGlowOuterFg,
+        const int16_t coreH = HermesXPattanakarnNeonFont::GlyphHeight;
+        addTftColorZone(display, timeFrameX - 3, timeY - 3, customTimeMaxW + 6,
+                        HermesXPattanakarnNeonFont::GlyphHeight + 6, neonGlowOuterFg,
                         0x0000);
-        addTftColorZone(display, drawX - 2, timeY - 2, currentTimeW + 4, PattanakarnClock32::kGlyphHeight + 4, neonGlowInnerFg,
+        addTftColorZone(display, drawX - 2, timeY - 2, currentTimeW + 4,
+                        HermesXPattanakarnNeonFont::GlyphHeight + 4, neonGlowInnerFg,
                         0x0000);
-        addTftColorZone(display, drawX, timeY, currentTimeW, PattanakarnClock32::kGlyphHeight, neonCoreFg, 0x0000);
-        drawPattanakarnClockTextOutsideRect(display, drawX + 2, timeY, timeBuf, coreX, coreY, coreW, coreH);
-        drawPattanakarnClockTextOutsideRect(display, drawX - 2, timeY, timeBuf, coreX, coreY, coreW, coreH);
-        drawPattanakarnClockTextOutsideRect(display, drawX, timeY + 2, timeBuf, coreX, coreY, coreW, coreH);
-        drawPattanakarnClockTextOutsideRect(display, drawX, timeY - 2, timeBuf, coreX, coreY, coreW, coreH);
-        drawPattanakarnClockTextOutsideRect(display, drawX + 1, timeY, timeBuf, coreX, coreY, coreW, coreH);
-        drawPattanakarnClockTextOutsideRect(display, drawX - 1, timeY, timeBuf, coreX, coreY, coreW, coreH);
-        drawPattanakarnClockTextOutsideRect(display, drawX, timeY + 1, timeBuf, coreX, coreY, coreW, coreH);
-        drawPattanakarnClockTextOutsideRect(display, drawX, timeY - 1, timeBuf, coreX, coreY, coreW, coreH);
-        drawPattanakarnClockText(display, drawX, timeY, timeBuf);
+        addTftColorZone(
+            display, drawX, timeY, currentTimeW, HermesXPattanakarnNeonFont::GlyphHeight, neonCoreFg, 0x0000);
+        HermesXPattanakarnNeonFont::drawTextOutsideRect(display, drawX + 2, timeY, timeBuf, coreX, coreY, coreW, coreH);
+        HermesXPattanakarnNeonFont::drawTextOutsideRect(display, drawX - 2, timeY, timeBuf, coreX, coreY, coreW, coreH);
+        HermesXPattanakarnNeonFont::drawTextOutsideRect(display, drawX, timeY + 2, timeBuf, coreX, coreY, coreW, coreH);
+        HermesXPattanakarnNeonFont::drawTextOutsideRect(display, drawX, timeY - 2, timeBuf, coreX, coreY, coreW, coreH);
+        HermesXPattanakarnNeonFont::drawTextOutsideRect(display, drawX + 1, timeY, timeBuf, coreX, coreY, coreW, coreH);
+        HermesXPattanakarnNeonFont::drawTextOutsideRect(display, drawX - 1, timeY, timeBuf, coreX, coreY, coreW, coreH);
+        HermesXPattanakarnNeonFont::drawTextOutsideRect(display, drawX, timeY + 1, timeBuf, coreX, coreY, coreW, coreH);
+        HermesXPattanakarnNeonFont::drawTextOutsideRect(display, drawX, timeY - 1, timeBuf, coreX, coreY, coreW, coreH);
+        HermesXPattanakarnNeonFont::drawText(display, drawX, timeY, timeBuf);
     } else {
         display->setFont(FONT_LARGE);
         if (display->getStringWidth(timeBuf) > (width - 4)) {
@@ -13199,25 +5753,6 @@ void Screen::drawHermesXMain(OLEDDisplay *display, OLEDDisplayUiState * /*state*
         drawHomeLine(drawX, timeY, timeBuf);
     }
 
-    display->setFont(FONT_SMALL);
-    const int16_t dateY = originY + (compactLayout ? 49 : 62);
-    drawHomeBoldLine(contentX, dateY, dateBuf);
-
-    display->setFont(compactLayout ? FONT_SMALL : FONT_MEDIUM);
-    if (display->getStringWidth(roleUpper) > (width / 2)) {
-        display->setFont(FONT_SMALL);
-    }
-    const int16_t roleY = originY + (compactLayout ? 62 : (height - FONT_HEIGHT_MEDIUM));
-    drawHomeBoldLine(contentX, roleY, roleUpper);
-
-    if (hasBattery) {
-        int16_t iconW = compactLayout ? 34 : 48;
-        int16_t iconH = compactLayout ? 16 : 20;
-        const int16_t iconX = originX + ((width - iconW) / 2) - (compactLayout ? 6 : 12);
-        const int16_t iconY = originY + height - iconH - (compactLayout ? 3 : 6);
-        drawHermesXBatteryIconHorizontal(display, iconX, iconY, iconW, iconH, batteryPercent);
-    }
-
     uint32_t satCount = 0;
     if (gpsStatus && gpsStatus->getIsConnected()) {
         satCount = gpsStatus->getNumSatellites();
@@ -13225,396 +5760,45 @@ void Screen::drawHermesXMain(OLEDDisplay *display, OLEDDisplayUiState * /*state*
     if (satCount > 99) {
         satCount = 99;
     }
-    const bool hasSatFix = satCount > 0;
-
-    const int16_t badgeW = compactLayout ? 24 : 32;
-    const int16_t badgeH = compactLayout ? 18 : 24;
-    const int16_t badgeShiftLeft = 20;
-    int16_t badgeX = width - badgeW - (compactLayout ? 12 : 18) - badgeShiftLeft;
-    if (badgeX < 2) {
-        badgeX = 2;
-    }
-    const int16_t badgeY = height - badgeH - (compactLayout ? 10 : 16);
-    addTftColorZone(display, badgeX, badgeY, badgeW, badgeH,
-                    hasSatFix ? TFTDisplay::rgb565(0xB5, 0xED, 0x00) : TFTDisplay::rgb565(0xD9, 0x2D, 0x20), 0x0000);
-    display->setColor(BLACK);
-    display->fillRect(badgeX - 1, badgeY - 1, badgeW + 2, badgeH + 2);
-    display->setColor(WHITE);
-    display->fillRect(badgeX, badgeY, badgeW, badgeH);
-    display->setColor(BLACK);
-    display->setFont(compactLayout ? FONT_SMALL : FONT_MEDIUM);
-    char satBuf[4];
-    snprintf(satBuf, sizeof(satBuf), "%" PRIu32, satCount);
-    display->setTextAlignment(TEXT_ALIGN_CENTER);
-    const int16_t satTextY = badgeY + (compactLayout ? 1 : 2);
-    display->drawString(badgeX + badgeW / 2, satTextY, satBuf);
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-    display->setColor(WHITE);
+    const HermesXHomeStatusView statusView{
+        dateBuf, roleUpper, hasBattery, batteryPercent, static_cast<uint8_t>(satCount)};
+    HermesXHomeUiRenderer::drawStatus(display, statusView);
 
 }
 
 void Screen::drawEmergencyConfirmOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
 {
     (void)state;
-    if (!display || !screen || !screen->hermesEmergencyConfirmVisible) {
-        return;
-    }
-
-    const int16_t width = display->getWidth();
-    const int16_t height = display->getHeight();
-
-    display->setFont(FONT_SMALL);
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-    const int16_t boxX = 3;
-    const int16_t boxY = 2;
-    const int16_t boxW = width - 6;
-    const int16_t boxH = height - 4;
-    const int16_t titleBarH = 12;
-    const int16_t optionH = 10;
-    const int16_t optionY = boxY + boxH - optionH - 2;
-    const int16_t optionW = boxW - 8;
-    const int16_t exitX = boxX + 4;
-
-#if defined(USE_EINK)
-    const auto dialogBg = EINK_WHITE;
-    const auto dialogFg = EINK_BLACK;
-#else
-    const auto dialogBg = OLEDDISPLAY_COLOR::WHITE;
-    const auto dialogFg = OLEDDISPLAY_COLOR::BLACK;
-#endif
-    display->setColor(dialogBg);
-    display->fillRect(boxX, boxY, boxW, boxH);
-    display->setColor(dialogFg);
-    display->drawRect(boxX, boxY, boxW, boxH);
-    display->fillRect(boxX + 1, boxY + 1, boxW - 2, titleBarH);
-    display->setColor(dialogBg);
-
-    const char *title = u8"緊急模式警告";
-    const int titleW = graphics::HermesX_zh::stringAdvance(title, graphics::HermesX_zh::GLYPH_WIDTH, display);
-    int16_t titleX = boxX + (boxW - titleW) / 2;
-    if (titleX < boxX + 2) {
-        titleX = boxX + 2;
-    }
-    graphics::HermesX_zh::drawMixedBounded(*display, titleX, boxY + 1, boxW - 4, title,
-                                           graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-    display->setColor(dialogFg);
-
-    const int advance = graphics::HermesX_zh::GLYPH_WIDTH - 1;
-    const int16_t bodyX = boxX + 5;
-    const int16_t bodyW = boxW - 10;
-    const int16_t bodyY = boxY + titleBarH + 2;
-    const int16_t statusY = optionY - FONT_HEIGHT_SMALL - 2;
-    int16_t bodyLineHeight = (statusY - bodyY - 1) / 2;
-    if (bodyLineHeight < (FONT_HEIGHT_SMALL - 1)) {
-        bodyLineHeight = FONT_HEIGHT_SMALL - 1;
-    } else if (bodyLineHeight > kSetupRowHeight) {
-        bodyLineHeight = kSetupRowHeight;
-    }
-    graphics::HermesX_zh::drawMixedBounded(*display, bodyX, bodyY, bodyW, u8"注意：即將進入EM模式",
-                                           advance, bodyLineHeight, nullptr);
-    graphics::HermesX_zh::drawMixedBounded(*display, bodyX, bodyY + bodyLineHeight, bodyW, u8"按下可退出取消",
-                                           advance, bodyLineHeight, nullptr);
-
-    display->drawRect(exitX, optionY, optionW, optionH);
-    const char *label = u8"退出";
-    const int textW = graphics::HermesX_zh::stringAdvance(label, graphics::HermesX_zh::GLYPH_WIDTH, display);
-    int16_t textX = exitX + (optionW - textW) / 2;
-    if (textX < exitX + 1) {
-        textX = exitX + 1;
-    }
-    graphics::HermesX_zh::drawMixedBounded(*display, textX, optionY + 1, optionW - 2, label,
-                                           graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-
-    char countdownLine[48];
-    snprintf(countdownLine, sizeof(countdownLine), u8"%lus 後自動進入",
-             static_cast<unsigned long>(screen->hermesEmergencyConfirmRemainingSec));
-    graphics::HermesX_zh::drawMixedBounded(*display, bodyX, statusY, bodyW, countdownLine, advance, FONT_HEIGHT_SMALL,
-                                           nullptr);
-    display->setColor(WHITE);
+    graphics::HermesXEmergencyConfirmUiRenderer::draw(display, gEmergencyConfirmUiState);
 }
 
 void Screen::drawRotaryLockOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
 {
     (void)state;
-    if (!display || !screen || !screen->hermesRotaryLockPopupVisible) {
-        return;
-    }
-
     constexpr uint32_t kRotaryLockPopupMs = 5000;
-    const uint32_t nowMs = millis();
-    if (screen->hermesRotaryLockPopupShownAtMs != 0 &&
-        (nowMs - screen->hermesRotaryLockPopupShownAtMs) >= kRotaryLockPopupMs) {
-        screen->hermesRotaryLockPopupVisible = false;
-        screen->setFastFramerate();
+    if (gRotaryLockUiModel.expire(millis(), kRotaryLockPopupMs)) {
+        if (screen) {
+            screen->setFastFramerate();
+        }
         return;
     }
-
-    const int16_t width = display->getWidth();
-    const int16_t height = display->getHeight();
-
-    display->setFont(FONT_SMALL);
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-
-    const int16_t boxX = 7;
-    const int16_t boxY = 10;
-    const int16_t boxW = width - 14;
-    const int16_t boxH = height - 20;
-    const int16_t titleBarH = 13;
-    const int16_t optionH = 13;
-    const int16_t optionY = boxY + boxH - optionH - 4;
-    const int16_t optionW = (boxW - 15) / 2;
-    const int16_t unlockX = boxX + 5;
-    const int16_t lockX = unlockX + optionW + 5;
-
-#if defined(USE_EINK)
-    const auto dialogBg = EINK_WHITE;
-    const auto dialogFg = EINK_BLACK;
-#else
-    const auto dialogBg = OLEDDISPLAY_COLOR::WHITE;
-    const auto dialogFg = OLEDDISPLAY_COLOR::BLACK;
-#endif
-
-    display->setColor(dialogBg);
-    display->fillRect(boxX, boxY, boxW, boxH);
-    display->setColor(dialogFg);
-    display->drawRect(boxX, boxY, boxW, boxH);
-    display->fillRect(boxX + 1, boxY + 1, boxW - 2, titleBarH);
-    display->setColor(dialogBg);
-
-    const char *title = u8"旋鈕鎖定";
-    const int titleW = graphics::HermesX_zh::stringAdvance(title, graphics::HermesX_zh::GLYPH_WIDTH, display);
-    int16_t titleX = boxX + (boxW - titleW) / 2;
-    if (titleX < boxX + 2) {
-        titleX = boxX + 2;
+    if (!display) {
+        return;
     }
-    graphics::HermesX_zh::drawMixedBounded(*display, titleX, boxY + 2, boxW - 4, title,
-                                           graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-    display->setColor(dialogFg);
-
-    auto drawOption = [&](int16_t optionX, const char *label, bool selected) {
-        if (selected) {
-            display->setColor(dialogFg);
-            display->fillRect(optionX, optionY, optionW, optionH);
-            display->setColor(dialogBg);
-        } else {
-            display->setColor(dialogFg);
-            display->drawRect(optionX, optionY, optionW, optionH);
-        }
-
-        const int textW = graphics::HermesX_zh::stringAdvance(label, graphics::HermesX_zh::GLYPH_WIDTH, display);
-        int16_t textX = optionX + (optionW - textW) / 2;
-        if (textX < optionX + 1) {
-            textX = optionX + 1;
-        }
-        graphics::HermesX_zh::drawMixedBounded(*display, textX, optionY + 2, optionW - 2, label,
-                                               graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-        display->setColor(dialogFg);
-    };
-
-    drawOption(unlockX, u8"解鎖", !screen->hermesRotaryLockPopupSelectedLocked);
-    drawOption(lockX, u8"鎖定", screen->hermesRotaryLockPopupSelectedLocked);
-    display->setColor(WHITE);
+    graphics::HermesXRotaryLockUiRenderer::draw(display, gRotaryLockUiState);
 }
 
 static void drawFinderPulseConfirmOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
 {
     (void)state;
-    if (!screen || !screen->isFinderPulseConfirmVisible()) {
-        return;
-    }
-
-    const uint32_t nowMs = millis();
-    uint32_t remainMs = 0;
-    const uint32_t shownAtMs = screen->getFinderPulseConfirmShownAtMs();
-    if (shownAtMs != 0) {
-        const uint32_t elapsedMs = nowMs - shownAtMs;
-        if (elapsedMs < kStealthConfirmArmMs) {
-            remainMs = kStealthConfirmArmMs - elapsedMs;
-        }
-    }
-    const uint32_t remainSec = (remainMs + 999U) / 1000U;
-    const int16_t width = display->getWidth();
-    const int16_t height = display->getHeight();
-
-    display->setFont(FONT_SMALL);
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-
-    const int16_t boxX = 3;
-    const int16_t boxY = 2;
-    const int16_t boxW = width - 6;
-    const int16_t boxH = height - 4;
-    const int16_t titleBarH = 12;
-    const int16_t optionH = 10;
-    const int16_t optionY = boxY + boxH - optionH - 2;
-    const int16_t optionW = (boxW - 13) / 2;
-    const int16_t cancelButtonX = boxX + 4;
-    const int16_t confirmButtonX = cancelButtonX + optionW + 5;
-
-#if defined(USE_EINK)
-    const auto dialogBg = EINK_WHITE;
-    const auto dialogFg = EINK_BLACK;
-#else
-    const auto dialogBg = OLEDDISPLAY_COLOR::WHITE;
-    const auto dialogFg = OLEDDISPLAY_COLOR::BLACK;
-#endif
-
-    display->setColor(dialogBg);
-    display->fillRect(boxX, boxY, boxW, boxH);
-    display->setColor(dialogFg);
-    display->drawRect(boxX, boxY, boxW, boxH);
-    display->fillRect(boxX + 1, boxY + 1, boxW - 2, titleBarH);
-    display->setColor(dialogBg);
-
-    const char *title = u8"尋人模式警告";
-    const int titleW = graphics::HermesX_zh::stringAdvance(title, graphics::HermesX_zh::GLYPH_WIDTH, display);
-    int16_t titleX = boxX + (boxW - titleW) / 2;
-    if (titleX < boxX + 2) {
-        titleX = boxX + 2;
-    }
-    graphics::HermesX_zh::drawMixedBounded(*display, titleX, boxY + 1, boxW - 4, title,
-                                           graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-    display->setColor(dialogFg);
-
-    const int dialogBodyAdvance = graphics::HermesX_zh::GLYPH_WIDTH - 1;
-    const int16_t bodyX = boxX + 5;
-    const int16_t bodyW = boxW - 10;
-    const int16_t bodyY = boxY + titleBarH + 2;
-    const int16_t statusY = optionY - FONT_HEIGHT_SMALL - 2;
-    int16_t dialogBodyLineHeight = (statusY - bodyY - 1) / 2;
-    if (dialogBodyLineHeight < (FONT_HEIGHT_SMALL - 1)) {
-        dialogBodyLineHeight = FONT_HEIGHT_SMALL - 1;
-    } else if (dialogBodyLineHeight > kSetupRowHeight) {
-        dialogBodyLineHeight = kSetupRowHeight;
-    }
-
-    graphics::HermesX_zh::drawMixedBounded(*display, bodyX, bodyY, bodyW, u8"注意：3秒後將強制", dialogBodyAdvance,
-                                           dialogBodyLineHeight, nullptr);
-    graphics::HermesX_zh::drawMixedBounded(*display, bodyX, bodyY + dialogBodyLineHeight, bodyW, u8"同頻裝置回報位置",
-                                           dialogBodyAdvance, dialogBodyLineHeight, nullptr);
-
-    auto drawOption = [&](int16_t optionX, const char *label, bool selected, bool enabled) {
-        if (!enabled) {
-            selected = false;
-        }
-        if (selected) {
-            display->setColor(dialogFg);
-            display->fillRect(optionX, optionY, optionW, optionH);
-            display->setColor(dialogBg);
-        } else {
-            display->setColor(dialogFg);
-            display->drawRect(optionX, optionY, optionW, optionH);
-        }
-
-        const int textW = graphics::HermesX_zh::stringAdvance(label, graphics::HermesX_zh::GLYPH_WIDTH, display);
-        int16_t textX = optionX + (optionW - textW) / 2;
-        if (textX < optionX + 1) {
-            textX = optionX + 1;
-        }
-        graphics::HermesX_zh::drawMixedBounded(*display, textX, optionY + 1, optionW - 2, label,
-                                               graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-        display->setColor(dialogFg);
-    };
-
-    drawOption(cancelButtonX, u8"取消", screen->getFinderPulseConfirmSelected() == 0, true);
-    drawOption(confirmButtonX, u8"發送", screen->getFinderPulseConfirmSelected() != 0, remainMs == 0);
-
-    char lockLine[48];
-    snprintf(lockLine, sizeof(lockLine), u8"%lus後自動發送尋人訊號", static_cast<unsigned long>(remainSec));
-    graphics::HermesX_zh::drawMixedBounded(*display, bodyX, statusY, bodyW, lockLine, dialogBodyAdvance,
-                                           FONT_HEIGHT_SMALL, nullptr);
-}
-
-static void drawFinderRadarIconShape(OLEDDisplay *display, int16_t cx, int16_t cy, int16_t radius, bool compactIcon,
-                                     int16_t sweepAngleDeg = INT16_MIN)
-{
-    if (!display) {
-        return;
-    }
-    if (radius < 8) {
-        radius = 8;
-    }
-
-    const int16_t rOuter = radius;
-    const int16_t rMid = (radius * 3) / 4;
-    const int16_t rInner = radius / 2;
-    const int16_t rCore = std::max<int16_t>(4, radius / 4);
-    const int16_t crossExt = compactIcon ? 4 : 6;
-    const int16_t dotR = compactIcon ? 3 : 4;
-
-    display->drawCircle(cx, cy, rOuter);
-    display->drawCircle(cx, cy, rMid);
-    display->drawCircle(cx, cy, rInner);
-    display->drawCircle(cx, cy, rCore);
-
-    display->drawLine(cx - rOuter - crossExt, cy, cx + rOuter + crossExt, cy);
-    display->drawLine(cx, cy - rOuter - crossExt, cx, cy + rOuter + crossExt);
-
-    display->drawLine(cx - rMid + 1, cy + rMid - 1, cx - 2, cy + 2);
-
-    const int16_t topRightX = cx + (rOuter * 4) / 5;
-    const int16_t topRightY = cy - (rOuter * 3) / 4;
-    const int16_t leftMidX = cx - (rMid * 4) / 5;
-    const int16_t leftMidY = cy - (rInner * 2) / 3;
-    const int16_t lowerRightX = cx + (rMid * 2) / 3;
-    const int16_t lowerRightY = cy + (rOuter * 2) / 3;
-
-    display->drawCircle(topRightX, topRightY, dotR);
-    display->drawCircle(leftMidX, leftMidY, dotR);
-    display->drawCircle(lowerRightX, lowerRightY, dotR);
-
-    if (sweepAngleDeg != INT16_MIN) {
-        const float radians = static_cast<float>(sweepAngleDeg) * PI / 180.0f;
-        const int16_t sweepX = cx + static_cast<int16_t>(cosf(radians) * static_cast<float>(rOuter - 2));
-        const int16_t sweepY = cy + static_cast<int16_t>(sinf(radians) * static_cast<float>(rOuter - 2));
-        display->drawLine(cx, cy, sweepX, sweepY);
-
-        const int16_t headR = compactIcon ? 1 : 2;
-        if (headR > 0) {
-            display->fillCircle(sweepX, sweepY, headR);
-        }
-    }
+    HermesXNodeBrowserUiRenderer::drawFinderPulseConfirm(display, millis(), kStealthConfirmArmMs);
 }
 
 static void drawFinderPulseSendingOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
 {
     (void)state;
-    if (!screen || !screen->isFinderPulseSendingVisible()) {
-        return;
-    }
-
-    const int16_t width = display->getWidth();
-    const int16_t height = display->getHeight();
-
-    display->setFont(FONT_SMALL);
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-
-#if defined(USE_EINK)
-    const auto dialogBg = EINK_WHITE;
-    const auto dialogFg = EINK_BLACK;
-#else
-    const auto dialogBg = OLEDDISPLAY_COLOR::WHITE;
-    const auto dialogFg = OLEDDISPLAY_COLOR::BLACK;
-#endif
-
-    display->setColor(dialogBg);
-    display->fillRect(0, 0, width, height);
-    display->setColor(dialogFg);
-
-    const uint32_t elapsedMs = millis() - screen->getFinderPulseSendingShownAtMs();
-    const int16_t radarRadius = std::max<int16_t>(16, std::min<int16_t>(width, height) / 4);
-    const int16_t radarCx = width / 2;
-    const int16_t radarCy = height / 2 - 14;
-    const int16_t sweepAngle = static_cast<int16_t>((elapsedMs / 30U) % 360U) - 90;
-    drawFinderRadarIconShape(display, radarCx, radarCy, radarRadius, false, sweepAngle);
-
-    const int advance = graphics::HermesX_zh::GLYPH_WIDTH - 1;
-    const int16_t textY = radarCy + radarRadius + 10;
-    graphics::HermesX_zh::drawMixedBounded(*display, 4, textY, width - 8, u8"正在發送尋人訊號",
-                                           advance, FONT_HEIGHT_SMALL, nullptr);
-    graphics::HermesX_zh::drawMixedBounded(*display, 4, textY + FONT_HEIGHT_SMALL + 4, width - 8, u8"等待位置回報...",
-                                           advance, FONT_HEIGHT_SMALL, nullptr);
+    HermesXNodeBrowserUiRenderer::drawFinderPulseSending(display, millis());
 }
-
 void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*state*/, int16_t /*x*/, int16_t /*y*/)
 {
     const int16_t width = display->getWidth();
@@ -13631,7 +5815,7 @@ void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*stat
     }
 
     if (!hermesActionStealthConfirmVisible) {
-        rebuildOnlineNodeOrder();
+        gNodeBrowserDataSource.refreshOnline();
         const bool stealthOn = isStealthModeActive();
         const bool takOn = isTakExperienceActive();
         const bool gpsPresent = config.position.gps_mode != meshtastic_Config_PositionConfig_GpsMode_NOT_PRESENT;
@@ -13940,7 +6124,7 @@ void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*stat
                     break;
                 }
                 case 12: { // 尋人模組（小圖）
-                    drawFinderRadarIconShape(display, cx, cy + 1, 10, true);
+                    HermesXNodeBrowserUiRenderer::drawFinderRadarIcon(display, cx, cy + 1, 10, true);
                     break;
                 }
                 case 13: { // 功能（小圖）
@@ -14222,7 +6406,7 @@ void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*stat
                 if (radarR < 16) {
                     radarR = 16;
                 }
-                drawFinderRadarIconShape(display, cx, iy + ih / 2, radarR, false);
+                HermesXNodeBrowserUiRenderer::drawFinderRadarIcon(display, cx, iy + ih / 2, radarR, false);
                 break;
             }
             case 13: { // 功能
@@ -14519,568 +6703,6 @@ void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*stat
     }
 }
 
-static void drawSetupDonutProgress(OLEDDisplay *display, int16_t cx, int16_t cy, int16_t radius, int progressPercent)
-{
-    if (!display || radius < 8) {
-        return;
-    }
-
-    const int boundedPercent = std::max(0, std::min(100, progressPercent));
-    const int16_t arcR = std::max<int16_t>(2, radius / 8);
-    const uint32_t now = millis();
-    const int spinnerHead = static_cast<int>((now / 9U) % 360U);
-    const int pulse = static_cast<int>((now / 140U) % 4U);
-
-    display->drawCircle(cx, cy, radius);
-    if (radius > 3) {
-        display->drawCircle(cx, cy, radius - 3);
-    }
-
-    int arcStart = -90;
-    int arcEnd = -90 + (360 * boundedPercent) / 100;
-    if (boundedPercent <= 0) {
-        arcStart = spinnerHead - 58;
-        arcEnd = spinnerHead;
-    } else if (boundedPercent >= 100) {
-        arcStart = -90;
-        arcEnd = 270;
-    }
-
-    for (int deg = arcStart; deg <= arcEnd; deg += 4) {
-        const float angle = deg * PI / 180.0f;
-        const int16_t x = cx + static_cast<int16_t>(lrintf(cosf(angle) * radius));
-        const int16_t y = cy + static_cast<int16_t>(lrintf(sinf(angle) * radius));
-        display->fillCircle(x, y, arcR);
-    }
-
-    if (arcEnd >= arcStart) {
-        const float startAngle = arcStart * PI / 180.0f;
-        const float endAngle = arcEnd * PI / 180.0f;
-        display->fillCircle(cx + static_cast<int16_t>(lrintf(cosf(startAngle) * radius)),
-                            cy + static_cast<int16_t>(lrintf(sinf(startAngle) * radius)), arcR);
-        display->fillCircle(cx + static_cast<int16_t>(lrintf(cosf(endAngle) * radius)),
-                            cy + static_cast<int16_t>(lrintf(sinf(endAngle) * radius)), arcR + (pulse == 0 ? 1 : 0));
-    }
-
-    const int shineDeg = (boundedPercent <= 0) ? spinnerHead - 24 : arcEnd - 18;
-    const float shineA = shineDeg * PI / 180.0f;
-    display->fillCircle(cx + static_cast<int16_t>(lrintf(cosf(shineA) * std::max<int16_t>(3, radius - arcR - 2))),
-                        cy + static_cast<int16_t>(lrintf(sinf(shineA) * std::max<int16_t>(3, radius - arcR - 2))), 1);
-
-    char percentText[8];
-    snprintf(percentText, sizeof(percentText), "%d%%", boundedPercent);
-    display->setFont(FONT_SMALL);
-    const int16_t textW = display->getStringWidth(percentText);
-    display->drawString(cx - textW / 2, cy - FONT_HEIGHT_SMALL / 2, percentText);
-}
-
-static void drawSetupUpdateProgressPage(OLEDDisplay *display,
-                                        int16_t width,
-                                        int16_t height,
-                                        const char *title,
-                                        const String &instruction,
-                                        int progressPercent,
-                                        const String &statusLine,
-                                        const String &targetVersion,
-                                        const String &errorLine,
-                                        bool canApply,
-                                        int actionCount,
-                                        const char *primaryLabel,
-                                        const char *secondaryLabel,
-                                        int selectedIndex,
-                                        String &toast,
-                                        uint32_t &toastUntilMs)
-{
-    if (!display) {
-        return;
-    }
-
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-#if defined(USE_EINK)
-    display->setColor(EINK_WHITE);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-    display->fillRect(0, 0, width, height);
-#if defined(USE_EINK)
-    display->setColor(EINK_BLACK);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-
-    drawSetupHeader(display, width, title);
-#if defined(USE_EINK)
-    display->setColor(EINK_BLACK);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-    display->setFont(FONT_SMALL);
-
-    const int16_t bodyTop = kSetupHeaderHeight + 3;
-    const int16_t lineH = FONT_HEIGHT_SMALL + 2;
-    const bool compactLayout = height <= 80;
-    const int16_t footerH = 14;
-    const int16_t footerY = height - footerH - 2;
-    const int16_t gap = 4;
-    const int16_t actionW = (width - 12 - gap * (actionCount - 1)) / actionCount;
-    const int16_t actionH = footerH;
-    const bool showToastHere = !compactLayout;
-
-    int16_t contentY = bodyTop;
-    int16_t metaBottom = footerY - 2;
-
-    auto drawWrappedCapped = [&](const String &text, int16_t x, int16_t y, int16_t maxWidth, int maxLines) -> int16_t {
-        if (text.isEmpty() || maxWidth <= 0 || maxLines <= 0) {
-            return 0;
-        }
-        const std::vector<String> wrappedLines =
-            buildMixedWrappedLines(display, text.c_str(), maxWidth, graphics::HermesX_zh::GLYPH_WIDTH);
-        const int16_t linesToDraw = std::min<int16_t>(static_cast<int16_t>(wrappedLines.size()), maxLines);
-        for (int16_t i = 0; i < linesToDraw; ++i) {
-            graphics::HermesX_zh::drawMixedBounded(*display, x, y + lineH * i, maxWidth, wrappedLines[i].c_str(),
-                                                   graphics::HermesX_zh::GLYPH_WIDTH, lineH, nullptr);
-        }
-        return linesToDraw;
-    };
-
-    auto drawSingleLine = [&](const String &text, int16_t x, int16_t y, int16_t maxWidth) {
-        if (text.isEmpty() || maxWidth <= 0) {
-            return;
-        }
-        const std::vector<String> wrappedLines =
-            buildMixedWrappedLines(display, text.c_str(), maxWidth, graphics::HermesX_zh::GLYPH_WIDTH);
-        if (!wrappedLines.empty()) {
-            graphics::HermesX_zh::drawMixedBounded(*display, x, y, maxWidth, wrappedLines.front().c_str(),
-                                                   graphics::HermesX_zh::GLYPH_WIDTH, lineH, nullptr);
-        }
-    };
-
-    const int boundedPercent = std::max(0, std::min(100, progressPercent));
-
-    if (compactLayout) {
-        const String statusText = instruction.isEmpty() ? String(u8"待命中") : instruction;
-        String infoText;
-        if (errorLine.length() > 0) {
-            infoText = errorLine;
-        } else if (canApply && targetVersion.length() > 0) {
-            infoText = targetVersion;
-        } else if (statusLine.length() > 0) {
-            infoText = statusLine;
-        } else if (targetVersion.length() > 0) {
-            infoText = targetVersion;
-        } else {
-            infoText = u8"待更新版本: 無";
-        }
-
-        const int16_t donutRadius = std::min<int16_t>(16, std::max<int16_t>(12, (footerY - bodyTop - 4) / 2));
-        const int16_t donutX = 4 + donutRadius;
-        const int16_t donutY = bodyTop + 2 + donutRadius;
-        drawSetupDonutProgress(display, donutX, donutY, donutRadius, boundedPercent);
-
-        const int16_t textX = donutX + donutRadius + 8;
-        const int16_t textW = width - textX - 4;
-        const int16_t statusY = bodyTop + 2;
-        const int16_t infoY = statusY + lineH;
-        drawSingleLine(statusText, textX, statusY, textW);
-        drawSingleLine(infoText, textX, infoY, textW);
-
-        for (int i = 0; i < actionCount; ++i) {
-            const bool selected = (selectedIndex == i);
-            const int16_t actionX = 6 + i * (actionW + gap);
-            const char *label = (i == 0) ? primaryLabel : secondaryLabel;
-
-            if (selected) {
-#if defined(USE_EINK)
-                display->fillRect(actionX, footerY, actionW, actionH);
-                display->setColor(EINK_WHITE);
-#else
-                display->setColor(OLEDDISPLAY_COLOR::WHITE);
-                display->fillRect(actionX, footerY, actionW, actionH);
-                display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-            } else {
-                display->drawRect(actionX, footerY, actionW, actionH);
-            }
-
-            const int16_t textW = HermesX_zh::stringAdvance(label, HermesX_zh::GLYPH_WIDTH, display);
-            const int16_t textX = actionX + std::max<int16_t>(2, (actionW - textW) / 2);
-            const int16_t textY = footerY + ((actionH - FONT_HEIGHT_SMALL) / 2);
-            graphics::HermesX_zh::drawMixedBounded(*display, textX, textY, actionW - 4, label,
-                                                   graphics::HermesX_zh::GLYPH_WIDTH, lineH, nullptr);
-
-            if (selected) {
-#if defined(USE_EINK)
-                display->setColor(EINK_BLACK);
-#else
-                display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-            }
-        }
-        return;
-    } else {
-        const int16_t drawnInstructionLines = std::max<int16_t>(1, drawWrappedCapped(instruction, 4, contentY, width - 8, 2));
-        contentY += lineH * drawnInstructionLines;
-    }
-
-    const int16_t availableForDonut = std::max<int16_t>(24, footerY - contentY - 26);
-    const int16_t donutRadius = std::min<int16_t>(24, std::max<int16_t>(14, availableForDonut / 2));
-    const int16_t donutY = contentY + 3 + donutRadius;
-    drawSetupDonutProgress(display, width / 2, donutY, donutRadius, boundedPercent);
-
-    const int16_t metaY = donutY + donutRadius + 3;
-
-    String percentLine = String(u8"進度 ") + String(boundedPercent) + "%";
-    String detailLine;
-    if (!compactLayout) {
-        if (errorLine.length() > 0) {
-            detailLine = errorLine;
-        } else if (canApply && targetVersion.length() > 0) {
-            detailLine = targetVersion;
-        } else {
-            detailLine = statusLine;
-        }
-    } else if (canApply && targetVersion.length() > 0) {
-        detailLine = targetVersion;
-    } else if (errorLine.length() > 0) {
-        detailLine = errorLine;
-    }
-
-    const int16_t maxMetaLines = std::max<int16_t>(0, (metaBottom - metaY) / lineH);
-    int16_t drawnMetaLines = 0;
-    const String metaValues[3] = {percentLine, detailLine,
-                                  (!compactLayout && !canApply && targetVersion.length() > 0 && detailLine != targetVersion)
-                                      ? targetVersion
-                                      : String()};
-    for (int16_t i = 0; i < 3 && drawnMetaLines < maxMetaLines; ++i) {
-        if (metaValues[i].isEmpty()) {
-            continue;
-        }
-        const int16_t remainingMetaLines = maxMetaLines - drawnMetaLines;
-        const int16_t justDrawn = drawWrappedCapped(metaValues[i], 4, metaY + lineH * drawnMetaLines, width - 8, remainingMetaLines);
-        drawnMetaLines += justDrawn;
-    }
-
-    for (int i = 0; i < actionCount; ++i) {
-        const bool selected = (selectedIndex == i);
-        const int16_t actionX = 6 + i * (actionW + gap);
-        const char *label = (i == 0) ? primaryLabel : secondaryLabel;
-
-        if (selected) {
-#if defined(USE_EINK)
-            display->fillRect(actionX, footerY, actionW, actionH);
-            display->setColor(EINK_WHITE);
-#else
-            display->setColor(OLEDDISPLAY_COLOR::WHITE);
-            display->fillRect(actionX, footerY, actionW, actionH);
-            display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-        } else {
-            display->drawRect(actionX, footerY, actionW, actionH);
-        }
-
-        const int16_t textW = HermesX_zh::stringAdvance(label, HermesX_zh::GLYPH_WIDTH, display);
-        const int16_t textX = actionX + std::max<int16_t>(2, (actionW - textW) / 2);
-        const int16_t textY = footerY + ((actionH - FONT_HEIGHT_SMALL) / 2);
-        graphics::HermesX_zh::drawMixedBounded(*display, textX, textY, actionW - 4, label, graphics::HermesX_zh::GLYPH_WIDTH,
-                                               lineH, nullptr);
-
-        if (selected) {
-#if defined(USE_EINK)
-            display->setColor(EINK_BLACK);
-#else
-            display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-        }
-    }
-
-    const bool toastWouldOverlap = toastUntilMs != 0 && (footerY - FONT_HEIGHT_SMALL - 1) <= metaBottom;
-    if (showToastHere && !toastWouldOverlap) {
-        drawSetupToast(display, width, height, toast, toastUntilMs);
-    }
-}
-
-static void drawSetupUpdateTransitionPage(OLEDDisplay *display,
-                                          int16_t width,
-                                          int16_t height,
-                                          uint32_t startedAtMs,
-                                          const char *title,
-                                          const char *status)
-{
-    if (!display) {
-        return;
-    }
-
-    const uint32_t elapsed = startedAtMs == 0 ? 0 : millis() - startedAtMs;
-    const uint32_t phase = elapsed % kSetupUpdateIntroMs;
-    const uint32_t clampedElapsed = std::min<uint32_t>(elapsed, kSetupUpdateIntroMs);
-    const bool compactLayout = height <= 80;
-    const int16_t lineH = FONT_HEIGHT_SMALL + 2;
-    const int16_t barX = compactLayout ? 12 : 22;
-    const int16_t barW = std::max<int16_t>(width - barX * 2, 32);
-    const int16_t barH = compactLayout ? 10 : 12;
-    const int16_t titleY = compactLayout ? 14 : 22;
-    const bool hasStatus = status && status[0];
-    const int16_t statusY = titleY + (compactLayout ? 18 : 24);
-    const int16_t barY = statusY + lineH + (compactLayout ? 4 : 8);
-
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-#if defined(USE_EINK)
-    display->setColor(EINK_WHITE);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-    display->fillRect(0, 0, width, height);
-#if defined(USE_EINK)
-    display->setColor(EINK_BLACK);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-
-    display->setFont(FONT_SMALL);
-    auto drawCenteredMixed = [&](const char *text, int16_t y) {
-        if (!text || !text[0]) {
-            return;
-        }
-        const int16_t textW = HermesX_zh::stringAdvance(text, HermesX_zh::GLYPH_WIDTH, display);
-        const int16_t textX = std::max<int16_t>(2, (width - textW) / 2);
-        const int16_t maxW = std::max<int16_t>(1, width - textX * 2);
-        HermesX_zh::drawMixedBounded(*display, textX, y, maxW, text, HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-    };
-    drawCenteredMixed(title, hasStatus ? titleY : titleY + (compactLayout ? 7 : 10));
-    drawCenteredMixed(status, statusY);
-
-    display->drawRect(barX, barY, barW, barH);
-    const int16_t innerW = barW - 2;
-    const int16_t fillW = static_cast<int16_t>((static_cast<uint32_t>(innerW) * clampedElapsed) / kSetupUpdateIntroMs);
-    if (fillW > 0) {
-        display->fillRect(barX + 1, barY + 1, fillW, barH - 2);
-    }
-
-    const int16_t scanW = std::max<int16_t>(8, barW / 5);
-    const int16_t travelW = std::max<int16_t>(1, innerW - scanW);
-    const int16_t scanX = barX + 1 + static_cast<int16_t>((static_cast<uint32_t>(travelW) * phase) / kSetupUpdateIntroMs);
-    display->fillRect(scanX, barY + 1, scanW, barH - 2);
-
-    const int16_t edgeY = height - 5;
-    display->drawLine(4, 4, 18, 4);
-    display->drawLine(4, 4, 4, 12);
-    display->drawLine(width - 19, edgeY, width - 5, edgeY);
-    display->drawLine(width - 5, edgeY - 8, width - 5, edgeY);
-}
-
-static void drawSetupUpdateIntroPage(OLEDDisplay *display, int16_t width, int16_t height, uint32_t startedAtMs)
-{
-    drawSetupUpdateTransitionPage(display, width, height, startedAtMs, u8"進入更新模式", "");
-}
-
-static void drawSetupUrlUpdateFlowPage(OLEDDisplay *display,
-                                       int16_t width,
-                                       int16_t height,
-                                       const String &statusValue,
-                                       const String &candidateVersion,
-                                       int progressPercent,
-                                       const String &errorValue,
-                                       const char *actionLabel,
-                                       int selectedIndex,
-                                       String &toast,
-                                       uint32_t &toastUntilMs)
-{
-    if (!display) {
-        return;
-    }
-
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-#if defined(USE_EINK)
-    display->setColor(EINK_WHITE);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-    display->fillRect(0, 0, width, height);
-#if defined(USE_EINK)
-    display->setColor(EINK_BLACK);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-
-    drawSetupHeader(display, width, u8"URL更新");
-#if defined(USE_EINK)
-    display->setColor(EINK_BLACK);
-#else
-    display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-    display->setFont(FONT_SMALL);
-
-    const bool compactLayout = height <= 80;
-    const int16_t lineH = FONT_HEIGHT_SMALL + 2;
-    const int16_t bodyTop = kSetupHeaderHeight + 3;
-    const int16_t barX = 6;
-    const int16_t barW = width - 12;
-    const int16_t barH = 10;
-    const int16_t footerH = 14;
-    const int16_t footerY = height - footerH - 2;
-    const int16_t gap = 4;
-    const int16_t actionCount = 2;
-    const int16_t actionW = (width - 12 - gap) / 2;
-    const int16_t contentW = width - 8;
-
-    auto drawWrappedCapped = [&](const String &text, int16_t x, int16_t y, int16_t maxWidth, int maxLines) -> int16_t {
-        if (text.isEmpty() || maxWidth <= 0 || maxLines <= 0) {
-            return 0;
-        }
-        const std::vector<String> wrappedLines =
-            buildMixedWrappedLines(display, text.c_str(), maxWidth, graphics::HermesX_zh::GLYPH_WIDTH);
-        const int16_t linesToDraw = std::min<int16_t>(static_cast<int16_t>(wrappedLines.size()), maxLines);
-        for (int16_t i = 0; i < linesToDraw; ++i) {
-            graphics::HermesX_zh::drawMixedBounded(*display, x, y + lineH * i, maxWidth, wrappedLines[i].c_str(),
-                                                   graphics::HermesX_zh::GLYPH_WIDTH, lineH, nullptr);
-        }
-        return linesToDraw;
-    };
-
-    auto drawSingleLine = [&](const String &text, int16_t x, int16_t y, int16_t maxWidth) {
-        if (text.isEmpty() || maxWidth <= 0) {
-            return;
-        }
-        const std::vector<String> wrappedLines =
-            buildMixedWrappedLines(display, text.c_str(), maxWidth, graphics::HermesX_zh::GLYPH_WIDTH);
-        if (!wrappedLines.empty()) {
-            graphics::HermesX_zh::drawMixedBounded(*display, x, y, maxWidth, wrappedLines.front().c_str(),
-                                                   graphics::HermesX_zh::GLYPH_WIDTH, lineH, nullptr);
-        }
-    };
-
-    if (compactLayout) {
-        const String statusText = statusValue.isEmpty() ? String(u8"待命中") : statusValue;
-        String infoText;
-        if (!errorValue.isEmpty()) {
-            infoText = String(u8"錯誤: ") + errorValue;
-        } else if (!candidateVersion.isEmpty()) {
-            infoText = String(u8"版本: ") + candidateVersion;
-        } else {
-            infoText = u8"版本: 無";
-        }
-
-        const int16_t statusY = bodyTop;
-        const int16_t infoY = statusY + lineH;
-        const int16_t barY = infoY + lineH + 2;
-
-        drawSingleLine(statusText, 4, statusY, contentW);
-        drawSingleLine(infoText, 4, infoY, contentW);
-
-        display->drawRect(barX, barY, barW, barH);
-        const int boundedPercent = std::max(0, std::min(100, progressPercent));
-        const int16_t innerW = barW - 2;
-        const int16_t fillW = (innerW * boundedPercent) / 100;
-        if (fillW > 0) {
-            display->fillRect(barX + 1, barY + 1, fillW, barH - 2);
-        }
-
-        for (int i = 0; i < actionCount; ++i) {
-            const bool selected = (selectedIndex == i);
-            const int16_t actionX = 6 + i * (actionW + gap);
-            const char *label = (i == 0) ? u8"返回" : actionLabel;
-
-            if (selected) {
-#if defined(USE_EINK)
-                display->fillRect(actionX, footerY, actionW, footerH);
-                display->setColor(EINK_WHITE);
-#else
-                display->setColor(OLEDDISPLAY_COLOR::WHITE);
-                display->fillRect(actionX, footerY, actionW, footerH);
-                display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-            } else {
-                display->drawRect(actionX, footerY, actionW, footerH);
-            }
-
-            const int16_t textW = HermesX_zh::stringAdvance(label, HermesX_zh::GLYPH_WIDTH, display);
-            const int16_t textX = actionX + std::max<int16_t>(2, (actionW - textW) / 2);
-            const int16_t textY = footerY + ((footerH - FONT_HEIGHT_SMALL) / 2);
-            graphics::HermesX_zh::drawMixedBounded(*display, textX, textY, actionW - 4, label,
-                                                   graphics::HermesX_zh::GLYPH_WIDTH, lineH, nullptr);
-
-            if (selected) {
-#if defined(USE_EINK)
-                display->setColor(EINK_BLACK);
-#else
-                display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-            }
-        }
-        return;
-    }
-
-    int16_t y = bodyTop;
-    graphics::HermesX_zh::drawMixedBounded(*display, 4, y, contentW, u8"目前狀態", graphics::HermesX_zh::GLYPH_WIDTH, lineH, nullptr);
-    y += lineH;
-    const int maxStatusLines = compactLayout ? 2 : 3;
-    const int16_t statusLines =
-        std::max<int16_t>(1, drawWrappedCapped(statusValue.isEmpty() ? String(u8"待命中") : statusValue, 4, y, contentW, maxStatusLines));
-    y += statusLines * lineH + 2;
-
-    const int16_t barY = y;
-    display->drawRect(barX, barY, barW, barH);
-    const int boundedPercent = std::max(0, std::min(100, progressPercent));
-    const int16_t innerW = barW - 2;
-    const int16_t fillW = (innerW * boundedPercent) / 100;
-    if (fillW > 0) {
-        display->fillRect(barX + 1, barY + 1, fillW, barH - 2);
-    }
-    y = barY + barH + 2;
-
-    const String progressLine = String(u8"下載進度: ") + String(boundedPercent) + "%";
-    graphics::HermesX_zh::drawMixedBounded(*display, 4, y, contentW, progressLine.c_str(), graphics::HermesX_zh::GLYPH_WIDTH, lineH,
-                                           nullptr);
-    y += lineH;
-
-    String bottomInfo;
-    if (!errorValue.isEmpty()) {
-        bottomInfo = String(u8"最後錯誤: ") + errorValue;
-    } else if (!candidateVersion.isEmpty()) {
-        bottomInfo = String(u8"待更新版本: ") + candidateVersion;
-    } else {
-        bottomInfo = u8"待更新版本: 無";
-    }
-    const int16_t availableInfoLines = std::max<int16_t>(0, (footerY - 2 - y) / lineH);
-    drawWrappedCapped(bottomInfo, 4, y, contentW, compactLayout ? std::min<int16_t>(2, availableInfoLines)
-                                                                 : std::min<int16_t>(3, availableInfoLines));
-
-    for (int i = 0; i < actionCount; ++i) {
-        const bool selected = (selectedIndex == i);
-        const int16_t actionX = 6 + i * (actionW + gap);
-        const char *label = (i == 0) ? u8"返回" : actionLabel;
-
-        if (selected) {
-#if defined(USE_EINK)
-            display->fillRect(actionX, footerY, actionW, footerH);
-            display->setColor(EINK_WHITE);
-#else
-            display->setColor(OLEDDISPLAY_COLOR::WHITE);
-            display->fillRect(actionX, footerY, actionW, footerH);
-            display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-        } else {
-            display->drawRect(actionX, footerY, actionW, footerH);
-        }
-
-        const int16_t textW = HermesX_zh::stringAdvance(label, HermesX_zh::GLYPH_WIDTH, display);
-        const int16_t textX = actionX + std::max<int16_t>(2, (actionW - textW) / 2);
-        const int16_t textY = footerY + ((footerH - FONT_HEIGHT_SMALL) / 2);
-        graphics::HermesX_zh::drawMixedBounded(*display, textX, textY, actionW - 4, label, graphics::HermesX_zh::GLYPH_WIDTH,
-                                               lineH, nullptr);
-
-        if (selected) {
-#if defined(USE_EINK)
-            display->setColor(EINK_BLACK);
-#else
-            display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-        }
-    }
-
-    drawSetupToast(display, width, height, toast, toastUntilMs);
-}
-
 void Screen::drawHermesXShareChannel(OLEDDisplay *display, OLEDDisplayUiState * /*state*/, int16_t x, int16_t y)
 {
     const int16_t width = display->getWidth();
@@ -15215,27 +6837,24 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
 {
     const int16_t width = display->getWidth();
     const int16_t height = display->getHeight();
-    const uint32_t nowMs = millis();
-    const bool showToast = (hermesSetupToastUntilMs != 0) && (nowMs <= hermesSetupToastUntilMs);
     static int lastPalettePage = -1;
-    const int currentPalettePage = static_cast<int>(hermesSetupPage);
+    const int currentPalettePage = static_cast<int>(gHermesFastSetupNavigation.page);
     const bool forcePaletteRedraw = (lastPalettePage != currentPalettePage);
     lastPalettePage = currentPalettePage;
 
     const auto applyPaletteNoSelection = [&]() {
-        applyHermesFastSetupTftPalette(display, width, height, 0, 0, 0, showToast, forcePaletteRedraw);
+        HermesXFastSetupUiRenderer::applyTftPalette(display, width, height, forcePaletteRedraw);
     };
-    const auto applyPaletteList = [&](int itemCount) {
-        applyHermesFastSetupTftPalette(display, width, height, itemCount, hermesSetupSelected, hermesSetupOffset, showToast,
-                                       forcePaletteRedraw);
-    };
+    const HermesXFastSetupListContext listContext(display, width, height, gHermesFastSetupNavigation.selected,
+                                                  gHermesFastSetupNavigation.offset, forcePaletteRedraw,
+                                                  hermesSetupToast, hermesSetupToastUntilMs);
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateDetailPopup && isSetupDetailPopupVisible()) {
-        if (hermesSetupReturnPage != HermesFastSetupPage::UpdateDetailPopup) {
-            const HermesFastSetupPage popupPage = hermesSetupPage;
-            hermesSetupPage = hermesSetupReturnPage;
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateDetailPopup && isSetupDetailPopupVisible()) {
+        if (gHermesFastSetupNavigation.returnPage != HermesFastSetupPage::UpdateDetailPopup) {
+            const HermesFastSetupPage popupPage = gHermesFastSetupNavigation.page;
+            gHermesFastSetupNavigation.page = gHermesFastSetupNavigation.returnPage;
             drawHermesFastSetup(display, nullptr, 0, 0);
-            hermesSetupPage = popupPage;
+            gHermesFastSetupNavigation.page = popupPage;
         } else {
             applyPaletteNoSelection();
         }
@@ -15243,391 +6862,213 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::Entry) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::Entry) {
         applyPaletteNoSelection();
-        display->setTextAlignment(TEXT_ALIGN_LEFT);
-#if defined(USE_EINK)
-        display->setColor(EINK_WHITE);
-#else
-        display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-        display->fillRect(0, 0, width, height);
-#if defined(USE_EINK)
-        display->setColor(EINK_BLACK);
-#else
-        display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-
-        drawSetupHeader(display, width, u8"HermesFastSetup");
-
-        const int16_t line1Y = height - (FONT_HEIGHT_SMALL * 2) - 2;
-        const int16_t line2Y = height - FONT_HEIGHT_SMALL;
-        const int16_t iconTop = kSetupHeaderHeight + 2;
-        const int16_t iconBottom = line1Y - 4;
-        int16_t iconRadius = (iconBottom > iconTop) ? ((iconBottom - iconTop) / 2) : 10;
-        const int16_t maxRadiusByWidth = (width / 2) - 6;
-        if (iconRadius > maxRadiusByWidth) {
-            iconRadius = maxRadiusByWidth;
-        }
-        if (iconRadius < 10) {
-            iconRadius = 10;
-        }
-        const int16_t iconCx = width / 2;
-        const int16_t iconCy = iconTop + iconRadius;
-        drawSetupNutIcon(display, iconCx, iconCy, iconRadius);
-
-        graphics::HermesX_zh::drawMixedBounded(*display, 2, line1Y, width - 4, u8"旋轉以進入設定",
-                                               graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-        graphics::HermesX_zh::drawMixedBounded(*display, 2, line2Y, width - 4, u8"短按=下一頁",
-                                               graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
+        HermesXFastSetupUiRenderer::drawEntryPage(display, width, height);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::PassEdit) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::PassEdit) {
         applyPaletteNoSelection();
         const char *header = (hermesSetupEditingSlot == 0) ? "GROUP PIN A" : "GROUP PIN B";
-        drawSetupKeyboardPage(display, width, height, header, hermesSetupPassDraft, kSetupKeyRows, kSetupKeyRowLengths,
-                              kSetupKeyRowCount, hermesSetupKeyRow, hermesSetupKeyCol, hermesSetupToast,
-                              hermesSetupToastUntilMs);
+        HermesXFastSetupUiRenderer::drawKeyboardPage(
+            display, width, height, header, hermesSetupPassDraft, kSetupKeyRows, kSetupKeyRowLengths,
+            kSetupKeyRowCount, hermesSetupKeyRow, hermesSetupKeyCol, hermesSetupToast, hermesSetupToastUntilMs);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::FrequencyEdit) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::FrequencyEdit) {
         applyPaletteNoSelection();
-        drawSetupKeyboardPage(display, width, height, u8"手動設定頻率", hermesSetupFrequencyDraft, kSetupNumericKeyRows,
-                              kSetupNumericKeyRowLengths, kSetupNumericKeyRowCount, hermesSetupKeyRow, hermesSetupKeyCol,
-                              hermesSetupToast, hermesSetupToastUntilMs);
+        HermesXFastSetupUiRenderer::drawKeyboardPage(
+            display, width, height, u8"手動設定頻率", hermesSetupFrequencyDraft, kSetupNumericKeyRows,
+            kSetupNumericKeyRowLengths, kSetupNumericKeyRowCount, hermesSetupKeyRow, hermesSetupKeyCol,
+            hermesSetupToast, hermesSetupToastUntilMs);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::PassShow) {
-        applyPaletteNoSelection();
-        display->setTextAlignment(TEXT_ALIGN_LEFT);
-#if defined(USE_EINK)
-        display->setColor(EINK_WHITE);
-#else
-        display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-        display->fillRect(0, 0, width, height);
-#if defined(USE_EINK)
-        display->setColor(EINK_BLACK);
-#else
-        display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-        drawSetupHeader(display, width, "GROUP PIN");
-#if defined(USE_EINK)
-        display->setColor(EINK_BLACK);
-#else
-        display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-        display->setFont(FONT_SMALL);
-        String passA = lighthouseModule ? lighthouseModule->getEmergencyGroupPin(0) : "";
-        String passB = lighthouseModule ? lighthouseModule->getEmergencyGroupPin(1) : "";
-        if (passA.length() == 0) {
-            passA = u8"未設定";
-        }
-        if (passB.length() == 0) {
-            passB = u8"未設定";
-        }
-        const String lineA = String("PIN A: ") + passA;
-        const String lineB = String("PIN B: ") + passB;
-        graphics::HermesX_zh::drawMixedBounded(*display, 2, kSetupHeaderHeight + 2, width - 4, lineA.c_str(),
-                                               graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-        graphics::HermesX_zh::drawMixedBounded(*display, 2, kSetupHeaderHeight + 2 + FONT_HEIGHT_SMALL + 2, width - 4,
-                                               lineB.c_str(), graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
-        graphics::HermesX_zh::drawMixedBounded(*display, 2, height - FONT_HEIGHT_SMALL, width - 4, u8"按返回離開",
-                                               graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::PassShow) {
+        const String passA = lighthouseModule ? lighthouseModule->getEmergencyGroupPin(0) : "";
+        const String passB = lighthouseModule ? lighthouseModule->getEmergencyGroupPin(1) : "";
+        HermesXFastSetupUiRenderer::drawGroupPins(listContext, passA.c_str(), passB.c_str());
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UiMenu) {
-        applyPaletteList(kSetupUiMenuCount);
-        String label = u8"全域蜂鳴器: ";
-        if (isBuzzerGloballyEnabled()) {
-            label += u8"開";
-        } else {
-            label += u8"關";
-        }
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UiMenu) {
         const uint8_t ledBrightness =
             HermesXInterfaceModule::instance ? HermesXInterfaceModule::instance->getUiLedBrightness() : 60;
         const bool ambientEnabled = moduleConfig.has_ambient_lighting && moduleConfig.ambient_lighting.led_state;
-        String brightnessLine = String(u8"Hermes狀態條: ") + getSetupBrightnessLabel(ledBrightness);
-        String ambientLine = String(u8"板載RGB燈: ") + (ambientEnabled ? u8"開" : u8"關");
-        String screenSleepLine = String(u8"螢幕休眠: ") + getSetupScreenSleepLabel(getSetupCurrentScreenSleepSeconds());
-        String timezoneLine = String(u8"時區: ") + getSetupTimezoneLabel(config.device.tzdef);
         const bool rotarySwapped =
             moduleConfig.canned_message.inputbroker_event_cw ==
             meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP;
-        String rotarySwapLine = String(u8"旋鈕對調: ") + (rotarySwapped ? u8"開" : u8"關");
-        String msgPopupLine = String(u8"新訊息提示: ") + (isIncomingTextPopupEnabled() ? u8"開" : u8"關");
-        const char *items[] = {u8"返回", label.c_str(), brightnessLine.c_str(), ambientLine.c_str(), screenSleepLine.c_str(),
-                               timezoneLine.c_str(), rotarySwapLine.c_str(), msgPopupLine.c_str()};
-        drawSetupList(display, width, height, u8"UI設定", items, kSetupUiMenuCount, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        const String brightnessLabel = getSetupBrightnessLabel(ledBrightness);
+        const String sleepLabel = getSetupScreenSleepLabel(getSetupCurrentScreenSleepSeconds());
+        HermesXFastSetupUiRenderer::drawUiMenu(
+            listContext, isBuzzerGloballyEnabled(), brightnessLabel.c_str(), ambientEnabled, sleepLabel.c_str(),
+            getSetupTimezoneLabel(config.device.tzdef), rotarySwapped, isIncomingTextPopupEnabled());
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UiBrightnessSelect) {
-        applyPaletteList(kSetupBrightnessCount + 1);
-        const char *items[kSetupBrightnessCount + 1] = {u8"返回"};
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UiBrightnessSelect) {
+        const char *labels[kSetupBrightnessCount];
         for (uint8_t i = 0; i < kSetupBrightnessCount; ++i) {
-            items[i + 1] = kSetupBrightnessOptions[i].label;
+            labels[i] = kSetupBrightnessOptions[i].label;
         }
-        drawSetupList(display, width, height, u8"Hermes狀態條亮度", items, kSetupBrightnessCount + 1, hermesSetupSelected,
-                      hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        HermesXFastSetupUiRenderer::drawSelectionMenu(
+            listContext, u8"Hermes狀態條亮度", labels, kSetupBrightnessCount);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UiScreenSleepSelect) {
-        applyPaletteList(kSetupScreenSleepCount + 1);
-        const char *items[kSetupScreenSleepCount + 1] = {u8"返回"};
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UiScreenSleepSelect) {
+        const char *labels[kSetupScreenSleepCount];
         for (uint8_t i = 0; i < kSetupScreenSleepCount; ++i) {
-            items[i + 1] = kSetupScreenSleepOptions[i].label;
+            labels[i] = kSetupScreenSleepOptions[i].label;
         }
-        drawSetupList(display, width, height, u8"螢幕休眠時間", items, kSetupScreenSleepCount + 1, hermesSetupSelected,
-                      hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        HermesXFastSetupUiRenderer::drawSelectionMenu(
+            listContext, u8"螢幕休眠時間", labels, kSetupScreenSleepCount);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UiTimezoneSelect) {
-        applyPaletteList(kSetupTimezoneCount + 1);
-        const char *items[kSetupTimezoneCount + 1] = {u8"返回"};
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UiTimezoneSelect) {
+        const char *labels[kSetupTimezoneCount];
         for (uint8_t i = 0; i < kSetupTimezoneCount; ++i) {
-            items[i + 1] = kSetupTimezoneOptions[i].label;
+            labels[i] = kSetupTimezoneOptions[i].label;
         }
-        drawSetupList(display, width, height, u8"時區設定", items, kSetupTimezoneCount + 1, hermesSetupSelected,
-                      hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        HermesXFastSetupUiRenderer::drawSelectionMenu(listContext, u8"時區設定", labels, kSetupTimezoneCount);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UiRotarySwapSelect) {
-        applyPaletteList(3);
-        const char *items[] = {u8"返回", u8"關閉", u8"開啟"};
-        drawSetupList(display, width, height, u8"旋鈕對調", items, 3, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UiRotarySwapSelect) {
+        HermesXFastSetupUiRenderer::drawToggleSelectionMenu(listContext, u8"旋鈕對調");
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::EmacMenu) {
-        applyPaletteList(kSetupEmacCount);
-        drawSetupList(display, width, height, u8"GROUP設定", kSetupEmacItems, kSetupEmacCount, hermesSetupSelected,
-                      hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::EmacMenu) {
+        HermesXFastSetupUiRenderer::drawMenu(listContext, u8"GROUP設定", kSetupEmacItems, kSetupEmacCount);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::EmacEmInfoMenu) {
-        applyPaletteList(kSetupEmInfoCount);
-        String emInfoBroadcastLine = String(u8"EMINFO廣播: ") +
-                                     ((hermesXEmUiModule && hermesXEmUiModule->isEmInfoBroadcastEnabled()) ? u8"開" : u8"關");
-        String emInfoIntervalLine = String(u8"EMINFO週期: ") +
-                                    formatSetupSecondsLabel(hermesXEmUiModule ? hermesXEmUiModule->getEmInfoIntervalSec() : 0);
-        String heartbeatIntervalLine = String(u8"Heartbeat週期: ") +
-                                       formatSetupSecondsLabel(hermesXEmUiModule ? hermesXEmUiModule->getEmHeartbeatIntervalSec() : 0);
-        String offlineThresholdLine = String(u8"離線門檻: ") +
-                                      String(hermesXEmUiModule ? hermesXEmUiModule->getEmOfflineThresholdCount() : 3) + "x";
-        String batteryIncludeLine = String(u8"附帶電量: ") +
-                                    ((hermesXEmUiModule && hermesXEmUiModule->isEmBatteryIncluded()) ? u8"開" : u8"關");
-        const char *items[] = {u8"返回", emInfoBroadcastLine.c_str(), emInfoIntervalLine.c_str(), heartbeatIntervalLine.c_str(),
-                               offlineThresholdLine.c_str(), batteryIncludeLine.c_str()};
-        drawSetupList(display, width, height, u8"EMINFO設定", items, kSetupEmInfoCount, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::EmacEmInfoMenu) {
+        const String emInfoLabel =
+            formatSetupSecondsLabel(hermesXEmUiModule ? hermesXEmUiModule->getEmInfoIntervalSec() : 0);
+        const String heartbeatLabel =
+            formatSetupSecondsLabel(hermesXEmUiModule ? hermesXEmUiModule->getEmHeartbeatIntervalSec() : 0);
+        HermesXFastSetupUiRenderer::drawEmInfoMenu(
+            listContext, hermesXEmUiModule && hermesXEmUiModule->isEmInfoBroadcastEnabled(), emInfoLabel.c_str(),
+            heartbeatLabel.c_str(), hermesXEmUiModule ? hermesXEmUiModule->getEmOfflineThresholdCount() : 3,
+            hermesXEmUiModule && hermesXEmUiModule->isEmBatteryIncluded());
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::EmacEmInfoIntervalSelect) {
-        const int itemCount = kSetupEmInfoIntervalCount + 1;
-        applyPaletteList(itemCount);
-        const char *items[kSetupEmInfoIntervalCount + 1];
-        items[0] = u8"返回";
-        for (uint8_t i = 0; i < kSetupEmInfoIntervalCount; ++i) {
-            items[i + 1] = kSetupEmInfoIntervalLabels[i];
-        }
-        drawSetupList(display, width, height, u8"EMINFO週期", items, itemCount, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::EmacEmInfoIntervalSelect) {
+        HermesXFastSetupUiRenderer::drawSelectionMenu(
+            listContext, u8"EMINFO週期", kSetupEmInfoIntervalLabels, kSetupEmInfoIntervalCount);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::EmacHeartbeatIntervalSelect) {
-        const int itemCount = kSetupHeartbeatIntervalCount + 1;
-        applyPaletteList(itemCount);
-        const char *items[kSetupHeartbeatIntervalCount + 1];
-        items[0] = u8"返回";
-        for (uint8_t i = 0; i < kSetupHeartbeatIntervalCount; ++i) {
-            items[i + 1] = kSetupHeartbeatIntervalLabels[i];
-        }
-        drawSetupList(display, width, height, u8"Heartbeat週期", items, itemCount, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::EmacHeartbeatIntervalSelect) {
+        HermesXFastSetupUiRenderer::drawSelectionMenu(
+            listContext, u8"Heartbeat週期", kSetupHeartbeatIntervalLabels, kSetupHeartbeatIntervalCount);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::EmacOfflineThresholdSelect) {
-        const int itemCount = kSetupOfflineThresholdCount + 1;
-        applyPaletteList(itemCount);
-        const char *items[kSetupOfflineThresholdCount + 1];
-        items[0] = u8"返回";
-        for (uint8_t i = 0; i < kSetupOfflineThresholdCount; ++i) {
-            items[i + 1] = kSetupOfflineThresholdLabels[i];
-        }
-        drawSetupList(display, width, height, u8"離線門檻", items, itemCount, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::EmacOfflineThresholdSelect) {
+        HermesXFastSetupUiRenderer::drawSelectionMenu(
+            listContext, u8"離線門檻", kSetupOfflineThresholdLabels, kSetupOfflineThresholdCount);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::EmacBatteryIncludeSelect) {
-        applyPaletteList(3);
-        const char *items[] = {u8"返回", u8"關閉", u8"開啟"};
-        drawSetupList(display, width, height, u8"附帶電量", items, 3, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::EmacBatteryIncludeSelect) {
+        HermesXFastSetupUiRenderer::drawToggleSelectionMenu(listContext, u8"附帶電量");
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::NodeMenu) {
-        applyPaletteList(kSetupNodeMenuCount);
-        const bool mqttEnabled = moduleConfig.mqtt.enabled;
-        String btLine = String(u8"藍牙: ") + (config.bluetooth.enabled ? u8"開" : u8"關");
-        String mqttLine = String("MQTT: ") + (mqttEnabled ? u8"開" : u8"關");
-        const char *items[] = {u8"返回", u8"裝置資訊", "LoRa", u8"GPS", mqttLine.c_str(), u8"頻道設定", btLine.c_str(),
-                               u8"電源管理", u8"節點資料庫", u8"更新模式"};
-        drawSetupList(display, width, height, u8"裝置管理", items, kSetupNodeMenuCount, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::NodeMenu) {
+        HermesXFastSetupUiRenderer::drawNodeMenu(listContext, moduleConfig.mqtt.enabled, config.bluetooth.enabled);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::DeviceInfoMenu) {
-        applyPaletteList(kSetupDeviceInfoMenuCount);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::DeviceInfoMenu) {
         const uint32_t currentBroadcast = getSetupCurrentNodeInfoBroadcast();
         const char *broadcastLabel = getSetupNodeInfoBroadcastLabel(currentBroadcast);
-        String shortLine = String(u8"裝置ID: ") + (owner.short_name[0] ? String(owner.short_name) : u8"未設定");
-        String longLine = String(u8"裝置名稱: ") + (owner.long_name[0] ? String(owner.long_name) : u8"未設定");
-        String nodeIdLine = String("NodeID: ") + getSetupNodeNumLabel();
-        String broadcastLine =
-            String(u8"廣播時間: ") + (broadcastLabel ? String(broadcastLabel) : formatSetupSecondsLabel(currentBroadcast));
-        const char *items[] = {u8"返回", shortLine.c_str(), longLine.c_str(), nodeIdLine.c_str(), broadcastLine.c_str(),
-                               u8"立即廣播"};
-        drawSetupList(display, width, height, u8"裝置資訊", items, kSetupDeviceInfoMenuCount, hermesSetupSelected,
-                      hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        const String nodeId = getSetupNodeNumLabel();
+        const String broadcastValue =
+            broadcastLabel ? String(broadcastLabel) : formatSetupSecondsLabel(currentBroadcast);
+        HermesXFastSetupUiRenderer::drawDeviceInfoMenu(
+            listContext, owner.short_name, owner.long_name, nodeId.c_str(), broadcastValue.c_str());
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::DeviceInfoShortNameEdit ||
-        hermesSetupPage == HermesFastSetupPage::DeviceInfoLongNameEdit) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::DeviceInfoShortNameEdit ||
+        gHermesFastSetupNavigation.page == HermesFastSetupPage::DeviceInfoLongNameEdit) {
         applyPaletteNoSelection();
         const String preview = makeSetupDraftPreview(hermesSetupDeviceInfoDraft);
         const char *title =
-            (hermesSetupPage == HermesFastSetupPage::DeviceInfoShortNameEdit) ? u8"裝置ID" : u8"裝置名稱";
-        drawSetupKeyboardPage(display, width, height, title, preview,
-                              getSetupWifiKeyRows(hermesSetupDeviceInfoLowercase), kSetupWifiKeyRowLengths,
-                              kSetupWifiKeyRowCount, hermesSetupKeyRow, hermesSetupKeyCol, hermesSetupToast,
-                              hermesSetupToastUntilMs);
+            (gHermesFastSetupNavigation.page == HermesFastSetupPage::DeviceInfoShortNameEdit) ? u8"裝置ID" : u8"裝置名稱";
+        HermesXFastSetupUiRenderer::drawKeyboardPage(
+            display, width, height, title, preview, getSetupWifiKeyRows(hermesSetupDeviceInfoLowercase),
+            kSetupWifiKeyRowLengths, kSetupWifiKeyRowCount, hermesSetupKeyRow, hermesSetupKeyCol, hermesSetupToast,
+            hermesSetupToastUntilMs);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::DeviceInfoBroadcastSelect) {
-        const int itemCount = kSetupNodeInfoBroadcastCount + 1;
-        applyPaletteList(itemCount);
-        const char *items[kSetupNodeInfoBroadcastCount + 1];
-        items[0] = u8"返回";
-        for (uint8_t i = 0; i < kSetupNodeInfoBroadcastCount; ++i) {
-            items[i + 1] = kSetupNodeInfoBroadcastLabels[i];
-        }
-        drawSetupList(display, width, height, u8"廣播時間", items, itemCount, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::DeviceInfoBroadcastSelect) {
+        HermesXFastSetupUiRenderer::drawSelectionMenu(
+            listContext, u8"廣播時間", kSetupNodeInfoBroadcastLabels, kSetupNodeInfoBroadcastCount);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateMenu) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateMenu) {
         auto &updateManager = HermesXUpdateManager::instance();
-        const bool dedicatedUpdateBoot = gUpdateBootRequested;
-        if (!dedicatedUpdateBoot) {
-            applyPaletteList(kSetupUpdateEntryMenuCount);
-            const char *items[] = {u8"返回", u8"開始更新"};
-            drawSetupList(display, width, height, u8"更新模式", items, kSetupUpdateEntryMenuCount, hermesSetupSelected,
-                          hermesSetupOffset);
-            drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
-            return;
-        }
-
-        applyPaletteList(kSetupUpdateMenuCount);
-        String currentLine = String(u8"目前版本: ") + updateManager.getCurrentVersion();
-        const char *items[] = {u8"退出更新模式", u8"WiFi設定", currentLine.c_str(), u8"檢查更新", u8"手動更新"};
-        drawSetupList(display, width, height, u8"更新模式", items, kSetupUpdateMenuCount, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        HermesXFastSetupUiRenderer::drawUpdateMenu(
+            listContext, gUpdateBootRequested, updateManager.getCurrentVersion().c_str());
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateIntro) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateIntro) {
         applyPaletteNoSelection();
-        drawSetupUpdateIntroPage(display, width, height, hermesUpdateIntroStartedAtMs);
+        HermesXFastSetupUiRenderer::drawUpdateIntroPage(display, width, height, hermesUpdateIntroStartedAtMs);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateExitPending) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateExitPending) {
         applyPaletteNoSelection();
         const char *pendingTitle = (hermesSetupToast == u8"重開中") ? u8"重開中" : u8"退出更新模式中";
-        drawSetupUpdateTransitionPage(display, width, height, hermesUpdateIntroStartedAtMs, pendingTitle, "");
+        HermesXFastSetupUiRenderer::drawUpdateTransitionPage(
+            display, width, height, hermesUpdateIntroStartedAtMs, pendingTitle, "");
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateCheckMenu) {
-        applyPaletteList(kSetupUpdateCheckMenuCount);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateCheckMenu) {
         auto &updateManager = HermesXUpdateManager::instance();
-        String currentLine = String(u8"目前版本: ") + updateManager.getCurrentVersion();
-        const char *remoteUrl = updateManager.getRemoteUpdateUrl();
-        String remoteUrlPreview = u8"未設定";
-        if (remoteUrl && remoteUrl[0]) {
-            remoteUrlPreview = String(remoteUrl);
-            if (remoteUrlPreview.length() > 10) {
-                remoteUrlPreview = remoteUrlPreview.substring(0, 10);
-            }
-        }
-        String urlLine = String(u8"更新來源: ") + remoteUrlPreview;
-        String actionLine;
-        if (updateManager.canApply()) {
-            actionLine = String(u8"套用更新");
-        } else if (updateManager.hasCandidate()) {
-            actionLine = String(u8"開始下載");
-        } else {
-            actionLine = String(u8"開始檢查");
-        }
-        String statusLine = String(u8"目前狀態: ") + updateManager.getSourceStatus();
-        String targetLine = String(u8"待更新版本: ") +
-                            (updateManager.getCandidateVersion().isEmpty() ? u8"無" : updateManager.getCandidateVersion());
-        String progressLine = String(u8"下載進度: ") + String(updateManager.getProgressPercent()) + "%";
-        String errorLine = String(u8"最後錯誤: ") +
-                           (updateManager.getLastError().isEmpty() ? u8"無" : updateManager.getLastError());
-        const char *items[] = {u8"返回", currentLine.c_str(), urlLine.c_str(), actionLine.c_str(), statusLine.c_str(),
-                               targetLine.c_str(), progressLine.c_str(), errorLine.c_str()};
-        drawSetupList(display, width, height, u8"檢查更新", items, kSetupUpdateCheckMenuCount, hermesSetupSelected,
-                      hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        HermesXFastSetupUiRenderer::drawUpdateCheckMenu(
+            listContext, updateManager.getCurrentVersion().c_str(), updateManager.getRemoteUpdateUrl(),
+            updateManager.getSourceStatus().c_str(), updateManager.getCandidateVersion().c_str(),
+            updateManager.getProgressPercent(), updateManager.getLastError().c_str(), updateManager.hasCandidate(),
+            updateManager.canApply());
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateCheckFlowPage) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateCheckFlowPage) {
         applyPaletteNoSelection();
         auto &updateManager = HermesXUpdateManager::instance();
         const char *actionLabel = updateManager.canApply()
                                       ? u8"套用更新"
                                       : (updateManager.hasCandidate() ? u8"開始下載" : u8"開始檢查");
-        drawSetupUrlUpdateFlowPage(display, width, height, updateManager.getSourceStatus(), updateManager.getCandidateVersion(),
-                                   updateManager.getProgressPercent(), updateManager.getLastError(), actionLabel,
-                                   hermesSetupSelected, hermesSetupToast, hermesSetupToastUntilMs);
+        HermesXFastSetupUiRenderer::drawUrlUpdateFlowPage(
+            display, width, height, updateManager.getSourceStatus(), updateManager.getCandidateVersion(),
+            updateManager.getProgressPercent(), updateManager.getLastError(), actionLabel,
+            gHermesFastSetupNavigation.selected, hermesSetupToast, hermesSetupToastUntilMs);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateDetailPopup) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateDetailPopup) {
         LOG_INFO("[UpdateDetailPopup] render title=%s bodyLen=%u", gSetupDetailPopupState.title.c_str(),
                  static_cast<unsigned>(gSetupDetailPopupState.body.length()));
-        if (hermesSetupReturnPage != HermesFastSetupPage::UpdateDetailPopup) {
-            const HermesFastSetupPage popupPage = hermesSetupPage;
-            hermesSetupPage = hermesSetupReturnPage;
+        if (gHermesFastSetupNavigation.returnPage != HermesFastSetupPage::UpdateDetailPopup) {
+            const HermesFastSetupPage popupPage = gHermesFastSetupNavigation.page;
+            gHermesFastSetupNavigation.page = gHermesFastSetupNavigation.returnPage;
             drawHermesFastSetup(display, nullptr, 0, 0);
-            hermesSetupPage = popupPage;
+            gHermesFastSetupNavigation.page = popupPage;
         } else {
             applyPaletteNoSelection();
         }
@@ -15635,56 +7076,37 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateRuntimeMenu) {
-        applyPaletteList(kSetupUpdateRuntimeMenuCount);
-        const char *items[] = {u8"返回", u8"WiFi更新", u8"USB更新"};
-        drawSetupList(display, width, height, u8"手動更新", items, kSetupUpdateRuntimeMenuCount, hermesSetupSelected,
-                      hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateRuntimeMenu) {
+        HermesXFastSetupUiRenderer::drawUpdateRuntimeMenu(listContext);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateWifiConfigMenu) {
-        applyPaletteList(kSetupUpdateWifiConfigMenuCount);
-        String enabledLine = String("WiFi: ") + (hermesSetupWifiEnabledDraft ? u8"開" : u8"關");
-        String ssidLine = String("SSID: ") +
-                          (hermesSetupWifiSsidDraft.length() > 0 ? hermesSetupWifiSsidDraft : String(u8"未設定"));
-        String passwordLine = String(u8"密碼: ") + maskSetupSecret(hermesSetupWifiPasswordDraft.c_str(), 0);
-        String saveLine = String(u8"儲存設定: ") + (hermesSetupWifiDirty ? u8"未套用" : u8"已同步");
-        String ipLine = String("IP: ") + getSetupWifiIpLabel();
-        const char *items[] = {u8"返回", enabledLine.c_str(), ssidLine.c_str(), passwordLine.c_str(), saveLine.c_str(),
-                               ipLine.c_str()};
-        drawSetupList(display, width, height, u8"WiFi設定", items, kSetupUpdateWifiConfigMenuCount, hermesSetupSelected,
-                      hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateWifiConfigMenu) {
+        const String maskedPassword = maskSetupSecret(hermesSetupWifiPasswordDraft.c_str(), 0);
+        const String ipLabel = getSetupWifiIpLabel();
+        HermesXFastSetupUiRenderer::drawUpdateWifiConfigMenu(
+            listContext, hermesSetupWifiEnabledDraft, hermesSetupWifiSsidDraft.c_str(), maskedPassword.c_str(),
+            hermesSetupWifiDirty, ipLabel.c_str());
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateWifiMenu) {
-        applyPaletteList(kSetupUpdateWifiMenuCount);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateWifiMenu) {
         auto &updateManager = HermesXUpdateManager::instance();
-        String currentLine = String(u8"目前版本: ") + updateManager.getCurrentVersion();
-        String statusLine = String(u8"連線狀態: ") + getSetupWifiIpLabel();
-        const char *items[] = {u8"返回", currentLine.c_str(), statusLine.c_str(), u8"開始更新"};
-        drawSetupList(display, width, height, u8"WiFi更新", items, kSetupUpdateWifiMenuCount, hermesSetupSelected,
-                      hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        const String connectionStatus = getSetupWifiIpLabel();
+        HermesXFastSetupUiRenderer::drawUpdateTransportMenu(
+            listContext, true, updateManager.getCurrentVersion().c_str(), connectionStatus.c_str());
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateUploadMenu) {
-        applyPaletteList(kSetupUpdateUploadMenuCount);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateUploadMenu) {
         auto &updateManager = HermesXUpdateManager::instance();
-        String currentLine = String(u8"目前版本: ") + updateManager.getCurrentVersion();
-        String linkLine = String(u8"USB連線狀態: ") + getSetupUsbStatusLabel();
-        const char *items[] = {u8"返回", currentLine.c_str(), linkLine.c_str(), u8"開始更新"};
-        drawSetupList(display, width, height, u8"USB更新", items, kSetupUpdateUploadMenuCount, hermesSetupSelected,
-                      hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        const String connectionStatus = getSetupUsbStatusLabel();
+        HermesXFastSetupUiRenderer::drawUpdateTransportMenu(
+            listContext, false, updateManager.getCurrentVersion().c_str(), connectionStatus.c_str());
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateApplyMenu) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateApplyMenu) {
         applyPaletteNoSelection();
         auto &updateManager = HermesXUpdateManager::instance();
         const bool wifiFlow = (hermesManualUpdateFlow == Screen::HermesManualUpdateFlow::Wifi);
@@ -15725,330 +7147,197 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
         String statusLine = String(u8"狀態: ") + updateManager.getSourceStatus();
         String errorLine = updateManager.getLastError().isEmpty() ? String()
                                                                   : String(u8"錯誤: ") + updateManager.getLastError();
-        drawSetupUpdateProgressPage(display, width, height, wifiFlow ? u8"WiFi更新" : u8"USB更新", guideLine,
-                                    updateManager.getProgressPercent(), statusLine, targetLine, errorLine,
-                                    updateManager.canApply(), updateManager.canApply() ? 2 : 1, u8"返回", u8"套用更新", hermesSetupSelected, hermesSetupToast,
-                                    hermesSetupToastUntilMs);
+        HermesXFastSetupUiRenderer::drawUpdateProgressPage(
+            display, width, height, wifiFlow ? u8"WiFi更新" : u8"USB更新", guideLine,
+            updateManager.getProgressPercent(), statusLine, targetLine, errorLine, updateManager.canApply(),
+            updateManager.canApply() ? 2 : 1, u8"返回", u8"套用更新", gHermesFastSetupNavigation.selected,
+            hermesSetupToast, hermesSetupToastUntilMs);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateWifiSsidEdit) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateWifiSsidEdit) {
         applyPaletteNoSelection();
         const String preview = makeSetupDraftPreview(hermesSetupWifiSsidDraft);
-        drawSetupKeyboardPage(display, width, height, "WiFi SSID", preview,
-                              getSetupWifiKeyRows(hermesSetupWifiLowercase), kSetupWifiKeyRowLengths, kSetupWifiKeyRowCount,
-                              hermesSetupKeyRow, hermesSetupKeyCol, hermesSetupToast, hermesSetupToastUntilMs);
+        HermesXFastSetupUiRenderer::drawKeyboardPage(
+            display, width, height, "WiFi SSID", preview, getSetupWifiKeyRows(hermesSetupWifiLowercase),
+            kSetupWifiKeyRowLengths, kSetupWifiKeyRowCount, hermesSetupKeyRow, hermesSetupKeyCol, hermesSetupToast,
+            hermesSetupToastUntilMs);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateWifiPasswordEdit) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateWifiPasswordEdit) {
         applyPaletteNoSelection();
         const String preview = makeSetupDraftPreview(hermesSetupWifiPasswordDraft);
-        drawSetupKeyboardPage(display, width, height, u8"WiFi密碼", preview,
-                              getSetupWifiKeyRows(hermesSetupWifiLowercase), kSetupWifiKeyRowLengths, kSetupWifiKeyRowCount,
-                              hermesSetupKeyRow, hermesSetupKeyCol, hermesSetupToast, hermesSetupToastUntilMs);
+        HermesXFastSetupUiRenderer::drawKeyboardPage(
+            display, width, height, u8"WiFi密碼", preview, getSetupWifiKeyRows(hermesSetupWifiLowercase),
+            kSetupWifiKeyRowLengths, kSetupWifiKeyRowCount, hermesSetupKeyRow, hermesSetupKeyCol, hermesSetupToast,
+            hermesSetupToastUntilMs);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::NodeDatabaseMenu) {
-        applyPaletteList(kSetupNodeDatabaseMenuCount);
-        const char *items[] = {u8"返回", u8"重設資料庫"};
-        drawSetupList(display, width, height, u8"節點資料庫", items, kSetupNodeDatabaseMenuCount, hermesSetupSelected,
-                      hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::NodeDatabaseMenu) {
+        HermesXFastSetupUiRenderer::drawNodeDatabaseMenu(listContext, false);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::NodeDatabaseResetSelect) {
-        applyPaletteList(kSetupNodeDatabaseResetCount);
-        const char *items[] = {u8"返回", u8"清除12hr未更新", u8"清除24hr未更新", u8"清除48hr未更新", u8"全部清除"};
-        drawSetupList(display, width, height, u8"重設資料庫", items, kSetupNodeDatabaseResetCount, hermesSetupSelected,
-                      hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::NodeDatabaseResetSelect) {
+        HermesXFastSetupUiRenderer::drawNodeDatabaseMenu(listContext, true);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::MqttMenu) {
-        applyPaletteList(kSetupMqttMenuCount);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::MqttMenu) {
         const bool mapEnabled = moduleConfig.mqtt.map_reporting_enabled && moduleConfig.mqtt.has_map_report_settings &&
                                 moduleConfig.mqtt.map_report_settings.should_report_location;
-        String mqttLine = String("MQTT: ") + (moduleConfig.mqtt.enabled ? u8"開" : u8"關");
-        String proxyLine = String(u8"啟用客戶端代理: ") + (moduleConfig.mqtt.proxy_to_client_enabled ? u8"開" : u8"關");
-        String mapLine = String(u8"地圖報告: ") + (mapEnabled ? u8"開" : u8"關");
-        const char *items[] = {u8"返回", mqttLine.c_str(), proxyLine.c_str(), mapLine.c_str()};
-        drawSetupList(display, width, height, "MQTT", items, kSetupMqttMenuCount, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        HermesXFastSetupUiRenderer::drawMqttMenu(
+            listContext, moduleConfig.mqtt.enabled, moduleConfig.mqtt.proxy_to_client_enabled, mapEnabled);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::MqttMapReportMenu) {
-        applyPaletteList(kSetupMqttMapReportMenuCount);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::MqttMapReportMenu) {
         const bool mapEnabled = moduleConfig.mqtt.map_reporting_enabled && moduleConfig.mqtt.has_map_report_settings &&
                                 moduleConfig.mqtt.map_report_settings.should_report_location;
-        String enabledLine = String(u8"上報: ") + (mapEnabled ? u8"開" : u8"關");
-        String precisionLine = String(u8"精確度: ") + getSetupMqttMapPrecisionLabel(getSetupCurrentMqttMapPrecision());
-        String publishLine = String(u8"廣播間隔: ") + formatSetupSecondsLabel(getSetupCurrentMqttMapPublishInterval());
-        const char *items[] = {u8"返回", enabledLine.c_str(), precisionLine.c_str(), publishLine.c_str()};
-        drawSetupList(display, width, height, u8"地圖報告", items, kSetupMqttMapReportMenuCount, hermesSetupSelected,
-                      hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        const String precisionLabel = getSetupMqttMapPrecisionLabel(getSetupCurrentMqttMapPrecision());
+        const String publishLabel = formatSetupSecondsLabel(getSetupCurrentMqttMapPublishInterval());
+        HermesXFastSetupUiRenderer::drawMqttMapReportMenu(
+            listContext, mapEnabled, precisionLabel.c_str(), publishLabel.c_str());
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::MqttMapPrecisionSelect) {
-        const int itemCount = kSetupMqttMapPrecisionCount + 1;
-        applyPaletteList(itemCount);
-        const char *items[kSetupMqttMapPrecisionCount + 1];
-        items[0] = u8"返回";
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::MqttMapPrecisionSelect) {
+        const char *labels[kSetupMqttMapPrecisionCount];
         for (uint8_t i = 0; i < kSetupMqttMapPrecisionCount; ++i) {
-            items[i + 1] = kSetupMqttMapPrecisionOptions[i].label;
+            labels[i] = kSetupMqttMapPrecisionOptions[i].label;
         }
-        drawSetupList(display, width, height, u8"精確度", items, itemCount, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        HermesXFastSetupUiRenderer::drawSelectionMenu(listContext, u8"精確度", labels, kSetupMqttMapPrecisionCount);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::MqttMapPublishSelect) {
-        const int itemCount = kSetupMqttMapPublishCount + 1;
-        applyPaletteList(itemCount);
-        const char *items[kSetupMqttMapPublishCount + 1];
-        items[0] = u8"返回";
-        for (uint8_t i = 0; i < kSetupMqttMapPublishCount; ++i) {
-            items[i + 1] = kSetupMqttMapPublishLabels[i];
-        }
-        drawSetupList(display, width, height, u8"廣播間隔", items, itemCount, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::MqttMapPublishSelect) {
+        HermesXFastSetupUiRenderer::drawSelectionMenu(
+            listContext, u8"廣播間隔", kSetupMqttMapPublishLabels, kSetupMqttMapPublishCount);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::ChannelMenu) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::ChannelMenu) {
         ChannelIndex channelList[MAX_NUM_CHANNELS];
         const uint8_t channelCount = buildSetupChannelList(channelList, MAX_NUM_CHANNELS);
-        const int itemCount = channelCount + 1;
-        applyPaletteList(itemCount);
-        String itemLabels[MAX_NUM_CHANNELS + 1];
-        const char *items[MAX_NUM_CHANNELS + 1];
-        itemLabels[0] = u8"返回";
-        items[0] = itemLabels[0].c_str();
+        String itemLabels[MAX_NUM_CHANNELS];
+        const char *labels[MAX_NUM_CHANNELS];
         for (uint8_t i = 0; i < channelCount; ++i) {
-            itemLabels[i + 1] = getSetupChannelMenuLabel(channelList[i]);
-            items[i + 1] = itemLabels[i + 1].c_str();
+            itemLabels[i] = getSetupChannelMenuLabel(channelList[i]);
+            labels[i] = itemLabels[i].c_str();
         }
-        drawSetupList(display, width, height, u8"頻道設定", items, itemCount, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        HermesXFastSetupUiRenderer::drawChannelMenu(listContext, labels, channelCount);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::ChannelDetailMenu) {
-        applyPaletteList(kSetupChannelDetailMenuCount);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::ChannelDetailMenu) {
         const auto channel = getSetupChannelCopy(hermesSetupChannelIndex);
         const bool shareEnabled = isSetupChannelPositionSharingEnabled(hermesSetupChannelIndex);
-        String title = getSetupChannelMenuLabel(hermesSetupChannelIndex);
-        String uplinkLine = String(u8"上行: ") + (channel.settings.uplink_enabled ? u8"開" : u8"關");
-        String downlinkLine = String(u8"下行: ") + (channel.settings.downlink_enabled ? u8"開" : u8"關");
-        String shareLine = String(u8"位置分享: ") + (shareEnabled ? u8"開" : u8"關");
-        String precisionLine =
-            String(u8"精確度: ") + (shareEnabled ? getSetupChannelPrecisionLabel(getSetupChannelPrecision(hermesSetupChannelIndex))
-                                                : u8"關閉");
-        const char *items[] = {u8"返回", uplinkLine.c_str(), downlinkLine.c_str(), shareLine.c_str(), precisionLine.c_str()};
-        drawSetupList(display, width, height, title.c_str(), items, kSetupChannelDetailMenuCount, hermesSetupSelected,
-                      hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        const String title = getSetupChannelMenuLabel(hermesSetupChannelIndex);
+        const String precisionLabel = getSetupChannelPrecisionLabel(getSetupChannelPrecision(hermesSetupChannelIndex));
+        HermesXFastSetupUiRenderer::drawChannelDetailMenu(
+            listContext, title.c_str(), channel.settings.uplink_enabled, channel.settings.downlink_enabled,
+            shareEnabled, precisionLabel.c_str());
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::ChannelPrecisionSelect) {
-        const int itemCount = kSetupChannelPrecisionCount + 1;
-        applyPaletteList(itemCount);
-        const char *items[kSetupChannelPrecisionCount + 1];
-        items[0] = u8"返回";
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::ChannelPrecisionSelect) {
+        const char *labels[kSetupChannelPrecisionCount];
         for (uint8_t i = 0; i < kSetupChannelPrecisionCount; ++i) {
-            items[i + 1] = kSetupChannelPrecisionOptions[i].label;
+            labels[i] = kSetupChannelPrecisionOptions[i].label;
         }
-        drawSetupList(display, width, height, u8"精確度", items, itemCount, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        HermesXFastSetupUiRenderer::drawSelectionMenu(listContext, u8"精確度", labels, kSetupChannelPrecisionCount);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::PowerMenu) {
-        applyPaletteList(kSetupPowerMenuCount);
-        String currentVoltageLine = String(u8"當前電壓: ") + getSetupCurrentVoltageLabel();
-        String guardLine = String(u8"過放保護: ") + (HermesXBatteryProtection::isEnabled() ? u8"開" : u8"關");
-        String thresholdLine =
-            String(u8"過放門檻: ") + formatSetupVoltageMvLabel(HermesXBatteryProtection::getThresholdMv());
-        const char *items[] = {u8"返回", currentVoltageLine.c_str(), guardLine.c_str(), thresholdLine.c_str()};
-        drawSetupList(display, width, height, u8"電源管理", items, kSetupPowerMenuCount, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::PowerMenu) {
+        const String voltageLabel = getSetupCurrentVoltageLabel();
+        const String thresholdLabel = formatSetupVoltageMvLabel(HermesXBatteryProtection::getThresholdMv());
+        HermesXFastSetupUiRenderer::drawPowerMenu(
+            listContext, voltageLabel.c_str(), HermesXBatteryProtection::isEnabled(), thresholdLabel.c_str());
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::PowerGuardVoltageSelect) {
-        const int itemCount = kSetupPowerGuardThresholdCount + 1;
-        applyPaletteList(itemCount);
-        const char *items[kSetupPowerGuardThresholdCount + 1];
-        items[0] = u8"返回";
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::PowerGuardVoltageSelect) {
+        const char *labels[kSetupPowerGuardThresholdCount];
         for (uint8_t i = 0; i < kSetupPowerGuardThresholdCount; ++i) {
-            items[i + 1] = kSetupPowerGuardThresholdOptions[i].label;
+            labels[i] = kSetupPowerGuardThresholdOptions[i].label;
         }
-        drawSetupList(display, width, height, u8"過放門檻", items, itemCount, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        HermesXFastSetupUiRenderer::drawSelectionMenu(listContext, u8"過放門檻", labels, kSetupPowerGuardThresholdCount);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::LoraMenu) {
-        applyPaletteList(kSetupLoraMenuCount);
-        String roleLine = String("Role: ") + getSetupRoleOptionLabel(config.device.role);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::LoraMenu) {
+        const char *roleLabel = getSetupRoleOptionLabel(config.device.role);
         const char *presetLabel = config.lora.use_preset ? getSetupLoraPresetLabel(config.lora.modem_preset) : "Custom";
-        String presetLine = String("Preset: ") + presetLabel;
-        String regionLine = String(u8"地區: ") + getSetupRegionLabel(config.lora.region);
-        String ignoreMqttLine = String(u8"無視MQTT: ") + (config.lora.ignore_mqtt ? u8"開" : u8"關");
-        String allowMqttLine = String(u8"允許轉發至MQTT: ") + (config.lora.config_ok_to_mqtt ? u8"開" : u8"關");
-        String txLine = String(u8"啟用LoRa: ") + (config.lora.tx_enabled ? u8"開" : u8"關");
-        String slotLine = String(u8"頻段槽位: ") + (config.lora.channel_num ? String(config.lora.channel_num) : String(u8"自動"));
-        String freqLine = String(u8"手動頻率: ") + formatSetupFrequencyLabel(config.lora.override_frequency);
+        const char *regionLabel = getSetupRegionLabel(config.lora.region);
+        const String slotLabel = config.lora.channel_num ? String(config.lora.channel_num) : String(u8"自動");
+        String frequencyLabel = formatSetupFrequencyLabel(config.lora.override_frequency);
         if (fabsf(config.lora.override_frequency) >= 0.0001f) {
-            freqLine += "MHz";
+            frequencyLabel += "MHz";
         }
-        const char *items[] = {u8"返回",         roleLine.c_str(),    presetLine.c_str(),     regionLine.c_str(),
-                               ignoreMqttLine.c_str(), allowMqttLine.c_str(), txLine.c_str(), slotLine.c_str(),
-                               freqLine.c_str()};
-        drawSetupList(display, width, height, "LoRa", items, kSetupLoraMenuCount, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        HermesXFastSetupUiRenderer::drawLoraMenu(
+            listContext, roleLabel, presetLabel, regionLabel, config.lora.ignore_mqtt,
+            config.lora.config_ok_to_mqtt, config.lora.tx_enabled, slotLabel.c_str(), frequencyLabel.c_str());
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::LoraRoleSelect) {
-        const int itemCount = kSetupRoleOptionCount + 1;
-        applyPaletteList(itemCount);
-        const char *items[kSetupRoleOptionCount + 1];
-        items[0] = u8"返回";
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::LoraRoleSelect) {
+        const char *labels[kSetupRoleOptionCount];
         for (uint8_t i = 0; i < kSetupRoleOptionCount; ++i) {
-            items[i + 1] = kSetupRoleOptions[i].label;
+            labels[i] = kSetupRoleOptions[i].label;
         }
-        drawSetupList(display, width, height, "Role", items, itemCount, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        HermesXFastSetupUiRenderer::drawSelectionMenu(listContext, "Role", labels, kSetupRoleOptionCount);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::LoraPresetSelect) {
-        const int itemCount = kSetupLoraPresetOptionCount + 1;
-        applyPaletteList(itemCount);
-        const char *items[kSetupLoraPresetOptionCount + 1];
-        items[0] = u8"返回";
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::LoraPresetSelect) {
+        const char *labels[kSetupLoraPresetOptionCount];
         for (uint8_t i = 0; i < kSetupLoraPresetOptionCount; ++i) {
-            items[i + 1] = kSetupLoraPresetOptions[i].label;
+            labels[i] = kSetupLoraPresetOptions[i].label;
         }
-        drawSetupList(display, width, height, "Preset", items, itemCount, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        HermesXFastSetupUiRenderer::drawSelectionMenu(listContext, "Preset", labels, kSetupLoraPresetOptionCount);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::LoraRegionSelect) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::LoraRegionSelect) {
         const uint8_t regionCount = getSetupRegionOptionCount();
-        const int itemCount = regionCount + 1;
-        applyPaletteList(itemCount);
-        const char *items[kSetupMaxRegionOptions + 1];
-        items[0] = u8"返回";
+        const char *labels[kSetupMaxRegionOptions];
         for (uint8_t i = 0; i < regionCount && i < kSetupMaxRegionOptions; ++i) {
-            items[i + 1] = regions[i].name;
+            labels[i] = regions[i].name;
         }
-        drawSetupList(display, width, height, u8"地區", items, itemCount, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        HermesXFastSetupUiRenderer::drawSelectionMenu(listContext, u8"地區", labels, regionCount);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::LoraChannelSlotSelect) {
-        const int itemCount = static_cast<int>(getSetupLoraChannelSlotCount()) + 2;
-        applyPaletteList(itemCount);
-        display->setTextAlignment(TEXT_ALIGN_LEFT);
-#if defined(USE_EINK)
-        display->setColor(EINK_WHITE);
-#else
-        display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-        display->fillRect(0, 0, width, height);
-        drawSetupHeader(display, width, u8"頻段槽位");
-#if defined(USE_EINK)
-        display->setColor(EINK_BLACK);
-#else
-        display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-        const int16_t listTop = kSetupHeaderHeight + 2;
-        for (int i = 0; i < kSetupVisibleRows; ++i) {
-            const int entryIndex = hermesSetupOffset + i;
-            if (entryIndex >= itemCount) {
-                break;
-            }
-            const int16_t rowY = listTop + i * kSetupRowHeight;
-            char labelBuf[20];
-            const char *label = nullptr;
-            if (entryIndex == 0) {
-                label = u8"返回";
-            } else if (entryIndex == 1) {
-                label = u8"自動";
-            } else {
-                snprintf(labelBuf, sizeof(labelBuf), "%d", entryIndex - 1);
-                label = labelBuf;
-            }
-            if (entryIndex == hermesSetupSelected) {
-#if defined(USE_EINK)
-                display->fillRect(0, rowY - 1, width, kSetupRowHeight);
-                display->setColor(EINK_WHITE);
-#else
-                display->setColor(OLEDDISPLAY_COLOR::WHITE);
-                display->fillRect(0, rowY - 1, width, kSetupRowHeight);
-                display->setColor(OLEDDISPLAY_COLOR::BLACK);
-#endif
-                graphics::HermesX_zh::drawMixedBounded(*display, 4, rowY, width - 4, label,
-                                                       graphics::HermesX_zh::GLYPH_WIDTH, kSetupRowHeight, nullptr);
-#if defined(USE_EINK)
-                display->setColor(EINK_BLACK);
-#else
-                display->setColor(OLEDDISPLAY_COLOR::WHITE);
-#endif
-            } else {
-                graphics::HermesX_zh::drawMixedBounded(*display, 4, rowY, width - 4, label,
-                                                       graphics::HermesX_zh::GLYPH_WIDTH, kSetupRowHeight, nullptr);
-            }
-        }
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::LoraChannelSlotSelect) {
+        HermesXFastSetupUiRenderer::drawLoraChannelSlotMenu(listContext, getSetupLoraChannelSlotCount());
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::CannedMenu) {
-        applyPaletteList(2);
-        String channelLine = u8"目標頻道: ";
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::CannedMenu) {
+        const char *channelName = nullptr;
         if (cannedMessageModule) {
-            ChannelIndex chan = cannedMessageModule->getPreferredChannel();
-            const char *name = channels.getName(chan);
-            channelLine += name ? name : u8"未知";
-        } else {
-            channelLine += u8"未知";
+            channelName = channels.getName(cannedMessageModule->getPreferredChannel());
         }
-        const char *items[] = {u8"返回", channelLine.c_str()};
-        drawSetupList(display, width, height, u8"罐頭訊息", items, 2, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        HermesXFastSetupUiRenderer::drawCannedMenu(listContext, channelName);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::CannedChannelSelect) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::CannedChannelSelect) {
         ChannelIndex channelList[MAX_NUM_CHANNELS];
         const uint8_t channelCount = buildSetupChannelList(channelList, MAX_NUM_CHANNELS);
-        const uint8_t itemCount = channelCount + 1;
-        applyPaletteList(itemCount);
-        const char *items[MAX_NUM_CHANNELS + 1];
-        items[0] = u8"返回";
+        const char *labels[MAX_NUM_CHANNELS];
         for (uint8_t i = 0; i < channelCount; ++i) {
             const char *name = channels.getName(channelList[i]);
-            items[i + 1] = name ? name : u8"未知";
+            labels[i] = name ? name : u8"未知";
         }
-        drawSetupList(display, width, height, u8"目標頻道", items, itemCount, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        HermesXFastSetupUiRenderer::drawSelectionMenu(listContext, u8"目標頻道", labels, channelCount);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::GpsMenu) {
-        applyPaletteList(kSetupGpsMenuCount);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::GpsMenu) {
         const uint32_t currentUpdate =
             Default::getConfiguredOrDefault(config.position.gps_update_interval, default_gps_update_interval);
         const uint32_t currentBroadcast =
@@ -16069,83 +7358,39 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
                 break;
             }
         }
-        String updateLine = String(u8"衛星更新: ") + (updateLabel ? updateLabel : (String(currentUpdate) + u8"秒"));
-        String broadcastLine = String(u8"廣播時間: ") + (broadcastLabel ? broadcastLabel : (String(currentBroadcast) + u8"秒"));
-        String smartLine = String(u8"智慧位置: ") + (config.position.position_broadcast_smart_enabled ? u8"開" : u8"關");
-        String smartDistanceLine = String(u8"最小距離: ") + formatSetupDistanceLabel(currentSmartDistance);
-        String smartIntervalLine = String(u8"最小間隔: ") + formatSetupSecondsLabel(currentSmartInterval);
-        const char *items[] = {u8"返回", updateLine.c_str(),       broadcastLine.c_str(),
-                               smartLine.c_str(), smartDistanceLine.c_str(), smartIntervalLine.c_str()};
-        drawSetupList(display, width, height, u8"GPS", items, kSetupGpsMenuCount, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+        const String distanceLabel = formatSetupDistanceLabel(currentSmartDistance);
+        const String intervalLabel = formatSetupSecondsLabel(currentSmartInterval);
+        HermesXFastSetupUiRenderer::drawGpsMenu(
+            listContext, currentUpdate, updateLabel, currentBroadcast, broadcastLabel,
+            config.position.position_broadcast_smart_enabled, distanceLabel.c_str(), intervalLabel.c_str());
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::GpsUpdateSelect) {
-        const int itemCount = kSetupGpsUpdateCount + 1;
-        applyPaletteList(itemCount);
-        const char *items[kSetupGpsUpdateCount + 1];
-        items[0] = u8"返回";
-        for (uint8_t i = 0; i < kSetupGpsUpdateCount; ++i) {
-            items[i + 1] = kSetupGpsUpdateLabels[i];
-        }
-        drawSetupList(display, width, height, u8"衛星更新", items, itemCount, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::GpsUpdateSelect) {
+        HermesXFastSetupUiRenderer::drawSelectionMenu(
+            listContext, u8"衛星更新", kSetupGpsUpdateLabels, kSetupGpsUpdateCount);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::GpsBroadcastSelect) {
-        const int itemCount = kSetupGpsBroadcastCount + 1;
-        applyPaletteList(itemCount);
-        const char *items[kSetupGpsBroadcastCount + 1];
-        items[0] = u8"返回";
-        for (uint8_t i = 0; i < kSetupGpsBroadcastCount; ++i) {
-            items[i + 1] = kSetupGpsBroadcastLabels[i];
-        }
-        drawSetupList(display, width, height, u8"廣播時間", items, itemCount, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::GpsBroadcastSelect) {
+        HermesXFastSetupUiRenderer::drawSelectionMenu(
+            listContext, u8"廣播時間", kSetupGpsBroadcastLabels, kSetupGpsBroadcastCount);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::GpsSmartDistanceSelect) {
-        const int itemCount = kSetupGpsSmartDistanceCount + 1;
-        applyPaletteList(itemCount);
-        const char *items[kSetupGpsSmartDistanceCount + 1];
-        items[0] = u8"返回";
-        for (uint8_t i = 0; i < kSetupGpsSmartDistanceCount; ++i) {
-            items[i + 1] = kSetupGpsSmartDistanceLabels[i];
-        }
-        drawSetupList(display, width, height, u8"最小距離", items, itemCount, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::GpsSmartDistanceSelect) {
+        HermesXFastSetupUiRenderer::drawSelectionMenu(
+            listContext, u8"最小距離", kSetupGpsSmartDistanceLabels, kSetupGpsSmartDistanceCount);
         return;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::GpsSmartIntervalSelect) {
-        const int itemCount = kSetupGpsSmartIntervalCount + 1;
-        applyPaletteList(itemCount);
-        const char *items[kSetupGpsSmartIntervalCount + 1];
-        items[0] = u8"返回";
-        for (uint8_t i = 0; i < kSetupGpsSmartIntervalCount; ++i) {
-            items[i + 1] = kSetupGpsSmartIntervalLabels[i];
-        }
-        drawSetupList(display, width, height, u8"最小間隔", items, itemCount, hermesSetupSelected, hermesSetupOffset);
-        drawSetupToast(display, width, height, hermesSetupToast, hermesSetupToastUntilMs);
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::GpsSmartIntervalSelect) {
+        HermesXFastSetupUiRenderer::drawSelectionMenu(
+            listContext, u8"最小間隔", kSetupGpsSmartIntervalLabels, kSetupGpsSmartIntervalCount);
         return;
     }
 
-    applyPaletteList(kSetupRootCount);
-    drawSetupList(display, width, height, u8"HermesFastSetup", kSetupRootItems, kSetupRootCount, hermesSetupSelected,
-                  hermesSetupOffset);
-    if (hermesSetupToastUntilMs != 0) {
-        if (millis() > hermesSetupToastUntilMs) {
-            hermesSetupToastUntilMs = 0;
-            hermesSetupToast = "";
-        } else if (hermesSetupToast.length() > 0) {
-            graphics::HermesX_zh::drawMixedBounded(*display, 2, height - FONT_HEIGHT_SMALL, width - 4,
-                                                   hermesSetupToast.c_str(), graphics::HermesX_zh::GLYPH_WIDTH,
-                                                   FONT_HEIGHT_SMALL, nullptr);
-        }
-    }
+    HermesXFastSetupUiRenderer::drawMenu(listContext, u8"HermesFastSetup", kSetupRootItems, kSetupRootCount);
 }
 
 #if defined(ESP_PLATFORM) && defined(USE_ST7789)
@@ -17182,42 +8427,43 @@ int32_t Screen::runOnce()
 
     auto &updateManager = HermesXUpdateManager::instance();
     if (updateManager.poll()) {
-        if (hermesSetupPage == HermesFastSetupPage::UpdateMenu || updateManager.isBusy()) {
+        if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateMenu || updateManager.isBusy()) {
             setFastFramerate();
         }
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateIntro) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateIntro) {
         if (hermesUpdateIntroStartedAtMs == 0) {
             hermesUpdateIntroStartedAtMs = millis();
         }
         if (millis() - hermesUpdateIntroStartedAtMs >= kSetupUpdateIntroMs) {
-            hermesSetupPage = HermesFastSetupPage::UpdateMenu;
-            hermesSetupSelected = 0;
-            hermesSetupOffset = 0;
-            hermesSetupLastNavAtMs = 0;
-            hermesSetupLastNavDir = 0;
+            gHermesFastSetupNavigation.page = HermesFastSetupPage::UpdateMenu;
+            gHermesFastSetupNavigation.selected = 0;
+            gHermesFastSetupNavigation.offset = 0;
+            gHermesFastSetupNavigation.lastNavAtMs = 0;
+            gHermesFastSetupNavigation.lastNavDir = 0;
         }
         setFastFramerate();
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateExitPending) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateExitPending) {
         if (hermesUpdateIntroStartedAtMs == 0) {
             hermesUpdateIntroStartedAtMs = millis();
         }
         setFastFramerate();
     }
 
-    if (gTakModePageView == TakModePageView::TransitionEnter || gTakModePageView == TakModePageView::TransitionExit) {
-        if (gTakModeTransitionStartedAtMs == 0) {
-            gTakModeTransitionStartedAtMs = millis();
+    if (gTakModeUiState.page == graphics::HermesXTakModePage::TransitionEnter ||
+        gTakModeUiState.page == graphics::HermesXTakModePage::TransitionExit) {
+        if (gTakModeUiState.transitionStartedAtMs == 0) {
+            gTakModeUiState.transitionStartedAtMs = millis();
         }
         setFastFramerate();
     }
 
 #if HAS_WIFI && !defined(ARCH_PORTDUINO)
-    if ((hermesSetupPage == HermesFastSetupPage::UpdateCheckMenu ||
-         hermesSetupPage == HermesFastSetupPage::UpdateCheckFlowPage) &&
+    if ((gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateCheckMenu ||
+         gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateCheckFlowPage) &&
         hermesPendingUpdateCheckAction != HermesPendingUpdateCheckAction::None && WiFi.status() == WL_CONNECTED) {
         auto pump = []() {
             if (screen) {
@@ -17374,10 +8620,10 @@ int32_t Screen::runOnce()
         hermesUpdateModalActive = true;
         showingNormalScreen = false;
         enableUpdateLowLoadMode();
-        hermesSetupPage = HermesFastSetupPage::UpdateIntro;
+        gHermesFastSetupNavigation.page = HermesFastSetupPage::UpdateIntro;
         hermesUpdateIntroStartedAtMs = millis();
-        hermesSetupSelected = 0;
-        hermesSetupOffset = 0;
+        gHermesFastSetupNavigation.selected = 0;
+        gHermesFastSetupNavigation.offset = 0;
         hermesSetupWifiEnabledDraft = config.network.wifi_enabled;
         hermesSetupWifiSsidDraft = config.network.wifi_ssid;
         hermesSetupWifiPasswordDraft = config.network.wifi_psk;
@@ -17389,27 +8635,13 @@ int32_t Screen::runOnce()
         setFrameImmediateDraw(updateModalFrames);
     }
 
-    if (gIncomingTextPopupState.pending && screenOn && isHermesXMainPageActive()) {
-        gIncomingTextPopupState.pending = false;
-        gIncomingTextPopupState.visible = true;
-        gIncomingTextPopupState.untilMs = millis() + kIncomingTextPopupMs;
-        fastUntilMs = gIncomingTextPopupState.untilMs + 50;
+    const HermesXMessagePopupLifecycleDecision popupLifecycle =
+        HermesXMessageUiController::instance().updatePopupLifecycle(
+            screenOn, isHermesXMainPageActive(), millis(), kIncomingTextPopupMs);
+    if (popupLifecycle.activated) {
+        fastUntilMs = popupLifecycle.fastUntilMs;
         setFastFramerate();
-    } else if (gIncomingTextPopupState.visible && gIncomingTextPopupState.untilMs != 0 &&
-               millis() >= gIncomingTextPopupState.untilMs) {
-        dismissIncomingTextPopup();
-        setFastFramerate();
-    }
-
-    if (gIncomingNodePopupState.pending && screenOn) {
-        gIncomingNodePopupState.pending = false;
-        gIncomingNodePopupState.visible = true;
-        gIncomingNodePopupState.untilMs = millis() + kIncomingNodePopupMs;
-        fastUntilMs = gIncomingNodePopupState.untilMs + 50;
-        setFastFramerate();
-    } else if (gIncomingNodePopupState.visible && gIncomingNodePopupState.untilMs != 0 &&
-               millis() >= gIncomingNodePopupState.untilMs) {
-        dismissIncomingNodePopup();
+    } else if (popupLifecycle.dismissed) {
         setFastFramerate();
     }
 
@@ -17423,13 +8655,13 @@ int32_t Screen::runOnce()
         setFastFramerate();
     }
 
-    if ((hermesFinderPulseSendingVisible || hermesFinderUiMode == HermesFinderUiMode::PositionList) && lighthouseModule) {
+    auto &nodeBrowserController = HermesXNodeBrowserUiController::instance();
+    if ((gFinderPulseState.sendingVisible || hermesFinderUiMode == HermesFinderUiMode::PositionList) && lighthouseModule) {
         const auto pulseResult = lighthouseModule->consumePositionPulseUiResult();
         if (pulseResult == LighthouseModule::PositionPulseUiResult::Success) {
-            hermesFinderPulseSendingVisible = false;
-            hermesFinderPulseSendingShownAtMs = 0;
+            nodeBrowserController.finishFinderPulseRequest();
             hermesFinderUiMode = HermesFinderUiMode::PositionList;
-            rebuildFinderNodeOrder();
+            gNodeBrowserDataSource.refreshFinder();
             LOG_INFO("[Screen] Finder pulse success -> position list count=%u", static_cast<unsigned>(gFinderNodeState.count));
             gFinderNodeState.listCursor = gFinderNodeState.count > 0 ? 1 : 0;
             gFinderNodeState.selectedIndex = 0;
@@ -17444,12 +8676,9 @@ int32_t Screen::runOnce()
             setFastFramerate();
             requestImmediateRedraw();
         } else if (pulseResult == LighthouseModule::PositionPulseUiResult::Timeout) {
-            hermesFinderPulseSendingVisible = false;
-            hermesFinderPulseSendingShownAtMs = 0;
+            nodeBrowserController.finishFinderPulseRequest();
             hermesFinderUiMode = HermesFinderUiMode::PositionList;
-            gFinderNodeState.listCursor = 0;
-            gFinderNodeState.selectedIndex = 0;
-            gFinderNodeState.detailCursor = 0;
+            gNodeBrowserUiModel.reset(gFinderNodeState);
             LOG_WARN("[Screen] Finder pulse timeout -> position list");
             showFinderListPageSafely(true);
             showTraceRoutePopup(u8"尋人模式", "SEND FAIL");
@@ -17462,9 +8691,8 @@ int32_t Screen::runOnce()
         const uint32_t freeHeap = memGet.getFreeHeap();
         const uint32_t largest = memGet.getLargestFreeBlock();
         if (releaseLowMemoryProtectionIfRecovered(freeHeap, largest)) {
-            lowMemoryReminderTriggerFree = freeHeap;
-            lowMemoryReminderTriggerLargest = largest;
-            snprintf(lowMemoryProtectionStatus, sizeof(lowMemoryProtectionStatus), u8"Heap 已恢復");
+            gLowMemoryUiModel.setMeasurements(freeHeap, largest);
+            snprintf(gLowMemoryUiState.status, sizeof(gLowMemoryUiState.status), u8"Heap 已恢復");
             setFastFramerate();
         }
         const bool lowMemoryDanger = freeHeap < kLowMemoryReminderFreeThreshold || largest < kLowMemoryReminderLargestThreshold;
@@ -17472,12 +8700,8 @@ int32_t Screen::runOnce()
         if (confirmedLowMemoryDanger) {
             activateLowMemoryProtection(freeHeap, largest);
         }
-        if (!lowMemoryReminderVisible && millis() >= lowMemoryReminderSuppressUntilMs && confirmedLowMemoryDanger) {
-            lowMemoryReminderVisible = true;
-            lowMemoryReminderSelected = 0;
-            lowMemoryReminderTriggerFree = freeHeap;
-            lowMemoryReminderTriggerLargest = largest;
-            lowMemoryProtectionStatus[0] = '\0';
+        if (!gLowMemoryUiState.visible && millis() >= gLowMemoryUiState.suppressUntilMs && confirmedLowMemoryDanger) {
+            gLowMemoryUiModel.show(freeHeap, largest);
             playLowMemoryAlert();
             if (ui && framesetInfo.positions.main < framesetInfo.frameCount) {
                 ui->switchToFrame(framesetInfo.positions.main);
@@ -17487,15 +8711,10 @@ int32_t Screen::runOnce()
         }
     }
 
-    if (hermesFinderPulseConfirmVisible && !hermesFinderPulseDispatched && hermesFinderPulseConfirmShownAtMs != 0 &&
-        millis() - hermesFinderPulseConfirmShownAtMs >= kStealthConfirmArmMs) {
+    if (nodeBrowserController.consumeFinderPulseAutoBroadcast(millis(), kStealthConfirmArmMs)) {
         const bool requestStarted = lighthouseModule && lighthouseModule->requestPositionPulse();
-        hermesFinderPulseDispatched = true;
-        hermesFinderPulseConfirmVisible = false;
-        hermesFinderPulseConfirmShownAtMs = 0;
         hermesFinderUiMode = HermesFinderUiMode::Menu;
-        hermesFinderPulseSendingVisible = requestStarted;
-        hermesFinderPulseSendingShownAtMs = requestStarted ? millis() : 0;
+        nodeBrowserController.setFinderPulseRequestStarted(requestStarted, millis());
         if (requestStarted) {
             showFinderListPageSafely(true);
         }
@@ -17597,14 +8816,7 @@ int32_t Screen::runOnce()
 
 #if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
     defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
-    bool directNeonBuffersReady = false;
-    bool renderDirectHomeClock = false;
-    bool renderDirectHomeDogOverlay = false;
-    bool directHomeBaseRedrawRequested = false;
-    bool forceDirectHomeClockRedraw = false;
-    uint16_t directHomeDogFrame = 0xFFFF;
-    char directHomeTimeBuf[16];
-    directHomeTimeBuf[0] = '\0';
+    HermesXDirectHomeFrameDecision directHomeDecision;
     const uint64_t uiLastUpdateBefore = ui->getUiState()->lastUpdate;
 
     if (isHermesFastSetupActive()) {
@@ -17625,134 +8837,86 @@ int32_t Screen::runOnce()
          (framesetInfo.positions.finderDetail < framesetInfo.frameCount && currentFrameIndex == framesetInfo.positions.finderDetail));
     const bool finderTftFullRepaintActive =
         finderTftFrameActive && hermesFinderTftFullRepaintUntilMs != 0 && millis() < hermesFinderTftFullRepaintUntilMs;
-    const bool frameIndexChanged = currentFrameIndex != gDirectLastFrameIndex;
-    const bool isCurrentGpsFrame = showingNormalScreen && (framesetInfo.positions.settings < framesetInfo.frameCount) &&
-                                   (currentFrameIndex == framesetInfo.positions.settings);
-    const bool switchedToGpsFrame = frameIndexChanged && isCurrentGpsFrame;
-    if (switchedToGpsFrame) {
-        // Frame just switched to GPS: require one FIXED full repaint before any skip-ui optimization.
-        gDirectGpsNeedsFullFrameAfterSwitch = true;
-        gDirectGpsBasePainted = false;
-        gDirectGpsPosterRenderCache.valid = false;
-        gDirectGpsPosterWasVisible = false;
-        tft->resetColorPalette(true);
-        tft->markColorPaletteDirty();
-    } else if (frameIndexChanged && !isCurrentGpsFrame) {
-        gDirectGpsNeedsFullFrameAfterSwitch = false;
-        gDirectGpsBasePainted = false;
-    }
+    auto &gpsUiModel = HermesXGpsUiModel::instance();
     const bool onFixedMainFrame = showingNormalScreen && ui->getUiState()->frameState == FIXED &&
                                   framesetInfo.positions.main < framesetInfo.frameCount &&
                                   ui->getUiState()->currentFrame == framesetInfo.positions.main;
-    const bool smartPowerHomeActive = onFixedMainFrame && isSmartPowerHomeActive();
-    if (smartPowerHomeActive) {
-        freeDirectNeonBuffers();
-    }
-    const bool onFixedGpsFrame = showingNormalScreen && ui->getUiState()->frameState == FIXED &&
-                                 framesetInfo.positions.settings < framesetInfo.frameCount &&
-                                 ui->getUiState()->currentFrame == framesetInfo.positions.settings;
-    const bool directGpsPosterNeonEnabled =
-        kEnableDirectGpsPosterTitleNeon || kEnableDirectGpsPosterDecorNeon || kEnableDirectGpsPosterCoordinateNeon;
-    const bool incomingTextPopupActive = gIncomingTextPopupState.pending || gIncomingTextPopupState.visible;
-    const bool incomingNodePopupActive = isIncomingNodePopupActive();
-    const bool incomingNodePopupVisible = isIncomingNodePopupVisible();
-    const bool directGpsPosterCandidate =
-        directGpsPosterNeonEnabled && onFixedGpsFrame && supportsDirectTftClockRendering(dispdev) && !incomingNodePopupActive;
-    if (directGpsPosterCandidate) {
-        directNeonBuffersReady = ensureDirectNeonBuffers();
-    } else if (onFixedMainFrame && !smartPowerHomeActive) {
-        freeDirectNeonBuffers();
-    }
-    const bool directGpsPosterVisible = directGpsPosterCandidate && directNeonBuffersReady;
-    bool incomingNodePopupDirty = false;
-    if (incomingNodePopupVisible && supportsDirectTftClockRendering(dispdev)) {
-        incomingNodePopupDirty = !gDirectIncomingNodePopupRenderCache.valid ||
-                                 gDirectIncomingNodePopupRenderCache.nodeNum != gIncomingNodePopupState.node.num ||
-                                 gDirectIncomingNodePopupRenderCache.width != dispdev->getWidth() ||
-                                 gDirectIncomingNodePopupRenderCache.height != dispdev->getHeight();
-        if (!incomingNodePopupDirty) {
-            skipUiUpdate = true;
-        }
-    } else if (!incomingNodePopupVisible) {
-        gDirectIncomingNodePopupRenderCache.valid = false;
-    }
+    const bool smartPowerHomeActive = isSmartPowerHomeActive();
+    auto &messageUiController = HermesXMessageUiController::instance();
+    const HermesXMessageOverlayRuntimeDecision messageOverlayRuntime = messageUiController.overlayRuntime();
     const bool emergencyUiActive =
         HermesXInterfaceModule::instance && HermesXInterfaceModule::instance->isEmergencyUiActive();
-    if (onFixedMainFrame && !smartPowerHomeActive && canUseDirectHermesXHomeClock(dispdev) && !incomingTextPopupActive &&
-        !incomingNodePopupActive && !hermesEmergencyConfirmVisible && !emergencyUiActive && !lowMemoryReminderVisible) {
-        const bool enteringDirectHomeOverlay = !gDirectHomeClockWasVisible && !gDirectHomeDogWasVisible;
-        if (enteringDirectHomeOverlay) {
-            startHermesXHomeQuote();
-        }
-        char homeDateBuf[24];
-        homeDateBuf[0] = '\0';
-        formatHermesXHomeTimeDate(directHomeTimeBuf, sizeof(directHomeTimeBuf), homeDateBuf, sizeof(homeDateBuf));
-        renderDirectHomeClock = false;
-        renderDirectHomeDogOverlay = true;
-        directHomeDogFrame = static_cast<uint16_t>((static_cast<uint64_t>(millis()) * DIRECT_HOME_DOG_FRAMERATE) / 1000U);
-
-        bool hasBattery = false;
-        int batteryVoltageMv = 0;
-        uint8_t batteryPercent = 0;
-        getHermesXHomeBatteryState(hasBattery, batteryVoltageMv, batteryPercent);
-        (void)batteryVoltageMv;
-
-        uint8_t satCount = 0;
-        if (gpsStatus && gpsStatus->getIsConnected()) {
-            satCount = static_cast<uint8_t>(std::min<uint32_t>(99, gpsStatus->getNumSatellites()));
-        }
-
-        const bool stealth = isStealthModeActive();
-        const uint32_t nowMs = millis();
-        const bool telemetryChanged = !gHermesXDirectHomeUiCache.valid || gHermesXDirectHomeUiCache.hasBattery != hasBattery ||
-                                      gHermesXDirectHomeUiCache.batteryPercent != batteryPercent ||
-                                      gHermesXDirectHomeUiCache.satCount != satCount;
-        const bool telemetryRefreshDue =
-            (gDirectHomeLastBaseRefreshMs == 0) || (nowMs - gDirectHomeLastBaseRefreshMs >= kDirectHomeBaseRefreshMinMs);
-        const bool telemetryDirty = telemetryChanged && (!gDirectHomeBasePainted || telemetryRefreshDue);
-        const bool baseDirty = enteringDirectHomeOverlay || !gHermesXDirectHomeUiCache.valid ||
-                               gHermesXDirectHomeUiCache.stealth != stealth ||
-                               gHermesXDirectHomeUiCache.role != config.device.role ||
-                               strcmp(gHermesXDirectHomeUiCache.date, homeDateBuf) != 0 || telemetryDirty;
+    auto &homeUiController = HermesXHomeUiController::instance();
+    HermesXDirectHomeRuntimeInput directHomeRuntimeInput;
+    directHomeRuntimeInput.onFixedMainFrame = onFixedMainFrame;
+    directHomeRuntimeInput.smartPowerHomeActive = smartPowerHomeActive;
+    directHomeRuntimeInput.directOverlaySupported = isDirectHomePresentationAvailable(dispdev);
+    directHomeRuntimeInput.incomingTextPopupActive = messageOverlayRuntime.popupActive;
+    directHomeRuntimeInput.emergencyConfirmVisible = gEmergencyConfirmUiState.visible;
+    directHomeRuntimeInput.emergencyUiActive = emergencyUiActive;
+    directHomeRuntimeInput.lowMemoryReminderVisible = gLowMemoryUiState.visible;
+    directHomeRuntimeInput.paletteResetPending = messageOverlayRuntime.paletteRecoveryPending;
+    const uint32_t directHomeNowMs = millis();
+    const HermesXDirectHomeRuntimeDecision directHomeRuntime =
+        homeUiController.evaluateRuntime(directHomeRuntimeInput, directHomeNowMs);
+    if (directHomeRuntime.releaseNeonBuffers) {
+        freeDirectNeonBuffers();
+    }
+    HermesXGpsRuntimeInput gpsRuntimeInput;
+    gpsRuntimeInput.showingNormalScreen = showingNormalScreen;
+    gpsRuntimeInput.frameFixed = ui->getUiState()->frameState == FIXED;
+    gpsRuntimeInput.currentFrameIndex = currentFrameIndex;
+    gpsRuntimeInput.gpsFrameIndex = framesetInfo.positions.settings;
+    gpsRuntimeInput.frameCount = framesetInfo.frameCount;
+    gpsRuntimeInput.directOverlaySupported = supportsDirectTftOverlayRendering(dispdev);
+    gpsRuntimeInput.releaseWorkspaceWhenInactive = onFixedMainFrame && !smartPowerHomeActive;
+    gpsRuntimeInput.layers = getDirectGpsPosterLayers();
+    auto &gpsUiController = HermesXGpsUiController::instance();
+    const HermesXGpsRuntimeDecision gpsRuntime =
+        gpsUiController.evaluateRuntime(gpsRuntimeInput, ensureDirectNeonBuffers, freeDirectNeonBuffers);
+    if (gpsRuntime.resetPaletteForFrameSwitch) {
+        // Frame just switched to GPS: require one FIXED full repaint before any skip-ui optimization.
+        tft->resetColorPalette(true);
+        tft->markColorPaletteDirty();
+    }
+    if (directHomeRuntime.active) {
+        HermesXHomeStateInput homeStateInput;
+        homeStateInput.rtcSeconds = getValidTime(RTCQuality::RTCQualityNTP, true);
+        homeStateInput.battery = readHermesXHomeBatterySource();
+        homeStateInput.gpsConnected = gpsStatus && gpsStatus->getIsConnected();
+        homeStateInput.satelliteCount = homeStateInput.gpsConnected ? gpsStatus->getNumSatellites() : 0;
+        homeStateInput.stealth = isStealthModeActive();
+        homeStateInput.role = static_cast<int32_t>(config.device.role);
+        HermesXHomeStateSnapshot homeStateSnapshot;
+        HermesXHomeStateCollector::instance().collect(homeStateInput, homeStateSnapshot);
+        const HermesXHomeBaseState homeBaseState = homeStateSnapshot.baseState();
+        directHomeDecision =
+            homeUiController.beginActiveFrame(homeBaseState, directHomeNowMs, directHomeRuntime);
+        const bool enteringDirectHomeOverlay = directHomeDecision.entering;
+        const HermesXHomeBaseDecision &homeBaseDecision = directHomeDecision.base;
+        const bool telemetryChanged = homeBaseDecision.telemetryChanged;
+        const bool telemetryRefreshDue = homeBaseDecision.telemetryRefreshDue;
+        const bool telemetryDirty = homeBaseDecision.telemetryDirty;
+        const bool baseDirty = homeBaseDecision.baseDirty;
         if (enteringDirectHomeOverlay || telemetryDirty || baseDirty) {
             LOG_DEBUG("[DirectHome] state enter=%d telemetryChanged=%d telemetryRefreshDue=%d telemetryDirty=%d baseDirty=%d "
-                      "basePainted=%d meshPainted=%d skipUi=%d updateModal=%d showingNormal=%d",
+                      "basePainted=%d skipUi=%d updateModal=%d showingNormal=%d",
                       enteringDirectHomeOverlay ? 1 : 0, telemetryChanged ? 1 : 0, telemetryRefreshDue ? 1 : 0,
-                      telemetryDirty ? 1 : 0, baseDirty ? 1 : 0, gDirectHomeBasePainted ? 1 : 0,
-                      gDirectHomeMeshPainted ? 1 : 0, skipUiUpdate ? 1 : 0, hermesUpdateModalActive ? 1 : 0,
-                      showingNormalScreen ? 1 : 0);
+                      telemetryDirty ? 1 : 0, baseDirty ? 1 : 0, directHomeDecision.basePainted ? 1 : 0,
+                      skipUiUpdate ? 1 : 0, hermesUpdateModalActive ? 1 : 0, showingNormalScreen ? 1 : 0);
             logDirectHomeNeonSummary("DirectHome state update");
         }
 
-        if (targetFramerate < DIRECT_HOME_DOG_FRAMERATE) {
-            targetFramerate = DIRECT_HOME_DOG_FRAMERATE;
+        if (targetFramerate < directHomeRuntime.requiredFps) {
+            targetFramerate = directHomeRuntime.requiredFps;
             ui->setTargetFPS(targetFramerate);
         }
 
         if (enteringDirectHomeOverlay) {
             // First frame when returning to Home must force a full UI-backed repaint, otherwise direct TFT overlays can
             // sit on top of stale pixels from previous frame buffers.
-            gHermesXDirectHomeUiCache.valid = false;
-            gHermesXDirectHomeUiCache.lastTimeValid = false;
-            gHermesXDirectHomeUiCache.lastDogValid = false;
-            gHermesXDirectHomeUiCache.lastDogFrame = 0xFFFF;
-            gHermesXDirectHomeUiCache.lastDogPose = 0xFF;
-            gHermesXDirectHomeUiCache.lastDogX = -1;
-            gHermesXDirectHomeUiCache.lastDogY = -1;
-            gHermesXDirectHomeUiCache.lastDogW = 0;
-            gHermesXDirectHomeUiCache.lastDogH = 0;
-            gDirectHomeBasePainted = false;
-            gDirectHomeMeshPainted = false;
-            gDirectHomeOrbLastPulsePercent = 0xFF;
-            gDirectHomeOrbLastDrawMs = 0;
-            forceDirectHomeClockRedraw = true;
-            if (renderDirectHomeDogOverlay) {
-                gDirectHomeDogPose = static_cast<uint8_t>(gDirectHomeDogEntryCount % 2U);
-                ++gDirectHomeDogEntryCount;
-            }
             skipUiUpdate = false;
-            ui->init();
-            tft->markColorPaletteDirty();
+            HermesXHomeDirectPresenter::enter(tft, initializeDisplayUi, ui);
             LOG_INFO("[DirectHome] entering updateModal=%d showingNormal=%d currentFrame=%u free=%u largest=%u",
                      hermesUpdateModalActive ? 1 : 0, showingNormalScreen ? 1 : 0,
                      ui && ui->getUiState() ? ui->getUiState()->currentFrame : 0xFF, ESP.getFreeHeap(),
@@ -17760,173 +8924,67 @@ int32_t Screen::runOnce()
             logDirectHomeNeonSummary("DirectHome entering");
         }
 
-        const bool canSkipUi = gDirectHomeBasePainted && !baseDirty && !gIncomingTextPopupState.pending &&
-                               !gIncomingTextPopupState.visible && !gIncomingTextPopupPaletteResetNeeded;
-        if (canSkipUi) {
+        if (directHomeDecision.canSkipUi) {
             skipUiUpdate = true;
-        } else {
-            directHomeBaseRedrawRequested = true;
-            gHermesXDirectHomeUiCache.valid = true;
-            gHermesXDirectHomeUiCache.stealth = stealth;
-            gHermesXDirectHomeUiCache.hasBattery = hasBattery;
-            gHermesXDirectHomeUiCache.batteryPercent = batteryPercent;
-            gHermesXDirectHomeUiCache.satCount = satCount;
-            gHermesXDirectHomeUiCache.role = config.device.role;
-            strlcpy(gHermesXDirectHomeUiCache.date, homeDateBuf, sizeof(gHermesXDirectHomeUiCache.date));
-            gDirectHomeLastBaseRefreshMs = nowMs;
-            forceDirectHomeClockRedraw = true;
         }
     } else {
         if (!onFixedMainFrame) {
-            gHermesXHomeQuoteActive = false;
+            HermesXHomeUiRenderer::resetQuote();
         }
-        gHermesXDirectHomeUiCache.valid = false;
-        gHermesXDirectHomeUiCache.lastTimeValid = false;
-        gHermesXDirectHomeUiCache.lastDogValid = false;
-        gHermesXDirectHomeUiCache.lastDogFrame = 0xFFFF;
-        gHermesXDirectHomeUiCache.lastDogPose = 0xFF;
-        gHermesXDirectHomeUiCache.lastDogX = -1;
-        gHermesXDirectHomeUiCache.lastDogY = -1;
-        gHermesXDirectHomeUiCache.lastDogW = 0;
-        gHermesXDirectHomeUiCache.lastDogH = 0;
-        gDirectHomeBasePainted = false;
-        gDirectHomeMeshPainted = false;
-        gDirectHomeOrbLastPulsePercent = 0xFF;
-        gDirectHomeOrbLastDrawMs = 0;
-        gDirectHomeLastBaseRefreshMs = 0;
+        directHomeDecision = homeUiController.deactivate();
     }
 
-    const bool leftDirectHomeOverlay =
-        (gDirectHomeClockWasVisible && !renderDirectHomeClock) || (gDirectHomeDogWasVisible && !renderDirectHomeDogOverlay);
+    const bool leftDirectHomeOverlay = directHomeDecision.left;
     if (leftDirectHomeOverlay) {
         skipUiUpdate = false;
-        if (gDirectHomeDogWasVisible && gHermesXDirectHomeUiCache.lastDogW > 0 && gHermesXDirectHomeUiCache.lastDogH > 0) {
-            tft->fillRect565(gHermesXDirectHomeUiCache.lastDogX,
-                             gHermesXDirectHomeUiCache.lastDogY,
-                             gHermesXDirectHomeUiCache.lastDogW,
-                             gHermesXDirectHomeUiCache.lastDogH,
-                             normalBg);
-            tft->overlayBufferForegroundRect565(gHermesXDirectHomeUiCache.lastDogX,
-                                                gHermesXDirectHomeUiCache.lastDogY,
-                                                gHermesXDirectHomeUiCache.lastDogW,
-                                                gHermesXDirectHomeUiCache.lastDogH);
-        }
-        clearDirectNeonClockRegion(tft, dispdev->getWidth(), 0);
-        gDirectHomeBasePainted = false;
-        gDirectHomeMeshPainted = false;
-        gHermesXDirectHomeUiCache.lastDogValid = false;
-        gHermesXDirectHomeUiCache.lastDogFrame = 0xFFFF;
-        gHermesXDirectHomeUiCache.lastDogPose = 0xFF;
-        gHermesXDirectHomeUiCache.lastDogX = -1;
-        gHermesXDirectHomeUiCache.lastDogY = -1;
-        gHermesXDirectHomeUiCache.lastDogW = 0;
-        gHermesXDirectHomeUiCache.lastDogH = 0;
-        gDirectHomeOrbLastPulsePercent = 0xFF;
-        gDirectHomeOrbLastDrawMs = 0;
-        gDirectHomeLastBaseRefreshMs = 0;
-        tft->resetColorPalette(false);
-        tft->setColorPaletteDefaults(isStealthModeActive() ? stealthFg : normalFg, normalBg);
-        ui->init();
-        // Direct TFT clock bypasses the OLED diff buffers; force one full TFT repaint after leaving Home.
-        tft->markColorPaletteDirty();
+        HermesXHomeDirectPresenter::leave(tft,
+                                          dispdev->getWidth(),
+                                          directHomeDecision.previousDog,
+                                          isStealthModeActive() ? stealthFg : normalFg,
+                                          normalBg,
+                                          initializeDisplayUi,
+                                          ui);
     }
 
-    const bool leftIncomingNodePopup = gIncomingNodePopupWasVisible && !isIncomingNodePopupVisible();
-    if (leftIncomingNodePopup) {
-        skipUiUpdate = false;
-        gDirectIncomingNodePopupRenderCache.valid = false;
-        gHermesXDirectHomeUiCache.valid = false;
-        gHermesXDirectHomeUiCache.lastTimeValid = false;
-        gDirectHomeBasePainted = false;
-        gDirectHomeMeshPainted = false;
-        gDirectGpsPosterRenderCache.valid = false;
-        gDirectGpsBasePainted = false;
-        ui->init();
-        tft->markColorPaletteDirty();
-    }
-
-    const bool enteredDirectGpsPoster = directGpsPosterVisible && !gDirectGpsPosterWasVisible;
-    const bool leftDirectGpsPoster = gDirectGpsPosterWasVisible && !directGpsPosterVisible;
-    if (enteredDirectGpsPoster || leftDirectGpsPoster) {
-        // Mirror Home page behavior: only invalidate palette regions on GPS page transitions.
-        tft->resetColorPalette(false);
-        tft->setColorPaletteDefaults(isStealthModeActive() ? stealthFg : normalFg, normalBg);
-        tft->markColorPaletteDirty();
-    }
+    const HermesXGpsPosterVisibilityTransition gpsVisibilityTransition =
+        HermesXGpsDirectPresenter::updateVisibility(tft,
+                                                    dispdev->getWidth(),
+                                                    dispdev->getHeight(),
+                                                    gpsUiModel,
+                                                    gpsRuntime.visible,
+                                                    isStealthModeActive() ? stealthFg : normalFg,
+                                                    normalBg,
+                                                    initializeDisplayUi,
+                                                    ui);
+    const bool enteredDirectGpsPoster = gpsVisibilityTransition.entered;
     if (enteredDirectGpsPoster) {
         // Match Home direct-TFT entry behavior: ensure one full UI-backed base redraw before any neon overlay.
-        gDirectGpsBasePainted = false;
-        gDirectGpsPosterRenderCache.valid = false;
         skipUiUpdate = false;
-        ui->init();
-        tft->fillRect565(0, 0, dispdev->getWidth(), dispdev->getHeight(), normalBg);
-        tft->markColorPaletteDirty();
     }
-    if (leftDirectGpsPoster) {
-        gDirectGpsBasePainted = false;
-        gDirectGpsPosterRenderCache.valid = false;
-    }
-    if (directGpsPosterVisible && !skipUiUpdate) {
+    if (gpsRuntime.visible && !skipUiUpdate) {
         const int16_t renderW = dispdev->getWidth();
         const int16_t renderH = dispdev->getHeight();
-        const bool gpsEnabled = config.position.gps_mode == meshtastic_Config_PositionConfig_GpsMode_ENABLED;
-        bool gpsConnected = false;
-        bool gpsHasLock = false;
-        uint8_t satCount = 0;
-        bool fixedPosition = false;
-        bool hasCoordinates = false;
-        int32_t latitudeE7 = INT32_MIN;
-        int32_t longitudeE7 = INT32_MIN;
-        int32_t altitude = INT32_MIN;
-        if (kEnableDirectGpsPosterDecorNeon && gpsStatus && gpsStatus->getIsConnected()) {
-            satCount = static_cast<uint8_t>(std::min<uint32_t>(99, gpsStatus->getNumSatellites()));
-        }
-        if (kEnableDirectGpsPosterCoordinateNeon) {
-            gpsConnected = gpsStatus && gpsStatus->getIsConnected();
-            gpsHasLock = gpsStatus && gpsStatus->getHasLock();
-            fixedPosition = config.position.fixed_position;
-            hasCoordinates = gpsStatus && gpsEnabled && (fixedPosition || (gpsConnected && gpsHasLock));
-            latitudeE7 = hasCoordinates ? gpsStatus->getLatitude() : INT32_MIN;
-            longitudeE7 = hasCoordinates ? gpsStatus->getLongitude() : INT32_MIN;
-            altitude = hasCoordinates ? gpsStatus->getAltitude() : INT32_MIN;
-        }
-
-        const bool gpsPosterDirty = enteredDirectGpsPoster || !gDirectGpsPosterRenderCache.valid ||
-                                    gDirectGpsPosterRenderCache.width != renderW || gDirectGpsPosterRenderCache.height != renderH ||
-                                    (kEnableDirectGpsPosterTitleNeon && gDirectGpsPosterRenderCache.gpsEnabled != gpsEnabled) ||
-                                    (kEnableDirectGpsPosterDecorNeon && gDirectGpsPosterRenderCache.satCount != satCount) ||
-                                    (kEnableDirectGpsPosterCoordinateNeon &&
-                                     (gDirectGpsPosterRenderCache.gpsConnected != gpsConnected ||
-                                      gDirectGpsPosterRenderCache.gpsHasLock != gpsHasLock ||
-                                      gDirectGpsPosterRenderCache.fixedPosition != fixedPosition ||
-                                      gDirectGpsPosterRenderCache.hasCoordinates != hasCoordinates ||
-                                      gDirectGpsPosterRenderCache.latitudeE7 != latitudeE7 ||
-                                      gDirectGpsPosterRenderCache.longitudeE7 != longitudeE7 ||
-                                      gDirectGpsPosterRenderCache.altitude != altitude));
-        const bool canSkipGpsUi = gDirectGpsBasePainted && gDirectGpsPosterRenderCache.valid && !gpsPosterDirty &&
-                                  !gIncomingTextPopupState.pending && !gIncomingTextPopupState.visible &&
-                                  !gIncomingTextPopupPaletteResetNeeded && !gDirectGpsNeedsFullFrameAfterSwitch;
-        if (canSkipGpsUi) {
+        const HermesXGpsStateSnapshot gpsState = collectDirectGpsState(renderW, renderH, gpsStatus);
+        if (HermesXGpsDirectPresenter::shouldSkipUi(gpsUiModel,
+                                                    gpsState.poster,
+                                                    gpsRuntime.layers,
+                                                    enteredDirectGpsPoster,
+                                                    messageOverlayRuntime.uiSkipBlocked)) {
             skipUiUpdate = true;
         }
     }
 
-    if (gIncomingTextPopupPaletteResetNeeded) {
+    if (messageOverlayRuntime.paletteRecoveryPending) {
         skipUiUpdate = false;
-        gHermesXDirectHomeUiCache.valid = false;
-        gHermesXDirectHomeUiCache.lastTimeValid = false;
-        gHermesXDirectHomeUiCache.lastDogValid = false;
-        gDirectHomeBasePainted = false;
-        gDirectHomeMeshPainted = false;
-        gDirectGpsPosterRenderCache.valid = false;
-        gDirectGpsBasePainted = false;
+        homeUiController.invalidateForPaletteReset();
+        gpsUiModel.invalidatePoster();
         ui->init();
         tft->resetColorPalette(true);
         tft->markColorPaletteDirty();
         if (ui->getUiState()) {
             ui->getUiState()->lastUpdate = 0;
         }
-        gIncomingTextPopupPaletteResetNeeded = false;
+        messageUiController.consumePaletteRecovery();
     }
 
     if (!skipUiUpdate) {
@@ -17942,7 +9000,7 @@ int32_t Screen::runOnce()
             ui->getUiState()->lastUpdate = 0;
         }
     }
-    if (directHomeBaseRedrawRequested && ui && ui->getUiState() && ui->getUiState()->frameState == FIXED) {
+    if (directHomeDecision.baseRedrawRequested && ui && ui->getUiState() && ui->getUiState()->frameState == FIXED) {
         // The dog is rendered directly to TFT after the UI pass. Force the dirty Home base through
         // OLEDDisplayUi's frame budget so basePainted can become true instead of waiting forever
         // while the 60 FPS dog loop keeps running just ahead of the scheduled UI tick.
@@ -17964,176 +9022,32 @@ int32_t Screen::runOnce()
         LOG_INFO("[Screen] Finder TFT foreground overlay frame=%u count=%u",
                  ui->getUiState() ? ui->getUiState()->currentFrame : 0xFF, static_cast<unsigned>(gFinderNodeState.count));
     }
-    if (onFixedGpsFrame && uiRenderedThisTick) {
-        gDirectGpsNeedsFullFrameAfterSwitch = false;
-        gDirectGpsBasePainted = true;
-    } else if (!onFixedGpsFrame) {
-        gDirectGpsBasePainted = false;
+    gpsUiModel.markUiFrameRendered(gpsRuntime.onFixedGpsFrame, uiRenderedThisTick);
+    homeUiController.markUiFrameRendered(directHomeDecision.active, uiRenderedThisTick);
+    if (directHomeDecision.active) {
+        HermesXHomeDirectPresenter::renderDog(tft,
+                                              dispdev->getWidth(),
+                                              dispdev->getHeight(),
+                                              homeUiController,
+                                              directHomeDecision.dogFrame,
+                                              directHomeDecision.forceDogRedraw);
     }
-    if ((renderDirectHomeClock || renderDirectHomeDogOverlay) && uiRenderedThisTick) {
-        gDirectHomeBasePainted = true;
-    }
-    if (renderDirectHomeClock && kEnableDirectHomeOrbAnimation) {
-        static constexpr uint32_t kOrbPulseCycleMs = 5000U;
-        const uint32_t nowMs = millis();
-        const uint32_t cyclePhaseMs = nowMs % kOrbPulseCycleMs;
-        uint8_t pulsePercent = 100;
-        if (cyclePhaseMs <= (kOrbPulseCycleMs / 2U)) {
-            pulsePercent = static_cast<uint8_t>(100U + static_cast<uint8_t>((30U * cyclePhaseMs + 1250U) / 2500U));
-        } else {
-            const uint32_t downPhase = cyclePhaseMs - (kOrbPulseCycleMs / 2U);
-            pulsePercent = static_cast<uint8_t>(130U - static_cast<uint8_t>((30U * downPhase + 1250U) / 2500U));
-        }
-        // Quantize to 1% steps for smoother visible motion.
-        if (pulsePercent < 100U) {
-            pulsePercent = 100U;
-        } else if (pulsePercent > 130U) {
-            pulsePercent = 130U;
-        }
-        pulsePercent = static_cast<uint8_t>(100U + (pulsePercent - 100U));
-        const bool repaintHomeOrbBase = !gDirectHomeMeshPainted || uiRenderedThisTick;
-        const bool pulsePhaseChanged = gDirectHomeOrbLastPulsePercent != pulsePercent;
-        const bool pulseFrameDue =
-            (gDirectHomeOrbLastDrawMs == 0) || ((nowMs - gDirectHomeOrbLastDrawMs) >= kDirectHomeOrbMinFrameIntervalMs);
-        if (repaintHomeOrbBase) {
-            renderDirectHomeOrangeMesh(tft, dispdev->getWidth(), dispdev->getHeight(), nullptr, false, pulsePercent);
-            // Re-stamp only the orb box so clock/date/role/battery areas are not repeatedly full-screen overdrawn.
-            int16_t orbX = 0;
-            int16_t orbY = 0;
-            int16_t orbW = 0;
-            int16_t orbH = 0;
-            if (getDirectHomeOrbBoundsRect(dispdev->getWidth(), dispdev->getHeight(), orbX, orbY, orbW, orbH)) {
-                tft->overlayBufferForegroundRect565(orbX, orbY, orbW, orbH);
-            } else {
-                tft->overlayBufferForeground565();
-            }
-            gDirectHomeMeshPainted = true;
-            gDirectHomeOrbLastPulsePercent = pulsePercent;
-            gDirectHomeOrbLastDrawMs = nowMs;
-        } else if (pulsePhaseChanged && pulseFrameDue) {
-            int16_t orbX = 0;
-            int16_t orbY = 0;
-            int16_t orbW = 0;
-            int16_t orbH = 0;
-            DirectDrawClipRect orbClip;
-            if (getDirectHomeOrbBoundsRect(dispdev->getWidth(), dispdev->getHeight(), orbX, orbY, orbW, orbH) &&
-                makeDirectDrawClipRect(orbX, orbY, orbW, orbH, dispdev->getWidth(), dispdev->getHeight(), orbClip)) {
-                renderDirectHomeOrangeMesh(tft, dispdev->getWidth(), dispdev->getHeight(), &orbClip, true, pulsePercent);
-                tft->overlayBufferForegroundRect565(orbX, orbY, orbW, orbH);
-            }
-            gDirectHomeOrbLastPulsePercent = pulsePercent;
-            gDirectHomeOrbLastDrawMs = nowMs;
-        }
-    }
-    if (renderDirectHomeClock) {
-        if (forceDirectHomeClockRedraw || !gHermesXDirectHomeUiCache.lastTimeValid ||
-            strcmp(gHermesXDirectHomeUiCache.lastTime, directHomeTimeBuf) != 0) {
-            const bool repaintClockBackground = repaintDirectHomeClockMeshRegion(tft, dispdev->getWidth(), dispdev->getHeight(), 0);
-            LOG_DEBUG("[DirectHome] redraw time='%s' force=%d repaintClockBackground=%d lastTimeValid=%d", directHomeTimeBuf,
-                      forceDirectHomeClockRedraw ? 1 : 0, repaintClockBackground ? 1 : 0,
-                      gHermesXDirectHomeUiCache.lastTimeValid ? 1 : 0);
-            renderDirectNeonClock(tft,
-                                  dispdev->getWidth(),
-                                  0,
-                                  directHomeTimeBuf,
-                                  forceDirectHomeClockRedraw || repaintClockBackground,
-                                  !repaintClockBackground);
-            strlcpy(gHermesXDirectHomeUiCache.lastTime, directHomeTimeBuf, sizeof(gHermesXDirectHomeUiCache.lastTime));
-            gHermesXDirectHomeUiCache.lastTimeValid = true;
-            logDirectHomeNeonSummary("DirectHome after redraw");
-        }
-    } else if (renderDirectHomeDogOverlay) {
-        if (forceDirectHomeClockRedraw || !gHermesXDirectHomeUiCache.lastDogValid ||
-            gHermesXDirectHomeUiCache.lastDogFrame != directHomeDogFrame ||
-            gHermesXDirectHomeUiCache.lastDogPose != gDirectHomeDogPose) {
-            renderDirectHomeDog(tft,
-                                dispdev->getWidth(),
-                                dispdev->getHeight(),
-                                directHomeDogFrame,
-                                gDirectHomeDogPose);
-            gHermesXDirectHomeUiCache.lastDogValid = true;
-            gHermesXDirectHomeUiCache.lastDogFrame = directHomeDogFrame;
-            gHermesXDirectHomeUiCache.lastDogPose = gDirectHomeDogPose;
-            gHermesXDirectHomeUiCache.lastTimeValid = false;
-        }
-    }
-    if (directGpsPosterVisible) {
+    if (gpsRuntime.visible) {
         const int16_t renderW = dispdev->getWidth();
         const int16_t renderH = dispdev->getHeight();
-        const bool gpsEnabled = config.position.gps_mode == meshtastic_Config_PositionConfig_GpsMode_ENABLED;
-        bool gpsConnected = false;
-        bool gpsHasLock = false;
-        uint8_t satCount = 0;
-        bool fixedPosition = false;
-        bool hasCoordinates = false;
-        int32_t latitudeE7 = INT32_MIN;
-        int32_t longitudeE7 = INT32_MIN;
-        int32_t altitude = INT32_MIN;
-        if (kEnableDirectGpsPosterDecorNeon && gpsStatus && gpsStatus->getIsConnected()) {
-            satCount = static_cast<uint8_t>(std::min<uint32_t>(99, gpsStatus->getNumSatellites()));
-        }
-        if (kEnableDirectGpsPosterCoordinateNeon) {
-            gpsConnected = gpsStatus && gpsStatus->getIsConnected();
-            gpsHasLock = gpsStatus && gpsStatus->getHasLock();
-            fixedPosition = config.position.fixed_position;
-            hasCoordinates = gpsStatus && gpsEnabled && (fixedPosition || (gpsConnected && gpsHasLock));
-            latitudeE7 = hasCoordinates ? gpsStatus->getLatitude() : INT32_MIN;
-            longitudeE7 = hasCoordinates ? gpsStatus->getLongitude() : INT32_MIN;
-            altitude = hasCoordinates ? gpsStatus->getAltitude() : INT32_MIN;
-        }
-
-        const bool gpsPosterDirty = enteredDirectGpsPoster || !gDirectGpsPosterRenderCache.valid ||
-                                    gDirectGpsPosterRenderCache.width != renderW || gDirectGpsPosterRenderCache.height != renderH ||
-                                    (kEnableDirectGpsPosterTitleNeon && gDirectGpsPosterRenderCache.gpsEnabled != gpsEnabled) ||
-                                    (kEnableDirectGpsPosterDecorNeon && gDirectGpsPosterRenderCache.satCount != satCount) ||
-                                    (kEnableDirectGpsPosterCoordinateNeon &&
-                                     (gDirectGpsPosterRenderCache.gpsConnected != gpsConnected ||
-                                      gDirectGpsPosterRenderCache.gpsHasLock != gpsHasLock ||
-                                      gDirectGpsPosterRenderCache.fixedPosition != fixedPosition ||
-                                      gDirectGpsPosterRenderCache.hasCoordinates != hasCoordinates ||
-                                      gDirectGpsPosterRenderCache.latitudeE7 != latitudeE7 ||
-                                      gDirectGpsPosterRenderCache.longitudeE7 != longitudeE7 ||
-                                      gDirectGpsPosterRenderCache.altitude != altitude));
-        const bool gpsPosterNeedsRepaint = gDirectGpsBasePainted && (gpsPosterDirty || uiRenderedThisTick);
+        const HermesXGpsStateSnapshot gpsState = collectDirectGpsState(renderW, renderH, gpsStatus);
+        const bool gpsPosterDirty = gpsUiModel.isPosterDirty(gpsState.poster, gpsRuntime.layers, enteredDirectGpsPoster);
+        const bool gpsPosterNeedsRepaint = gpsUiModel.isBasePainted() && (gpsPosterDirty || uiRenderedThisTick);
         if (gpsPosterNeedsRepaint) {
             // GPS base frame is still drawn by ui->update(); re-apply enabled direct layers after any UI repaint.
-            if (kEnableDirectGpsPosterDecorNeon) {
-                renderDirectGpsPosterDecor(tft, renderW, renderH, gpsStatus);
-            }
-            if (kEnableDirectGpsPosterTitleNeon) {
-                renderDirectGpsPosterTitleNeon(tft, renderW, renderH);
-            }
-            if (kEnableDirectGpsPosterCoordinateNeon) {
-                renderDirectGpsPosterCoordinateNeon(tft, renderW, renderH, gpsStatus);
-            }
-            gDirectGpsPosterRenderCache.valid = true;
-            gDirectGpsPosterRenderCache.gpsEnabled = gpsEnabled;
-            gDirectGpsPosterRenderCache.gpsConnected = gpsConnected;
-            gDirectGpsPosterRenderCache.gpsHasLock = gpsHasLock;
-            gDirectGpsPosterRenderCache.satCount = satCount;
-            gDirectGpsPosterRenderCache.fixedPosition = fixedPosition;
-            gDirectGpsPosterRenderCache.hasCoordinates = hasCoordinates;
-            gDirectGpsPosterRenderCache.latitudeE7 = latitudeE7;
-            gDirectGpsPosterRenderCache.longitudeE7 = longitudeE7;
-            gDirectGpsPosterRenderCache.altitude = altitude;
-            gDirectGpsPosterRenderCache.width = renderW;
-            gDirectGpsPosterRenderCache.height = renderH;
+            HermesXGpsDirectRenderer::render(tft, gpsState, gpsRuntime.layers, ensureDirectNeonBuffers);
+            gpsUiModel.commitPosterState(gpsState.poster);
         }
     } else {
-        gDirectGpsBasePainted = false;
+        gpsUiModel.invalidateBase();
     }
-    if (incomingNodePopupVisible && (incomingNodePopupDirty || uiRenderedThisTick)) {
-        renderDirectIncomingNodePopup(tft, dispdev->getWidth(), dispdev->getHeight(), gIncomingNodePopupState.node);
-        gDirectIncomingNodePopupRenderCache.valid = true;
-        gDirectIncomingNodePopupRenderCache.nodeNum = gIncomingNodePopupState.node.num;
-        gDirectIncomingNodePopupRenderCache.width = dispdev->getWidth();
-        gDirectIncomingNodePopupRenderCache.height = dispdev->getHeight();
-    }
-    gDirectHomeClockWasVisible = renderDirectHomeClock;
-    gDirectHomeDogWasVisible = renderDirectHomeDogOverlay;
-    gDirectGpsPosterWasVisible = directGpsPosterVisible;
-    gIncomingNodePopupWasVisible = incomingNodePopupVisible;
-    gDirectLastFrameIndex = currentFrameIndex;
+    gpsUiModel.commitVisibility(gpsRuntime.visible);
+    gpsUiController.commitFrame(currentFrameIndex);
 #endif
 
     if (showingNormalScreen && hasUnreadTextMessage && hasRecentTextMessages()) {
@@ -18149,7 +9063,7 @@ int32_t Screen::runOnce()
     // but we should only call setTargetFPS when framestate changes, because
     // otherwise that breaks animations.
     if (targetFramerate != IDLE_FRAMERATE && ui->getUiState()->frameState == FIXED && !hermesXBootHoldActive &&
-        !gDirectHomeClockWasVisible && !gDirectHomeDogWasVisible) {
+        !HermesXHomeUiController::instance().isVisible()) {
         if (isHermesFastSetupActive() || (hermesXEmUiModule && hermesXEmUiModule->isActive())) {
             // Keep UI responsive while interacting with HermesX screens.
             fastUntilMs = millis() + 1200;
@@ -18236,45 +9150,52 @@ void Screen::startHermesXAlert(const char *text)
 
 void Screen::showEmergencyConfirmPopup(uint32_t remainingSec)
 {
-    hermesEmergencyConfirmVisible = true;
-    hermesEmergencyConfirmCancelRequested = false;
-    hermesEmergencyConfirmRemainingSec = remainingSec;
+    gEmergencyConfirmUiModel.show(remainingSec);
     setFastFramerate();
 }
 
 void Screen::updateEmergencyConfirmPopup(uint32_t remainingSec)
 {
-    hermesEmergencyConfirmRemainingSec = remainingSec;
-    if (hermesEmergencyConfirmVisible) {
+    gEmergencyConfirmUiModel.update(remainingSec);
+    if (gEmergencyConfirmUiState.visible) {
         setFastFramerate();
     }
 }
 
 void Screen::hideEmergencyConfirmPopup()
 {
-    hermesEmergencyConfirmVisible = false;
-    hermesEmergencyConfirmRemainingSec = 0;
+    gEmergencyConfirmUiModel.hide();
     setFastFramerate();
 }
 
 bool Screen::consumeEmergencyConfirmCancelRequest()
 {
-    const bool requested = hermesEmergencyConfirmCancelRequested;
-    hermesEmergencyConfirmCancelRequested = false;
-    return requested;
+    return gEmergencyConfirmUiModel.consumeCancelRequest();
+}
+
+bool Screen::isEmergencyConfirmPopupVisible() const
+{
+    return gEmergencyConfirmUiState.visible;
 }
 
 void Screen::setRotaryLockState(bool locked)
 {
-    hermesRotaryLocked = locked;
-    hermesRotaryLockPopupVisible = true;
-    hermesRotaryLockPopupSelectedLocked = locked;
-    hermesRotaryLockPopupShownAtMs = millis();
+    gRotaryLockUiModel.show(locked, millis());
     if (!screenOn) {
         setOn(true);
     }
     setFastFramerate();
     requestImmediateRedraw();
+}
+
+bool Screen::isRotaryLocked() const
+{
+    return gRotaryLockUiState.locked;
+}
+
+bool Screen::isRotaryLockPopupVisible() const
+{
+    return gRotaryLockUiState.visible;
 }
 
 void Screen::startBootHoldReveal(uint32_t revealMs)
@@ -18631,7 +9552,6 @@ void Screen::setFrames(FrameFocus focus)
         drawFinderPulseConfirmOverlay,
         drawFinderPulseSendingOverlay,
         drawIncomingTextPopupOverlay,
-        drawIncomingNodePopupOverlay,
         drawTraceRoutePopupOverlay,
         drawLowMemoryReminderOverlay,
     };
@@ -19527,11 +10447,11 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
 
     auto openHermesFastSetupPage = [&](HermesFastSetupPage page) {
         hermesSetupReturnToGroupMenu = false;
-        hermesSetupPage = page;
-        hermesSetupSelected = 0;
-        hermesSetupOffset = 0;
-        hermesSetupLastNavAtMs = 0;
-        hermesSetupLastNavDir = 0;
+        gHermesFastSetupNavigation.page = page;
+        gHermesFastSetupNavigation.selected = 0;
+        gHermesFastSetupNavigation.offset = 0;
+        gHermesFastSetupNavigation.lastNavAtMs = 0;
+        gHermesFastSetupNavigation.lastNavDir = 0;
         if (ui) {
             ui->switchToFrame(framesetInfo.positions.setup);
         }
@@ -19571,24 +10491,14 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
         return true;
     };
     auto openOnlineNodeList = [&]() {
-        rebuildOnlineNodeOrder();
-        gOnlineNodeState.listCursor = 0;
-        gOnlineNodeState.selectedIndex = 0;
-        gOnlineNodeState.detailCursor = 0;
+        gNodeBrowserDataSource.refreshOnline();
+        gNodeBrowserUiModel.reset(gOnlineNodeState);
         return showOnlineNodeListPage();
     };
     auto openTraceRouteNodeList = [&]() {
-        rebuildTraceRouteNodeOrder();
-        gTraceRouteSearchState = TraceRouteSearchState{};
-        gTraceRouteUiMode = TraceRouteUiMode::Menu;
-        gTraceRouteBoundState.menuCursor = 1;
-        gTraceRouteBoundState.confirmVisible = false;
-        gTraceRouteBoundState.confirmNode = 0;
-        gTraceRouteBoundState.confirmSelected = 1;
-        gTraceRouteBoundState.bindCursor = 0;
-        gTraceRouteBoundState.bindSelectedIndex = 0;
-        gTraceRouteBoundState.boundCursor = 0;
-        gTraceRouteBoundState.boundSelectedIndex = 0;
+        gNodeBrowserDataSource.refreshTraceRoute();
+        HermesXTraceRouteUiModel::instance().resetSearch();
+        HermesXTraceRouteUiModel::instance().resetNavigation();
         return showTraceRouteNodeListPage();
     };
     auto returnToPrimaryFeatureEntry = [&]() {
@@ -19712,9 +10622,9 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
             // Entering GPS from Action must force one full repaint, otherwise
             // direct-GPS cache can occasionally leave only the title neon on top
             // of the previous page.
-            gDirectGpsPosterRenderCache.valid = false;
-            gDirectGpsPosterWasVisible = false;
-            if (supportsDirectTftClockRendering(dispdev)) {
+            HermesXGpsUiModel::instance().invalidate();
+            HermesXGpsUiModel::instance().clearVisibility();
+            if (supportsDirectTftOverlayRendering(dispdev)) {
                 auto *tft = static_cast<TFTDisplay *>(dispdev);
                 tft->resetColorPalette(true);
                 tft->markColorPaletteDirty();
@@ -19738,9 +10648,7 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
                 rebootAtMsec = millis() + kTakModeTransitionRebootMs;
             }
         } else {
-            gTakModePageView = TakModePageView::Popup;
-            gTakModePopupSelected = 0;
-            gTakModePopupOffset = 0;
+            gTakModeUiModel.showPopup();
             showHermesXMainPage();
         }
     } else if (selectedAction == 4) {
@@ -19766,9 +10674,7 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
     } else if (selectedAction == 11) {
         gGroupNodeState.menuCursor = 1;
         gGroupNodeState.nodeListVisible = false;
-        gGroupNodeState.listCursor = 0;
-        gGroupNodeState.selectedIndex = 0;
-        gGroupNodeState.detailCursor = 0;
+        gNodeBrowserUiModel.resetGroupList();
         hermesSetupReturnToGroupMenu = false;
         showGroupNodeListPage();
     } else if (selectedAction == 12) {
@@ -19783,74 +10689,43 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
 
 bool Screen::handleLowMemoryReminderInput(const InputEvent *event)
 {
-    if (!event || !lowMemoryReminderVisible) {
+    if (!event) {
         return false;
     }
 
-    const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
-    const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
-    const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
-    const bool isLeft =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
-    const bool isRight =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
-    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
-    const bool isDown =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
-    const bool isSelect =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
-    const bool isCancel =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
-    const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
-    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
-    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
+    const auto action = graphics::HermesXLowMemoryUiController::instance().handle(
+        {event->inputEvent},
+        {static_cast<char>(moduleConfig.canned_message.inputbroker_event_press),
+         static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw),
+         static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw)},
+        millis(), kLowMemoryReminderSuppressMs);
 
-    if (isLeft || isUp || isCcw) {
-        lowMemoryReminderSelected = 0;
-        setFastFramerate();
+    if (action == graphics::HermesXLowMemoryAction::Unhandled) {
+        return false;
+    }
+    if (action == graphics::HermesXLowMemoryAction::Consumed) {
         return true;
     }
-    if (isRight || isDown || isCw) {
-        lowMemoryReminderSelected = 1;
-        setFastFramerate();
-        return true;
-    }
-    if (isCancel) {
-        lowMemoryReminderVisible = false;
-        lowMemoryReminderSuppressUntilMs = millis() + kLowMemoryReminderSuppressMs;
-        lowMemoryProtectionStatus[0] = '\0';
-        setFastFramerate();
-        return true;
-    }
-    if (!(isSelect || isPress)) {
-        return true;
-    }
-
-    lowMemoryReminderVisible = false;
-    if (lowMemoryReminderSelected == 0) {
-        lowMemoryReminderSuppressUntilMs = millis() + kLowMemoryReminderSuppressMs;
-        lowMemoryProtectionStatus[0] = '\0';
+    if (action == graphics::HermesXLowMemoryAction::Refresh ||
+        action == graphics::HermesXLowMemoryAction::Dismissed) {
         setFastFramerate();
         return true;
     }
 
-    lowMemoryReminderVisible = true;
-    lowMemoryReminderSelected = 0;
     if (nodeDB) {
         const int beforeCount = static_cast<int>(nodeDB->getNumMeshNodes());
         nodeDB->resetNodes();
         const int removed = beforeCount > 0 ? beforeCount - 1 : 0;
-        snprintf(lowMemoryProtectionStatus, sizeof(lowMemoryProtectionStatus), u8"已清除 %d 筆節點", removed);
-        lowMemoryReminderTriggerFree = memGet.getFreeHeap();
-        lowMemoryReminderTriggerLargest = memGet.getLargestFreeBlock();
-        if (releaseLowMemoryProtectionIfRecovered(lowMemoryReminderTriggerFree, lowMemoryReminderTriggerLargest)) {
-            snprintf(lowMemoryProtectionStatus, sizeof(lowMemoryProtectionStatus), u8"已清除 %d 筆，Heap恢復", removed);
+        snprintf(gLowMemoryUiState.status, sizeof(gLowMemoryUiState.status), u8"已清除 %d 筆節點", removed);
+        const uint32_t freeHeap = memGet.getFreeHeap();
+        const uint32_t largestBlock = memGet.getLargestFreeBlock();
+        gLowMemoryUiModel.setMeasurements(freeHeap, largestBlock);
+        if (releaseLowMemoryProtectionIfRecovered(freeHeap, largestBlock)) {
+            snprintf(gLowMemoryUiState.status, sizeof(gLowMemoryUiState.status), u8"已清除 %d 筆，Heap恢復", removed);
         }
-        LOG_WARN("[LowMemory] protection cleared NodeDB removed=%d free=%u largest=%u", removed, lowMemoryReminderTriggerFree,
-                 lowMemoryReminderTriggerLargest);
+        LOG_WARN("[LowMemory] protection cleared NodeDB removed=%d free=%u largest=%u", removed, freeHeap, largestBlock);
     } else {
-        snprintf(lowMemoryProtectionStatus, sizeof(lowMemoryProtectionStatus), u8"NodeDB 尚未就緒");
+        snprintf(gLowMemoryUiState.status, sizeof(gLowMemoryUiState.status), u8"NodeDB 尚未就緒");
     }
     setFastFramerate();
     return true;
@@ -19858,199 +10733,60 @@ bool Screen::handleLowMemoryReminderInput(const InputEvent *event)
 
 bool Screen::handleEmergencyConfirmInput(const InputEvent *event)
 {
-    if (!event || !hermesEmergencyConfirmVisible) {
+    if (!event) {
         return false;
     }
-
-    const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
-    const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
-    const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
-    const bool isLeft =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
-    const bool isRight =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
-    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
-    const bool isDown =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
-    const bool isSelect =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
-    const bool isCancel =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
-    const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
-    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
-    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
-
-    if (isLeft || isRight || isUp || isDown || isSelect || isCancel || isPress || isCw || isCcw) {
-        hermesEmergencyConfirmCancelRequested = true;
-        hideEmergencyConfirmPopup();
+    const auto action = graphics::HermesXEmergencyConfirmUiController::instance().handle(
+        event->inputEvent,
+        {static_cast<char>(moduleConfig.canned_message.inputbroker_event_press),
+         static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw),
+         static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw)});
+    if (action == graphics::HermesXEmergencyConfirmAction::Canceled) {
+        setFastFramerate();
         return true;
     }
-
-    return true;
+    return action != graphics::HermesXEmergencyConfirmAction::Unhandled;
 }
 
 bool Screen::handleRotaryLockInput(const InputEvent *event)
 {
-    if (!event || !hermesRotaryLockPopupVisible) {
+    if (!event) {
         return false;
     }
-
-    const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
-    const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
-    const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
-    const bool isLeft =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
-    const bool isRight =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
-    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
-    const bool isDown =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
-    const bool isSelect =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
-    const bool isCancel =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
-    const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
-    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
-    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
     const bool isRotary = (event->source && strncmp(event->source, "rotEnc", 6) == 0);
-
-    int8_t navDir = 0;
-    if (isRotary) {
-        if (isCcw) {
-            navDir = -1;
-        } else if (isCw) {
-            navDir = 1;
-        } else if (eventCw == 0 && eventCcw == 0) {
-            if (isUp || isLeft) {
-                navDir = -1;
-            } else if (isDown || isRight) {
-                navDir = 1;
-            }
-        }
-    } else {
-        if (isLeft || isUp || isCcw) {
-            navDir = -1;
-        } else if (isRight || isDown || isCw) {
-            navDir = 1;
-        }
-    }
-
-    if (navDir < 0) {
-        hermesRotaryLockPopupSelectedLocked = false;
-        hermesRotaryLockPopupShownAtMs = millis();
+    const auto action = graphics::HermesXRotaryLockUiController::instance().handle(
+        event->inputEvent, isRotary, millis(),
+        {static_cast<char>(moduleConfig.canned_message.inputbroker_event_press),
+         static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw),
+         static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw)});
+    if (action == graphics::HermesXRotaryLockAction::SelectionChanged ||
+        action == graphics::HermesXRotaryLockAction::Confirmed ||
+        action == graphics::HermesXRotaryLockAction::Canceled) {
         setFastFramerate();
-        return true;
     }
-    if (navDir > 0) {
-        hermesRotaryLockPopupSelectedLocked = true;
-        hermesRotaryLockPopupShownAtMs = millis();
-        setFastFramerate();
-        return true;
-    }
-
-    if (isSelect || isPress) {
-        hermesRotaryLocked = hermesRotaryLockPopupSelectedLocked;
-        hermesRotaryLockPopupVisible = false;
-        hermesRotaryLockPopupShownAtMs = 0;
-        setFastFramerate();
+    if (action == graphics::HermesXRotaryLockAction::Confirmed ||
+        action == graphics::HermesXRotaryLockAction::Canceled) {
         requestImmediateRedraw();
-        return true;
     }
-
-    if (isCancel) {
-        hermesRotaryLockPopupVisible = false;
-        hermesRotaryLockPopupSelectedLocked = hermesRotaryLocked;
-        hermesRotaryLockPopupShownAtMs = 0;
-        setFastFramerate();
-        requestImmediateRedraw();
-        return true;
-    }
-
-    return true;
+    return action != graphics::HermesXRotaryLockAction::Unhandled;
 }
 
 bool Screen::handleFinderPulseConfirmInput(const InputEvent *event)
 {
-    if (!event || !hermesFinderPulseConfirmVisible) {
+    if (!event) {
         return false;
     }
 
     const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
     const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
     const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
-    const bool isLeft =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
-    const bool isRight =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
-    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
-    const bool isDown =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
-    const bool isSelect =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
-    const bool isCancel =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
-    const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
-    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
-    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
-    const uint32_t now = millis();
-    bool broadcastArmed = true;
-    if (hermesFinderPulseConfirmShownAtMs != 0) {
-        const uint32_t elapsedMs = now - hermesFinderPulseConfirmShownAtMs;
-        broadcastArmed = (elapsedMs >= kStealthConfirmArmMs);
-    }
-    int8_t navDir = 0;
-    const bool isRotary = (event->source && strncmp(event->source, "rotEnc", 6) == 0);
-    if (isRotary) {
-        if (isCcw) {
-            navDir = -1;
-        } else if (isCw) {
-            navDir = 1;
-        } else if (eventCw == 0 && eventCcw == 0) {
-            if (isUp || isLeft) {
-                navDir = -1;
-            } else if (isDown || isRight) {
-                navDir = 1;
-            }
-        }
-    } else {
-        if (isLeft || isCcw) {
-            navDir = -1;
-        } else if (isRight || isCw) {
-            navDir = 1;
-        }
-    }
-    auto allowNav = [&](int8_t dir) -> bool {
-        if (dir == 0) {
-            return false;
-        }
-        if (!isRotary) {
-            if (hermesActionLastNavAtMs != 0 && (now - hermesActionLastNavAtMs) < kSetupNavMinIntervalMs) {
-                return false;
-            }
-            if (hermesActionLastNavDir != 0 && dir != hermesActionLastNavDir &&
-                (now - hermesActionLastNavAtMs) < kSetupNavFlipGuardMs) {
-                return false;
-            }
-        }
-        hermesActionLastNavAtMs = now;
-        hermesActionLastNavDir = dir;
-        return true;
-    };
-
-    if (isCancel) {
+    const HermesXFinderPulseAction action = HermesXNodeBrowserUiController::instance().handleFinderPulseConfirm(
+        {event->source, event->inputEvent}, {eventPress, eventCw, eventCcw}, millis(), kStealthConfirmArmMs);
+    if (action == HermesXFinderPulseAction::CancelRequested) {
         if (lighthouseModule) {
             lighthouseModule->cancelPositionPulseRequest();
             (void)lighthouseModule->consumePositionPulseUiResult();
         }
-        hermesFinderPulseConfirmVisible = false;
-        hermesFinderPulseConfirmSelected = 0;
-        hermesFinderPulseConfirmShownAtMs = 0;
-        hermesFinderPulseDispatched = false;
-        hermesFinderPulseSendingVisible = false;
-        hermesFinderPulseSendingShownAtMs = 0;
         hermesFinderUiMode = HermesFinderUiMode::Menu;
         hermesFinderMenuSelected = 1;
         showFinderListPageSafely(true);
@@ -20058,58 +10794,32 @@ bool Screen::handleFinderPulseConfirmInput(const InputEvent *event)
         requestImmediateRedraw();
         return true;
     }
-
-    if (navDir != 0 && allowNav(navDir)) {
-        if (!broadcastArmed || navDir < 0) {
-            hermesFinderPulseConfirmSelected = 0;
-        } else {
-            hermesFinderPulseConfirmSelected = 1;
-        }
+    if (action == HermesXFinderPulseAction::Refresh) {
         setFastFramerate();
         return true;
     }
-
-    if (isSelect || isPress) {
-        const bool confirmBroadcast = broadcastArmed && (hermesFinderPulseConfirmSelected != 0);
-        hermesFinderPulseConfirmVisible = false;
-        hermesFinderPulseConfirmSelected = 0;
-        hermesFinderPulseConfirmShownAtMs = 0;
-        hermesFinderPulseDispatched = false;
-        if (confirmBroadcast) {
-            const bool requestStarted = lighthouseModule && lighthouseModule->requestPositionPulse();
-            hermesFinderPulseSendingVisible = requestStarted;
-            hermesFinderPulseSendingShownAtMs = requestStarted ? millis() : 0;
-            hermesFinderUiMode = HermesFinderUiMode::Menu;
-            if (requestStarted) {
-                showFinderListPageSafely(true);
-            }
-            if (!requestStarted) {
-                if (HermesXInterfaceModule::instance) {
-                    HermesXInterfaceModule::instance->playNackFail();
-                }
-                showTraceRoutePopup(u8"尋人模式", "SEND FAIL");
-            }
-        } else {
-            if (lighthouseModule) {
-                lighthouseModule->cancelPositionPulseRequest();
-                (void)lighthouseModule->consumePositionPulseUiResult();
-            }
-            hermesFinderPulseSendingVisible = false;
-            hermesFinderPulseSendingShownAtMs = 0;
-            hermesFinderUiMode = HermesFinderUiMode::Menu;
-            hermesFinderMenuSelected = 1;
+    if (action == HermesXFinderPulseAction::BroadcastRequested) {
+        const bool requestStarted = lighthouseModule && lighthouseModule->requestPositionPulse();
+        HermesXNodeBrowserUiController::instance().setFinderPulseRequestStarted(requestStarted, millis());
+        hermesFinderUiMode = HermesFinderUiMode::Menu;
+        if (requestStarted) {
             showFinderListPageSafely(true);
+        } else {
+            if (HermesXInterfaceModule::instance) {
+                HermesXInterfaceModule::instance->playNackFail();
+            }
+            showTraceRoutePopup(u8"尋人模式", "SEND FAIL");
         }
         setFastFramerate();
         requestImmediateRedraw();
         return true;
     }
-    return true;
+    return action != HermesXFinderPulseAction::Unhandled;
 }
 
 bool Screen::handleFinderPulseSendingInput(const InputEvent *event)
 {
-    if (!event || !hermesFinderPulseSendingVisible) {
+    if (!event) {
         return false;
     }
 
@@ -20117,33 +10827,13 @@ bool Screen::handleFinderPulseSendingInput(const InputEvent *event)
     const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
     const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
 
-    const bool isLeft =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
-    const bool isRight =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
-    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
-    const bool isDown =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
-    const bool isSelect =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
-    const bool isCancel =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
-    const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
-    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
-    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
-
-    if (isCancel || isLeft) {
+    const HermesXFinderPulseAction action = HermesXNodeBrowserUiController::instance().handleFinderPulseSending(
+        {event->source, event->inputEvent}, {eventPress, eventCw, eventCcw});
+    if (action == HermesXFinderPulseAction::CancelRequested) {
         if (lighthouseModule) {
             lighthouseModule->cancelPositionPulseRequest();
             (void)lighthouseModule->consumePositionPulseUiResult();
         }
-        hermesFinderPulseConfirmVisible = false;
-        hermesFinderPulseConfirmSelected = 0;
-        hermesFinderPulseConfirmShownAtMs = 0;
-        hermesFinderPulseDispatched = false;
-        hermesFinderPulseSendingVisible = false;
-        hermesFinderPulseSendingShownAtMs = 0;
         hermesFinderUiMode = HermesFinderUiMode::Menu;
         hermesFinderMenuSelected = 1;
         showFinderListPageSafely(true);
@@ -20151,12 +10841,7 @@ bool Screen::handleFinderPulseSendingInput(const InputEvent *event)
         requestImmediateRedraw();
         return true;
     }
-
-    if (isRight || isUp || isDown || isSelect || isPress || isCw || isCcw) {
-        return true;
-    }
-
-    return true;
+    return action != HermesXFinderPulseAction::Unhandled;
 }
 
 bool Screen::handleHermesFastSetupInput(const InputEvent *event)
@@ -20210,76 +10895,17 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
     }
 
     auto resetMenu = [&](HermesFastSetupPage page) {
-        hermesSetupPage = page;
-        hermesSetupSelected = 0;
-        hermesSetupOffset = 0;
-        hermesSetupLastNavAtMs = 0;
-        hermesSetupLastNavDir = 0;
+        HermesXFastSetupUiModel::instance().reset(page);
     };
     auto openSetupDetailPage = [&](const char *title, const String &body, HermesFastSetupPage returnPage) {
         LOG_INFO("[UpdateDetailPopup] open title=%s return=%d bodyLen=%u", title ? title : "",
                  static_cast<int>(returnPage), static_cast<unsigned>(body.length()));
         showSetupDetailPopup(title, body);
-        hermesSetupReturnPage = returnPage;
-        hermesSetupPage = HermesFastSetupPage::UpdateDetailPopup;
-        hermesSetupSelected = 0;
-        hermesSetupOffset = 0;
-        hermesSetupLastNavAtMs = 0;
-        hermesSetupLastNavDir = 0;
-    };
-
-    auto updateOffset = [&](int count) {
-        if (count <= static_cast<int>(kSetupVisibleRows)) {
-            hermesSetupOffset = 0;
-            return;
-        }
-        if (hermesSetupSelected < hermesSetupOffset) {
-            hermesSetupOffset = hermesSetupSelected;
-        } else if (hermesSetupSelected >= hermesSetupOffset + static_cast<int>(kSetupVisibleRows)) {
-            hermesSetupOffset = hermesSetupSelected - static_cast<int>(kSetupVisibleRows) + 1;
-        }
-        const int maxOffset = count - static_cast<int>(kSetupVisibleRows);
-        if (hermesSetupOffset > maxOffset) {
-            hermesSetupOffset = maxOffset;
-        }
-        if (hermesSetupOffset < 0) {
-            hermesSetupOffset = 0;
-        }
+        HermesXFastSetupUiModel::instance().openDetail(returnPage);
     };
 
     auto enterMenu = [&](HermesFastSetupPage page, int count, int selected) {
-        hermesSetupPage = page;
-        if (count <= 0) {
-            hermesSetupSelected = 0;
-        } else if (selected < 0) {
-            hermesSetupSelected = 0;
-        } else if (selected >= count) {
-            hermesSetupSelected = count - 1;
-        } else {
-            hermesSetupSelected = selected;
-        }
-        hermesSetupOffset = 0;
-        hermesSetupLastNavAtMs = 0;
-        hermesSetupLastNavDir = 0;
-        updateOffset(count);
-    };
-
-    auto allowNav = [&](int8_t dir) -> bool {
-        if (dir == 0) {
-            return false;
-        }
-        if (!isRotary) {
-            if (hermesSetupLastNavAtMs != 0 && (now - hermesSetupLastNavAtMs) < kSetupNavMinIntervalMs) {
-                return false;
-            }
-            if (hermesSetupLastNavDir != 0 && dir != hermesSetupLastNavDir &&
-                (now - hermesSetupLastNavAtMs) < kSetupNavFlipGuardMs) {
-                return false;
-            }
-            hermesSetupLastNavAtMs = now;
-            hermesSetupLastNavDir = dir;
-        }
-        return true;
+        HermesXFastSetupUiModel::instance().enter(page, count, selected);
     };
 
     auto saveSetupSegments = [&](int saveWhat) {
@@ -20459,8 +11085,8 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     };
 
-    if (hermesSetupPage == HermesFastSetupPage::Entry) {
-        if (navDir != 0 && allowNav(navDir)) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::Entry) {
+        if (HermesXFastSetupUiController::instance().acceptNavigation(navDir, isRotary, now)) {
             resetMenu(HermesFastSetupPage::Root);
             setFastFramerate();
             return true;
@@ -20473,9 +11099,9 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::PassEdit) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::PassEdit) {
         const int rowCount = static_cast<int>(kSetupKeyRowCount);
-        if (navDir != 0 && allowNav(navDir)) {
+        if (HermesXFastSetupUiController::instance().acceptNavigation(navDir, isRotary, now)) {
             int totalKeys = 0;
             for (int r = 0; r < rowCount; ++r) {
                 totalKeys += kSetupKeyRowLengths[r];
@@ -20537,13 +11163,13 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return true;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::DeviceInfoShortNameEdit ||
-        hermesSetupPage == HermesFastSetupPage::DeviceInfoLongNameEdit) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::DeviceInfoShortNameEdit ||
+        gHermesFastSetupNavigation.page == HermesFastSetupPage::DeviceInfoLongNameEdit) {
         const int rowCount = static_cast<int>(kSetupWifiKeyRowCount);
-        const size_t maxLen = (hermesSetupPage == HermesFastSetupPage::DeviceInfoShortNameEdit)
+        const size_t maxLen = (gHermesFastSetupNavigation.page == HermesFastSetupPage::DeviceInfoShortNameEdit)
                                   ? sizeof(owner.short_name) - 1
                                   : sizeof(owner.long_name) - 1;
-        if (navDir != 0 && allowNav(navDir)) {
+        if (HermesXFastSetupUiController::instance().acceptNavigation(navDir, isRotary, now)) {
             int totalKeys = 0;
             for (int r = 0; r < rowCount; ++r) {
                 totalKeys += kSetupWifiKeyRowLengths[r];
@@ -20571,7 +11197,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
             const char *label = getSetupWifiKeyRows(hermesSetupDeviceInfoLowercase)[hermesSetupKeyRow][hermesSetupKeyCol];
             if (label) {
                 if (strcmp(label, "OK") == 0) {
-                    if (saveDeviceInfoName(hermesSetupPage == HermesFastSetupPage::DeviceInfoShortNameEdit)) {
+                    if (saveDeviceInfoName(gHermesFastSetupNavigation.page == HermesFastSetupPage::DeviceInfoShortNameEdit)) {
                         resetMenu(HermesFastSetupPage::DeviceInfoMenu);
                     }
                 } else if (strcmp(label, "DEL") == 0) {
@@ -20598,14 +11224,14 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return true;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateWifiSsidEdit ||
-        hermesSetupPage == HermesFastSetupPage::UpdateWifiPasswordEdit) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateWifiSsidEdit ||
+        gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateWifiPasswordEdit) {
         const int rowCount = static_cast<int>(kSetupWifiKeyRowCount);
-        String &draft = (hermesSetupPage == HermesFastSetupPage::UpdateWifiSsidEdit) ? hermesSetupWifiSsidDraft
+        String &draft = (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateWifiSsidEdit) ? hermesSetupWifiSsidDraft
                                                                                       : hermesSetupWifiPasswordDraft;
-        const size_t maxLen = (hermesSetupPage == HermesFastSetupPage::UpdateWifiSsidEdit) ? kSetupWifiSsidMaxLen
+        const size_t maxLen = (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateWifiSsidEdit) ? kSetupWifiSsidMaxLen
                                                                                             : kSetupWifiPasswordMaxLen;
-        if (navDir != 0 && allowNav(navDir)) {
+        if (HermesXFastSetupUiController::instance().acceptNavigation(navDir, isRotary, now)) {
             int totalKeys = 0;
             for (int r = 0; r < rowCount; ++r) {
                 totalKeys += kSetupWifiKeyRowLengths[r];
@@ -20634,7 +11260,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
             if (label) {
                 if (strcmp(label, "OK") == 0) {
                     hermesSetupWifiDirty = true;
-                    hermesSetupToast = (hermesSetupPage == HermesFastSetupPage::UpdateWifiSsidEdit) ? u8"SSID 已更新草稿"
+                    hermesSetupToast = (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateWifiSsidEdit) ? u8"SSID 已更新草稿"
                                                                                                     : u8"密碼已更新草稿";
                     hermesSetupToastUntilMs = millis() + 1500;
                     resetMenu(HermesFastSetupPage::UpdateWifiConfigMenu);
@@ -20662,9 +11288,9 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return true;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::FrequencyEdit) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::FrequencyEdit) {
         const int rowCount = static_cast<int>(kSetupNumericKeyRowCount);
-        if (navDir != 0 && allowNav(navDir)) {
+        if (HermesXFastSetupUiController::instance().acceptNavigation(navDir, isRotary, now)) {
             int totalKeys = 0;
             for (int r = 0; r < rowCount; ++r) {
                 totalKeys += kSetupNumericKeyRowLengths[r];
@@ -20733,7 +11359,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return true;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::PassShow) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::PassShow) {
         if (isCancel || isSelect || isPress) {
             resetMenu(HermesFastSetupPage::EmacMenu);
             setFastFramerate();
@@ -20743,52 +11369,26 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
     }
 
     auto handleMenuNav = [&](int count) -> bool {
-        if (navDir == 0) {
-            return false;
-        }
-        if (!allowNav(navDir)) {
-            return true;
-        }
-        if (navDir < 0) {
-            if (hermesSetupSelected > 0) {
-                hermesSetupSelected--;
-            } else {
-                hermesSetupSelected = count - 1;
-            }
-            updateOffset(count);
-        } else {
-            if (hermesSetupSelected < count - 1) {
-                hermesSetupSelected++;
-            } else {
-                hermesSetupSelected = 0;
-            }
-            updateOffset(count);
-        }
-        return true;
+        return HermesXFastSetupUiController::instance().navigate(navDir, count, isRotary, now) !=
+               HermesXFastSetupNavigationAction::Ignored;
     };
 
-    if (hermesSetupPage == HermesFastSetupPage::Root) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::Root) {
         if (isCancel) {
             exitFastSetupToActionPage();
             return true;
         }
         if (handleMenuNav(kSetupRootCount)) {
-            LOG_INFO("[HermesFastSetup] select=%d item=%s", hermesSetupSelected, kSetupRootItems[hermesSetupSelected]);
+            LOG_INFO("[HermesFastSetup] select=%d item=%s", gHermesFastSetupNavigation.selected, kSetupRootItems[gHermesFastSetupNavigation.selected]);
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
+            const auto action =
+                HermesXFastSetupUiController::instance().activateRoot(gHermesFastSetupNavigation.selected);
+            if (action == HermesXFastSetupAction::ExitRequested) {
                 exitFastSetupToActionPage();
-            } else if (hermesSetupSelected == 1) {
-                resetMenu(HermesFastSetupPage::EmacMenu);
-            } else if (hermesSetupSelected == 2) {
-                resetMenu(HermesFastSetupPage::UiMenu);
-            } else if (hermesSetupSelected == 3) {
-                resetMenu(HermesFastSetupPage::NodeMenu);
-            } else if (hermesSetupSelected == 4) {
-                resetMenu(HermesFastSetupPage::CannedMenu);
-            } else {
+            } else if (action == HermesXFastSetupAction::SaveAndRebootRequested) {
                 nodeDB->saveToDisk(SEGMENT_CONFIG | SEGMENT_MODULECONFIG | SEGMENT_CHANNELS | SEGMENT_DEVICESTATE);
                 hermesSetupToast = u8"即將重新開機";
                 hermesSetupToastUntilMs = millis() + 1500;
@@ -20800,48 +11400,20 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::NodeMenu) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::NodeMenu) {
         if (handleMenuNav(kSetupNodeMenuCount)) {
-            const char *itemName = "未知";
-            if (hermesSetupSelected == 0) {
-                itemName = "返回";
-            } else if (hermesSetupSelected == 1) {
-                itemName = "DeviceInfo";
-            } else if (hermesSetupSelected == 2) {
-                itemName = "LoRa";
-            } else if (hermesSetupSelected == 3) {
-                itemName = "GPS";
-            } else if (hermesSetupSelected == 4) {
-                itemName = "MQTT";
-            } else if (hermesSetupSelected == 5) {
-                itemName = "Channel";
-            } else if (hermesSetupSelected == 6) {
-                itemName = "Bluetooth";
-            } else if (hermesSetupSelected == 7) {
-                itemName = "Power";
-            } else if (hermesSetupSelected == 8) {
-                itemName = "NodeDB";
-            } else if (hermesSetupSelected == 9) {
-                itemName = "Update";
-            }
-            LOG_INFO("[HermesFastSetup] select=%d item=%s", hermesSetupSelected, itemName);
+            const char *itemName =
+                HermesXFastSetupUiController::instance().nodeMenuItemName(gHermesFastSetupNavigation.selected);
+            LOG_INFO("[HermesFastSetup] select=%d item=%s", gHermesFastSetupNavigation.selected, itemName);
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
-                resetMenu(HermesFastSetupPage::Root);
-            } else if (hermesSetupSelected == 1) {
-                resetMenu(HermesFastSetupPage::DeviceInfoMenu);
-            } else if (hermesSetupSelected == 2) {
-                resetMenu(HermesFastSetupPage::LoraMenu);
-            } else if (hermesSetupSelected == 3) {
-                resetMenu(HermesFastSetupPage::GpsMenu);
-            } else if (hermesSetupSelected == 4) {
-                resetMenu(HermesFastSetupPage::MqttMenu);
-            } else if (hermesSetupSelected == 5) {
+            const auto action =
+                HermesXFastSetupUiController::instance().activateNodeMenu(gHermesFastSetupNavigation.selected);
+            if (action == HermesXFastSetupAction::OpenChannelMenuRequested) {
                 enterChannelMenu();
-            } else if (hermesSetupSelected == 6) {
+            } else if (action == HermesXFastSetupAction::ToggleBluetoothRequested) {
                 if (config.bluetooth.enabled) {
                     config.bluetooth.enabled = false;
                     saveSetupSegments(SEGMENT_CONFIG);
@@ -20855,11 +11427,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                     hermesSetupToastUntilMs = millis() + 1500;
                     rebootAtMsec = millis() + 1500;
                 }
-            } else if (hermesSetupSelected == 7) {
-                resetMenu(HermesFastSetupPage::PowerMenu);
-            } else if (hermesSetupSelected == 8) {
-                resetMenu(HermesFastSetupPage::NodeDatabaseMenu);
-            } else if (hermesSetupSelected == 9) {
+            } else if (action == HermesXFastSetupAction::EnterUpdateModeRequested) {
                 scheduleEnterUpdateModeReboot();
             }
             setFastFramerate();
@@ -20873,32 +11441,30 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::DeviceInfoMenu) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::DeviceInfoMenu) {
         if (handleMenuNav(kSetupDeviceInfoMenuCount)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
-                resetMenu(HermesFastSetupPage::NodeMenu);
-            } else if (hermesSetupSelected == 1) {
+            const auto action =
+                HermesXFastSetupUiController::instance().activateDeviceInfoMenu(gHermesFastSetupNavigation.selected);
+            if (action == HermesXFastSetupAction::EditDeviceShortNameRequested) {
                 hermesSetupDeviceInfoDraft = owner.short_name;
                 hermesSetupDeviceInfoLowercase = false;
                 hermesSetupKeyRow = 0;
                 hermesSetupKeyCol = 0;
-                resetMenu(HermesFastSetupPage::DeviceInfoShortNameEdit);
-            } else if (hermesSetupSelected == 2) {
+            } else if (action == HermesXFastSetupAction::EditDeviceLongNameRequested) {
                 hermesSetupDeviceInfoDraft = owner.long_name;
                 hermesSetupDeviceInfoLowercase = false;
                 hermesSetupKeyRow = 0;
                 hermesSetupKeyCol = 0;
-                resetMenu(HermesFastSetupPage::DeviceInfoLongNameEdit);
-            } else if (hermesSetupSelected == 3) {
+            } else if (action == HermesXFastSetupAction::ShowNodeIdRequested) {
                 openSetupDetailPage("NodeID", getSetupNodeNumLabel(), HermesFastSetupPage::DeviceInfoMenu);
-            } else if (hermesSetupSelected == 4) {
+            } else if (action == HermesXFastSetupAction::OpenDeviceBroadcastRequested) {
                 enterMenu(HermesFastSetupPage::DeviceInfoBroadcastSelect, kSetupNodeInfoBroadcastCount + 1,
                           getSetupNodeInfoBroadcastSelection(getSetupCurrentNodeInfoBroadcast()));
-            } else if (hermesSetupSelected == 5) {
+            } else if (action == HermesXFastSetupAction::RequestNodeInfoRequested) {
                 if (nodeInfoModule) {
                     const bool sent = nodeInfoModule->sendOurNodeInfo(NODENUM_BROADCAST, true, 0, true);
                     hermesSetupToast = sent ? u8"已請求節點回報" : u8"太頻繁，稍後再試";
@@ -20918,16 +11484,16 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::DeviceInfoBroadcastSelect) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::DeviceInfoBroadcastSelect) {
         if (handleMenuNav(kSetupNodeInfoBroadcastCount + 1)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
+            if (gHermesFastSetupNavigation.selected == 0) {
                 resetMenu(HermesFastSetupPage::DeviceInfoMenu);
             } else {
-                const uint8_t index = hermesSetupSelected - 1;
+                const uint8_t index = gHermesFastSetupNavigation.selected - 1;
                 if (index < kSetupNodeInfoBroadcastCount) {
                     config.device.node_info_broadcast_secs = kSetupNodeInfoBroadcastOptions[index];
                     saveSetupSegments(SEGMENT_CONFIG);
@@ -20947,7 +11513,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateMenu) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateMenu) {
         auto &updateManager = HermesXUpdateManager::instance();
         const bool dedicatedUpdateBoot = gUpdateBootRequested;
         const uint8_t itemCount = dedicatedUpdateBoot ? kSetupUpdateMenuCount : kSetupUpdateEntryMenuCount;
@@ -20956,24 +11522,9 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
             return true;
         }
         if (isSelect || isPress) {
-            if (!dedicatedUpdateBoot) {
-                if (hermesSetupSelected == 0) {
-                    if (!updateManager.isBusy()) {
-                        if (!leaveUpdateMode()) {
-                            resetMenu(HermesFastSetupPage::NodeMenu);
-                        }
-                    } else {
-                        hermesSetupToast = u8"更新寫入中，請先取消";
-                        hermesSetupToastUntilMs = millis() + 1500;
-                    }
-                } else {
-                    scheduleEnterUpdateModeReboot();
-                }
-                setFastFramerate();
-                return true;
-            }
-
-            if (hermesSetupSelected == 0) {
+            const auto action = HermesXFastSetupUiController::instance().activateUpdateMenu(
+                gHermesFastSetupNavigation.selected, dedicatedUpdateBoot);
+            if (action == HermesXFastSetupAction::LeaveUpdateModeRequested) {
                 if (!updateManager.isBusy()) {
                     if (!leaveUpdateMode()) {
                         resetMenu(HermesFastSetupPage::NodeMenu);
@@ -20982,16 +11533,18 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                     hermesSetupToast = u8"更新寫入中，請先取消";
                     hermesSetupToastUntilMs = millis() + 1500;
                 }
-            } else if (hermesSetupSelected == 1) {
+            } else if (action == HermesXFastSetupAction::EnterUpdateModeRequested) {
+                scheduleEnterUpdateModeReboot();
+            } else if (action == HermesXFastSetupAction::OpenUpdateWifiConfigRequested) {
                 resetMenu(HermesFastSetupPage::UpdateWifiConfigMenu);
-            } else if (hermesSetupSelected == 2) {
+            } else if (action == HermesXFastSetupAction::ShowCurrentVersionRequested) {
                 hermesSetupToast = String(u8"目前版本: ") + updateManager.getCurrentBuildVersion();
                 hermesSetupToastUntilMs = millis() + 1800;
-            } else if (hermesSetupSelected == 3) {
+            } else if (action == HermesXFastSetupAction::OpenUpdateCheckRequested) {
                 hermesPendingUpdateCheckAction = HermesPendingUpdateCheckAction::None;
                 updateManager.resetUiSession(false);
                 resetMenu(HermesFastSetupPage::UpdateCheckMenu);
-            } else if (hermesSetupSelected == 4) {
+            } else if (action == HermesXFastSetupAction::OpenUpdateRuntimeRequested) {
                 resetMenu(HermesFastSetupPage::UpdateRuntimeMenu);
             }
             setFastFramerate();
@@ -21012,14 +11565,14 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateIntro) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateIntro) {
         hermesUpdateIntroStartedAtMs = 0;
         resetMenu(HermesFastSetupPage::UpdateMenu);
         setFastFramerate();
         return true;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateExitPending) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateExitPending) {
         if (hermesSetupToast != u8"重開中") {
             hermesSetupToast = u8"退出更新模式，重開中";
         }
@@ -21028,27 +11581,29 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return true;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateCheckMenu) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateCheckMenu) {
         if (handleMenuNav(kSetupUpdateCheckMenuCount)) {
             setFastFramerate();
             return true;
         }
         auto &updateManager = HermesXUpdateManager::instance();
         if (isSelect || isPress) {
-            LOG_INFO("[UpdateCheck] press selected=%d canApply=%d hasCandidate=%d page=%d", hermesSetupSelected,
-                     updateManager.canApply() ? 1 : 0, updateManager.hasCandidate() ? 1 : 0, static_cast<int>(hermesSetupPage));
-            if (hermesSetupSelected == 0) {
+            LOG_INFO("[UpdateCheck] press selected=%d canApply=%d hasCandidate=%d page=%d", gHermesFastSetupNavigation.selected,
+                     updateManager.canApply() ? 1 : 0, updateManager.hasCandidate() ? 1 : 0, static_cast<int>(gHermesFastSetupNavigation.page));
+            const auto action =
+                HermesXFastSetupUiController::instance().activateUpdateCheckMenu(gHermesFastSetupNavigation.selected);
+            if (action == HermesXFastSetupAction::ReturnToUpdateMenuRequested) {
                 hermesPendingUpdateCheckAction = HermesPendingUpdateCheckAction::None;
                 resetMenu(HermesFastSetupPage::UpdateMenu);
-            } else if (hermesSetupSelected == 1) {
+            } else if (action == HermesXFastSetupAction::ShowCurrentVersionRequested) {
                 openSetupDetailPage(u8"目前版本", updateManager.getCurrentBuildVersion(), HermesFastSetupPage::UpdateCheckMenu);
-            } else if (hermesSetupSelected == 2) {
+            } else if (action == HermesXFastSetupAction::ShowUpdateSourceRequested) {
                 const char *remoteUrl = updateManager.getRemoteUpdateUrl();
                 openSetupDetailPage(u8"更新來源", (remoteUrl && remoteUrl[0]) ? String(remoteUrl) : String(u8"URL 更新來源未設定"),
                                     HermesFastSetupPage::UpdateCheckMenu);
-            } else if (hermesSetupSelected == 3) {
+            } else if (action == HermesXFastSetupAction::StartUpdateCheckFlowRequested) {
                 resetMenu(HermesFastSetupPage::UpdateCheckFlowPage);
-                hermesSetupSelected = 1;
+                gHermesFastSetupNavigation.selected = 1;
                 if (!updateManager.canApply()) {
                     if (!config.network.wifi_enabled || !config.network.wifi_ssid[0]) {
                         hermesPendingUpdateCheckAction = HermesPendingUpdateCheckAction::None;
@@ -21080,16 +11635,16 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                     hermesSetupToast = updateManager.hasCandidate() ? u8"開始下載中" : u8"開始檢查中";
                     hermesSetupToastUntilMs = millis() + 1800;
                 }
-            } else if (hermesSetupSelected == 4) {
+            } else if (action == HermesXFastSetupAction::ShowUpdateStatusRequested) {
                 openSetupDetailPage(u8"目前狀態", updateManager.getSourceStatus(), HermesFastSetupPage::UpdateCheckMenu);
-            } else if (hermesSetupSelected == 5) {
+            } else if (action == HermesXFastSetupAction::ShowUpdateCandidateRequested) {
                 openSetupDetailPage(u8"待更新版本",
                                     updateManager.getCandidateVersion().isEmpty() ? String(u8"無")
                                                                                   : updateManager.getCandidateVersion(),
                                     HermesFastSetupPage::UpdateCheckMenu);
-            } else if (hermesSetupSelected == 6) {
+            } else if (action == HermesXFastSetupAction::ShowUpdateProgressRequested) {
                 openSetupDetailPage(u8"下載進度", String(updateManager.getProgressPercent()) + "%", HermesFastSetupPage::UpdateCheckMenu);
-            } else if (hermesSetupSelected == 7) {
+            } else if (action == HermesXFastSetupAction::ShowUpdateErrorRequested) {
                 openSetupDetailPage(u8"最後錯誤",
                                     updateManager.getLastError().isEmpty() ? String(u8"無") : updateManager.getLastError(),
                                     HermesFastSetupPage::UpdateCheckMenu);
@@ -21106,19 +11661,21 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateCheckFlowPage) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateCheckFlowPage) {
         if (handleMenuNav(kSetupUpdateCheckFlowCount)) {
             setFastFramerate();
             return true;
         }
         auto &updateManager = HermesXUpdateManager::instance();
         if (isSelect || isPress) {
-            LOG_INFO("[UpdateCheckFlow] press selected=%d canApply=%d hasCandidate=%d", hermesSetupSelected,
+            LOG_INFO("[UpdateCheckFlow] press selected=%d canApply=%d hasCandidate=%d", gHermesFastSetupNavigation.selected,
                      updateManager.canApply() ? 1 : 0, updateManager.hasCandidate() ? 1 : 0);
-            if (hermesSetupSelected == 0) {
+            const auto action =
+                HermesXFastSetupUiController::instance().activateUpdateCheckFlow(gHermesFastSetupNavigation.selected);
+            if (action == HermesXFastSetupAction::ReturnToUpdateCheckRequested) {
                 hermesPendingUpdateCheckAction = HermesPendingUpdateCheckAction::None;
                 resetMenu(HermesFastSetupPage::UpdateCheckMenu);
-            } else if (hermesSetupSelected == 1) {
+            } else if (action == HermesXFastSetupAction::ContinueUpdateCheckFlowRequested) {
                 if (updateManager.canApply()) {
                     const bool ok = updateManager.applyUpdate();
                     hermesSetupToast = ok ? updateManager.getSourceStatus()
@@ -21169,12 +11726,12 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateDetailPopup) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateDetailPopup) {
         LOG_INFO("[UpdateDetailPopup] input visible=%d title=%s", isSetupDetailPopupVisible() ? 1 : 0,
                  gSetupDetailPopupState.title.c_str());
         if (handleSetupDetailPopupInput(event)) {
             if (!isSetupDetailPopupVisible()) {
-                resetMenu(hermesSetupReturnPage);
+                resetMenu(gHermesFastSetupNavigation.returnPage);
             }
             setFastFramerate();
             return true;
@@ -21182,19 +11739,21 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return true;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateRuntimeMenu) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateRuntimeMenu) {
         if (handleMenuNav(kSetupUpdateRuntimeMenuCount)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
+            const auto action =
+                HermesXFastSetupUiController::instance().activateUpdateRuntimeMenu(gHermesFastSetupNavigation.selected);
+            if (action == HermesXFastSetupAction::ReturnToUpdateMenuRequested) {
                 hermesManualUpdateFlow = HermesManualUpdateFlow::None;
                 resetMenu(HermesFastSetupPage::UpdateMenu);
-            } else if (hermesSetupSelected == 1) {
+            } else if (action == HermesXFastSetupAction::OpenWifiUpdateFlowRequested) {
                 hermesManualUpdateFlow = HermesManualUpdateFlow::Wifi;
                 resetMenu(HermesFastSetupPage::UpdateWifiMenu);
-            } else if (hermesSetupSelected == 2) {
+            } else if (action == HermesXFastSetupAction::OpenUsbUpdateFlowRequested) {
                 hermesManualUpdateFlow = HermesManualUpdateFlow::Usb;
                 resetMenu(HermesFastSetupPage::UpdateUploadMenu);
             }
@@ -21210,21 +11769,23 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateWifiMenu) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateWifiMenu) {
         if (handleMenuNav(kSetupUpdateWifiMenuCount)) {
             setFastFramerate();
             return true;
         }
         auto &updateManager = HermesXUpdateManager::instance();
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
+            const auto action =
+                HermesXFastSetupUiController::instance().activateUpdateWifiMenu(gHermesFastSetupNavigation.selected);
+            if (action == HermesXFastSetupAction::ReturnToUpdateRuntimeRequested) {
                 hermesManualUpdateFlow = HermesManualUpdateFlow::None;
                 resetMenu(HermesFastSetupPage::UpdateRuntimeMenu);
-            } else if (hermesSetupSelected == 1) {
+            } else if (action == HermesXFastSetupAction::ShowCurrentVersionRequested) {
                 openSetupDetailPage(u8"目前版本", updateManager.getCurrentBuildVersion(), HermesFastSetupPage::UpdateWifiMenu);
-            } else if (hermesSetupSelected == 2) {
+            } else if (action == HermesXFastSetupAction::ShowWifiStatusRequested) {
                 openSetupDetailPage(u8"連線狀態", getSetupWifiIpLabel(), HermesFastSetupPage::UpdateWifiMenu);
-            } else if (hermesSetupSelected == 3) {
+            } else if (action == HermesXFastSetupAction::StartWifiUpdateRequested) {
                 hermesManualUpdateFlow = HermesManualUpdateFlow::Wifi;
                 stopMiniUpdateUploadServer();
                 updateManager.resetUiSession(true);
@@ -21232,8 +11793,8 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                 hermesSetupToast = "";
                 hermesSetupToastUntilMs = 0;
                 resetMenu(HermesFastSetupPage::UpdateApplyMenu);
-                hermesSetupSelected = 0;
-                hermesSetupOffset = 0;
+                gHermesFastSetupNavigation.selected = 0;
+                gHermesFastSetupNavigation.offset = 0;
             }
             setFastFramerate();
             return true;
@@ -21247,30 +11808,32 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateWifiConfigMenu) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateWifiConfigMenu) {
         if (handleMenuNav(kSetupUpdateWifiConfigMenuCount)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
+            const auto action =
+                HermesXFastSetupUiController::instance().activateUpdateWifiConfigMenu(gHermesFastSetupNavigation.selected);
+            if (action == HermesXFastSetupAction::ReturnToUpdateMenuRequested) {
                 resetMenu(HermesFastSetupPage::UpdateMenu);
-            } else if (hermesSetupSelected == 1) {
+            } else if (action == HermesXFastSetupAction::ToggleWifiDraftRequested) {
                 hermesSetupWifiEnabledDraft = !hermesSetupWifiEnabledDraft;
                 hermesSetupWifiDirty = true;
-            } else if (hermesSetupSelected == 2) {
+            } else if (action == HermesXFastSetupAction::EditWifiSsidRequested) {
                 hermesSetupWifiLowercase = false;
                 hermesSetupKeyRow = 0;
                 hermesSetupKeyCol = 0;
                 resetMenu(HermesFastSetupPage::UpdateWifiSsidEdit);
-            } else if (hermesSetupSelected == 3) {
+            } else if (action == HermesXFastSetupAction::EditWifiPasswordRequested) {
                 hermesSetupWifiLowercase = false;
                 hermesSetupKeyRow = 0;
                 hermesSetupKeyCol = 0;
                 resetMenu(HermesFastSetupPage::UpdateWifiPasswordEdit);
-            } else if (hermesSetupSelected == 4) {
+            } else if (action == HermesXFastSetupAction::SaveWifiDraftRequested) {
                 storeWifiConfigDraft(true);
-            } else if (hermesSetupSelected == 5) {
+            } else if (action == HermesXFastSetupAction::ShowWifiIpRequested) {
                 hermesSetupToast = String("IP: ") + getSetupWifiIpLabel();
                 hermesSetupToastUntilMs = millis() + 1800;
             }
@@ -21285,29 +11848,31 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateUploadMenu) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateUploadMenu) {
         if (handleMenuNav(kSetupUpdateUploadMenuCount)) {
             setFastFramerate();
             return true;
         }
         auto &updateManager = HermesXUpdateManager::instance();
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
+            const auto action =
+                HermesXFastSetupUiController::instance().activateUpdateUploadMenu(gHermesFastSetupNavigation.selected);
+            if (action == HermesXFastSetupAction::ReturnToUpdateRuntimeRequested) {
                 hermesManualUpdateFlow = HermesManualUpdateFlow::None;
                 resetMenu(HermesFastSetupPage::UpdateRuntimeMenu);
-            } else if (hermesSetupSelected == 1) {
+            } else if (action == HermesXFastSetupAction::ShowCurrentVersionRequested) {
                 openSetupDetailPage(u8"目前版本", updateManager.getCurrentBuildVersion(), HermesFastSetupPage::UpdateUploadMenu);
-            } else if (hermesSetupSelected == 2) {
+            } else if (action == HermesXFastSetupAction::ShowUsbStatusRequested) {
                 openSetupDetailPage(u8"USB連線狀態", getSetupUsbStatusLabel(), HermesFastSetupPage::UpdateUploadMenu);
-            } else if (hermesSetupSelected == 3) {
+            } else if (action == HermesXFastSetupAction::StartUsbUpdateRequested) {
                 hermesManualUpdateFlow = HermesManualUpdateFlow::Usb;
                 stopMiniUpdateUploadServer();
                 updateManager.resetUiSession(true);
                 hermesSetupToast = "";
                 hermesSetupToastUntilMs = 0;
                 resetMenu(HermesFastSetupPage::UpdateApplyMenu);
-                hermesSetupSelected = 0;
-                hermesSetupOffset = 0;
+                gHermesFastSetupNavigation.selected = 0;
+                gHermesFastSetupNavigation.offset = 0;
             }
             setFastFramerate();
             return true;
@@ -21321,7 +11886,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UpdateApplyMenu) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UpdateApplyMenu) {
         auto &updateManager = HermesXUpdateManager::instance();
         const uint8_t actionCount = updateManager.canApply() ? kSetupUpdateApplyMenuCount : 1;
         if (handleMenuNav(actionCount)) {
@@ -21329,10 +11894,12 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
+            const auto action = HermesXFastSetupUiController::instance().activateUpdateApplyMenu(
+                gHermesFastSetupNavigation.selected, updateManager.canApply());
+            if (action == HermesXFastSetupAction::ReturnFromUpdateApplyRequested) {
                 resetMenu(hermesManualUpdateFlow == HermesManualUpdateFlow::Usb ? HermesFastSetupPage::UpdateUploadMenu
                                                                                : HermesFastSetupPage::UpdateWifiMenu);
-            } else if (hermesSetupSelected == 1 && updateManager.canApply()) {
+            } else if (action == HermesXFastSetupAction::ApplyUpdateRequested) {
                 LOG_INFO("[UpdateApplyMenu] apply pressed flow=%d canApply=%d target=%s",
                          static_cast<int>(hermesManualUpdateFlow), updateManager.canApply() ? 1 : 0,
                          updateManager.getTargetPartitionLabel().c_str());
@@ -21357,17 +11924,13 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::NodeDatabaseMenu) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::NodeDatabaseMenu) {
         if (handleMenuNav(kSetupNodeDatabaseMenuCount)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
-                resetMenu(HermesFastSetupPage::NodeMenu);
-            } else if (hermesSetupSelected == 1) {
-                resetMenu(HermesFastSetupPage::NodeDatabaseResetSelect);
-            }
+            HermesXFastSetupUiController::instance().activateNodeDatabaseMenu(gHermesFastSetupNavigation.selected);
             setFastFramerate();
             return true;
         }
@@ -21379,40 +11942,28 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::NodeDatabaseResetSelect) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::NodeDatabaseResetSelect) {
         if (handleMenuNav(kSetupNodeDatabaseResetCount)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
-                resetMenu(HermesFastSetupPage::NodeDatabaseMenu);
-            } else {
-                uint32_t ageSeconds = 0;
-                if (hermesSetupSelected == 1) {
-                    ageSeconds = 12U * 60U * 60U;
-                } else if (hermesSetupSelected == 2) {
-                    ageSeconds = 24U * 60U * 60U;
-                } else if (hermesSetupSelected == 3) {
-                    ageSeconds = 48U * 60U * 60U;
-                } else if (hermesSetupSelected == 4 && nodeDB) {
-                    const int beforeCount = static_cast<int>(nodeDB->getNumMeshNodes());
-                    nodeDB->resetNodes();
-                    const int removed = beforeCount > 0 ? beforeCount - 1 : 0;
-                    char toastBuf[48];
-                    snprintf(toastBuf, sizeof(toastBuf), u8"已清除 %d 筆節點", removed);
-                    hermesSetupToast = toastBuf;
-                    hermesSetupToastUntilMs = millis() + 1800;
-                }
-                if (ageSeconds > 0 && nodeDB) {
-                    hermesSetupNodeCleanupAgeSeconds = ageSeconds;
-                    const int removed = nodeDB->cleanupNodesOlderThan(ageSeconds, true);
-                    char toastBuf[48];
-                    snprintf(toastBuf, sizeof(toastBuf), u8"已清除 %d 筆節點", removed);
-                    hermesSetupToast = toastBuf;
-                    hermesSetupToastUntilMs = millis() + 1800;
-                }
-                resetMenu(HermesFastSetupPage::NodeDatabaseMenu);
+            const auto result =
+                HermesXFastSetupUiController::instance().activateNodeDatabaseResetSelect(gHermesFastSetupNavigation.selected);
+            int removed = -1;
+            if (result.action == HermesXFastSetupAction::CleanupNodesRequested && nodeDB) {
+                hermesSetupNodeCleanupAgeSeconds = result.value;
+                removed = nodeDB->cleanupNodesOlderThan(result.value, true);
+            } else if (result.action == HermesXFastSetupAction::ResetAllNodesRequested && nodeDB) {
+                const int beforeCount = static_cast<int>(nodeDB->getNumMeshNodes());
+                nodeDB->resetNodes();
+                removed = beforeCount > 0 ? beforeCount - 1 : 0;
+            }
+            if (removed >= 0) {
+                char toastBuf[48];
+                snprintf(toastBuf, sizeof(toastBuf), u8"已清除 %d 筆節點", removed);
+                hermesSetupToast = toastBuf;
+                hermesSetupToastUntilMs = millis() + 1800;
             }
             setFastFramerate();
             return true;
@@ -21425,26 +11976,18 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::MqttMenu) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::MqttMenu) {
         if (handleMenuNav(kSetupMqttMenuCount)) {
-            const char *itemName = "未知";
-            if (hermesSetupSelected == 0) {
-                itemName = "返回";
-            } else if (hermesSetupSelected == 1) {
-                itemName = "MQTT";
-            } else if (hermesSetupSelected == 2) {
-                itemName = "客戶端代理";
-            } else if (hermesSetupSelected == 3) {
-                itemName = "地圖報告";
-            }
-            LOG_INFO("[HermesFastSetup] select=%d item=%s", hermesSetupSelected, itemName);
+            const char *itemName =
+                HermesXFastSetupUiController::instance().mqttMenuItemName(gHermesFastSetupNavigation.selected);
+            LOG_INFO("[HermesFastSetup] select=%d item=%s", gHermesFastSetupNavigation.selected, itemName);
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
-                resetMenu(HermesFastSetupPage::NodeMenu);
-            } else if (hermesSetupSelected == 1) {
+            const auto action =
+                HermesXFastSetupUiController::instance().activateMqttMenu(gHermesFastSetupNavigation.selected);
+            if (action == HermesXFastSetupAction::ToggleMqttRequested) {
                 moduleConfig.mqtt.enabled = !moduleConfig.mqtt.enabled;
                 saveSetupSegments(SEGMENT_MODULECONFIG);
                 if (mqtt) {
@@ -21452,7 +11995,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                 }
                 hermesSetupToast = moduleConfig.mqtt.enabled ? u8"MQTT 已啟用" : u8"MQTT 已停用";
                 hermesSetupToastUntilMs = millis() + 1500;
-            } else if (hermesSetupSelected == 2) {
+            } else if (action == HermesXFastSetupAction::ToggleMqttProxyRequested) {
                 moduleConfig.mqtt.proxy_to_client_enabled = !moduleConfig.mqtt.proxy_to_client_enabled;
                 saveSetupSegments(SEGMENT_MODULECONFIG);
                 if (mqtt) {
@@ -21460,7 +12003,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                 }
                 hermesSetupToast = moduleConfig.mqtt.proxy_to_client_enabled ? u8"客戶端代理已啟用" : u8"客戶端代理已停用";
                 hermesSetupToastUntilMs = millis() + 1500;
-            } else if (hermesSetupSelected == 3) {
+            } else if (action == HermesXFastSetupAction::OpenMqttMapReportRequested) {
                 enterMenu(HermesFastSetupPage::MqttMapReportMenu, kSetupMqttMapReportMenuCount, 1);
             }
             setFastFramerate();
@@ -21474,15 +12017,15 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::MqttMapReportMenu) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::MqttMapReportMenu) {
         if (handleMenuNav(kSetupMqttMapReportMenuCount)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
-                resetMenu(HermesFastSetupPage::MqttMenu);
-            } else if (hermesSetupSelected == 1) {
+            const auto action =
+                HermesXFastSetupUiController::instance().activateMqttMapReportMenu(gHermesFastSetupNavigation.selected);
+            if (action == HermesXFastSetupAction::ToggleMqttMapReportRequested) {
                 ensureMqttMapSettings();
                 const bool next =
                     !(moduleConfig.mqtt.map_reporting_enabled && moduleConfig.mqtt.map_report_settings.should_report_location);
@@ -21494,11 +12037,11 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                 }
                 hermesSetupToast = next ? u8"地圖報告已啟用" : u8"地圖報告已停用";
                 hermesSetupToastUntilMs = millis() + 1500;
-            } else if (hermesSetupSelected == 2) {
+            } else if (action == HermesXFastSetupAction::OpenMqttMapPrecisionRequested) {
                 ensureMqttMapSettings();
                 const uint8_t selected = getSetupMqttMapPrecisionSelection(getSetupCurrentMqttMapPrecision());
                 enterMenu(HermesFastSetupPage::MqttMapPrecisionSelect, kSetupMqttMapPrecisionCount + 1, selected);
-            } else if (hermesSetupSelected == 3) {
+            } else if (action == HermesXFastSetupAction::OpenMqttMapPublishRequested) {
                 ensureMqttMapSettings();
                 uint8_t selected = 1;
                 const uint32_t current = getSetupCurrentMqttMapPublishInterval();
@@ -21521,25 +12064,21 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::MqttMapPrecisionSelect) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::MqttMapPrecisionSelect) {
         const int count = kSetupMqttMapPrecisionCount + 1;
         if (handleMenuNav(count)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
-                resetMenu(HermesFastSetupPage::MqttMapReportMenu);
-            } else {
-                const uint8_t index = hermesSetupSelected - 1;
-                if (index < kSetupMqttMapPrecisionCount) {
-                    ensureMqttMapSettings();
-                    moduleConfig.mqtt.map_report_settings.position_precision = kSetupMqttMapPrecisionOptions[index].value;
-                    saveSetupSegments(SEGMENT_MODULECONFIG);
-                    hermesSetupToast = String(u8"地圖精確度: ") + kSetupMqttMapPrecisionOptions[index].label;
-                    hermesSetupToastUntilMs = millis() + 1500;
-                }
-                resetMenu(HermesFastSetupPage::MqttMapReportMenu);
+            const auto result = HermesXFastSetupUiController::instance().activateMqttMapPrecisionSelect(
+                gHermesFastSetupNavigation.selected, kSetupMqttMapPrecisionCount);
+            if (result.action == HermesXFastSetupAction::ApplyMqttMapPrecisionRequested) {
+                ensureMqttMapSettings();
+                moduleConfig.mqtt.map_report_settings.position_precision = kSetupMqttMapPrecisionOptions[result.optionIndex].value;
+                saveSetupSegments(SEGMENT_MODULECONFIG);
+                hermesSetupToast = String(u8"地圖精確度: ") + kSetupMqttMapPrecisionOptions[result.optionIndex].label;
+                hermesSetupToastUntilMs = millis() + 1500;
             }
             setFastFramerate();
             return true;
@@ -21552,25 +12091,21 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::MqttMapPublishSelect) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::MqttMapPublishSelect) {
         const int count = kSetupMqttMapPublishCount + 1;
         if (handleMenuNav(count)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
-                resetMenu(HermesFastSetupPage::MqttMapReportMenu);
-            } else {
-                const uint8_t index = hermesSetupSelected - 1;
-                if (index < kSetupMqttMapPublishCount) {
-                    ensureMqttMapSettings();
-                    moduleConfig.mqtt.map_report_settings.publish_interval_secs = kSetupMqttMapPublishOptions[index];
-                    saveSetupSegments(SEGMENT_MODULECONFIG);
-                    hermesSetupToast = String(u8"地圖間隔: ") + kSetupMqttMapPublishLabels[index];
-                    hermesSetupToastUntilMs = millis() + 1500;
-                }
-                resetMenu(HermesFastSetupPage::MqttMapReportMenu);
+            const auto result = HermesXFastSetupUiController::instance().activateMqttMapPublishSelect(
+                gHermesFastSetupNavigation.selected, kSetupMqttMapPublishCount);
+            if (result.action == HermesXFastSetupAction::ApplyMqttMapPublishRequested) {
+                ensureMqttMapSettings();
+                moduleConfig.mqtt.map_report_settings.publish_interval_secs = kSetupMqttMapPublishOptions[result.optionIndex];
+                saveSetupSegments(SEGMENT_MODULECONFIG);
+                hermesSetupToast = String(u8"地圖間隔: ") + kSetupMqttMapPublishLabels[result.optionIndex];
+                hermesSetupToastUntilMs = millis() + 1500;
             }
             setFastFramerate();
             return true;
@@ -21583,7 +12118,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::ChannelMenu) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::ChannelMenu) {
         ChannelIndex channelList[MAX_NUM_CHANNELS];
         const uint8_t channelCount = buildSetupChannelList(channelList, MAX_NUM_CHANNELS);
         const int count = channelCount + 1;
@@ -21592,10 +12127,10 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
-                resetMenu(HermesFastSetupPage::NodeMenu);
-            } else {
-                const uint8_t index = hermesSetupSelected - 1;
+            const auto action =
+                HermesXFastSetupUiController::instance().activateChannelMenu(gHermesFastSetupNavigation.selected);
+            if (action == HermesXFastSetupAction::OpenChannelDetailRequested) {
+                const uint8_t index = gHermesFastSetupNavigation.selected - 1;
                 if (index < channelCount) {
                     hermesSetupChannelIndex = channelList[index];
                     resetMenu(HermesFastSetupPage::ChannelDetailMenu);
@@ -21612,33 +12147,35 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::ChannelDetailMenu) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::ChannelDetailMenu) {
         if (handleMenuNav(kSetupChannelDetailMenuCount)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
             auto channel = getSetupChannelCopy(hermesSetupChannelIndex);
-            if (hermesSetupSelected == 0) {
+            const auto action =
+                HermesXFastSetupUiController::instance().activateChannelDetailMenu(gHermesFastSetupNavigation.selected);
+            if (action == HermesXFastSetupAction::OpenChannelMenuRequested) {
                 enterChannelMenu();
-            } else if (hermesSetupSelected == 1) {
+            } else if (action == HermesXFastSetupAction::ToggleChannelUplinkRequested) {
                 channel.settings.uplink_enabled = !channel.settings.uplink_enabled;
                 saveSetupChannel(channel);
                 hermesSetupToast = channel.settings.uplink_enabled ? u8"上行已啟用" : u8"上行已停用";
                 hermesSetupToastUntilMs = millis() + 1500;
-            } else if (hermesSetupSelected == 2) {
+            } else if (action == HermesXFastSetupAction::ToggleChannelDownlinkRequested) {
                 channel.settings.downlink_enabled = !channel.settings.downlink_enabled;
                 saveSetupChannel(channel);
                 hermesSetupToast = channel.settings.downlink_enabled ? u8"下行已啟用" : u8"下行已停用";
                 hermesSetupToastUntilMs = millis() + 1500;
-            } else if (hermesSetupSelected == 3) {
+            } else if (action == HermesXFastSetupAction::ToggleChannelPositionRequested) {
                 channel.settings.has_module_settings = true;
                 const bool next = !isSetupChannelPositionSharingEnabled(hermesSetupChannelIndex);
                 channel.settings.module_settings.position_precision = next ? getSetupDefaultChannelPrecision(hermesSetupChannelIndex) : 0U;
                 saveSetupChannel(channel);
                 hermesSetupToast = next ? u8"位置分享已啟用" : u8"位置分享已停用";
                 hermesSetupToastUntilMs = millis() + 1500;
-            } else if (hermesSetupSelected == 4) {
+            } else if (action == HermesXFastSetupAction::OpenChannelPrecisionRequested) {
                 const uint32_t current = getSetupChannelPrecision(hermesSetupChannelIndex);
                 const uint8_t selected = getSetupChannelPrecisionSelection(
                     current == 0U ? getSetupDefaultChannelPrecision(hermesSetupChannelIndex) : current);
@@ -21655,26 +12192,22 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::ChannelPrecisionSelect) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::ChannelPrecisionSelect) {
         const int count = kSetupChannelPrecisionCount + 1;
         if (handleMenuNav(count)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
-                resetMenu(HermesFastSetupPage::ChannelDetailMenu);
-            } else {
-                const uint8_t index = hermesSetupSelected - 1;
-                if (index < kSetupChannelPrecisionCount) {
-                    auto channel = getSetupChannelCopy(hermesSetupChannelIndex);
-                    channel.settings.has_module_settings = true;
-                    channel.settings.module_settings.position_precision = kSetupChannelPrecisionOptions[index].value;
-                    saveSetupChannel(channel);
-                    hermesSetupToast = String(u8"頻道精確度: ") + kSetupChannelPrecisionOptions[index].label;
-                    hermesSetupToastUntilMs = millis() + 1500;
-                }
-                resetMenu(HermesFastSetupPage::ChannelDetailMenu);
+            const auto result = HermesXFastSetupUiController::instance().activateChannelPrecisionSelect(
+                gHermesFastSetupNavigation.selected, kSetupChannelPrecisionCount);
+            if (result.action == HermesXFastSetupAction::ApplyChannelPrecisionRequested) {
+                auto channel = getSetupChannelCopy(hermesSetupChannelIndex);
+                channel.settings.has_module_settings = true;
+                channel.settings.module_settings.position_precision = kSetupChannelPrecisionOptions[result.optionIndex].value;
+                saveSetupChannel(channel);
+                hermesSetupToast = String(u8"頻道精確度: ") + kSetupChannelPrecisionOptions[result.optionIndex].label;
+                hermesSetupToastUntilMs = millis() + 1500;
             }
             setFastFramerate();
             return true;
@@ -21687,33 +12220,23 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::PowerMenu) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::PowerMenu) {
         if (handleMenuNav(kSetupPowerMenuCount)) {
-            const char *itemName = "未知";
-            if (hermesSetupSelected == 0) {
-                itemName = "返回";
-            } else if (hermesSetupSelected == 1) {
-                itemName = "當前電壓";
-            } else if (hermesSetupSelected == 2) {
-                itemName = "過放保護";
-            } else if (hermesSetupSelected == 3) {
-                itemName = "過放門檻";
-            }
-            LOG_INFO("[HermesFastSetup] select=%d item=%s", hermesSetupSelected, itemName);
+            const char *itemName =
+                HermesXFastSetupUiController::instance().powerMenuItemName(gHermesFastSetupNavigation.selected);
+            LOG_INFO("[HermesFastSetup] select=%d item=%s", gHermesFastSetupNavigation.selected, itemName);
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
-                resetMenu(HermesFastSetupPage::NodeMenu);
-            } else if (hermesSetupSelected == 1) {
-                // Read-only live metric.
-            } else if (hermesSetupSelected == 2) {
+            const auto action =
+                HermesXFastSetupUiController::instance().activatePowerMenu(gHermesFastSetupNavigation.selected);
+            if (action == HermesXFastSetupAction::TogglePowerGuardRequested) {
                 const bool next = !HermesXBatteryProtection::isEnabled();
                 HermesXBatteryProtection::setEnabled(next);
                 hermesSetupToast = next ? u8"過放保護已開啟" : u8"過放保護已關閉";
                 hermesSetupToastUntilMs = millis() + 1500;
-            } else if (hermesSetupSelected == 3) {
+            } else if (action == HermesXFastSetupAction::OpenPowerGuardThresholdRequested) {
                 const uint8_t selected =
                     getSetupPowerGuardThresholdSelection(HermesXBatteryProtection::getThresholdMv());
                 enterMenu(HermesFastSetupPage::PowerGuardVoltageSelect, kSetupPowerGuardThresholdCount + 1, selected);
@@ -21729,17 +12252,17 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::PowerGuardVoltageSelect) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::PowerGuardVoltageSelect) {
         const int count = kSetupPowerGuardThresholdCount + 1;
         if (handleMenuNav(count)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
+            if (gHermesFastSetupNavigation.selected == 0) {
                 resetMenu(HermesFastSetupPage::PowerMenu);
             } else {
-                const uint8_t index = hermesSetupSelected - 1;
+                const uint8_t index = gHermesFastSetupNavigation.selected - 1;
                 if (index < kSetupPowerGuardThresholdCount) {
                     HermesXBatteryProtection::setThresholdMv(kSetupPowerGuardThresholdOptions[index].millivolts);
                     hermesSetupToast = String(u8"過放門檻: ") + kSetupPowerGuardThresholdOptions[index].label;
@@ -21758,9 +12281,9 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::EmacMenu) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::EmacMenu) {
         if (handleMenuNav(kSetupEmacCount)) {
-            LOG_INFO("[HermesFastSetup] select=%d item=%s", hermesSetupSelected, kSetupEmacItems[hermesSetupSelected]);
+            LOG_INFO("[HermesFastSetup] select=%d item=%s", gHermesFastSetupNavigation.selected, kSetupEmacItems[gHermesFastSetupNavigation.selected]);
             setFastFramerate();
             return true;
         }
@@ -21774,22 +12297,22 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
             }
         };
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
+            const auto action =
+                HermesXFastSetupUiController::instance().activateEmacMenu(gHermesFastSetupNavigation.selected);
+            if (action == HermesXFastSetupAction::ReturnFromGroupRequested) {
                 returnFromGroupSettings();
-            } else if (hermesSetupSelected == 1) {
+            } else if (action == HermesXFastSetupAction::OpenEmInfoRequested) {
                 enterMenu(HermesFastSetupPage::EmacEmInfoMenu, kSetupEmInfoCount, 1);
-            } else if (hermesSetupSelected == 2 || hermesSetupSelected == 3) {
-                hermesSetupEditingSlot = (hermesSetupSelected == 2) ? 0 : 1;
+            } else if (action == HermesXFastSetupAction::EditGroupPin0Requested ||
+                       action == HermesXFastSetupAction::EditGroupPin1Requested) {
+                hermesSetupEditingSlot = action == HermesXFastSetupAction::EditGroupPin0Requested ? 0 : 1;
                 hermesSetupPassDraft = lighthouseModule ? lighthouseModule->getEmergencyGroupPin(hermesSetupEditingSlot) : "";
                 if (hermesSetupPassDraft.length() > kSetupPassMaxLen) {
                     hermesSetupPassDraft = hermesSetupPassDraft.substring(0, kSetupPassMaxLen);
                 }
                 hermesSetupKeyRow = 0;
                 hermesSetupKeyCol = 0;
-                hermesSetupPage = HermesFastSetupPage::PassEdit;
-            } else if (hermesSetupSelected == 4) {
-                hermesSetupPage = HermesFastSetupPage::PassShow;
-            } else if (hermesSetupSelected == 5) {
+            } else if (action == HermesXFastSetupAction::ResetLighthouseRequested) {
                 if (hermesXEmUiModule) {
                     hermesXEmUiModule->sendResetLighthouseNow();
                     hermesSetupToast = u8"解除EMAC已送出";
@@ -21799,8 +12322,6 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                 hermesSetupToastUntilMs = millis() + 1500;
                 setFastFramerate();
                 return true;
-            } else {
-                returnFromGroupSettings();
             }
             setFastFramerate();
             return true;
@@ -21813,33 +12334,33 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::EmacEmInfoMenu) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::EmacEmInfoMenu) {
         if (handleMenuNav(kSetupEmInfoCount)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
-                resetMenu(HermesFastSetupPage::EmacMenu);
-            } else if (hermesSetupSelected == 1) {
+            const auto action =
+                HermesXFastSetupUiController::instance().activateEmInfoMenu(gHermesFastSetupNavigation.selected);
+            if (action == HermesXFastSetupAction::ToggleEmInfoRequested) {
                 if (hermesXEmUiModule) {
                     hermesXEmUiModule->setEmInfoBroadcastEnabled(!hermesXEmUiModule->isEmInfoBroadcastEnabled());
                     hermesSetupToast = hermesXEmUiModule->isEmInfoBroadcastEnabled() ? u8"EMINFO廣播已開啟" : u8"EMINFO廣播已關閉";
                     hermesSetupToastUntilMs = millis() + 1500;
                 }
-            } else if (hermesSetupSelected == 2) {
+            } else if (action == HermesXFastSetupAction::OpenEmInfoIntervalRequested) {
                 const uint8_t selected =
                     getSetupEmInfoIntervalSelection(hermesXEmUiModule ? hermesXEmUiModule->getEmInfoIntervalSec() : 0);
                 enterMenu(HermesFastSetupPage::EmacEmInfoIntervalSelect, kSetupEmInfoIntervalCount + 1, selected);
-            } else if (hermesSetupSelected == 3) {
+            } else if (action == HermesXFastSetupAction::OpenHeartbeatIntervalRequested) {
                 const uint8_t selected = getSetupHeartbeatIntervalSelection(
                     hermesXEmUiModule ? hermesXEmUiModule->getEmHeartbeatIntervalSec() : 0);
                 enterMenu(HermesFastSetupPage::EmacHeartbeatIntervalSelect, kSetupHeartbeatIntervalCount + 1, selected);
-            } else if (hermesSetupSelected == 4) {
+            } else if (action == HermesXFastSetupAction::OpenOfflineThresholdRequested) {
                 const uint8_t selected = getSetupOfflineThresholdSelection(
                     hermesXEmUiModule ? hermesXEmUiModule->getEmOfflineThresholdCount() : 3);
                 enterMenu(HermesFastSetupPage::EmacOfflineThresholdSelect, kSetupOfflineThresholdCount + 1, selected);
-            } else if (hermesSetupSelected == 5) {
+            } else if (action == HermesXFastSetupAction::OpenBatteryIncludeRequested) {
                 enterMenu(HermesFastSetupPage::EmacBatteryIncludeSelect, 3,
                           (hermesXEmUiModule && hermesXEmUiModule->isEmBatteryIncluded()) ? 2 : 1);
             }
@@ -21854,17 +12375,17 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::EmacEmInfoIntervalSelect) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::EmacEmInfoIntervalSelect) {
         const int count = kSetupEmInfoIntervalCount + 1;
         if (handleMenuNav(count)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
+            if (gHermesFastSetupNavigation.selected == 0) {
                 resetMenu(HermesFastSetupPage::EmacEmInfoMenu);
             } else {
-                const uint8_t index = static_cast<uint8_t>(hermesSetupSelected - 1);
+                const uint8_t index = static_cast<uint8_t>(gHermesFastSetupNavigation.selected - 1);
                 if (index < kSetupEmInfoIntervalCount && hermesXEmUiModule) {
                     hermesXEmUiModule->setEmInfoIntervalSec(kSetupEmInfoIntervalOptions[index]);
                     hermesSetupToast = String(u8"EMINFO週期: ") + kSetupEmInfoIntervalLabels[index];
@@ -21883,17 +12404,17 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::EmacHeartbeatIntervalSelect) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::EmacHeartbeatIntervalSelect) {
         const int count = kSetupHeartbeatIntervalCount + 1;
         if (handleMenuNav(count)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
+            if (gHermesFastSetupNavigation.selected == 0) {
                 resetMenu(HermesFastSetupPage::EmacEmInfoMenu);
             } else {
-                const uint8_t index = static_cast<uint8_t>(hermesSetupSelected - 1);
+                const uint8_t index = static_cast<uint8_t>(gHermesFastSetupNavigation.selected - 1);
                 if (index < kSetupHeartbeatIntervalCount && hermesXEmUiModule) {
                     hermesXEmUiModule->setEmHeartbeatIntervalSec(kSetupHeartbeatIntervalOptions[index]);
                     hermesSetupToast = String(u8"Heartbeat週期: ") + kSetupHeartbeatIntervalLabels[index];
@@ -21912,17 +12433,17 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::EmacOfflineThresholdSelect) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::EmacOfflineThresholdSelect) {
         const int count = kSetupOfflineThresholdCount + 1;
         if (handleMenuNav(count)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
+            if (gHermesFastSetupNavigation.selected == 0) {
                 resetMenu(HermesFastSetupPage::EmacEmInfoMenu);
             } else {
-                const uint8_t index = static_cast<uint8_t>(hermesSetupSelected - 1);
+                const uint8_t index = static_cast<uint8_t>(gHermesFastSetupNavigation.selected - 1);
                 if (index < kSetupOfflineThresholdCount && hermesXEmUiModule) {
                     hermesXEmUiModule->setEmOfflineThresholdCount(kSetupOfflineThresholdOptions[index]);
                     hermesSetupToast = String(u8"離線門檻: ") + kSetupOfflineThresholdLabels[index];
@@ -21941,16 +12462,16 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::EmacBatteryIncludeSelect) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::EmacBatteryIncludeSelect) {
         if (handleMenuNav(3)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
+            if (gHermesFastSetupNavigation.selected == 0) {
                 resetMenu(HermesFastSetupPage::EmacEmInfoMenu);
             } else {
-                const bool enabled = (hermesSetupSelected == 2);
+                const bool enabled = (gHermesFastSetupNavigation.selected == 2);
                 if (hermesXEmUiModule) {
                     hermesXEmUiModule->setEmBatteryIncluded(enabled);
                 }
@@ -21969,32 +12490,18 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UiMenu) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UiMenu) {
         if (handleMenuNav(kSetupUiMenuCount)) {
-            const char *itemName = "未知";
-            if (hermesSetupSelected == 0) {
-                itemName = "返回";
-            } else if (hermesSetupSelected == 1) {
-                itemName = "全域蜂鳴器";
-            } else if (hermesSetupSelected == 2) {
-                itemName = "Hermes狀態條";
-            } else if (hermesSetupSelected == 3) {
-                itemName = "板載RGB燈";
-            } else if (hermesSetupSelected == 4) {
-                itemName = "螢幕休眠時間";
-            } else if (hermesSetupSelected == 5) {
-                itemName = "時區設定";
-            } else if (hermesSetupSelected == 6) {
-                itemName = "旋鈕對調";
-            } else if (hermesSetupSelected == 7) {
-                itemName = "新訊息提示";
-            }
-            LOG_INFO("[HermesFastSetup] select=%d item=%s", hermesSetupSelected, itemName);
+            const char *itemName =
+                HermesXFastSetupUiController::instance().uiMenuItemName(gHermesFastSetupNavigation.selected);
+            LOG_INFO("[HermesFastSetup] select=%d item=%s", gHermesFastSetupNavigation.selected, itemName);
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 1) {
+            const auto action =
+                HermesXFastSetupUiController::instance().activateUiMenu(gHermesFastSetupNavigation.selected);
+            if (action == HermesXFastSetupAction::ToggleBuzzerRequested) {
                 const bool next = !isBuzzerGloballyEnabled();
                 setGlobalBuzzerEnabled(next);
                 if (hermesXEmUiModule) {
@@ -22005,7 +12512,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                 }
                 hermesSetupToast = next ? u8"全域蜂鳴器已啟用" : u8"全域蜂鳴器已停用";
                 hermesSetupToastUntilMs = millis() + 1500;
-            } else if (hermesSetupSelected == 2) {
+            } else if (action == HermesXFastSetupAction::OpenUiBrightnessRequested) {
                 int selected = 1;
                 const uint8_t ledBrightness =
                     HermesXInterfaceModule::instance ? HermesXInterfaceModule::instance->getUiLedBrightness() : 60;
@@ -22016,7 +12523,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                     }
                 }
                 enterMenu(HermesFastSetupPage::UiBrightnessSelect, kSetupBrightnessCount + 1, selected);
-            } else if (hermesSetupSelected == 3) {
+            } else if (action == HermesXFastSetupAction::ToggleRgbRequested) {
                 moduleConfig.has_ambient_lighting = true;
                 if (moduleConfig.ambient_lighting.current == 0) {
                     moduleConfig.ambient_lighting.current = 10;
@@ -22026,24 +12533,22 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                 hermesSetupToast = moduleConfig.ambient_lighting.led_state ? u8"狀態燈已開啟 (重開生效)"
                                                                            : u8"狀態燈已關閉 (重開生效)";
                 hermesSetupToastUntilMs = millis() + 1800;
-            } else if (hermesSetupSelected == 4) {
+            } else if (action == HermesXFastSetupAction::OpenScreenSleepRequested) {
                 const uint8_t selected = getSetupScreenSleepSelection(getSetupCurrentScreenSleepSeconds());
                 enterMenu(HermesFastSetupPage::UiScreenSleepSelect, kSetupScreenSleepCount + 1, selected);
-            } else if (hermesSetupSelected == 5) {
+            } else if (action == HermesXFastSetupAction::OpenTimezoneRequested) {
                 const uint8_t selected = getSetupTimezoneSelection(config.device.tzdef);
                 enterMenu(HermesFastSetupPage::UiTimezoneSelect, kSetupTimezoneCount + 1, selected);
-            } else if (hermesSetupSelected == 6) {
+            } else if (action == HermesXFastSetupAction::OpenRotarySwapRequested) {
                 const bool rotarySwapped =
                     moduleConfig.canned_message.inputbroker_event_cw ==
                     meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP;
                 enterMenu(HermesFastSetupPage::UiRotarySwapSelect, 3, rotarySwapped ? 2 : 1);
-            } else if (hermesSetupSelected == 7) {
+            } else if (action == HermesXFastSetupAction::ToggleIncomingPopupRequested) {
                 const bool next = !isIncomingTextPopupEnabled();
                 setIncomingTextPopupEnabled(next);
                 hermesSetupToast = next ? u8"新訊息提示已開啟" : u8"新訊息提示已關閉";
                 hermesSetupToastUntilMs = millis() + 1500;
-            } else if (hermesSetupSelected == 0) {
-                resetMenu(HermesFastSetupPage::Root);
             }
             setFastFramerate();
             return true;
@@ -22056,16 +12561,16 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UiRotarySwapSelect) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UiRotarySwapSelect) {
         if (handleMenuNav(3)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
+            if (gHermesFastSetupNavigation.selected == 0) {
                 resetMenu(HermesFastSetupPage::UiMenu);
             } else {
-                const bool swapEnabled = (hermesSetupSelected == 2);
+                const bool swapEnabled = (gHermesFastSetupNavigation.selected == 2);
                 moduleConfig.canned_message.inputbroker_event_cw =
                     swapEnabled ? meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP
                                 : meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN;
@@ -22091,16 +12596,16 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UiBrightnessSelect) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UiBrightnessSelect) {
         if (handleMenuNav(kSetupBrightnessCount + 1)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
+            if (gHermesFastSetupNavigation.selected == 0) {
                 resetMenu(HermesFastSetupPage::UiMenu);
             } else {
-                const uint8_t idx = static_cast<uint8_t>(hermesSetupSelected - 1);
+                const uint8_t idx = static_cast<uint8_t>(gHermesFastSetupNavigation.selected - 1);
                 if (idx < kSetupBrightnessCount) {
                     if (HermesXInterfaceModule::instance) {
                         HermesXInterfaceModule::instance->setUiLedBrightnessPreference(kSetupBrightnessOptions[idx].value);
@@ -22121,16 +12626,16 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UiScreenSleepSelect) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UiScreenSleepSelect) {
         if (handleMenuNav(kSetupScreenSleepCount + 1)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
+            if (gHermesFastSetupNavigation.selected == 0) {
                 resetMenu(HermesFastSetupPage::UiMenu);
             } else {
-                const uint8_t idx = static_cast<uint8_t>(hermesSetupSelected - 1);
+                const uint8_t idx = static_cast<uint8_t>(gHermesFastSetupNavigation.selected - 1);
                 if (idx < kSetupScreenSleepCount) {
                     config.display.screen_on_secs = kSetupScreenSleepOptions[idx].seconds;
                     nodeDB->saveToDisk(SEGMENT_CONFIG);
@@ -22150,16 +12655,16 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::UiTimezoneSelect) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::UiTimezoneSelect) {
         if (handleMenuNav(kSetupTimezoneCount + 1)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
+            if (gHermesFastSetupNavigation.selected == 0) {
                 resetMenu(HermesFastSetupPage::UiMenu);
             } else {
-                const uint8_t idx = static_cast<uint8_t>(hermesSetupSelected - 1);
+                const uint8_t idx = static_cast<uint8_t>(gHermesFastSetupNavigation.selected - 1);
                 if (idx < kSetupTimezoneCount) {
                     applySetupTimezone(kSetupTimezoneOptions[idx].tz);
                     saveSetupSegments(SEGMENT_CONFIG);
@@ -22179,15 +12684,15 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::LoraMenu) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::LoraMenu) {
         if (handleMenuNav(kSetupLoraMenuCount)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
-                resetMenu(HermesFastSetupPage::NodeMenu);
-            } else if (hermesSetupSelected == 1) {
+            const auto action =
+                HermesXFastSetupUiController::instance().activateLoraMenu(gHermesFastSetupNavigation.selected);
+            if (action == HermesXFastSetupAction::OpenLoraRoleRequested) {
                 int selected = 1;
                 for (uint8_t i = 0; i < kSetupRoleOptionCount; ++i) {
                     if (kSetupRoleOptions[i].role == config.device.role) {
@@ -22196,7 +12701,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                     }
                 }
                 enterMenu(HermesFastSetupPage::LoraRoleSelect, kSetupRoleOptionCount + 1, selected);
-            } else if (hermesSetupSelected == 2) {
+            } else if (action == HermesXFastSetupAction::OpenLoraPresetRequested) {
                 int selected = 1;
                 for (uint8_t i = 0; i < kSetupLoraPresetOptionCount; ++i) {
                     if (kSetupLoraPresetOptions[i].preset == config.lora.modem_preset) {
@@ -22205,7 +12710,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                     }
                 }
                 enterMenu(HermesFastSetupPage::LoraPresetSelect, kSetupLoraPresetOptionCount + 1, selected);
-            } else if (hermesSetupSelected == 3) {
+            } else if (action == HermesXFastSetupAction::OpenLoraRegionRequested) {
                 int selected = 1;
                 const uint8_t regionCount = getSetupRegionOptionCount();
                 for (uint8_t i = 0; i < regionCount; ++i) {
@@ -22215,30 +12720,29 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                     }
                 }
                 enterMenu(HermesFastSetupPage::LoraRegionSelect, regionCount + 1, selected);
-            } else if (hermesSetupSelected == 4) {
+            } else if (action == HermesXFastSetupAction::ToggleIgnoreMqttRequested) {
                 config.lora.ignore_mqtt = !config.lora.ignore_mqtt;
                 saveSetupSegments(SEGMENT_CONFIG);
                 hermesSetupToast = config.lora.ignore_mqtt ? u8"已改為忽視 MQTT" : u8"已接收 MQTT";
                 hermesSetupToastUntilMs = millis() + 1500;
-            } else if (hermesSetupSelected == 5) {
+            } else if (action == HermesXFastSetupAction::ToggleMqttForwardRequested) {
                 config.lora.config_ok_to_mqtt = !config.lora.config_ok_to_mqtt;
                 saveSetupSegments(SEGMENT_CONFIG);
                 hermesSetupToast = config.lora.config_ok_to_mqtt ? u8"允許轉發至 MQTT" : u8"禁止轉發至 MQTT";
                 hermesSetupToastUntilMs = millis() + 1500;
-            } else if (hermesSetupSelected == 6) {
+            } else if (action == HermesXFastSetupAction::ToggleLoraTxRequested) {
                 config.lora.tx_enabled = !config.lora.tx_enabled;
                 saveSetupSegments(SEGMENT_CONFIG);
                 hermesSetupToast = config.lora.tx_enabled ? u8"LoRa 已啟用" : u8"LoRa 已停用";
                 hermesSetupToastUntilMs = millis() + 1500;
-            } else if (hermesSetupSelected == 7) {
+            } else if (action == HermesXFastSetupAction::OpenLoraChannelSlotRequested) {
                 const int selected = config.lora.channel_num ? (config.lora.channel_num + 1) : 1;
                 enterMenu(HermesFastSetupPage::LoraChannelSlotSelect, getSetupLoraChannelSlotCount() + 2, selected);
-            } else if (hermesSetupSelected == 8) {
+            } else if (action == HermesXFastSetupAction::EditLoraFrequencyRequested) {
                 hermesSetupFrequencyDraft =
                     (fabsf(config.lora.override_frequency) < 0.0001f) ? String("") : formatSetupFrequencyLabel(config.lora.override_frequency);
                 hermesSetupKeyRow = 0;
                 hermesSetupKeyCol = 0;
-                hermesSetupPage = HermesFastSetupPage::FrequencyEdit;
             }
             setFastFramerate();
             return true;
@@ -22251,17 +12755,17 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::LoraRoleSelect) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::LoraRoleSelect) {
         const int count = kSetupRoleOptionCount + 1;
         if (handleMenuNav(count)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
+            if (gHermesFastSetupNavigation.selected == 0) {
                 resetMenu(HermesFastSetupPage::LoraMenu);
             } else {
-                const uint8_t index = hermesSetupSelected - 1;
+                const uint8_t index = gHermesFastSetupNavigation.selected - 1;
                 if (index < kSetupRoleOptionCount) {
                     const auto nextRole = kSetupRoleOptions[index].role;
                     if (config.device.role != nextRole) {
@@ -22288,17 +12792,17 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::LoraPresetSelect) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::LoraPresetSelect) {
         const int count = kSetupLoraPresetOptionCount + 1;
         if (handleMenuNav(count)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
+            if (gHermesFastSetupNavigation.selected == 0) {
                 resetMenu(HermesFastSetupPage::LoraMenu);
             } else {
-                const uint8_t index = hermesSetupSelected - 1;
+                const uint8_t index = gHermesFastSetupNavigation.selected - 1;
                 if (index < kSetupLoraPresetOptionCount) {
                     config.lora.use_preset = true;
                     config.lora.modem_preset = kSetupLoraPresetOptions[index].preset;
@@ -22319,17 +12823,17 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::LoraRegionSelect) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::LoraRegionSelect) {
         const int count = getSetupRegionOptionCount() + 1;
         if (handleMenuNav(count)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
+            if (gHermesFastSetupNavigation.selected == 0) {
                 resetMenu(HermesFastSetupPage::LoraMenu);
             } else {
-                const uint8_t index = hermesSetupSelected - 1;
+                const uint8_t index = gHermesFastSetupNavigation.selected - 1;
                 if (index < getSetupRegionOptionCount()) {
                     config.lora.region = regions[index].code;
                     saveSetupSegments(SEGMENT_CONFIG);
@@ -22349,23 +12853,23 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::LoraChannelSlotSelect) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::LoraChannelSlotSelect) {
         const int count = getSetupLoraChannelSlotCount() + 2;
         if (handleMenuNav(count)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
+            if (gHermesFastSetupNavigation.selected == 0) {
                 resetMenu(HermesFastSetupPage::LoraMenu);
-            } else if (hermesSetupSelected == 1) {
+            } else if (gHermesFastSetupNavigation.selected == 1) {
                 config.lora.channel_num = 0;
                 saveSetupSegments(SEGMENT_CONFIG);
                 hermesSetupToast = u8"頻段槽位: 自動";
                 hermesSetupToastUntilMs = millis() + 1500;
                 resetMenu(HermesFastSetupPage::LoraMenu);
             } else {
-                config.lora.channel_num = hermesSetupSelected - 1;
+                config.lora.channel_num = gHermesFastSetupNavigation.selected - 1;
                 saveSetupSegments(SEGMENT_CONFIG);
                 hermesSetupToast = String(u8"頻段槽位: ") + String(config.lora.channel_num);
                 hermesSetupToastUntilMs = millis() + 1500;
@@ -22382,16 +12886,16 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::CannedMenu) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::CannedMenu) {
         if (handleMenuNav(2)) {
-            LOG_INFO("[HermesFastSetup] select=%d item=%s", hermesSetupSelected, (hermesSetupSelected == 0) ? "返回" : "目標頻道");
+            LOG_INFO("[HermesFastSetup] select=%d item=%s", gHermesFastSetupNavigation.selected, (gHermesFastSetupNavigation.selected == 0) ? "返回" : "目標頻道");
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
-                resetMenu(HermesFastSetupPage::Root);
-            } else {
+            const auto action =
+                HermesXFastSetupUiController::instance().activateCannedMenu(gHermesFastSetupNavigation.selected);
+            if (action == HermesXFastSetupAction::OpenCannedChannelRequested) {
                 ChannelIndex channelList[MAX_NUM_CHANNELS];
                 const uint8_t channelCount = buildSetupChannelList(channelList, MAX_NUM_CHANNELS);
                 int selected = 0;
@@ -22415,7 +12919,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::CannedChannelSelect) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::CannedChannelSelect) {
         ChannelIndex channelList[MAX_NUM_CHANNELS];
         const uint8_t channelCount = buildSetupChannelList(channelList, MAX_NUM_CHANNELS);
         const int count = channelCount + 1;
@@ -22424,10 +12928,10 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
+            if (gHermesFastSetupNavigation.selected == 0) {
                 resetMenu(HermesFastSetupPage::CannedMenu);
             } else {
-                const uint8_t index = hermesSetupSelected - 1;
+                const uint8_t index = gHermesFastSetupNavigation.selected - 1;
                 if (index < channelCount && cannedMessageModule) {
                     const ChannelIndex chan = channelList[index];
                     cannedMessageModule->setPreferredChannel(chan);
@@ -22448,15 +12952,15 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::GpsMenu) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::GpsMenu) {
         if (handleMenuNav(kSetupGpsMenuCount)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
-                resetMenu(HermesFastSetupPage::NodeMenu);
-            } else if (hermesSetupSelected == 1) {
+            const auto action =
+                HermesXFastSetupUiController::instance().activateGpsMenu(gHermesFastSetupNavigation.selected);
+            if (action == HermesXFastSetupAction::OpenGpsUpdateRequested) {
                 const uint32_t current =
                     Default::getConfiguredOrDefault(config.position.gps_update_interval, default_gps_update_interval);
                 int selected = 1;
@@ -22467,7 +12971,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                     }
                 }
                 enterMenu(HermesFastSetupPage::GpsUpdateSelect, kSetupGpsUpdateCount + 1, selected);
-            } else if (hermesSetupSelected == 2) {
+            } else if (action == HermesXFastSetupAction::OpenGpsBroadcastRequested) {
                 const uint32_t current =
                     Default::getConfiguredOrDefault(config.position.position_broadcast_secs, default_broadcast_interval_secs);
                 int selected = 1;
@@ -22478,13 +12982,13 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                     }
                 }
                 enterMenu(HermesFastSetupPage::GpsBroadcastSelect, kSetupGpsBroadcastCount + 1, selected);
-            } else if (hermesSetupSelected == 3) {
+            } else if (action == HermesXFastSetupAction::ToggleGpsSmartRequested) {
                 config.position.position_broadcast_smart_enabled = !config.position.position_broadcast_smart_enabled;
                 saveSetupSegments(SEGMENT_CONFIG);
                 hermesSetupToast = config.position.position_broadcast_smart_enabled ? u8"智慧位置已啟用"
                                                                                    : u8"智慧位置已停用";
                 hermesSetupToastUntilMs = millis() + 1500;
-            } else if (hermesSetupSelected == 4) {
+            } else if (action == HermesXFastSetupAction::OpenGpsSmartDistanceRequested) {
                 int selected = 1;
                 const uint32_t current = getSetupCurrentGpsSmartDistance();
                 for (uint8_t i = 0; i < kSetupGpsSmartDistanceCount; ++i) {
@@ -22494,7 +12998,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                     }
                 }
                 enterMenu(HermesFastSetupPage::GpsSmartDistanceSelect, kSetupGpsSmartDistanceCount + 1, selected);
-            } else if (hermesSetupSelected == 5) {
+            } else if (action == HermesXFastSetupAction::OpenGpsSmartIntervalRequested) {
                 int selected = 1;
                 const uint32_t current = getSetupCurrentGpsSmartInterval();
                 for (uint8_t i = 0; i < kSetupGpsSmartIntervalCount; ++i) {
@@ -22516,17 +13020,17 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::GpsUpdateSelect) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::GpsUpdateSelect) {
         const int count = kSetupGpsUpdateCount + 1;
         if (handleMenuNav(count)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
+            if (gHermesFastSetupNavigation.selected == 0) {
                 resetMenu(HermesFastSetupPage::GpsMenu);
             } else {
-                const uint8_t index = hermesSetupSelected - 1;
+                const uint8_t index = gHermesFastSetupNavigation.selected - 1;
                 if (index < kSetupGpsUpdateCount) {
                     config.position.gps_update_interval = kSetupGpsUpdateOptions[index];
                     saveSetupSegments(SEGMENT_CONFIG);
@@ -22546,17 +13050,17 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::GpsBroadcastSelect) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::GpsBroadcastSelect) {
         const int count = kSetupGpsBroadcastCount + 1;
         if (handleMenuNav(count)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
+            if (gHermesFastSetupNavigation.selected == 0) {
                 resetMenu(HermesFastSetupPage::GpsMenu);
             } else {
-                const uint8_t index = hermesSetupSelected - 1;
+                const uint8_t index = gHermesFastSetupNavigation.selected - 1;
                 if (index < kSetupGpsBroadcastCount) {
                     config.position.position_broadcast_secs = kSetupGpsBroadcastOptions[index];
                     saveSetupSegments(SEGMENT_CONFIG);
@@ -22576,17 +13080,17 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::GpsSmartDistanceSelect) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::GpsSmartDistanceSelect) {
         const int count = kSetupGpsSmartDistanceCount + 1;
         if (handleMenuNav(count)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
+            if (gHermesFastSetupNavigation.selected == 0) {
                 resetMenu(HermesFastSetupPage::GpsMenu);
             } else {
-                const uint8_t index = hermesSetupSelected - 1;
+                const uint8_t index = gHermesFastSetupNavigation.selected - 1;
                 if (index < kSetupGpsSmartDistanceCount) {
                     config.position.broadcast_smart_minimum_distance = kSetupGpsSmartDistanceOptions[index];
                     saveSetupSegments(SEGMENT_CONFIG);
@@ -22606,17 +13110,17 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         return false;
     }
 
-    if (hermesSetupPage == HermesFastSetupPage::GpsSmartIntervalSelect) {
+    if (gHermesFastSetupNavigation.page == HermesFastSetupPage::GpsSmartIntervalSelect) {
         const int count = kSetupGpsSmartIntervalCount + 1;
         if (handleMenuNav(count)) {
             setFastFramerate();
             return true;
         }
         if (isSelect || isPress) {
-            if (hermesSetupSelected == 0) {
+            if (gHermesFastSetupNavigation.selected == 0) {
                 resetMenu(HermesFastSetupPage::GpsMenu);
             } else {
-                const uint8_t index = hermesSetupSelected - 1;
+                const uint8_t index = gHermesFastSetupNavigation.selected - 1;
                 if (index < kSetupGpsSmartIntervalCount) {
                     config.position.broadcast_smart_minimum_interval_secs = kSetupGpsSmartIntervalOptions[index];
                     saveSetupSegments(SEGMENT_CONFIG);
@@ -22639,64 +13143,20 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
     return false;
 }
 
-bool Screen::handleIncomingNodePopupInput(const InputEvent *event)
-{
-    if (!event || !isIncomingNodePopupVisible()) {
-        return false;
-    }
-
-    dismissIncomingNodePopup();
-    setFastFramerate();
-    return true;
-}
-
 bool Screen::handleTextMessagePopupInput(const InputEvent *event)
 {
     if (!event || !isIncomingTextPopupActive()) {
         return false;
     }
+    const HermesXMessageInputBindings bindings{
+        static_cast<char>(moduleConfig.canned_message.inputbroker_event_press),
+        static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw),
+        static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw),
+    };
+    const HermesXMessageInput input{event->source, event->inputEvent};
+    const HermesXMessageInputAction action = HermesXMessageUiController::instance().handlePopup(input, bindings);
 
-    const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
-    const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
-    const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
-
-    const bool isSelect =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
-    const bool isConfiguredPress = (eventPress != 0) && (event->inputEvent == eventPress);
-    const bool wantsConfirm = isConfiguredPress || (eventPress == 0 && isSelect);
-
-    const bool isLeft =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
-    const bool isRight =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
-    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
-    const bool isDown =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
-    const bool isBack =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
-    const bool isCancel =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL);
-    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
-    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
-    const bool isRotary = (event->source && strncmp(event->source, "rotEnc", 6) == 0);
-    const bool hasRotaryFallback = isRotary && (eventCw == 0 && eventCcw == 0) && (isLeft || isRight || isUp || isDown);
-    int8_t navDir = 0;
-    if (isCcw || isLeft || isUp) {
-        navDir = -1;
-    } else if (isCw || isRight || isDown) {
-        navDir = 1;
-    } else if (hasRotaryFallback) {
-        navDir = (isLeft || isUp) ? -1 : 1;
-    }
-
-    if (navDir != 0) {
-        gIncomingTextPopupState.selectedOption = navDir < 0 ? 0 : 1;
-        setFastFramerate();
-        return true;
-    }
-
-    if (wantsConfirm && gIncomingTextPopupState.selectedOption == 0) {
-        const meshtastic_MeshPacket popupPacket = gIncomingTextPopupState.packet;
+    if (action == HermesXMessageInputAction::OpenPopupDetail) {
         if (cannedMessageModule) {
             const auto runState = cannedMessageModule->getRunState();
             if (runState != CANNED_MESSAGE_RUN_STATE_DISABLED && runState != CANNED_MESSAGE_RUN_STATE_INACTIVE) {
@@ -22704,24 +13164,18 @@ bool Screen::handleTextMessagePopupInput(const InputEvent *event)
             }
         }
         dismissIncomingTextPopup();
-        const int popupIndex = findRecentTextMessageIndex(popupPacket);
-        if (popupIndex >= 0) {
-            gRecentTextMessageState.listCursor = static_cast<uint8_t>(popupIndex + 1);
-            gRecentTextMessageState.selectedIndex = static_cast<uint8_t>(popupIndex);
-            showTextMessageDetailPage();
-        } else {
-            setFastFramerate();
-        }
+        showTextMessageDetailPage();
         return true;
     }
-
-    if ((wantsConfirm && gIncomingTextPopupState.selectedOption == 1) || isBack || isCancel) {
+    if (action == HermesXMessageInputAction::DismissPopup) {
         dismissIncomingTextPopup();
         setFastFramerate();
         return true;
     }
-
-    return true; // While popup is visible, swallow other input so it doesn't leak through.
+    if (action == HermesXMessageInputAction::Refresh) {
+        setFastFramerate();
+    }
+    return action != HermesXMessageInputAction::Unhandled;
 }
 
 bool Screen::handleTraceRoutePopupInput(const InputEvent *event)
@@ -22730,55 +13184,15 @@ bool Screen::handleTraceRoutePopupInput(const InputEvent *event)
         return false;
     }
 
-    const uint32_t popupVisibleMs = millis() - gTraceRoutePopupState.shownAtMs;
-    if (popupVisibleMs < kTraceRoutePopupDismissGuardMs) {
-        return true;
-    }
+    const HermesXTraceRoutePopupInput input(event->source, event->inputEvent);
+    const HermesXTraceRoutePopupBindings bindings(
+        static_cast<char>(moduleConfig.canned_message.inputbroker_event_press),
+        static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw),
+        static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw));
+    const HermesXTraceRoutePopupAction action = HermesXTraceRouteUiController::instance().handlePopup(
+        input, bindings, millis(), FONT_HEIGHT_SMALL + 2, kTraceRoutePopupDismissGuardMs);
 
-    const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
-    const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
-    const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
-    const bool isRotary = (event->source && strncmp(event->source, "rotEnc", 6) == 0);
-
-    const bool isSelect =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
-    const bool isConfiguredPress = (eventPress != 0) && (event->inputEvent == eventPress);
-    const bool wantsDismiss = isConfiguredPress || (eventPress == 0 && isSelect) ||
-                              event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK) ||
-                              event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL);
-
-    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
-    const bool isDown =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
-    const bool isLeft =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
-    const bool isRight =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
-    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
-    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
-
-    int8_t navDir = 0;
-    if (isRotary) {
-        if (isCcw) {
-            navDir = -1;
-        } else if (isCw) {
-            navDir = 1;
-        } else if (eventCw == 0 && eventCcw == 0) {
-            if (isUp || isLeft) {
-                navDir = -1;
-            } else if (isDown || isRight) {
-                navDir = 1;
-            }
-        }
-    } else {
-        if (isUp || isLeft || isCcw) {
-            navDir = -1;
-        } else if (isDown || isRight || isCw) {
-            navDir = 1;
-        }
-    }
-
-    if (wantsDismiss) {
+    if (action == HermesXTraceRoutePopupAction::DismissRequested) {
         dismissTraceRoutePopup();
 #if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
     defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
@@ -22793,18 +13207,10 @@ bool Screen::handleTraceRoutePopupInput(const InputEvent *event)
 #endif
         requestImmediateRedraw();
         setFastFramerate();
-        return true;
-    }
-
-    if (navDir != 0 && gTraceRoutePopupState.maxScrollY > 0) {
-        const uint16_t kPopupScrollStep = FONT_HEIGHT_SMALL + 2;
-        const int nextScroll = clamp<int>(static_cast<int>(gTraceRoutePopupState.scrollY) + navDir * kPopupScrollStep, 0,
-                                          static_cast<int>(gTraceRoutePopupState.maxScrollY));
-        gTraceRoutePopupState.scrollY = static_cast<uint16_t>(nextScroll);
+    } else if (action == HermesXTraceRoutePopupAction::Refresh) {
         setFastFramerate();
-        return true;
+        requestImmediateRedraw();
     }
-
     return true;
 }
 
@@ -22812,11 +13218,6 @@ bool Screen::handleSetupDetailPopupInput(const InputEvent *event)
 {
     if (!event || !isSetupDetailPopupVisible()) {
         return false;
-    }
-
-    const uint32_t popupVisibleMs = millis() - gSetupDetailPopupState.shownAtMs;
-    if (popupVisibleMs < kSetupDetailPopupDismissGuardMs) {
-        return true;
     }
 
     const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
@@ -22862,22 +13263,12 @@ bool Screen::handleSetupDetailPopupInput(const InputEvent *event)
         }
     }
 
-    if (wantsDismiss) {
-        dismissSetupDetailPopup();
+    const HermesXDetailPopupAction action = HermesXDetailPopupController::instance().handle(
+        wantsDismiss, navDir, millis(), FONT_HEIGHT_SMALL + 2);
+    if (action == HermesXDetailPopupAction::Dismissed || action == HermesXDetailPopupAction::Refresh) {
         setFastFramerate();
-        return true;
     }
-
-    if (navDir != 0 && gSetupDetailPopupState.maxScrollY > 0) {
-        const uint16_t kPopupScrollStep = FONT_HEIGHT_SMALL + 2;
-        const int nextScroll = clamp<int>(static_cast<int>(gSetupDetailPopupState.scrollY) + navDir * kPopupScrollStep, 0,
-                                          static_cast<int>(gSetupDetailPopupState.maxScrollY));
-        gSetupDetailPopupState.scrollY = static_cast<uint16_t>(nextScroll);
-        setFastFramerate();
-        return true;
-    }
-
-    return true;
+    return action != HermesXDetailPopupAction::Unhandled;
 }
 
 bool Screen::handleRecentTextMessageListInput(const InputEvent *event)
@@ -22885,94 +13276,26 @@ bool Screen::handleRecentTextMessageListInput(const InputEvent *event)
     if (!event) {
         return false;
     }
-
-    const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
-    const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
-    const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
-
-    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
-    const bool isDown =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
-    const bool isLeft =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
-    const bool isRight =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
-    const bool isSelect =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
-    const bool isCancel =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
-
-    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
-    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
-    const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
-
-    int8_t navDir = 0;
-    const bool isRotary = (event->source && strncmp(event->source, "rotEnc", 6) == 0);
-    if (isRotary) {
-        if (isCcw) {
-            navDir = -1;
-        } else if (isCw) {
-            navDir = 1;
-        } else if (eventCw == 0 && eventCcw == 0) {
-            if (isUp || isLeft) {
-                navDir = -1;
-            } else if (isDown || isRight) {
-                navDir = 1;
-            }
-        }
-    } else {
-        if (isCcw || isUp || isLeft) {
-            navDir = -1;
-        } else if (isCw || isDown || isRight) {
-            navDir = 1;
-        }
-    }
-
-    if (navDir != 0) {
-        clampRecentTextMessageIndices();
-        const int totalEntries = static_cast<int>(getRecentTextMessageListEntryCount());
-        int nextCursor = static_cast<int>(gRecentTextMessageState.listCursor) + navDir;
-        if (nextCursor < 0) {
-            nextCursor = 0;
-        } else if (nextCursor >= totalEntries) {
-            nextCursor = totalEntries - 1;
-        }
-
-        if (nextCursor != gRecentTextMessageState.listCursor) {
-            gRecentTextMessageState.listCursor = static_cast<uint8_t>(nextCursor);
-            if (nextCursor > 0) {
-                gRecentTextMessageState.selectedIndex = static_cast<uint8_t>(nextCursor - 1);
-            }
-            LOG_INFO("[Screen] Recent Send cursor=%u selected=%u total=%d", gRecentTextMessageState.listCursor,
-                     gRecentTextMessageState.selectedIndex, totalEntries);
-            setFastFramerate();
-        }
-        return true;
-    }
-
-    if (isSelect || isPress) {
-        clampRecentTextMessageIndices();
-        if (gRecentTextMessageState.listCursor == 0) {
-            LOG_INFO("[Screen] Recent Send select -> back to action page");
-            showHermesXActionPage();
-            setFastFramerate();
-        } else {
-            gRecentTextMessageState.selectedIndex = gRecentTextMessageState.listCursor - 1;
-            LOG_INFO("[Screen] Recent Send open detail index=%u", gRecentTextMessageState.selectedIndex);
-            showTextMessageDetailPage();
-        }
-        return true;
-    }
-
-    if (isCancel) {
-        LOG_INFO("[Screen] Recent Send cancel -> back to action page");
+    const HermesXMessageInputBindings bindings{
+        static_cast<char>(moduleConfig.canned_message.inputbroker_event_press),
+        static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw),
+        static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw),
+    };
+    const HermesXMessageInput input{event->source, event->inputEvent};
+    const HermesXMessageInputAction action = HermesXMessageUiController::instance().handleRecentList(input, bindings);
+    if (action == HermesXMessageInputAction::BackToAction) {
         showHermesXActionPage();
         setFastFramerate();
         return true;
     }
-
-    return false;
+    if (action == HermesXMessageInputAction::OpenDetail) {
+        showTextMessageDetailPage();
+        return true;
+    }
+    if (action == HermesXMessageInputAction::Refresh) {
+        setFastFramerate();
+    }
+    return action != HermesXMessageInputAction::Unhandled;
 }
 
 bool Screen::handleRecentTextMessageDetailInput(const InputEvent *event)
@@ -22984,73 +13307,24 @@ bool Screen::handleRecentTextMessageDetailInput(const InputEvent *event)
         return false;
     }
 
-    const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
-    const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
-
-    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
-    const bool isDown =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
-    const bool isLeft =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
-    const bool isRight =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
-    const bool isCancel =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
-    const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
-    const bool isSelect =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
-    const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
-
-    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
-    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
-    const bool isRotary = (event->source && strncmp(event->source, "rotEnc", 6) == 0);
-
-    int8_t navDir = 0;
-    if (isRotary) {
-        if (isCcw) {
-            navDir = -1;
-        } else if (isCw) {
-            navDir = 1;
-        } else if (eventCw == 0 && eventCcw == 0) {
-            if (isUp) {
-                navDir = -1;
-            } else if (isDown) {
-                navDir = 1;
-            }
-        }
-    } else {
-        if (isUp) {
-            navDir = -1;
-        } else if (isDown) {
-            navDir = 1;
-        }
-    }
-
-    if (navDir != 0) {
-        if (gRecentTextMessageState.detailMaxScrollY > 0) {
-            const uint16_t kDetailScrollStep =
-                std::max<int>(FONT_HEIGHT_MEDIUM, getRecentTextMessageBodyHanziPixelSize()) + 2;
-            const int nextScroll =
-                clamp<int>(static_cast<int>(gRecentTextMessageState.detailScrollY) + navDir * kDetailScrollStep, 0,
-                           static_cast<int>(gRecentTextMessageState.detailMaxScrollY));
-            if (nextScroll != static_cast<int>(gRecentTextMessageState.detailScrollY)) {
-                gRecentTextMessageState.detailScrollY = static_cast<uint16_t>(nextScroll);
-                setFastFramerate();
-            }
-        }
+    const HermesXMessageInputBindings bindings{
+        static_cast<char>(moduleConfig.canned_message.inputbroker_event_press),
+        static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw),
+        static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw),
+    };
+    const uint16_t scrollStep =
+        std::max<int>(FONT_HEIGHT_MEDIUM, HermesXMessageUiRenderer::bodyHanziPixelSize()) + 2;
+    const HermesXMessageInputAction action =
+        HermesXMessageUiController::instance().handleRecentDetail({event->source, event->inputEvent}, bindings, scrollStep);
+    if (action == HermesXMessageInputAction::BackToList) {
+        ui->switchToFrame(framesetInfo.positions.textMessageList);
+        setFastFramerate();
         return true;
     }
-
-    const bool wantsBack = isCancel || isLeft || isRight || isSelect || isPress;
-
-    if (!wantsBack) {
-        return false;
+    if (action == HermesXMessageInputAction::Refresh) {
+        setFastFramerate();
     }
-
-    ui->switchToFrame(framesetInfo.positions.textMessageList);
-    setFastFramerate();
-    return true;
+    return action != HermesXMessageInputAction::Unhandled;
 }
 
 bool Screen::handleOnlineNodeListInput(const InputEvent *event)
@@ -23066,65 +13340,25 @@ bool Screen::handleOnlineNodeListInput(const InputEvent *event)
         const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
         const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
         const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
-        const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
-        const bool isDown =
-            event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
-        const bool isLeft =
-            event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
-        const bool isRight =
-            event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
-        const bool isSelect =
-            event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
-        const bool isCancel =
-            event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
-            event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
-        const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
-        const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
-        const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
-        int8_t navDir = 0;
-        const bool isRotary = (event->source && strncmp(event->source, "rotEnc", 6) == 0);
-        if (isRotary) {
-            if (isCcw) navDir = -1;
-            else if (isCw) navDir = 1;
-            else if (eventCw == 0 && eventCcw == 0) {
-                if (isUp || isLeft) navDir = -1;
-                else if (isDown || isRight) navDir = 1;
-            }
-        } else {
-            if (isCcw || isUp || isLeft) navDir = -1;
-            else if (isCw || isDown || isRight) navDir = 1;
-        }
-        if (navDir != 0) {
-            int next = static_cast<int>(hermesFinderMenuSelected) + navDir;
-            if (next < 0) next = 0;
-            if (next > 2) next = 2;
-            hermesFinderMenuSelected = static_cast<uint8_t>(next);
+        const HermesXNodeBrowserAction action = HermesXNodeBrowserUiController::instance().handleMenu(
+            {event->source, event->inputEvent}, {eventPress, eventCw, eventCcw}, hermesFinderMenuSelected, 3);
+        if (action == HermesXNodeBrowserAction::Refresh) {
             setFastFramerate();
             return true;
         }
-        if (isCancel) {
+        if (action == HermesXNodeBrowserAction::ExitRequested) {
             hermesFinderUiMode = HermesFinderUiMode::None;
             showHermesXActionPage();
             setFastFramerate();
             return true;
         }
-        if (isSelect || isPress) {
-            if (hermesFinderMenuSelected == 0) {
-                hermesFinderUiMode = HermesFinderUiMode::None;
-                showHermesXActionPage();
-            } else if (hermesFinderMenuSelected == 1) {
-                hermesFinderPulseConfirmVisible = true;
-                hermesFinderPulseConfirmSelected = 0;
-                hermesFinderPulseConfirmShownAtMs = millis();
-                hermesFinderPulseDispatched = false;
-                hermesFinderPulseSendingVisible = false;
-                hermesFinderPulseSendingShownAtMs = 0;
+        if (action == HermesXNodeBrowserAction::ActivateRequested) {
+            if (hermesFinderMenuSelected == 1) {
+                HermesXNodeBrowserUiController::instance().beginFinderPulseConfirm(millis());
             } else if (hermesFinderMenuSelected == 2) {
                 hermesFinderUiMode = HermesFinderUiMode::PositionList;
-                rebuildFinderNodeOrder();
-                gFinderNodeState.listCursor = 0;
-                gFinderNodeState.selectedIndex = 0;
-                gFinderNodeState.detailCursor = 0;
+                gNodeBrowserDataSource.refreshFinder();
+                gNodeBrowserUiModel.reset(gFinderNodeState);
                 showFinderListPageSafely(true);
             }
             setFastFramerate();
@@ -23135,9 +13369,9 @@ bool Screen::handleOnlineNodeListInput(const InputEvent *event)
 
     const bool finderMode = hermesFinderUiMode == HermesFinderUiMode::PositionList;
     if (finderMode) {
-        rebuildFinderNodeOrder();
+        gNodeBrowserDataSource.refreshFinder();
     } else {
-        rebuildOnlineNodeOrder();
+        gNodeBrowserDataSource.refreshOnline();
     }
     LOG_INFO("[Screen] ONLINE list input src=%s event=%d frame=%u onlineList=%u onlineDetail=%u cursor=%u count=%u",
              event->source ? event->source : "(null)", event->inputEvent, ui->getUiState()->currentFrame,
@@ -23148,99 +13382,24 @@ bool Screen::handleOnlineNodeListInput(const InputEvent *event)
     const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
     const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
     const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
-
-    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
-    const bool isDown =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
-    const bool isLeft =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
-    const bool isRight =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
-    const bool isSelect =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
-    const bool isCancel =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
-
-    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
-    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
-    const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
-
-    int8_t navDir = 0;
-    const bool isRotary = (event->source && strncmp(event->source, "rotEnc", 6) == 0);
-    if (isRotary) {
-        if (isCcw) {
-            navDir = -1;
-        } else if (isCw) {
-            navDir = 1;
-        } else if (eventCw == 0 && eventCcw == 0) {
-            if (isUp || isLeft) {
-                navDir = -1;
-            } else if (isDown || isRight) {
-                navDir = 1;
-            }
-        }
-    } else {
-        if (isCcw || isUp || isLeft) {
-            navDir = -1;
-        } else if (isCw || isDown || isRight) {
-            navDir = 1;
-        }
-    }
-
-    uint8_t &listCursor = finderMode ? gFinderNodeState.listCursor : gOnlineNodeState.listCursor;
-    uint8_t &selectedIndex = finderMode ? gFinderNodeState.selectedIndex : gOnlineNodeState.selectedIndex;
-    uint8_t &detailCursor = finderMode ? gFinderNodeState.detailCursor : gOnlineNodeState.detailCursor;
-    const int totalEntries = static_cast<int>((finderMode ? gFinderNodeState.count : gOnlineNodeState.count)) + 1;
-    if (navDir != 0) {
-        int nextCursor = static_cast<int>(listCursor) + navDir;
-        if (nextCursor < 0) {
-            nextCursor = 0;
-        } else if (nextCursor >= totalEntries) {
-            nextCursor = totalEntries - 1;
-        }
-
-        if (nextCursor != listCursor) {
-            listCursor = static_cast<uint8_t>(nextCursor);
-            if (nextCursor > 0) {
-                selectedIndex = static_cast<uint8_t>(nextCursor - 1);
-            }
-            LOG_INFO("[Screen] ONLINE list nav dir=%d next=%d selected=%u", navDir, nextCursor, selectedIndex);
-            setFastFramerate();
-        }
-        return true;
-    }
-
-    if (isSelect || isPress) {
-        if (listCursor == 0) {
-            LOG_INFO("[Screen] ONLINE list select -> action page");
-            if (finderMode) {
-                hermesFinderUiMode = HermesFinderUiMode::Menu;
-            } else {
-                showHermesXActionPage();
-            }
-        } else {
-            selectedIndex = listCursor - 1;
-            detailCursor = 0;
-            LOG_INFO("[Screen] ONLINE list select -> detail index=%u", selectedIndex);
-            showOnlineNodeDetailPage();
-        }
-        setFastFramerate();
-        return true;
-    }
-
-    if (isCancel) {
+    HermesXNodeBrowserState &browserState = finderMode ? gFinderNodeState : gOnlineNodeState;
+    const HermesXNodeBrowserAction action = HermesXNodeBrowserUiController::instance().handleList(
+        {event->source, event->inputEvent}, {eventPress, eventCw, eventCcw}, browserState);
+    if (action == HermesXNodeBrowserAction::ExitRequested || action == HermesXNodeBrowserAction::CancelRequested) {
         if (finderMode) {
             hermesFinderUiMode = HermesFinderUiMode::Menu;
         } else {
-            LOG_INFO("[Screen] ONLINE list cancel -> action page");
             showHermesXActionPage();
         }
-        setFastFramerate();
-        return true;
+    } else if (action == HermesXNodeBrowserAction::OpenDetailRequested) {
+        showOnlineNodeDetailPage();
     }
-
-    return false;
+    if (action == HermesXNodeBrowserAction::Refresh || action == HermesXNodeBrowserAction::ExitRequested ||
+        action == HermesXNodeBrowserAction::CancelRequested ||
+        action == HermesXNodeBrowserAction::OpenDetailRequested) {
+        setFastFramerate();
+    }
+    return action != HermesXNodeBrowserAction::Unhandled;
 }
 
 bool Screen::handleOnlineNodeDetailInput(const InputEvent *event)
@@ -23254,7 +13413,8 @@ bool Screen::handleOnlineNodeDetailInput(const InputEvent *event)
     }
 
     const bool finderMode = hermesFinderUiMode == HermesFinderUiMode::PositionList;
-    const meshtastic_NodeInfoLite *node = finderMode ? getSelectedFinderNode() : getSelectedOnlineNode();
+    const meshtastic_NodeInfoLite *node = finderMode ? gNodeBrowserDataSource.selectedFinderNode()
+                                                     : gNodeBrowserDataSource.selectedOnlineNode();
     LOG_INFO("[Screen] ONLINE detail input src=%s event=%d frame=%u onlineList=%u onlineDetail=%u cursor=%u node=%08lx",
              event->source ? event->source : "(null)", event->inputEvent, ui->getUiState()->currentFrame,
              framesetInfo.positions.onlineList, framesetInfo.positions.onlineDetail,
@@ -23272,77 +13432,19 @@ bool Screen::handleOnlineNodeDetailInput(const InputEvent *event)
 
     const uint8_t rowCount = buildOnlineNodeDetailRows(*node, finderMode, nullptr, 0);
     uint8_t &detailCursor = finderMode ? gFinderNodeState.detailCursor : gOnlineNodeState.detailCursor;
-    if (detailCursor >= rowCount) {
-        detailCursor = rowCount - 1;
-    }
-
     const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
     const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
     const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
-
-    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
-    const bool isDown =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
-    const bool isLeft =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
-    const bool isRight =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
-    const bool isSelect =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
-    const bool isCancel =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
-
-    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
-    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
-    const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
-
-    int8_t navDir = 0;
-    const bool isRotary = (event->source && strncmp(event->source, "rotEnc", 6) == 0);
-    if (isRotary) {
-        if (isCcw) {
-            navDir = -1;
-        } else if (isCw) {
-            navDir = 1;
-        } else if (eventCw == 0 && eventCcw == 0) {
-            if (isUp) {
-                navDir = -1;
-            } else if (isDown) {
-                navDir = 1;
-            }
+    const HermesXNodeBrowserAction action = HermesXNodeBrowserUiController::instance().handleDetail(
+        {event->source, event->inputEvent}, {eventPress, eventCw, eventCcw}, detailCursor, rowCount);
+    if (action == HermesXNodeBrowserAction::BackToListRequested) {
+        if (finderMode) {
+            showFinderListPageSafely(true);
+        } else {
+            showOnlineNodeListPage();
         }
-    } else {
-        if (isUp || isCcw) {
-            navDir = -1;
-        } else if (isDown || isCw) {
-            navDir = 1;
-        }
-    }
-
-    if (navDir != 0) {
-        int nextCursor = static_cast<int>(detailCursor) + navDir;
-        if (nextCursor < 0) {
-            nextCursor = 0;
-        } else if (nextCursor >= rowCount) {
-            nextCursor = rowCount - 1;
-        }
-        if (nextCursor != detailCursor) {
-            detailCursor = static_cast<uint8_t>(nextCursor);
-            LOG_INFO("[Screen] ONLINE detail nav dir=%d next=%d", navDir, nextCursor);
-            setFastFramerate();
-        }
-        return true;
-    }
-
-    if (isSelect || isPress) {
-        if (detailCursor == kOnlineDetailBackRow) {
-            LOG_INFO("[Screen] ONLINE detail select -> list");
-            if (finderMode) {
-                showFinderListPageSafely(true);
-            } else {
-                showOnlineNodeListPage();
-            }
-        } else if (!finderMode && detailCursor == kOnlineDetailMessageRow) {
+    } else if (action == HermesXNodeBrowserAction::ActivateRequested) {
+        if (!finderMode && detailCursor == kOnlineDetailMessageRow) {
             LOG_INFO("[Screen] ONLINE detail select -> MSG node=%08lx", static_cast<unsigned long>(node->num));
             startDirectMessageComposer(node->num, false);
         } else if (!finderMode && detailCursor == kOnlineDetailTraceRouteRow) {
@@ -23357,22 +13459,12 @@ bool Screen::handleOnlineNodeDetailInput(const InputEvent *event)
                 sendOnlineNodeTraceRoute(node->num);
             }
         }
-        setFastFramerate();
-        return true;
     }
-
-    if (isCancel || isLeft || isRight) {
-        LOG_INFO("[Screen] ONLINE detail cancel/back -> list");
-        if (finderMode) {
-            showFinderListPageSafely(true);
-        } else {
-            showOnlineNodeListPage();
-        }
+    if (action == HermesXNodeBrowserAction::Refresh || action == HermesXNodeBrowserAction::BackToListRequested ||
+        action == HermesXNodeBrowserAction::ActivateRequested) {
         setFastFramerate();
-        return true;
     }
-
-    return false;
+    return action != HermesXNodeBrowserAction::Unhandled;
 }
 
 bool Screen::handleTraceRouteNodeListInput(const InputEvent *event)
@@ -23389,289 +13481,85 @@ bool Screen::handleTraceRouteNodeListInput(const InputEvent *event)
     const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
     const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
 
-    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
-    const bool isDown =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
-    const bool isLeft =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
-    const bool isRight =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
-    const bool isSelect =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
-    const bool isCancel =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
+    if (gTraceRouteSearchState.resultVisible || gTraceRouteSearchState.active) {
+        const HermesXTraceRoutePopupInput searchInput(event->source, event->inputEvent);
+        const HermesXTraceRoutePopupBindings searchBindings(eventPress, eventCw, eventCcw);
+        const HermesXTraceRouteSearchAction searchAction =
+            HermesXTraceRouteUiController::instance().handleSearch(searchInput, searchBindings, millis());
 
-    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
-    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
-    const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
-
-    int8_t navDir = 0;
-    const bool isRotary = (event->source && strncmp(event->source, "rotEnc", 6) == 0);
-    if (isRotary) {
-        if (isCcw) {
-            navDir = -1;
-        } else if (isCw) {
-            navDir = 1;
-        } else if (eventCw == 0 && eventCcw == 0) {
-            if (isUp || isLeft) {
-                navDir = -1;
-            } else if (isDown || isRight) {
-                navDir = 1;
+        if (searchAction == HermesXTraceRouteSearchAction::SearchRequested) {
+            gNodeBrowserDataSource.refreshTraceRoute();
+            const NodeNum foundNode = gNodeBrowserDataSource.findTraceRouteNodeByShortName(gTraceRouteSearchState.draft);
+            const bool found = foundNode != 0;
+            if (found) {
+                LOG_INFO("[Screen] TraceRoute search found short=%s node=%08lx",
+                         gTraceRouteSearchState.draft.c_str(), static_cast<unsigned long>(foundNode));
             }
-        }
-    } else if (isCcw || isUp || isLeft) {
-        navDir = -1;
-    } else if (isCw || isDown || isRight) {
-        navDir = 1;
-    }
-
-    if (gTraceRouteSearchState.resultVisible) {
-        if (navDir != 0 && gTraceRouteSearchState.resultFound) {
-            gTraceRouteSearchState.resultCursor = gTraceRouteSearchState.resultCursor == 0 ? 1 : 0;
+            const String query = gTraceRouteSearchState.draft;
+            HermesXTraceRouteUiModel::instance().showSearchResult(query, found, foundNode);
             setFastFramerate();
             requestImmediateRedraw();
-            return true;
-        }
-
-        if (isSelect || isPress || isCancel) {
-            const bool bindSelected = !isCancel && gTraceRouteSearchState.resultFound &&
-                                      gTraceRouteSearchState.resultCursor == 0;
-            const NodeNum resultNode = gTraceRouteSearchState.resultNode;
-            if (bindSelected) {
+        } else if (searchAction == HermesXTraceRouteSearchAction::BindResultRequested ||
+                   searchAction == HermesXTraceRouteSearchAction::ExitResultRequested) {
+            if (searchAction == HermesXTraceRouteSearchAction::BindResultRequested) {
+                const NodeNum resultNode = gTraceRouteSearchState.resultNode;
                 const bool bound = bindTraceRouteNode(resultNode);
-                LOG_INFO("[Screen] TraceRoute search bind node=%08lx result=%u", static_cast<unsigned long>(resultNode),
-                         bound ? 1 : 0);
+                LOG_INFO("[Screen] TraceRoute search bind node=%08lx result=%u",
+                         static_cast<unsigned long>(resultNode), bound ? 1 : 0);
             }
-            gTraceRouteSearchState = TraceRouteSearchState{};
-            gTraceRouteUiMode = TraceRouteUiMode::BindOnline;
-            gTraceRouteBoundState.bindCursor = kTraceRouteBindBackRow;
-            gTraceRouteBoundState.bindSelectedIndex = 0;
+            HermesXTraceRouteUiModel::instance().resetSearch();
+            gTraceRouteNavigationState.mode = HermesXTraceRouteUiMode::BindOnline;
+            gTraceRouteNavigationState.bindCursor = kTraceRouteBindBackRow;
+            gTraceRouteNavigationState.bindSelectedIndex = 0;
+            setFastFramerate();
+            requestImmediateRedraw();
+        } else if (searchAction == HermesXTraceRouteSearchAction::CloseRequested) {
+            HermesXTraceRouteUiModel::instance().resetSearch();
+            setFastFramerate();
+            requestImmediateRedraw();
+        } else if (searchAction == HermesXTraceRouteSearchAction::Refresh) {
             setFastFramerate();
             requestImmediateRedraw();
         }
         return true;
     }
 
-    if (gTraceRouteSearchState.active) {
-        if (isCancel) {
-            gTraceRouteSearchState = TraceRouteSearchState{};
-            setFastFramerate();
-            requestImmediateRedraw();
-            return true;
-        }
+    gNodeBrowserDataSource.refreshTraceRoute();
+    const HermesXTraceRoutePopupInput listInput(event->source, event->inputEvent);
+    const HermesXTraceRoutePopupBindings listBindings(eventPress, eventCw, eventCcw);
+    const HermesXTraceRouteListAction listAction =
+        HermesXTraceRouteUiController::instance().handleList(
+            listInput, listBindings, gNodeBrowserDataSource.traceRouteCount());
 
-        if (navDir != 0) {
-            int totalKeys = 0;
-            for (uint8_t row = 0; row < kTraceRouteSearchKeyRowCount; ++row) {
-                totalKeys += kTraceRouteSearchKeyRowLengths[row];
-            }
-            int keyIndex = 0;
-            for (uint8_t row = 0; row < kTraceRouteSearchKeyRowCount; ++row) {
-                if (row == gTraceRouteSearchState.keyRow) {
-                    keyIndex += gTraceRouteSearchState.keyCol;
-                    break;
-                }
-                keyIndex += kTraceRouteSearchKeyRowLengths[row];
-            }
-            keyIndex = (keyIndex + navDir + totalKeys) % totalKeys;
-            for (uint8_t row = 0; row < kTraceRouteSearchKeyRowCount; ++row) {
-                const uint8_t rowLength = kTraceRouteSearchKeyRowLengths[row];
-                if (keyIndex < rowLength) {
-                    gTraceRouteSearchState.keyRow = row;
-                    gTraceRouteSearchState.keyCol = static_cast<uint8_t>(keyIndex);
-                    break;
-                }
-                keyIndex -= rowLength;
-            }
-            setFastFramerate();
-            return true;
-        }
-
-        if (isSelect || isPress) {
-            const char *label =
-                kTraceRouteSearchKeyRows[gTraceRouteSearchState.keyRow][gTraceRouteSearchState.keyCol];
-            if (!label) {
-                return true;
-            }
-            if (strcmp(label, "OK") == 0) {
-                if (gTraceRouteSearchState.draft.length() == 0) {
-                    gTraceRouteSearchState.toast = u8"請輸入ShortName";
-                    gTraceRouteSearchState.toastUntilMs = millis() + 1500;
-                } else {
-                    rebuildTraceRouteNodeOrder();
-                    bool found = false;
-                    NodeNum foundNode = 0;
-                    for (uint8_t index = 0; index < gTraceRouteNodeState.count; ++index) {
-                        const meshtastic_NodeInfoLite *node =
-                            (nodeDB && nodeDB->meshNodes)
-                                ? &nodeDB->meshNodes->at(gTraceRouteNodeState.order[index])
-                                : nullptr;
-                        if (node && node->has_user &&
-                            String(node->user.short_name).equalsIgnoreCase(gTraceRouteSearchState.draft)) {
-                            LOG_INFO("[Screen] TraceRoute search found short=%s node=%08lx",
-                                     gTraceRouteSearchState.draft.c_str(), static_cast<unsigned long>(node->num));
-                            found = true;
-                            foundNode = node->num;
-                            break;
-                        }
-                    }
-                    const String query = gTraceRouteSearchState.draft;
-                    gTraceRouteSearchState = TraceRouteSearchState{};
-                    gTraceRouteSearchState.resultVisible = true;
-                    gTraceRouteSearchState.resultFound = found;
-                    gTraceRouteSearchState.resultNode = foundNode;
-                    gTraceRouteSearchState.resultCursor = found ? 0 : 1;
-                    gTraceRouteSearchState.resultQuery = query;
-                    requestImmediateRedraw();
-                }
-            } else if (strcmp(label, "EXIT") == 0) {
-                gTraceRouteSearchState = TraceRouteSearchState{};
-                requestImmediateRedraw();
-            } else if (strcmp(label, "DEL") == 0) {
-                if (gTraceRouteSearchState.draft.length() > 0) {
-                    gTraceRouteSearchState.draft.remove(gTraceRouteSearchState.draft.length() - 1);
-                }
-            } else if (gTraceRouteSearchState.draft.length() < 4) {
-                gTraceRouteSearchState.draft += label;
-            }
-            setFastFramerate();
-            return true;
-        }
-        return true;
-    }
-
-    if (gTraceRouteBoundState.confirmVisible) {
-        if (navDir != 0 || isLeft || isRight || isUp || isDown || isCw || isCcw) {
-            gTraceRouteBoundState.confirmSelected = (gTraceRouteBoundState.confirmSelected == 0) ? 1 : 0;
-            setFastFramerate();
-            return true;
-        }
-        if (isCancel) {
-            cancelDeferredTraceRouteBindShortPress();
-            gTraceRouteBoundState.confirmVisible = false;
-            gTraceRouteBoundState.confirmNode = 0;
-            gTraceRouteBoundState.confirmSelected = 1;
-            setFastFramerate();
-            return true;
-        }
-        if (isSelect || isPress) {
-            const bool confirmBind = gTraceRouteBoundState.confirmSelected == 0;
-            const NodeNum nodeNum = gTraceRouteBoundState.confirmNode;
-            gTraceRouteBoundState.confirmVisible = false;
-            gTraceRouteBoundState.confirmNode = 0;
-            gTraceRouteBoundState.confirmSelected = 1;
-            if (confirmBind) {
-                const bool bound = bindTraceRouteNode(nodeNum);
-                showTraceRoutePopup("TraceRoute", bound ? u8"已綁定" : u8"已存在或已滿");
-            }
-            setFastFramerate();
-            return true;
-        }
-        return true;
-    }
-
-    if (gTraceRouteUiMode == TraceRouteUiMode::Menu) {
-        if (navDir != 0) {
-            cancelDeferredTraceRouteBindShortPress();
-            int nextCursor = static_cast<int>(gTraceRouteBoundState.menuCursor) + navDir;
-            if (nextCursor < 0) {
-                nextCursor = 0;
-            } else if (nextCursor > 2) {
-                nextCursor = 2;
-            }
-            gTraceRouteBoundState.menuCursor = static_cast<uint8_t>(nextCursor);
-            setFastFramerate();
-            return true;
-        }
-        if (isSelect || isPress) {
-            cancelDeferredTraceRouteBindShortPress();
-            if (gTraceRouteBoundState.menuCursor == 0) {
-                showHermesXActionPage();
-            } else if (gTraceRouteBoundState.menuCursor == 1) {
-                gTraceRouteUiMode = TraceRouteUiMode::BindOnline;
-                rebuildTraceRouteNodeOrder();
-                gTraceRouteBoundState.bindCursor = kTraceRouteBindSearchRow;
-                gTraceRouteBoundState.bindSelectedIndex = 0;
-                LOG_INFO("[Screen] TraceRoute menu -> bind count=%u cursor=%u",
-                         static_cast<unsigned>(gTraceRouteNodeState.count),
-                         static_cast<unsigned>(gTraceRouteBoundState.bindCursor));
-            } else {
-                gTraceRouteUiMode = TraceRouteUiMode::BoundRoutes;
-                compactTraceRouteBoundNodes();
-                gTraceRouteBoundState.boundCursor = 0;
-                gTraceRouteBoundState.boundSelectedIndex = 0;
-                showTraceRouteNodeDetailPage();
-            }
-            setFastFramerate();
-            return true;
-        }
-        if (isCancel) {
-            cancelDeferredTraceRouteBindShortPress();
-            showHermesXActionPage();
-            setFastFramerate();
-            return true;
-        }
+    if (listAction == HermesXTraceRouteListAction::Ignored) {
         return false;
     }
 
-    rebuildTraceRouteNodeOrder();
-    const int totalEntries = static_cast<int>(gTraceRouteNodeState.count) + kTraceRouteBindFirstNodeRow;
-    if (gTraceRouteBoundState.bindCursor >= totalEntries) {
-        gTraceRouteBoundState.bindCursor = kTraceRouteBindSearchRow;
-        gTraceRouteBoundState.bindSelectedIndex = 0;
-    }
-    if (navDir != 0) {
-        cancelDeferredTraceRouteBindShortPress();
-        int nextCursor = static_cast<int>(gTraceRouteBoundState.bindCursor) + navDir;
-        if (nextCursor < 0) {
-            nextCursor = 0;
-        } else if (nextCursor >= totalEntries) {
-            nextCursor = totalEntries - 1;
-        }
-
-        if (nextCursor != gTraceRouteBoundState.bindCursor) {
-            gTraceRouteBoundState.bindCursor = static_cast<uint8_t>(nextCursor);
-            if (nextCursor >= kTraceRouteBindFirstNodeRow) {
-                gTraceRouteBoundState.bindSelectedIndex =
-                    traceRouteBindNodeIndex(static_cast<uint8_t>(nextCursor));
-            }
-            LOG_INFO("[Screen] TraceRoute bind nav dir=%d cursor=%u selected=%u count=%u", navDir,
-                     static_cast<unsigned>(gTraceRouteBoundState.bindCursor),
-                     static_cast<unsigned>(gTraceRouteBoundState.bindSelectedIndex),
-                     static_cast<unsigned>(gTraceRouteNodeState.count));
-            setFastFramerate();
-        }
-        return true;
-    }
-
-    if (isSelect || isPress) {
-        cancelDeferredTraceRouteBindShortPress();
-        if (gTraceRouteBoundState.bindCursor == kTraceRouteBindSearchRow) {
-            gTraceRouteSearchState = TraceRouteSearchState{};
-            gTraceRouteSearchState.active = true;
+    if (listAction == HermesXTraceRouteListAction::ExitFeatureRequested) {
+        showHermesXActionPage();
+    } else if (listAction == HermesXTraceRouteListAction::OpenSearchRequested) {
+        HermesXTraceRouteUiModel::instance().beginSearch();
+        requestImmediateRedraw();
+    } else if (listAction == HermesXTraceRouteListAction::ShowBindInfoRequested) {
+        if (showTraceRouteBindInfoForSelectedNode()) {
             requestImmediateRedraw();
-        } else if (gTraceRouteBoundState.bindCursor == kTraceRouteBindBackRow) {
-            gTraceRouteUiMode = TraceRouteUiMode::Menu;
-        } else {
-            if (isRotary) {
-                deferTraceRouteBindShortPressForSelectedNode();
-            } else if (showTraceRouteBindInfoForSelectedNode()) {
-                requestImmediateRedraw();
-            }
         }
-        setFastFramerate();
-        return true;
+    } else if (listAction == HermesXTraceRouteListAction::DeferBindInfoRequested) {
+        deferTraceRouteBindShortPressForSelectedNode();
+    } else if (listAction == HermesXTraceRouteListAction::OpenBoundRoutesRequested) {
+        syncTraceRouteBoundSelection();
+        showTraceRouteNodeDetailPage();
+    } else if (listAction == HermesXTraceRouteListAction::BindConfirmed) {
+        const NodeNum nodeNum = gTraceRouteNavigationState.confirmNode;
+        HermesXTraceRouteUiModel::instance().dismissBindConfirm();
+        const bool bound = bindTraceRouteNode(nodeNum);
+        showTraceRoutePopup("TraceRoute", bound ? u8"已綁定" : u8"已存在或已滿");
     }
 
-    if (isCancel) {
-        cancelDeferredTraceRouteBindShortPress();
-        gTraceRouteUiMode = TraceRouteUiMode::Menu;
+    if (listAction != HermesXTraceRouteListAction::Consumed) {
         setFastFramerate();
-        return true;
     }
-
-    return false;
+    return true;
 }
 
 bool Screen::handleTraceRouteNodeDetailInput(const InputEvent *event)
@@ -23684,106 +13572,44 @@ bool Screen::handleTraceRouteNodeDetailInput(const InputEvent *event)
         return false;
     }
 
-    gTraceRouteUiMode = TraceRouteUiMode::BoundRoutes;
-    compactTraceRouteBoundNodes();
+    syncTraceRouteBoundSelection();
 
     const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
     const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
     const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
 
-    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
-    const bool isDown =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
-    const bool isLeft =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
-    const bool isRight =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
-    const bool isSelect =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
-    const bool isCancel =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
+    const HermesXTraceRoutePopupInput listInput(event->source, event->inputEvent);
+    const HermesXTraceRoutePopupBindings listBindings(eventPress, eventCw, eventCcw);
+    const HermesXTraceRouteBoundListAction listAction = HermesXTraceRouteUiController::instance().handleBoundList(
+        listInput, listBindings, gTraceRouteBindings.count());
 
-    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
-    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
-    const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
-
-    int8_t navDir = 0;
-    const bool isRotary = (event->source && strncmp(event->source, "rotEnc", 6) == 0);
-    if (isRotary) {
-        if (isCcw) {
-            navDir = -1;
-        } else if (isCw) {
-            navDir = 1;
-        } else if (eventCw == 0 && eventCcw == 0) {
-            if (isUp) {
-                navDir = -1;
-            } else if (isDown) {
-                navDir = 1;
-            }
-        }
-    } else if (isUp || isCcw) {
-        navDir = -1;
-    } else if (isDown || isCw) {
-        navDir = 1;
+    if (listAction == HermesXTraceRouteBoundListAction::Ignored) {
+        return false;
     }
 
-    const int totalEntries = static_cast<int>(gTraceRouteBoundState.count) + 1;
-    if (navDir != 0) {
-        cancelDeferredTraceRouteBoundShortPress();
-        int nextCursor = static_cast<int>(gTraceRouteBoundState.boundCursor) + navDir;
-        if (nextCursor < 0) {
-            nextCursor = 0;
-        } else if (nextCursor >= totalEntries) {
-            nextCursor = totalEntries - 1;
-        }
-        if (nextCursor != gTraceRouteBoundState.boundCursor) {
-            gTraceRouteBoundState.boundCursor = static_cast<uint8_t>(nextCursor);
-            if (nextCursor > 0) {
-                gTraceRouteBoundState.boundSelectedIndex = static_cast<uint8_t>(nextCursor - 1);
-            }
-            setFastFramerate();
-        }
-        return true;
-    }
-
-    if (isSelect || isPress) {
-        cancelDeferredTraceRouteBoundShortPress();
-        if (gTraceRouteBoundState.boundCursor == 0) {
-            gTraceRouteUiMode = TraceRouteUiMode::Menu;
-            showTraceRouteNodeListPage();
-        } else {
-            if (isRotary) {
-                deferTraceRouteBoundShortPressForSelectedNode();
-            } else {
-                sendTraceRouteForSelectedBoundNode();
-            }
-        }
-        setFastFramerate();
-        return true;
-    }
-
-    if (isCancel || isLeft || isRight) {
-        cancelDeferredTraceRouteBoundShortPress();
-        gTraceRouteUiMode = TraceRouteUiMode::Menu;
+    if (listAction == HermesXTraceRouteBoundListAction::ReturnToMenuRequested) {
         showTraceRouteNodeListPage();
-        setFastFramerate();
-        return true;
+    } else if (listAction == HermesXTraceRouteBoundListAction::SendRequested) {
+        sendTraceRouteForSelectedBoundNode();
+    } else if (listAction == HermesXTraceRouteBoundListAction::DeferSendRequested) {
+        deferTraceRouteBoundShortPressForSelectedNode();
     }
-
-    return false;
+    if (listAction != HermesXTraceRouteBoundListAction::Consumed) {
+        setFastFramerate();
+    }
+    return true;
 }
 
 bool Screen::handleTraceRouteBindLongPress()
 {
     if (!showingNormalScreen || !ui || !isTraceRouteNodeListPageActive() ||
-        gTraceRouteUiMode != TraceRouteUiMode::BindOnline || gTraceRouteBoundState.confirmVisible ||
+        gTraceRouteNavigationState.mode != HermesXTraceRouteUiMode::BindOnline || gTraceRouteNavigationState.confirmVisible ||
         gTraceRouteSearchState.active || gTraceRouteSearchState.resultVisible ||
-        !isTraceRouteBindNodeRow(gTraceRouteBoundState.bindCursor)) {
+        !isTraceRouteBindNodeRow(gTraceRouteNavigationState.bindCursor)) {
         LOG_DEBUG("[Screen] TraceRoute bind long ignored normal=%u ui=%u active=%u mode=%u confirm=%u cursor=%u",
                   showingNormalScreen ? 1 : 0, ui ? 1 : 0, isTraceRouteNodeListPageActive() ? 1 : 0,
-                  static_cast<unsigned>(gTraceRouteUiMode), gTraceRouteBoundState.confirmVisible ? 1 : 0,
-                  static_cast<unsigned>(gTraceRouteBoundState.bindCursor));
+                  static_cast<unsigned>(gTraceRouteNavigationState.mode), gTraceRouteNavigationState.confirmVisible ? 1 : 0,
+                  static_cast<unsigned>(gTraceRouteNavigationState.bindCursor));
         return false;
     }
     openTraceRouteBindConfirmForSelectedNode();
@@ -23795,16 +13621,16 @@ bool Screen::handleTraceRouteBindLongPress()
 bool Screen::shouldUseTraceRouteBindQuickLongPress() const
 {
     return showingNormalScreen && ui && isTraceRouteNodeListPageActive() &&
-           gTraceRouteUiMode == TraceRouteUiMode::BindOnline && !gTraceRouteBoundState.confirmVisible &&
+           gTraceRouteNavigationState.mode == HermesXTraceRouteUiMode::BindOnline && !gTraceRouteNavigationState.confirmVisible &&
            !gTraceRouteSearchState.active && !gTraceRouteSearchState.resultVisible &&
-           isTraceRouteBindNodeRow(gTraceRouteBoundState.bindCursor);
+           isTraceRouteBindNodeRow(gTraceRouteNavigationState.bindCursor);
 }
 
 bool Screen::shouldUseTraceRouteBoundQuickLongPress() const
 {
     return showingNormalScreen && ui && isTraceRouteNodeDetailPageActive() &&
-           gTraceRouteUiMode == TraceRouteUiMode::BoundRoutes && gTraceRouteBoundState.boundCursor != 0 &&
-           gTraceRouteBoundState.count > 0;
+           gTraceRouteNavigationState.mode == HermesXTraceRouteUiMode::BoundRoutes && gTraceRouteNavigationState.boundCursor != 0 &&
+           gTraceRouteBindings.count() > 0;
 }
 
 bool Screen::handleTraceRouteBoundLongPress()
@@ -23822,29 +13648,29 @@ bool Screen::handleTraceRouteBoundLongPress()
 
 void Screen::completeDeferredTraceRouteBindShortPress()
 {
-    if (!gTraceRouteBoundState.deferredShortVisible) {
+    if (!gTraceRouteNavigationState.deferredBindVisible) {
         return;
     }
 
-    const uint8_t deferredCursor = gTraceRouteBoundState.deferredShortCursor;
-    const NodeNum deferredNode = gTraceRouteBoundState.deferredShortNode;
+    const uint8_t deferredCursor = gTraceRouteNavigationState.deferredBindCursor;
+    const NodeNum deferredNode = gTraceRouteNavigationState.deferredBindNode;
     cancelDeferredTraceRouteBindShortPress();
 
     if (!showingNormalScreen || !ui || !isTraceRouteNodeListPageActive() || gTraceRouteSearchState.active ||
         gTraceRouteSearchState.resultVisible ||
-        gTraceRouteUiMode != TraceRouteUiMode::BindOnline || gTraceRouteBoundState.confirmVisible ||
+        gTraceRouteNavigationState.mode != HermesXTraceRouteUiMode::BindOnline || gTraceRouteNavigationState.confirmVisible ||
         !isTraceRouteBindNodeRow(deferredCursor) || deferredNode == 0) {
         return;
     }
 
-    rebuildTraceRouteNodeOrder();
+    gNodeBrowserDataSource.refreshTraceRoute();
     const uint8_t deferredIndex = traceRouteBindNodeIndex(deferredCursor);
-    if (deferredIndex >= gTraceRouteNodeState.count) {
+    if (deferredIndex >= gNodeBrowserDataSource.traceRouteCount()) {
         return;
     }
 
-    gTraceRouteBoundState.bindCursor = deferredCursor;
-    gTraceRouteBoundState.bindSelectedIndex = deferredIndex;
+    gTraceRouteNavigationState.bindCursor = deferredCursor;
+    gTraceRouteNavigationState.bindSelectedIndex = deferredIndex;
     const meshtastic_NodeInfoLite *node = getSelectedTraceRouteNode();
     if (!node || node->num != deferredNode) {
         LOG_WARN("[Screen] TraceRoute bind deferred short stale node=%08lx cursor=%u",
@@ -23860,26 +13686,26 @@ void Screen::completeDeferredTraceRouteBindShortPress()
 
 void Screen::completeDeferredTraceRouteBoundShortPress()
 {
-    if (!gTraceRouteBoundState.deferredRouteVisible) {
+    if (!gTraceRouteNavigationState.deferredRouteVisible) {
         return;
     }
 
-    const uint8_t deferredCursor = gTraceRouteBoundState.deferredRouteCursor;
-    const NodeNum deferredNode = gTraceRouteBoundState.deferredRouteNode;
+    const uint8_t deferredCursor = gTraceRouteNavigationState.deferredRouteCursor;
+    const NodeNum deferredNode = gTraceRouteNavigationState.deferredRouteNode;
     cancelDeferredTraceRouteBoundShortPress();
 
     if (!showingNormalScreen || !ui || !isTraceRouteNodeDetailPageActive() ||
-        gTraceRouteUiMode != TraceRouteUiMode::BoundRoutes || deferredCursor == 0 || deferredNode == 0) {
+        gTraceRouteNavigationState.mode != HermesXTraceRouteUiMode::BoundRoutes || deferredCursor == 0 || deferredNode == 0) {
         return;
     }
 
-    compactTraceRouteBoundNodes();
-    if (deferredCursor > gTraceRouteBoundState.count) {
+    syncTraceRouteBoundSelection();
+    if (deferredCursor > gTraceRouteBindings.count()) {
         return;
     }
 
-    gTraceRouteBoundState.boundCursor = deferredCursor;
-    gTraceRouteBoundState.boundSelectedIndex = deferredCursor - 1;
+    gTraceRouteNavigationState.boundCursor = deferredCursor;
+    gTraceRouteNavigationState.boundSelectedIndex = deferredCursor - 1;
     const meshtastic_NodeInfoLite *node = getSelectedTraceRouteNode();
     if (!node || node->num != deferredNode) {
         LOG_WARN("[Screen] TraceRoute bound deferred short stale node=%08lx cursor=%u",
@@ -23895,12 +13721,20 @@ void Screen::completeDeferredTraceRouteBoundShortPress()
 
 bool Screen::handleDirectMessageComposerInput(const InputEvent *event)
 {
-    if (!event || !gDirectMessageComposerState.active) {
+    if (!event || !gDirectMessageComposer.active()) {
         return false;
     }
 
-    auto closeComposer = [&]() {
-        const bool wasGroup = gDirectMessageComposerState.fromGroupDetail;
+    const HermesXComposerInput composerInput(event->source, event->inputEvent, event->kbchar);
+    const HermesXComposerInputBindings bindings(
+        static_cast<char>(moduleConfig.canned_message.inputbroker_event_press),
+        static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw),
+        static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw));
+    const HermesXComposerAction action = gDirectMessageComposer.handleInput(
+        composerInput, bindings, millis(), meshtastic_Constants_DATA_PAYLOAD_LEN);
+
+    if (action == HermesXComposerAction::CloseRequested) {
+        const bool wasGroup = gDirectMessageComposer.fromGroupDetail();
         stopDirectMessageComposer();
         if (wasGroup) {
             showGroupNodeDetailPage();
@@ -23909,16 +13743,11 @@ bool Screen::handleDirectMessageComposerInput(const InputEvent *event)
         }
         setFastFramerate();
         requestImmediateRedraw();
-    };
+        return true;
+    }
 
-    auto sendDraft = [&]() {
-        if (gDirectMessageComposerState.draft.length() == 0) {
-            gDirectMessageComposerState.toast = u8"訊息是空的";
-            gDirectMessageComposerState.toastUntilMs = millis() + 1200;
-            setFastFramerate();
-            return;
-        }
-        const bool sent = sendDirectTextMessage(gDirectMessageComposerState.dest, gDirectMessageComposerState.draft);
+    if (action == HermesXComposerAction::SendRequested) {
+        const bool sent = sendDirectTextMessage(gDirectMessageComposer.destination(), gDirectMessageComposer.draft());
         if (HermesXInterfaceModule::instance) {
             if (sent) {
                 HermesXInterfaceModule::instance->playSendFeedback();
@@ -23927,260 +13756,25 @@ bool Screen::handleDirectMessageComposerInput(const InputEvent *event)
             }
         }
         if (sent) {
-            closeComposer();
+            const bool wasGroup = gDirectMessageComposer.fromGroupDetail();
+            stopDirectMessageComposer();
+            if (wasGroup) {
+                showGroupNodeDetailPage();
+            } else {
+                showOnlineNodeDetailPage();
+            }
+            requestImmediateRedraw();
         } else {
-            gDirectMessageComposerState.toast = "SEND FAIL";
-            gDirectMessageComposerState.toastUntilMs = millis() + 1200;
-            setFastFramerate();
+            gDirectMessageComposer.showSendFailure(millis());
         }
-    };
+        setFastFramerate();
+        return true;
+    }
 
-    auto openBopomofoCandidates = [&]() {
-        if (!gDirectMessageComposerState.bpmf.composing()) {
-            return false;
-        }
-        gDirectMessageComposerState.bpmf.refresh();
-        if (!gDirectMessageComposerState.bpmf.hasCandidates()) {
-            gDirectMessageComposerState.toast = u8"沒有候選字";
-            gDirectMessageComposerState.toastUntilMs = millis() + 1200;
-            setFastFramerate();
-            return false;
-        }
-        gDirectMessageComposerState.candidateMode = true;
-        gDirectMessageComposerState.candidateCursor = 1;
+    if (action == HermesXComposerAction::Refresh) {
         setFastFramerate();
         requestImmediateRedraw();
-        return true;
-    };
-
-    const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
-    const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
-    const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
-    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
-    const bool isDown = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
-    const bool isLeft = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
-    const bool isRight = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
-    const bool isSelect = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
-    const bool isCancel =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL);
-    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
-    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
-    const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
-    const bool isRotary = event->source && strncmp(event->source, "rotEnc", 6) == 0;
-
-    int8_t navDir = 0;
-    if (isRotary) {
-        if (isCcw) {
-            navDir = -1;
-        } else if (isCw) {
-            navDir = 1;
-        } else if (eventCw == 0 && eventCcw == 0) {
-            if (isUp || isLeft) {
-                navDir = -1;
-            } else if (isDown || isRight) {
-                navDir = 1;
-            }
-        }
-    } else if (isUp || isLeft || isCcw) {
-        navDir = -1;
-    } else if (isDown || isRight || isCw) {
-        navDir = 1;
     }
-
-    if (gDirectMessageComposerState.candidateMode) {
-        const std::vector<std::string> &candidates = gDirectMessageComposerState.bpmf.candidates();
-        const int totalEntries = static_cast<int>(candidates.size()) + 1;
-        if (isCancel || event->inputEvent ==
-                            static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK) ||
-            (!isRotary && (isLeft || isRight))) {
-            gDirectMessageComposerState.candidateMode = false;
-            gDirectMessageComposerState.candidateCursor = 0;
-            setFastFramerate();
-            requestImmediateRedraw();
-            return true;
-        }
-        if (navDir != 0 && totalEntries > 0) {
-            int next = static_cast<int>(gDirectMessageComposerState.candidateCursor) + navDir;
-            next = (next + totalEntries) % totalEntries;
-            gDirectMessageComposerState.candidateCursor = static_cast<uint8_t>(next);
-            setFastFramerate();
-            return true;
-        }
-        if (isSelect || isPress || event->kbchar == 0x0D || event->kbchar == 0x0A) {
-            if (gDirectMessageComposerState.candidateCursor == 0) {
-                gDirectMessageComposerState.candidateMode = false;
-                setFastFramerate();
-                requestImmediateRedraw();
-                return true;
-            }
-            const size_t candidateIndex = gDirectMessageComposerState.candidateCursor - 1;
-            if (candidateIndex < candidates.size()) {
-                const std::string &candidate = candidates[candidateIndex];
-                if (gDirectMessageComposerState.draft.length() + candidate.length() >
-                    meshtastic_Constants_DATA_PAYLOAD_LEN) {
-                    gDirectMessageComposerState.candidateMode = false;
-                    gDirectMessageComposerState.toast = u8"訊息已達上限";
-                    gDirectMessageComposerState.toastUntilMs = millis() + 1200;
-                    setFastFramerate();
-                    return true;
-                }
-                const std::string committed = gDirectMessageComposerState.bpmf.select(candidateIndex);
-                gDirectMessageComposerState.draft += committed.c_str();
-            }
-            gDirectMessageComposerState.candidateMode = false;
-            gDirectMessageComposerState.candidateCursor = 0;
-            setFastFramerate();
-            requestImmediateRedraw();
-            return true;
-        }
-        return true;
-    }
-
-    if (isCancel || (!isRotary && (isLeft || isRight))) {
-        closeComposer();
-        return true;
-    }
-
-    if (event->kbchar >= 0x20 && event->kbchar <= 0x7E &&
-        event->kbchar != INPUT_BROKER_MSG_LEFT && event->kbchar != INPUT_BROKER_MSG_RIGHT &&
-        event->kbchar != INPUT_BROKER_MSG_UP && event->kbchar != INPUT_BROKER_MSG_DOWN) {
-        if (gDirectMessageComposerState.bopomofoMode) {
-            char key = static_cast<char>(event->kbchar);
-            if (key == ' ') {
-                if (gDirectMessageComposerState.bpmf.composing()) {
-                    gDirectMessageComposerState.bpmf.addSpace();
-                } else if (gDirectMessageComposerState.draft.length() < meshtastic_Constants_DATA_PAYLOAD_LEN) {
-                    gDirectMessageComposerState.draft += ' ';
-                }
-                setFastFramerate();
-                return true;
-            }
-            if (key >= 'A' && key <= 'Z') {
-                key = static_cast<char>(key - 'A' + 'a');
-            }
-            const hermesx_bpmf::HermesXBpmfSymbol *symbol = hermesx_bpmf::lookup_key(key);
-            if (symbol) {
-                gDirectMessageComposerState.bpmf.addSymbol(*symbol);
-            }
-            setFastFramerate();
-            return true;
-        }
-        if (gDirectMessageComposerState.draft.length() < meshtastic_Constants_DATA_PAYLOAD_LEN) {
-            gDirectMessageComposerState.draft += event->kbchar;
-        }
-        setFastFramerate();
-        return true;
-    }
-
-    if (event->kbchar == 0x08 || event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK)) {
-        if (gDirectMessageComposerState.bopomofoMode && gDirectMessageComposerState.bpmf.composing()) {
-            gDirectMessageComposerState.bpmf.backspace();
-            setFastFramerate();
-            return true;
-        }
-        if (gDirectMessageComposerState.draft.length() > 0) {
-            removeLastUtf8Character(gDirectMessageComposerState.draft);
-            setFastFramerate();
-            return true;
-        }
-        closeComposer();
-        return true;
-    }
-
-    if (event->kbchar == 0x0D || event->kbchar == 0x0A) {
-        if (gDirectMessageComposerState.bopomofoMode && gDirectMessageComposerState.bpmf.composing()) {
-            openBopomofoCandidates();
-        } else {
-            sendDraft();
-        }
-        return true;
-    }
-
-    if (navDir != 0) {
-        const uint8_t *rowLengths = getDirectMessageKeyRowLengths();
-        int totalKeys = 0;
-        for (uint8_t row = 0; row < kDirectMessageKeyRowCount; ++row) {
-            totalKeys += rowLengths[row];
-        }
-        int index = 0;
-        for (uint8_t row = 0; row < kDirectMessageKeyRowCount; ++row) {
-            if (row == gDirectMessageComposerState.keyRow) {
-                index += gDirectMessageComposerState.keyCol;
-                break;
-            }
-            index += rowLengths[row];
-        }
-        index = (index + navDir + totalKeys) % totalKeys;
-        int remaining = index;
-        for (uint8_t row = 0; row < kDirectMessageKeyRowCount; ++row) {
-            const uint8_t rowLen = rowLengths[row];
-            if (remaining < rowLen) {
-                gDirectMessageComposerState.keyRow = row;
-                gDirectMessageComposerState.keyCol = remaining;
-                break;
-            }
-            remaining -= rowLen;
-        }
-        setFastFramerate();
-        return true;
-    }
-
-    if (isSelect || isPress) {
-        const char *label = getDirectMessageKeyRows()[gDirectMessageComposerState.keyRow][gDirectMessageComposerState.keyCol];
-        if (!label) {
-            return true;
-        }
-        if (strcmp(label, "OK") == 0) {
-            if (gDirectMessageComposerState.bopomofoMode && gDirectMessageComposerState.bpmf.composing()) {
-                openBopomofoCandidates();
-            } else {
-                sendDraft();
-            }
-        } else if (strcmp(label, "EXIT") == 0) {
-            closeComposer();
-        } else if (strcmp(label, "DEL") == 0) {
-            if (gDirectMessageComposerState.bopomofoMode && gDirectMessageComposerState.bpmf.composing()) {
-                gDirectMessageComposerState.bpmf.backspace();
-            } else if (gDirectMessageComposerState.draft.length() > 0) {
-                removeLastUtf8Character(gDirectMessageComposerState.draft);
-            }
-        } else if (strcmp(label, "Aa") == 0) {
-            gDirectMessageComposerState.lowercase = !gDirectMessageComposerState.lowercase;
-        } else if (strcmp(label, u8"˙") == 0) {
-            const hermesx_bpmf::HermesXBpmfSymbol *tone = hermesx_bpmf::tone5_symbol();
-            if (tone) {
-                gDirectMessageComposerState.bpmf.addSymbol(*tone);
-            }
-        } else if (strcmp(label, u8"中") == 0) {
-            gDirectMessageComposerState.bopomofoMode = true;
-            gDirectMessageComposerState.bpmf.reset();
-        } else if (strcmp(label, "EN") == 0) {
-            gDirectMessageComposerState.bopomofoMode = false;
-            gDirectMessageComposerState.bpmf.reset();
-            if (gDirectMessageComposerState.keyRow == kDirectMessageKeyRowCount - 1 &&
-                gDirectMessageComposerState.keyCol >= kDirectMessageKeyRowLengthsEnglish[kDirectMessageKeyRowCount - 1]) {
-                gDirectMessageComposerState.keyCol = kDirectMessageKeyRowLengthsEnglish[kDirectMessageKeyRowCount - 1] - 1;
-            }
-        } else if (strcmp(label, "SP") == 0) {
-            if (gDirectMessageComposerState.bopomofoMode && gDirectMessageComposerState.bpmf.composing()) {
-                gDirectMessageComposerState.bpmf.addSpace();
-            } else if (gDirectMessageComposerState.draft.length() < meshtastic_Constants_DATA_PAYLOAD_LEN) {
-                gDirectMessageComposerState.draft += ' ';
-            }
-        } else if (gDirectMessageComposerState.bopomofoMode && gDirectMessageComposerState.keyRow < 4) {
-            const char key = kDirectMessageBopomofoScreenKeys[gDirectMessageComposerState.keyRow]
-                                                                [gDirectMessageComposerState.keyCol];
-            const hermesx_bpmf::HermesXBpmfSymbol *symbol = hermesx_bpmf::screen_symbol(key);
-            if (symbol) {
-                gDirectMessageComposerState.bpmf.addSymbol(*symbol);
-            }
-        } else if (gDirectMessageComposerState.draft.length() + strlen(label) <= meshtastic_Constants_DATA_PAYLOAD_LEN) {
-            gDirectMessageComposerState.draft += label;
-        }
-        setFastFramerate();
-        return true;
-    }
-
     return true;
 }
 
@@ -24193,72 +13787,29 @@ bool Screen::handleFinderNodeListInput(const InputEvent *event)
     const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
     const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
     const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
-    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
-    const bool isDown = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
-    const bool isLeft = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
-    const bool isRight = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
-    const bool isSelect = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
-    const bool isCancel = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
-                          event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
-    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
-    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
-    const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
-
-    int8_t navDir = 0;
-    const bool isRotary = (event->source && strncmp(event->source, "rotEnc", 6) == 0);
-    if (isRotary) {
-        if (isCcw) {
-            navDir = -1;
-        } else if (isCw) {
-            navDir = 1;
-        } else if (eventCw == 0 && eventCcw == 0) {
-            if (isUp || isLeft) {
-                navDir = -1;
-            } else if (isDown || isRight) {
-                navDir = 1;
-            }
-        }
-    } else {
-        if (isCcw || isUp || isLeft) {
-            navDir = -1;
-        } else if (isCw || isDown || isRight) {
-            navDir = 1;
-        }
-    }
+    const HermesXNodeBrowserInput input(event->source, event->inputEvent);
+    const HermesXNodeBrowserInputBindings bindings(eventPress, eventCw, eventCcw);
+    auto &controller = HermesXNodeBrowserUiController::instance();
 
     if (hermesFinderUiMode == HermesFinderUiMode::Menu) {
-        if (navDir != 0) {
-            int next = static_cast<int>(hermesFinderMenuSelected) + navDir;
-            if (next < 0) {
-                next = 0;
-            }
-            if (next > 2) {
-                next = 2;
-            }
-            hermesFinderMenuSelected = static_cast<uint8_t>(next);
+        const HermesXNodeBrowserAction action = controller.handleMenu(input, bindings, hermesFinderMenuSelected, 3);
+        if (action == HermesXNodeBrowserAction::Refresh) {
             setFastFramerate();
             return true;
         }
-        if (isCancel || ((isSelect || isPress) && hermesFinderMenuSelected == 0)) {
+        if (action == HermesXNodeBrowserAction::ExitRequested) {
             hermesFinderUiMode = HermesFinderUiMode::None;
             showHermesXActionPage();
             setFastFramerate();
             return true;
         }
-        if (isSelect || isPress) {
+        if (action == HermesXNodeBrowserAction::ActivateRequested) {
             if (hermesFinderMenuSelected == 1) {
-                hermesFinderPulseConfirmVisible = true;
-                hermesFinderPulseConfirmSelected = 0;
-                hermesFinderPulseConfirmShownAtMs = millis();
-                hermesFinderPulseDispatched = false;
-                hermesFinderPulseSendingVisible = false;
-                hermesFinderPulseSendingShownAtMs = 0;
+                HermesXNodeBrowserUiController::instance().beginFinderPulseConfirm(millis());
             } else if (hermesFinderMenuSelected == 2) {
                 hermesFinderUiMode = HermesFinderUiMode::PositionList;
-                rebuildFinderNodeOrder();
-                gFinderNodeState.listCursor = 0;
-                gFinderNodeState.selectedIndex = 0;
-                gFinderNodeState.detailCursor = 0;
+                gNodeBrowserDataSource.refreshFinder();
+                gNodeBrowserUiModel.reset(gFinderNodeState);
                 showFinderListPageSafely(true);
             }
             setFastFramerate();
@@ -24268,53 +13819,29 @@ bool Screen::handleFinderNodeListInput(const InputEvent *event)
     }
 
     hermesFinderUiMode = HermesFinderUiMode::PositionList;
-    rebuildFinderNodeOrder();
+    gNodeBrowserDataSource.refreshFinder();
     LOG_INFO("[Screen] FINDER list input src=%s event=%d frame=%u finderList=%u finderDetail=%u cursor=%u count=%u",
              event->source ? event->source : "(null)", event->inputEvent, ui->getUiState()->currentFrame,
              framesetInfo.positions.finderList, framesetInfo.positions.finderDetail, gFinderNodeState.listCursor,
              gFinderNodeState.count);
 
-    uint8_t &listCursor = gFinderNodeState.listCursor;
-    const int totalEntries = static_cast<int>(gFinderNodeState.count) + 1;
-    if (navDir != 0) {
-        int nextCursor = static_cast<int>(listCursor) + navDir;
-        if (nextCursor < 0) {
-            nextCursor = 0;
-        } else if (nextCursor >= totalEntries) {
-            nextCursor = totalEntries - 1;
-        }
-        if (nextCursor != listCursor) {
-            listCursor = static_cast<uint8_t>(nextCursor);
-            if (nextCursor > 0) {
-                gFinderNodeState.selectedIndex = static_cast<uint8_t>(nextCursor - 1);
-            }
-            setFastFramerate();
-        }
-        return true;
-    }
-
-    if (isSelect || isPress) {
-        if (listCursor == 0) {
-            hermesFinderUiMode = HermesFinderUiMode::None;
-            showHermesXActionPage();
-        } else {
-            gFinderNodeState.selectedIndex = listCursor - 1;
-            gFinderNodeState.detailCursor = 0;
-            showFinderNodeDetailPage();
-        }
-        setFastFramerate();
-        return true;
-    }
-
-    if (isCancel) {
+    const HermesXNodeBrowserAction action = controller.handleList(input, bindings, gFinderNodeState);
+    if (action == HermesXNodeBrowserAction::ExitRequested) {
+        hermesFinderUiMode = HermesFinderUiMode::None;
+        showHermesXActionPage();
+    } else if (action == HermesXNodeBrowserAction::CancelRequested) {
         hermesFinderUiMode = HermesFinderUiMode::Menu;
         hermesFinderMenuSelected = 2;
         showFinderListPageSafely(true);
-        setFastFramerate();
-        return true;
+    } else if (action == HermesXNodeBrowserAction::OpenDetailRequested) {
+        showFinderNodeDetailPage();
     }
-
-    return false;
+    if (action == HermesXNodeBrowserAction::Refresh || action == HermesXNodeBrowserAction::ExitRequested ||
+        action == HermesXNodeBrowserAction::CancelRequested ||
+        action == HermesXNodeBrowserAction::OpenDetailRequested) {
+        setFastFramerate();
+    }
+    return action != HermesXNodeBrowserAction::Unhandled;
 }
 
 bool Screen::handleFinderNodeDetailInput(const InputEvent *event)
@@ -24323,16 +13850,14 @@ bool Screen::handleFinderNodeDetailInput(const InputEvent *event)
         return false;
     }
 
-    const meshtastic_NodeInfoLite *node = getSelectedFinderNode();
+    const meshtastic_NodeInfoLite *node = gNodeBrowserDataSource.selectedFinderNode();
     LOG_INFO("[Screen] FINDER detail input src=%s event=%d frame=%u finderList=%u finderDetail=%u cursor=%u node=%08lx",
              event->source ? event->source : "(null)", event->inputEvent, ui->getUiState()->currentFrame,
              framesetInfo.positions.finderList, framesetInfo.positions.finderDetail, gFinderNodeState.detailCursor,
              static_cast<unsigned long>(node ? node->num : 0));
     if (!node) {
         hermesFinderUiMode = HermesFinderUiMode::PositionList;
-        gFinderNodeState.listCursor = 0;
-        gFinderNodeState.selectedIndex = 0;
-        gFinderNodeState.detailCursor = 0;
+        gNodeBrowserUiModel.reset(gFinderNodeState);
         if (framesetInfo.positions.finderList < framesetInfo.frameCount) {
             ui->switchToFrame(framesetInfo.positions.finderList);
         }
@@ -24342,68 +13867,20 @@ bool Screen::handleFinderNodeDetailInput(const InputEvent *event)
     }
 
     const uint8_t rowCount = buildOnlineNodeDetailRows(*node, true, nullptr, 0);
-    uint8_t &detailCursor = gFinderNodeState.detailCursor;
-    if (detailCursor >= rowCount) {
-        detailCursor = rowCount - 1;
-    }
-
     const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
     const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
     const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
-    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
-    const bool isDown = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
-    const bool isLeft = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
-    const bool isRight = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
-    const bool isSelect = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
-    const bool isCancel = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
-                          event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
-    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
-    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
-    const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
-
-    int8_t navDir = 0;
-    const bool isRotary = (event->source && strncmp(event->source, "rotEnc", 6) == 0);
-    if (isRotary) {
-        if (isCcw) {
-            navDir = -1;
-        } else if (isCw) {
-            navDir = 1;
-        } else if (eventCw == 0 && eventCcw == 0) {
-            if (isUp) {
-                navDir = -1;
-            } else if (isDown) {
-                navDir = 1;
-            }
-        }
-    } else {
-        if (isUp || isCcw) {
-            navDir = -1;
-        } else if (isDown || isCw) {
-            navDir = 1;
-        }
-    }
-
-    if (navDir != 0) {
-        int nextCursor = static_cast<int>(detailCursor) + navDir;
-        if (nextCursor < 0) {
-            nextCursor = 0;
-        } else if (nextCursor >= rowCount) {
-            nextCursor = rowCount - 1;
-        }
-        if (nextCursor != detailCursor) {
-            detailCursor = static_cast<uint8_t>(nextCursor);
-            setFastFramerate();
-        }
-        return true;
-    }
-
-    if (isSelect || isPress || isCancel || isLeft || isRight) {
+    const HermesXNodeBrowserAction action = HermesXNodeBrowserUiController::instance().handleDetail(
+        {event->source, event->inputEvent}, {eventPress, eventCw, eventCcw}, gFinderNodeState.detailCursor, rowCount);
+    if (action == HermesXNodeBrowserAction::BackToListRequested ||
+        action == HermesXNodeBrowserAction::ActivateRequested) {
         showFinderListPageSafely(true);
-        setFastFramerate();
-        return true;
     }
-
-    return false;
+    if (action == HermesXNodeBrowserAction::Refresh || action == HermesXNodeBrowserAction::BackToListRequested ||
+        action == HermesXNodeBrowserAction::ActivateRequested) {
+        setFastFramerate();
+    }
+    return action != HermesXNodeBrowserAction::Unhandled;
 }
 
 bool Screen::handleGroupNodeListInput(const InputEvent *event)
@@ -24416,115 +13893,48 @@ bool Screen::handleGroupNodeListInput(const InputEvent *event)
     const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
     const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
     const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
-    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
-    const bool isDown = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
-    const bool isLeft = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
-    const bool isRight = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
-    const bool isSelect = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
-    const bool isCancel =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
-    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
-    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
-    const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
-
-    int8_t navDir = 0;
-    const bool isRotary = (event->source && strncmp(event->source, "rotEnc", 6) == 0);
-    if (isRotary) {
-        if (isCcw) navDir = -1;
-        else if (isCw) navDir = 1;
-        else if (eventCw == 0 && eventCcw == 0) {
-            if (isUp || isLeft) navDir = -1;
-            else if (isDown || isRight) navDir = 1;
-        }
-    } else {
-        if (isCcw || isUp || isLeft) navDir = -1;
-        else if (isCw || isDown || isRight) navDir = 1;
-    }
+    const HermesXNodeBrowserInput input(event->source, event->inputEvent);
+    const HermesXNodeBrowserInputBindings bindings(eventPress, eventCw, eventCcw);
+    auto &controller = HermesXNodeBrowserUiController::instance();
 
     if (!gGroupNodeState.nodeListVisible) {
-        constexpr int kGroupMenuCount = 3;
-        if (navDir != 0) {
-            int nextCursor = static_cast<int>(gGroupNodeState.menuCursor) + navDir;
-            if (nextCursor < 0) {
-                nextCursor = 0;
-            } else if (nextCursor >= kGroupMenuCount) {
-                nextCursor = kGroupMenuCount - 1;
-            }
-            if (nextCursor != gGroupNodeState.menuCursor) {
-                gGroupNodeState.menuCursor = static_cast<uint8_t>(nextCursor);
-                setFastFramerate();
-            }
-            return true;
-        }
-
-        if (isSelect || isPress) {
-            if (gGroupNodeState.menuCursor == 0) {
-                showHermesXActionPage();
-            } else if (gGroupNodeState.menuCursor == 1) {
+        const HermesXNodeBrowserAction action = controller.handleMenu(input, bindings, gGroupNodeState.menuCursor, 3);
+        if (action == HermesXNodeBrowserAction::ExitRequested) {
+            showHermesXActionPage();
+        } else if (action == HermesXNodeBrowserAction::ActivateRequested) {
+            if (gGroupNodeState.menuCursor == 1) {
                 hermesSetupReturnToGroupMenu = true;
-                hermesSetupPage = HermesFastSetupPage::EmacMenu;
-                hermesSetupSelected = 0;
-                hermesSetupOffset = 0;
-                hermesSetupLastNavAtMs = 0;
-                hermesSetupLastNavDir = 0;
+                gHermesFastSetupNavigation.page = HermesFastSetupPage::EmacMenu;
+                gHermesFastSetupNavigation.selected = 0;
+                gHermesFastSetupNavigation.offset = 0;
+                gHermesFastSetupNavigation.lastNavAtMs = 0;
+                gHermesFastSetupNavigation.lastNavDir = 0;
                 ui->switchToFrame(framesetInfo.positions.setup);
             } else {
                 gGroupNodeState.nodeListVisible = true;
-                gGroupNodeState.listCursor = 0;
-                gGroupNodeState.selectedIndex = 0;
-                gGroupNodeState.detailCursor = 0;
+                gNodeBrowserUiModel.resetGroupList();
             }
-            setFastFramerate();
-            return true;
         }
-
-        if (isCancel) {
-            showHermesXActionPage();
-            setFastFramerate();
-            return true;
-        }
-
-        return false;
-    }
-
-    const int totalEntries = getGroupNodeCount() + 1;
-    if (navDir != 0) {
-        int nextCursor = static_cast<int>(gGroupNodeState.listCursor) + navDir;
-        if (nextCursor < 0) {
-            nextCursor = 0;
-        } else if (nextCursor >= totalEntries) {
-            nextCursor = totalEntries - 1;
-        }
-        if (nextCursor != gGroupNodeState.listCursor) {
-            gGroupNodeState.listCursor = static_cast<uint8_t>(nextCursor);
-            if (nextCursor > 0) {
-                gGroupNodeState.selectedIndex = static_cast<uint8_t>(nextCursor - 1);
-            }
+        if (action == HermesXNodeBrowserAction::Refresh || action == HermesXNodeBrowserAction::ExitRequested ||
+            action == HermesXNodeBrowserAction::ActivateRequested) {
             setFastFramerate();
         }
-        return true;
+        return action != HermesXNodeBrowserAction::Unhandled;
     }
 
-    if (isSelect || isPress) {
-        if (gGroupNodeState.listCursor == 0) {
-            gGroupNodeState.nodeListVisible = false;
-        } else {
-            gGroupNodeState.selectedIndex = gGroupNodeState.listCursor - 1;
-            gGroupNodeState.detailCursor = 0;
-            showGroupNodeDetailPage();
-        }
-        setFastFramerate();
-        return true;
-    }
-
-    if (isCancel) {
+    const HermesXNodeBrowserAction action = controller.handleGroupList(
+        input, bindings, gGroupNodeState, static_cast<uint8_t>(std::max(0, getGroupNodeCount())));
+    if (action == HermesXNodeBrowserAction::ExitRequested || action == HermesXNodeBrowserAction::CancelRequested) {
         gGroupNodeState.nodeListVisible = false;
-        setFastFramerate();
-        return true;
+    } else if (action == HermesXNodeBrowserAction::OpenDetailRequested) {
+        showGroupNodeDetailPage();
     }
-
-    return false;
+    if (action == HermesXNodeBrowserAction::Refresh || action == HermesXNodeBrowserAction::ExitRequested ||
+        action == HermesXNodeBrowserAction::CancelRequested ||
+        action == HermesXNodeBrowserAction::OpenDetailRequested) {
+        setFastFramerate();
+    }
+    return action != HermesXNodeBrowserAction::Unhandled;
 }
 
 bool Screen::handleGroupNodeDetailInput(const InputEvent *event)
@@ -24541,57 +13951,15 @@ bool Screen::handleGroupNodeDetailInput(const InputEvent *event)
     }
 
     const uint8_t rowCount = buildGroupNodeDetailRows(*entry, nullptr, 0);
-    if (gGroupNodeState.detailCursor >= rowCount) {
-        gGroupNodeState.detailCursor = rowCount > 0 ? rowCount - 1 : 0;
-    }
-
     const char eventCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
     const char eventCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
     const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
-    const bool isUp = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP);
-    const bool isDown = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
-    const bool isLeft = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
-    const bool isRight = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
-    const bool isSelect = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
-    const bool isCancel =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
-    const bool isCw = (eventCw != 0) && (event->inputEvent == eventCw);
-    const bool isCcw = (eventCcw != 0) && (event->inputEvent == eventCcw);
-    const bool isPress = (eventPress != 0) && (event->inputEvent == eventPress);
-
-    int8_t navDir = 0;
-    const bool isRotary = (event->source && strncmp(event->source, "rotEnc", 6) == 0);
-    if (isRotary) {
-        if (isCcw) navDir = -1;
-        else if (isCw) navDir = 1;
-        else if (eventCw == 0 && eventCcw == 0) {
-            if (isUp) navDir = -1;
-            else if (isDown) navDir = 1;
-        }
-    } else {
-        if (isUp || isCcw) navDir = -1;
-        else if (isDown || isCw) navDir = 1;
-    }
-
-    if (navDir != 0) {
-        int nextCursor = static_cast<int>(gGroupNodeState.detailCursor) + navDir;
-        if (nextCursor < 0) {
-            nextCursor = 0;
-        } else if (nextCursor >= rowCount) {
-            nextCursor = rowCount - 1;
-        }
-        if (nextCursor != gGroupNodeState.detailCursor) {
-            gGroupNodeState.detailCursor = static_cast<uint8_t>(nextCursor);
-            setFastFramerate();
-        }
-        return true;
-    }
-
-    if (isSelect || isPress) {
-        if (gGroupNodeState.detailCursor == kGroupDetailBackRow) {
-            showGroupNodeListPage();
-        } else if (gGroupNodeState.detailCursor == kGroupDetailMessageRow) {
+    const HermesXNodeBrowserAction action = HermesXNodeBrowserUiController::instance().handleDetail(
+        {event->source, event->inputEvent}, {eventPress, eventCw, eventCcw}, gGroupNodeState.detailCursor, rowCount);
+    if (action == HermesXNodeBrowserAction::BackToListRequested) {
+        showGroupNodeListPage();
+    } else if (action == HermesXNodeBrowserAction::ActivateRequested) {
+        if (gGroupNodeState.detailCursor == kGroupDetailMessageRow) {
             startDirectMessageComposer(entry->nodeNum, true);
         } else if (gGroupNodeState.detailCursor == kGroupDetailTraceRouteRow) {
             const meshtastic_NodeInfoLite *node = getGroupMeshNode(*entry);
@@ -24604,17 +13972,12 @@ bool Screen::handleGroupNodeDetailInput(const InputEvent *event)
                 sendOnlineNodeTraceRoute(entry->nodeNum);
             }
         }
-        setFastFramerate();
-        return true;
     }
-
-    if (isCancel || isLeft || isRight) {
-        showGroupNodeListPage();
+    if (action == HermesXNodeBrowserAction::Refresh || action == HermesXNodeBrowserAction::BackToListRequested ||
+        action == HermesXNodeBrowserAction::ActivateRequested) {
         setFastFramerate();
-        return true;
     }
-
-    return false;
+    return action != HermesXNodeBrowserAction::Unhandled;
 }
 
 bool Screen::handleTakModeInput(const InputEvent *event)
@@ -24634,123 +13997,41 @@ bool Screen::handleTakModeInput(const InputEvent *event)
     const char effectiveCcw = (configuredCcw == eventNone) ? eventUp : configuredCcw;
     const char effectivePress = (configuredPress == eventNone) ? eventSelect : configuredPress;
 
-    const bool isUp = event->inputEvent == eventUp;
-    const bool isDown = event->inputEvent == eventDown;
-    const bool isLeft =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT);
-    const bool isRight =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT);
-    const bool isSelect = event->inputEvent == eventSelect;
-    const bool isCancel =
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
-        event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
-    const bool isCw = event->inputEvent == effectiveCw;
-    const bool isCcw = event->inputEvent == effectiveCcw;
-    const bool isPress = event->inputEvent == effectivePress;
-    const bool isRotaryEnc1 = (event->source && strcmp(event->source, "rotEnc1") == 0);
-    const bool isRotary = isRotaryEnc1 || (event->source && strncmp(event->source, "rotEnc", 6) == 0);
-
-    int8_t navDir = 0;
-    if (isRotary) {
-        if (isCcw) {
-            navDir = -1;
-        } else if (isCw) {
-            navDir = 1;
-        } else if (!isRotaryEnc1) {
-            if (isUp || isLeft) {
-                navDir = -1;
-            } else if (isDown || isRight) {
-                navDir = 1;
-            }
+    uint8_t selectedChannelRow = 0;
+    for (uint8_t i = 0; i < kTakMissionSlotCount; ++i) {
+        if (kTakMissionSlotOptions[i] == gTakModeProfile.missionSlot) {
+            selectedChannelRow = i + 1;
+            break;
         }
-    } else if (isUp || isLeft || isCcw) {
-        navDir = -1;
-    } else if (isDown || isRight || isCw) {
-        navDir = 1;
     }
 
-    if (gTakModePageView == TakModePageView::TransitionEnter || gTakModePageView == TakModePageView::TransitionExit) {
-        return true;
-    }
+    const graphics::HermesXTakModeAction action = graphics::HermesXTakModeUiController::instance().handle(
+        {event->source, event->inputEvent},
+        {effectivePress, effectiveCw, effectiveCcw},
+        gTakModeUiState,
+        kTakPopupRowCount,
+        kTakSettingsRowCount,
+        kTakMissionSlotCount + 1,
+        selectedChannelRow);
 
-    if (isCancel) {
-        if (gTakModePageView == TakModePageView::ChannelSelect) {
-            gTakModePageView = TakModePageView::Main;
-            setFastFramerate();
-        } else if (gTakModePageView == TakModePageView::Settings) {
-            gTakModePageView = TakModePageView::Popup;
-            gTakModePopupSelected = 1;
-            gTakModePopupOffset = 0;
-            setFastFramerate();
-        } else if (gTakModePageView == TakModePageView::Popup) {
-            gTakModePageView = TakModePageView::Main;
-            setFastFramerate();
-        } else {
-            gTakModePageView = TakModePageView::Popup;
-            gTakModePopupSelected = 0;
-            gTakModePopupOffset = 0;
-            setFastFramerate();
-        }
-        return true;
-    }
-
-    if (gTakModePageView == TakModePageView::Main) {
-        const bool wantsSelect = isRotaryEnc1 ? isPress : (isSelect || isPress);
-        if (navDir > 0) {
-            gTakModePageView = TakModePageView::Popup;
-            gTakModePopupSelected = 0;
-            gTakModePopupOffset = 0;
-            setFastFramerate();
-            return true;
-        }
-        if (navDir < 0) {
-            gTakModePageView = TakModePageView::ChannelSelect;
-            gTakModeSettingsSelected = 0;
-            gTakModeSettingsOffset = 0;
-            for (uint8_t i = 0; i < kTakMissionSlotCount; ++i) {
-                if (kTakMissionSlotOptions[i] == gTakModeProfile.missionSlot) {
-                    gTakModeSettingsSelected = i + 1;
-                    break;
-                }
-            }
-            setFastFramerate();
-            return true;
-        }
-        if (wantsSelect) {
-            gTakModePageView = TakModePageView::Main;
-            showHermesXActionPage();
-            return true;
-        }
+    if (action == graphics::HermesXTakModeAction::Unhandled) {
         return false;
     }
-
-    if (navDir != 0) {
-        uint8_t &selected = (gTakModePageView == TakModePageView::Popup) ? gTakModePopupSelected : gTakModeSettingsSelected;
-        const uint8_t rowCount = (gTakModePageView == TakModePageView::Settings)      ? kTakSettingsRowCount
-                                 : (gTakModePageView == TakModePageView::ChannelSelect) ? (kTakMissionSlotCount + 1)
-                                                                                         : kTakPopupRowCount;
-        int next = static_cast<int>(selected) + navDir;
-        if (next < 0) {
-            next = rowCount - 1;
-        } else if (next >= rowCount) {
-            next = 0;
-        }
-        selected = static_cast<uint8_t>(next);
+    if (action == graphics::HermesXTakModeAction::Consumed) {
+        return true;
+    }
+    if (action == graphics::HermesXTakModeAction::Refresh) {
         setFastFramerate();
         return true;
     }
-
-    if (!isSelect && !isPress) {
-        return false;
+    if (action == graphics::HermesXTakModeAction::ExitToActionRequested) {
+        gTakModeUiModel.showMain();
+        showHermesXActionPage();
+        return true;
     }
 
-    if (gTakModePageView == TakModePageView::Settings) {
-        switch (gTakModeSettingsSelected) {
-        case 0:
-            gTakModePageView = TakModePageView::Popup;
-            gTakModePopupSelected = 1;
-            gTakModePopupOffset = 0;
-            break;
+    if (action == graphics::HermesXTakModeAction::SettingSelected) {
+        switch (gTakModeUiState.settingsSelected) {
         case 1:
             cycleTakOption(gTakModeProfile.nodeInfoBroadcastSecs, kTakNodeInfoOptions, kTakNodeInfoCount);
             break;
@@ -24798,26 +14079,22 @@ bool Screen::handleTakModeInput(const InputEvent *event)
         return true;
     }
 
-    if (gTakModePageView == TakModePageView::ChannelSelect) {
-        if (gTakModeSettingsSelected == 0) {
-            gTakModePageView = TakModePageView::Main;
-        } else {
-            const uint8_t index = gTakModeSettingsSelected - 1;
-            if (index < kTakMissionSlotCount) {
-                gTakModeProfile.missionSlot = kTakMissionSlotOptions[index];
-                persistTakModeProfileToFile();
-                if (isTakExperienceActive()) {
-                    applyTakModeSettings();
-                    syncRetainedTakState();
-                    persistTakStateToFile();
-                }
+    if (action == graphics::HermesXTakModeAction::ChannelSelected) {
+        const uint8_t index = gTakModeUiState.settingsSelected - 1;
+        if (index < kTakMissionSlotCount) {
+            gTakModeProfile.missionSlot = kTakMissionSlotOptions[index];
+            persistTakModeProfileToFile();
+            if (isTakExperienceActive()) {
+                applyTakModeSettings();
+                syncRetainedTakState();
+                persistTakStateToFile();
             }
         }
         setFastFramerate();
         return true;
     }
 
-    if (gTakModePopupSelected == 0) {
+    if (action == graphics::HermesXTakModeAction::ToggleModeRequested) {
         if (!isTakExperienceActive()) {
             if (isStealthModeActive()) {
                 if (screen) {
@@ -24848,23 +14125,7 @@ bool Screen::handleTakModeInput(const InputEvent *event)
         return true;
     }
 
-    if (gTakModePopupSelected == 1) {
-        gTakModePageView = TakModePageView::Settings;
-        gTakModeSettingsSelected = 0;
-        gTakModeSettingsOffset = 0;
-        setFastFramerate();
-        return true;
-    }
-
-    if (gTakModePopupSelected == 2) {
-        gTakModePageView = TakModePageView::ChannelSelect;
-        gTakModeSettingsSelected = 0;
-        gTakModeSettingsOffset = 0;
-        setFastFramerate();
-        return true;
-    }
-
-    if (gTakModePopupSelected == 3) {
+    if (action == graphics::HermesXTakModeAction::OpenGroupSettingsRequested) {
         if (framesetInfo.positions.setup >= framesetInfo.frameCount) {
             if (screen) {
                 screen->print("GROUP settings unavailable\n");
@@ -24872,26 +14133,22 @@ bool Screen::handleTakModeInput(const InputEvent *event)
             setFastFramerate();
             return true;
         }
-        gTakModePageView = TakModePageView::Main;
-        gTakModePopupSelected = 0;
-        gTakModePopupOffset = 0;
+        gTakModeUiModel.showMain();
         gGroupNodeState.menuCursor = 1;
         gGroupNodeState.nodeListVisible = false;
-        gGroupNodeState.listCursor = 0;
-        gGroupNodeState.selectedIndex = 0;
-        gGroupNodeState.detailCursor = 0;
+        gNodeBrowserUiModel.resetGroupList();
         hermesSetupReturnToGroupMenu = true;
-        hermesSetupPage = HermesFastSetupPage::EmacMenu;
-        hermesSetupSelected = 0;
-        hermesSetupOffset = 0;
-        hermesSetupLastNavAtMs = 0;
-        hermesSetupLastNavDir = 0;
+        gHermesFastSetupNavigation.page = HermesFastSetupPage::EmacMenu;
+        gHermesFastSetupNavigation.selected = 0;
+        gHermesFastSetupNavigation.offset = 0;
+        gHermesFastSetupNavigation.lastNavAtMs = 0;
+        gHermesFastSetupNavigation.lastNavDir = 0;
         ui->switchToFrame(framesetInfo.positions.setup);
         setFastFramerate();
         return true;
     }
 
-    if (gTakModePopupSelected == 4) {
+    if (action == graphics::HermesXTakModeAction::OpenEmUiRequested) {
 #if HERMESX_CIV_DISABLE_EMAC
         if (screen) {
             screen->print("EMUI disabled in CIV build\n");
@@ -24907,7 +14164,7 @@ bool Screen::handleTakModeInput(const InputEvent *event)
         return true;
     }
 
-    if (gTakModePopupSelected == 5) {
+    if (action == graphics::HermesXTakModeAction::OpenFinderRequested) {
         if (gTakModeProfile.allowFinder) {
             hermesFinderUiMode = HermesFinderUiMode::Menu;
             hermesFinderMenuSelected = 0;
@@ -24919,8 +14176,6 @@ bool Screen::handleTakModeInput(const InputEvent *event)
         return true;
     }
 
-    gTakModePageView = TakModePageView::Main;
-    showHermesXActionPage();
     return true;
 }
 
@@ -24956,7 +14211,9 @@ int Screen::handleInputEvent(const InputEvent *event)
     }
 #endif
 
-    if (hermesUpdateModalActive) {
+    HermesXUiInputState inputState;
+    inputState.updateModal = hermesUpdateModalActive;
+    if (HermesXUiInputRouter::selectTarget(inputState) == HermesXUiInputTarget::UpdateModal) {
         if (handleHermesFastSetupInput(event)) {
             return 0;
         }
@@ -24978,48 +14235,60 @@ int Screen::handleInputEvent(const InputEvent *event)
             event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN);
         const bool hasRotaryFallback = isRotary && (eventCw == 0 && eventCcw == 0) && (isUp || isDown);
 
-        if (handleLowMemoryReminderInput(event)) {
-            return 0;
-        }
+        inputState.lowMemoryReminder = gLowMemoryUiState.visible;
+        inputState.rotaryLockPopup = gRotaryLockUiState.visible;
+        inputState.emergencyConfirm = gEmergencyConfirmUiState.visible;
+        inputState.finderPulseConfirm = gFinderPulseState.confirmVisible;
+        inputState.finderPulseSending = gFinderPulseState.sendingVisible;
+        inputState.traceRoutePopup = isTraceRoutePopupVisible();
+        inputState.setupDetailPopup = isSetupDetailPopupVisible();
+        inputState.incomingTextPopup = isIncomingTextPopupActive();
+        inputState.takMode = isTakModePageActive();
+        inputState.actionPage = currentFrame == framesetInfo.positions.mainAction;
+        inputState.fastSetup = currentFrame == framesetInfo.positions.setup;
+        inputState.recentMessageList = isRecentTextMessagesPageActive();
+        inputState.recentMessageDetail = isRecentTextMessageDetailPageActive();
+        inputState.finderNodeList = isFinderNodeListPageActive();
+        inputState.finderNodeDetail = isFinderNodeDetailPageActive();
+        inputState.onlineNodeList = isOnlineNodeListPageActive();
+        inputState.onlineNodeDetail = isOnlineNodeDetailPageActive();
+        inputState.traceRouteNodeList = isTraceRouteNodeListPageActive();
+        inputState.traceRouteNodeDetail = isTraceRouteNodeDetailPageActive();
+        inputState.groupNodeList = isGroupNodeListPageActive();
+        inputState.groupNodeDetail = isGroupNodeDetailPageActive();
 
-        if (handleRotaryLockInput(event)) {
+        const HermesXUiInputTarget inputTarget = HermesXUiInputRouter::selectTarget(inputState);
+        switch (inputTarget) {
+        case HermesXUiInputTarget::LowMemoryReminder:
+            handleLowMemoryReminderInput(event);
             return 0;
-        }
-
-        if (handleEmergencyConfirmInput(event)) {
+        case HermesXUiInputTarget::RotaryLockPopup:
+            handleRotaryLockInput(event);
             return 0;
-        }
-
-        if (handleFinderPulseConfirmInput(event)) {
+        case HermesXUiInputTarget::EmergencyConfirm:
+            handleEmergencyConfirmInput(event);
             return 0;
-        }
-
-        if (handleFinderPulseSendingInput(event)) {
+        case HermesXUiInputTarget::FinderPulseConfirm:
+            handleFinderPulseConfirmInput(event);
             return 0;
-        }
-
-        if (handleTraceRoutePopupInput(event)) {
+        case HermesXUiInputTarget::FinderPulseSending:
+            handleFinderPulseSendingInput(event);
             return 0;
-        }
-
-        if (handleSetupDetailPopupInput(event)) {
+        case HermesXUiInputTarget::TraceRoutePopup:
+            handleTraceRoutePopupInput(event);
             return 0;
-        }
-
-        if (handleIncomingNodePopupInput(event)) {
+        case HermesXUiInputTarget::SetupDetailPopup:
+            handleSetupDetailPopupInput(event);
             return 0;
-        }
-
-        if (handleTextMessagePopupInput(event)) {
+        case HermesXUiInputTarget::IncomingTextPopup:
+            handleTextMessagePopupInput(event);
             return 0;
-        }
-
-        if (isTakModePageActive()) {
+        case HermesXUiInputTarget::TakMode:
             LOG_INFO("[Screen] handleInputEvent route -> TAK mode ui frame=%u", currentFrame);
-            if (handleTakModeInput(event)) {
-                return 0;
-            }
+            handleTakModeInput(event);
             return 0;
+        default:
+            break;
         }
 
         if (isHermesXMainPageActive() && cannedMessageModule) {
@@ -25034,59 +14303,49 @@ int Screen::handleInputEvent(const InputEvent *event)
             }
         }
 
-        if (currentFrame == framesetInfo.positions.mainAction) {
-            if (handleHermesXActionInput(event)) {
-                return 0;
-            }
+        if (inputTarget == HermesXUiInputTarget::ActionPage) {
+            handleHermesXActionInput(event);
             // Action page handles navigation internally; keep frame switching locked.
             return 0;
         }
 
-        if (currentFrame == framesetInfo.positions.setup) {
-            if (handleHermesFastSetupInput(event)) {
-                return 0;
-            }
+        if (inputTarget == HermesXUiInputTarget::FastSetup) {
+            handleHermesFastSetupInput(event);
             // FastSetup page locks frame switching unless Exit is pressed.
             return 0;
         }
 
-        if (isRecentTextMessagesPageActive()) {
+        if (inputTarget == HermesXUiInputTarget::RecentMessageList) {
             handleRecentTextMessageListInput(event);
             // Recent message list handles its own navigation and open-detail flow.
             return 0;
         }
 
-        if (isRecentTextMessageDetailPageActive()) {
+        if (inputTarget == HermesXUiInputTarget::RecentMessageDetail) {
             if (handleRecentTextMessageDetailInput(event)) {
                 return 0;
             }
         }
 
-        if (isFinderNodeListPageActive()) {
+        if (inputTarget == HermesXUiInputTarget::FinderNodeList) {
             LOG_INFO("[Screen] handleInputEvent route -> FINDER list frame=%u", currentFrame);
-            if (handleFinderNodeListInput(event)) {
-                return 0;
-            }
+            handleFinderNodeListInput(event);
             return 0;
         }
 
-        if (isFinderNodeDetailPageActive()) {
+        if (inputTarget == HermesXUiInputTarget::FinderNodeDetail) {
             LOG_INFO("[Screen] handleInputEvent route -> FINDER detail frame=%u", currentFrame);
-            if (handleFinderNodeDetailInput(event)) {
-                return 0;
-            }
+            handleFinderNodeDetailInput(event);
             return 0;
         }
 
-        if (isOnlineNodeListPageActive()) {
+        if (inputTarget == HermesXUiInputTarget::OnlineNodeList) {
             LOG_INFO("[Screen] handleInputEvent route -> ONLINE list frame=%u", currentFrame);
-            if (handleOnlineNodeListInput(event)) {
-                return 0;
-            }
+            handleOnlineNodeListInput(event);
             return 0;
         }
 
-        if (isOnlineNodeDetailPageActive()) {
+        if (inputTarget == HermesXUiInputTarget::OnlineNodeDetail) {
             LOG_INFO("[Screen] handleInputEvent route -> ONLINE detail frame=%u", currentFrame);
             if (handleDirectMessageComposerInput(event)) {
                 return 0;
@@ -25096,31 +14355,25 @@ int Screen::handleInputEvent(const InputEvent *event)
             }
         }
 
-        if (isTraceRouteNodeListPageActive()) {
+        if (inputTarget == HermesXUiInputTarget::TraceRouteNodeList) {
             LOG_INFO("[Screen] handleInputEvent route -> TraceRoute list frame=%u", currentFrame);
-            if (handleTraceRouteNodeListInput(event)) {
-                return 0;
-            }
+            handleTraceRouteNodeListInput(event);
             return 0;
         }
 
-        if (isTraceRouteNodeDetailPageActive()) {
+        if (inputTarget == HermesXUiInputTarget::TraceRouteNodeDetail) {
             LOG_INFO("[Screen] handleInputEvent route -> TraceRoute detail frame=%u", currentFrame);
-            if (handleTraceRouteNodeDetailInput(event)) {
-                return 0;
-            }
+            handleTraceRouteNodeDetailInput(event);
             return 0;
         }
 
-        if (isGroupNodeListPageActive()) {
+        if (inputTarget == HermesXUiInputTarget::GroupNodeList) {
             LOG_INFO("[Screen] handleInputEvent route -> GROUP list frame=%u", currentFrame);
-            if (handleGroupNodeListInput(event)) {
-                return 0;
-            }
+            handleGroupNodeListInput(event);
             return 0;
         }
 
-        if (isGroupNodeDetailPageActive()) {
+        if (inputTarget == HermesXUiInputTarget::GroupNodeDetail) {
             LOG_INFO("[Screen] handleInputEvent route -> GROUP detail frame=%u", currentFrame);
             if (handleDirectMessageComposerInput(event)) {
                 return 0;
@@ -25334,15 +14587,20 @@ bool Screen::isTakModePageActive() const
         return false;
     }
     const bool onMainFrame = ui->getUiState()->currentFrame == framesetInfo.positions.main;
-    return onMainFrame && (isTakExperienceActive() || gTakModePageView != TakModePageView::Main);
+    return onMainFrame && (isTakExperienceActive() || gTakModeUiState.page != graphics::HermesXTakModePage::Main);
+}
+
+bool Screen::isFinderPulseSendingVisible() const
+{
+    return gFinderPulseState.sendingVisible;
 }
 
 bool Screen::isHermesInputOverlayActive() const
 {
-    return hermesUpdateModalActive || lowMemoryReminderVisible || hermesEmergencyConfirmVisible ||
-           hermesRotaryLockPopupVisible ||
-           hermesFinderPulseConfirmVisible || hermesFinderPulseSendingVisible || isIncomingTextPopupActive() ||
-           isIncomingNodePopupActive() || isTraceRoutePopupVisible() || isSetupDetailPopupVisible();
+    return hermesUpdateModalActive || gLowMemoryUiState.visible || gEmergencyConfirmUiState.visible ||
+           gRotaryLockUiState.visible ||
+           gFinderPulseState.confirmVisible || gFinderPulseState.sendingVisible || isIncomingTextPopupActive() ||
+           isTraceRoutePopupVisible() || isSetupDetailPopupVisible();
 }
 
 bool Screen::shouldAllowRotaryLockLongPress() const
@@ -25439,7 +14697,7 @@ bool Screen::shouldShowHermesXMenuFooter(uint8_t frameIndex) const
         return false;
     }
     if (frameIndex == framesetInfo.positions.main &&
-        (isTakExperienceActive() || gTakModePageView != TakModePageView::Main)) {
+        (isTakExperienceActive() || gTakModeUiState.page != graphics::HermesXTakModePage::Main)) {
         return false;
     }
     if (frameIndex == framesetInfo.positions.onlineList || frameIndex == framesetInfo.positions.onlineDetail) {
@@ -25723,9 +14981,7 @@ bool Screen::showTakModePage()
         return true;
     }
 
-    gTakModePageView = TakModePageView::Popup;
-    gTakModePopupSelected = 0;
-    gTakModePopupOffset = 0;
+    gTakModeUiModel.showPopup();
     showHermesXMainPage();
     setFastFramerate();
     return true;
