@@ -1,8 +1,8 @@
-## 2026-08-31
+## 2026-09-01
 - HermesX CIV 產品版號升為 `HXB_C0.4.0`，本次架構重整將 UI 狀態、輸入判斷與繪圖由 `Screen` 拆分為 Model／Controller／Renderer，並加入統一的 `HermesXUiInputRouter`。
 - Message、TraceRoute、Node Browser、FastSetup、Home、GPS、TAK Mode、Low Memory、Emergency Confirm 與 Rotary Lock 均已建立獨立責任邊界；偏好與 TraceRoute 綁定另移入 service。
 - 新增 `docs/HermesX_新版專案架構.md`，記錄輸入優先權、功能對照、Direct TFT 路徑、服務邊界及擴充規則。
-- `HXB_C0.4.0_20260831_2258` 完成 `heltec-wireless-tracker` 全量建置；RAM 34.7%、Flash 90.8%，OTA SHA256：`654c80c622041db00275c5984fd9a5d1d6ee46dec4ba4dcc850acf20411eea77`。
+- `HXB_C0.4.0_20260901_0049` 完成 `heltec-wireless-tracker` 全量建置並正式發布；RAM 34.7%、Flash 90.8%，OTA SHA256：`7342f72065b62cc1fc733d08930c56b66296e71c6f854a63ef13b46f14e4294b`。
 
 ## 2026-08-06
 - 修正 Home 待機期間每 2 秒因語錄 segment 切換而強制完整重畫的 Heap 配置壓力；語錄改為進入 Home 時一次繪製最多兩行，小威 60 FPS direct-TFT 動畫維持不變。

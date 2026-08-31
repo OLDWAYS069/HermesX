@@ -2,9 +2,9 @@
 
 本文件為可對外發布版本的更新紀錄，整理 HermesX 韌體的重要功能更新、體驗調整與修正項目。
 
-## 2026-08-31
+## 2026-09-01
 
-### 版本準備：HXB_C0.4.0_20260831_2258
+### 發布：HXB_C0.4.0_20260901_0049
 
 - HermesX CIV 產品版號由 `HXB_C0.3.7` 升為 `HXB_C0.4.0`；`APP_VERSION` 仍保留 Meshtastic 相容版本，OTA 與畫面顯示使用 HermesX 產品版號。
 - 完成 HermesX UI 架構重整：`Screen` 保留上游畫面生命週期、硬體取樣、切頁與副作用 dispatch，各功能的狀態、輸入判斷及純繪圖移入獨立元件。
@@ -19,10 +19,10 @@
 ### 驗證
 
 - `platformio run -e heltec-wireless-tracker -j 4` 完整建置成功。
-- 韌體內嵌 `APP_HERMES_VERSION`：`HXB_C0.4.0_20260831_2258`。
+- 韌體內嵌 `APP_HERMES_VERSION`：`HXB_C0.4.0_20260901_0049`。
 - RAM 34.7%（113,560 / 327,680 bytes）；Flash 90.8%（3,033,709 / 3,342,336 bytes）。
-- OTA SHA256：`654c80c622041db00275c5984fd9a5d1d6ee46dec4ba4dcc850acf20411eea77`。
-- Factory SHA256：`01802f8fc6e49e5eb118e333802157868a3018963e7fea9e386b9987d4038033`。
+- OTA SHA256：`7342f72065b62cc1fc733d08930c56b66296e71c6f854a63ef13b46f14e4294b`。
+- Factory SHA256：`6de40efcaf3044d2be69d5859df39648e1716f6629c3abb7c740e966a4758786`。
 - Emergency Confirm 與 Rotary Lock 的新元件已確認出現在最終 `firmware.elf` 符號表；實機初步驗證回報正常。
 
 ## 2026-07-15

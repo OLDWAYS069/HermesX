@@ -1,10 +1,11 @@
 ㄋ# HermesX Documentation Index
 
-> 文件目前以 `HXB_C0.4.0` 的 `CIV` 版為主；工作分支仍沿用 `HermesX_C0.3.7`，閱讀時請以目前 build flags 為準。
+> 文件目前以 `HermesX_C0.4.0` 分支的 `HXB_C0.4.0` CIV 版為主，閱讀時請以目前 build flags 為準。
 
 | 類型 | 檔名 | 說明 |
 |------|------|------|
 | 📌 版本 | HXB_C0.4.0 (`CIV`) | 架構重整版；關閉 EMAC，保留 GROUP/尋人 |
+| 🚀 發布 | RELEASE_HXB_C0.4.0_20260901_0049.md | C0.4.0 正式發布說明、驗證結果與韌體雜湊 |
 | 🔀 版本切換 | VERSION_BRANCHES.md | `GOV` / `CIV` 分支、版號與 build flags 對照 |
 | 📘 規格 | REF_prd.md | 需求規格與驗收條件 |
 | 📗 狀態 | REF_status.md | 開發進度與議題 |

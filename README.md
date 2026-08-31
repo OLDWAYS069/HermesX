@@ -20,7 +20,7 @@
   <a href="docs/CHANGELOG_MINI.md">Changelog</a>
 </div>
 
-> 目前產品版號為 `HXB_C0.4.0`（`CIV`）；工作分支仍沿用 `HermesX_C0.3.7`，關閉 EMAC，但保留 GROUP 與尋人模組。
+> 目前分支為 `HermesX_C0.4.0`（`CIV`），產品版號為 `HXB_C0.4.0`；關閉 EMAC，但保留 GROUP 與尋人模組。
 
 > 在沒有網路或行動訊號的時候，HermesX 讓 LoRa 裝置仍能「看得見、操得到、傳得出去」。
 

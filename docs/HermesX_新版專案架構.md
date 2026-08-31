@@ -1,8 +1,8 @@
 # HermesX 新版專案架構
 
-> 文件基準：`HXB_C0.4.0` CIV 架構重整版，工作分支 `HermesX_C0.3.7`，2026-08-31
+> 文件基準：`HXB_C0.4.0` CIV 架構重整版，工作分支 `HermesX_C0.4.0`，2026-09-01
 > 主要硬體目標：Heltec Wireless Tracker
-> 驗證韌體：`HXB_C0.4.0_20260831_2258`
+> 驗證韌體：`HXB_C0.4.0_20260901_0049`
 
 ## 1. 改版目的
 
@@ -192,7 +192,7 @@ src/
 platformio run -e heltec-wireless-tracker -j 4
 ```
 
-`HXB_C0.4.0_20260831_2258` 已完成全量建置；Emergency Confirm 與 Rotary Lock
+`HXB_C0.4.0_20260901_0049` 已完成全量建置；Emergency Confirm 與 Rotary Lock
 的新 Model、Controller、Renderer 也已出現在最終 `firmware.elf` 符號表中。
 
 編譯成功只證明程式已整合，不等於完整實機驗證。涉及旋鈕、長按、popup timeout、EM 倒數、
