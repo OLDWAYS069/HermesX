@@ -1,5 +1,7 @@
 # HermesX b0.2.6 功能摘要
 
+> **歷史版本摘要。** 本文的 Heltec、GPS、Lighthouse、EM 與舊版 UI 內容不適用 HermesOne 0.1.0。
+
 ## 版本基線
 - 分支／版號：`hermesX_b0.2.6`（APP_VERSION `HXB_0.2.64158fb2`，build flags in build.log）
 - 目標硬體：Heltec Wireless Tracker（主鍵 GPIO04，active-low/pullup）

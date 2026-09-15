@@ -77,8 +77,9 @@ void HermesXNodeBrowserUiRenderer::drawMenu(OLEDDisplay *display,
     prepareDisplay(display, x, y, clearBackground);
     const int16_t width = display->getWidth();
     drawMixed(display, x, y, width - 2, title, FONT_HEIGHT_SMALL);
-    const int16_t rowH = FONT_HEIGHT_SMALL + rowPadding;
-    const int16_t listTop = y + FONT_HEIGHT_SMALL + titleGap;
+    const bool compact64 = width <= 128 && display->getHeight() <= 64;
+    const int16_t rowH = compact64 ? HermesX_zh::GLYPH_HEIGHT : FONT_HEIGHT_SMALL + rowPadding;
+    const int16_t listTop = compact64 ? y + FONT_HEIGHT_SMALL + 1 : y + FONT_HEIGHT_SMALL + titleGap;
     const uint8_t selected = std::min<uint8_t>(cursor, itemCount - 1);
     const int8_t visibleRows = std::max<int8_t>(1, (display->getHeight() - listTop - 1) / rowH);
     for (uint8_t row = 0; row < itemCount && row < static_cast<uint8_t>(visibleRows); ++row) {
@@ -107,9 +108,10 @@ void HermesXNodeBrowserUiRenderer::drawList(OLEDDisplay *display,
     prepareDisplay(display, x, y, clearBackground);
     const int16_t width = display->getWidth();
     drawMixed(display, x, y, width - 2, title, FONT_HEIGHT_SMALL);
-    const int16_t rowH = FONT_HEIGHT_SMALL + 3;
-    const int16_t listTop = y + FONT_HEIGHT_SMALL + 2;
-    int8_t visibleRows = std::max<int8_t>(1, (display->getHeight() - listTop - 1) / rowH);
+    const bool compact64 = width <= 128 && display->getHeight() <= 64;
+    const int16_t rowH = compact64 ? HermesX_zh::GLYPH_HEIGHT : FONT_HEIGHT_SMALL + 3;
+    const int16_t listTop = y + FONT_HEIGHT_SMALL + (compact64 ? 1 : 2);
+    int8_t visibleRows = std::max<int8_t>(1, (display->getHeight() - listTop) / rowH);
     visibleRows = std::min<int8_t>(visibleRows, maxVisibleRows);
     const uint8_t totalRows = rows.count + 1;
     const uint8_t selected = std::min<uint8_t>(cursor, rows.count);
@@ -161,9 +163,10 @@ void HermesXNodeBrowserUiRenderer::drawDetail(OLEDDisplay *display,
         drawMixed(display, x + 2, y + FONT_HEIGHT_SMALL + 4, width - 4, noDataLabel, FONT_HEIGHT_SMALL);
         return;
     }
-    const int16_t rowH = FONT_HEIGHT_SMALL + 3;
-    const int16_t listTop = y + FONT_HEIGHT_SMALL + 2;
-    int8_t visibleRows = std::max<int8_t>(1, (display->getHeight() - listTop - 1) / rowH);
+    const bool compact64 = width <= 128 && display->getHeight() <= 64;
+    const int16_t rowH = compact64 ? HermesX_zh::GLYPH_HEIGHT : FONT_HEIGHT_SMALL + 3;
+    const int16_t listTop = y + FONT_HEIGHT_SMALL + (compact64 ? 1 : 2);
+    int8_t visibleRows = std::max<int8_t>(1, (display->getHeight() - listTop) / rowH);
     visibleRows = std::min<int8_t>(visibleRows, 4);
     const uint8_t selected = std::min<uint8_t>(cursor, rowCount - 1);
     const uint8_t startCursor = selected >= static_cast<uint8_t>(visibleRows)
@@ -235,6 +238,7 @@ void HermesXNodeBrowserUiRenderer::drawFinderPulseConfirm(OLEDDisplay *display, 
     const uint32_t remainSec = (remainMs + 999U) / 1000U;
     const int16_t width = display->getWidth();
     const int16_t height = display->getHeight();
+    const bool compact64 = width <= 128 && height <= 64;
     display->setFont(FONT_SMALL);
     display->setTextAlignment(TEXT_ALIGN_LEFT);
     const int16_t boxX = 3;
@@ -254,6 +258,63 @@ void HermesXNodeBrowserUiRenderer::drawFinderPulseConfirm(OLEDDisplay *display, 
     const auto dialogBg = OLEDDISPLAY_COLOR::WHITE;
     const auto dialogFg = OLEDDISPLAY_COLOR::BLACK;
 #endif
+    if (compact64) {
+        const int16_t compactBoxX = 1;
+        const int16_t compactBoxY = 0;
+        const int16_t compactBoxW = width - 2;
+        const int16_t compactBoxH = height;
+        const int16_t compactTitleH = 14;
+        const int16_t compactLineH = 14;
+        const int16_t compactOptionY = 48;
+        const int16_t compactOptionH = 15;
+        const int16_t compactGap = 5;
+        const int16_t compactOptionW = (compactBoxW - 13) / 2;
+        const int16_t compactCancelX = compactBoxX + 4;
+        const int16_t compactConfirmX = compactCancelX + compactOptionW + compactGap;
+
+        display->setColor(dialogBg);
+        display->fillRect(compactBoxX, compactBoxY, compactBoxW, compactBoxH);
+        display->setColor(dialogFg);
+        display->drawRect(compactBoxX, compactBoxY, compactBoxW, compactBoxH);
+        display->fillRect(compactBoxX + 1, compactBoxY + 1, compactBoxW - 2, compactTitleH);
+        display->setColor(dialogBg);
+        const char *compactTitle = u8"發送尋人訊號";
+        const int16_t compactTitleW = HermesX_zh::stringAdvance(compactTitle, HermesX_zh::GLYPH_WIDTH, display);
+        HermesXTextLayout::drawMixedSingleLineBounded(
+            display, compactBoxX + std::max<int16_t>(2, (compactBoxW - compactTitleW) / 2), 1,
+            compactBoxW - 4, compactTitle, compactLineH, HermesX_zh::GLYPH_WIDTH);
+
+        display->setColor(dialogFg);
+        HermesXTextLayout::drawMixedSingleLineBounded(
+            display, compactBoxX + 5, 17, compactBoxW - 10, u8"要求同頻裝置回報", compactLineH,
+            HermesX_zh::GLYPH_WIDTH);
+        const String compactStatus = remainMs == 0
+                                         ? String(u8"可立即發送尋人訊號")
+                                         : String(remainSec) + u8"秒後可發送尋人";
+        HermesXTextLayout::drawMixedSingleLineBounded(
+            display, compactBoxX + 5, 31, compactBoxW - 10, compactStatus.c_str(), compactLineH,
+            HermesX_zh::GLYPH_WIDTH);
+
+        const auto drawCompactOption = [&](int16_t optionX, const char *label, bool selected, bool enabled) {
+            selected = selected && enabled;
+            display->setColor(dialogFg);
+            if (selected) {
+                display->fillRect(optionX, compactOptionY, compactOptionW, compactOptionH);
+                display->setColor(dialogBg);
+            } else {
+                display->drawRect(optionX, compactOptionY, compactOptionW, compactOptionH);
+            }
+            const int16_t labelW = HermesX_zh::stringAdvance(label, HermesX_zh::GLYPH_WIDTH, display);
+            HermesXTextLayout::drawMixedSingleLineBounded(
+                display, optionX + std::max<int16_t>(1, (compactOptionW - labelW) / 2), compactOptionY + 1,
+                compactOptionW - 2, label, compactLineH, HermesX_zh::GLYPH_WIDTH);
+            display->setColor(dialogFg);
+        };
+        drawCompactOption(compactCancelX, u8"取消", state.confirmSelected == 0, true);
+        drawCompactOption(compactConfirmX, u8"發送", state.confirmSelected != 0, remainMs == 0);
+        return;
+    }
+
     display->setColor(dialogBg);
     display->fillRect(boxX, boxY, boxW, boxH);
     display->setColor(dialogFg);
@@ -319,6 +380,21 @@ void HermesXNodeBrowserUiRenderer::drawFinderPulseSending(OLEDDisplay *display, 
     display->fillRect(0, 0, width, height);
     display->setColor(foreground);
     const uint32_t elapsedMs = nowMs - state.sendingShownAtMs;
+    const bool compact64 = width <= 128 && height <= 64;
+    if (compact64) {
+        const int16_t sweepAngle = static_cast<int16_t>((elapsedMs / 30U) % 360U) - 90;
+        drawFinderRadarIcon(display, 24, 31, 18, true, sweepAngle);
+        constexpr int16_t textX = 50;
+        const int16_t textW = width - textX - 2;
+        constexpr int16_t lineH = 15;
+        HermesXTextLayout::drawMixedSingleLineBounded(
+            display, textX, 9, textW, u8"正在發送", lineH, HermesX_zh::GLYPH_WIDTH);
+        HermesXTextLayout::drawMixedSingleLineBounded(
+            display, textX, 24, textW, u8"尋人訊號", lineH, HermesX_zh::GLYPH_WIDTH);
+        HermesXTextLayout::drawMixedSingleLineBounded(
+            display, textX, 39, textW, u8"等待回報...", lineH, HermesX_zh::GLYPH_WIDTH);
+        return;
+    }
     const int16_t radius = std::max<int16_t>(16, std::min<int16_t>(width, height) / 4);
     const int16_t centerX = width / 2;
     const int16_t centerY = height / 2 - 14;

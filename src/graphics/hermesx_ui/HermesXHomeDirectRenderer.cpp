@@ -7,7 +7,6 @@
 
 #include <Arduino.h>
 #include <cstddef>
-#include <esp_task_wdt.h>
 
 namespace graphics
 {

@@ -1,5 +1,7 @@
 # HermesX 電源鍵長按喚醒異常紀錄
 
+> 歷史 Heltec ESP32-S3 電源議題。HermesOne 的 nRF52840 休眠、喚醒與硬體斷電尚未驗證，不得直接套用本文結論。
+
 -## 環境
 - 硬體：Heltec Wireless Tracker (ESP32-S3)，主鍵 GPIO04、預設 active-low/pullup。
 - 分支/韌體：`hermesX_b0.2.6`，版本字串 `HXB_0.2.64158fb2`，最近 commit `4158fb2 add password for lighthouse module, but not test yet`。

@@ -1,5 +1,7 @@
 # HermesX 302.1 EM UI v2.1（現行實作）
 
+> **HermesOne 0.1.0 不包含此功能。** 標題中的「現行」只指原 HermesX EM 分支；HermesOne 不建立 EM UI 模組。
+
 > 本文件為現行版本行為；取代舊文件 `HermesX_EM_UI.md`。
 
 ## 版面

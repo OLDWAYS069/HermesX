@@ -54,6 +54,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "graphics/hermesx_ui/HermesXEmergencyConfirmUiController.h"
 #include "graphics/hermesx_ui/HermesXEmergencyConfirmUiModel.h"
 #include "graphics/hermesx_ui/HermesXEmergencyConfirmUiRenderer.h"
+#include "graphics/hermesx_ui/HermesXCompactUi.h"
 #include "graphics/hermesx_ui/HermesXFastSetupUiController.h"
 #include "graphics/hermesx_ui/HermesXFastSetupUiModel.h"
 #include "graphics/hermesx_ui/HermesXFastSetupUiRenderer.h"
@@ -164,6 +165,33 @@ using namespace meshtastic; /** @todo remove */
 namespace graphics
 {
 
+#if !HAS_WIFI || defined(ARCH_PORTDUINO)
+static bool requestWifiForUpdateMode()
+{
+    return false;
+}
+
+static void releaseWifiForUpdateMode() {}
+#endif
+
+#if !HAS_WIFI || defined(ARCH_PORTDUINO) || MESHTASTIC_EXCLUDE_WEBSERVER
+static void startMiniUpdateUploadServer() {}
+static void stopMiniUpdateUploadServer() {}
+static bool isMiniUpdateUploadServerRunning()
+{
+    return false;
+}
+#endif
+
+static void restartMqttIfAvailable()
+{
+#if !MESHTASTIC_EXCLUDE_MQTT
+    if (mqtt) {
+        mqtt->start();
+    }
+#endif
+}
+
 using HermesXTextLayout::copyUtf8Snippet;
 using HermesXTextLayout::drawLargeMixedLine;
 using HermesXTextLayout::drawMixedSingleLineBounded;
@@ -175,6 +203,9 @@ static auto &gHermesFastSetupNavigation = HermesXFastSetupUiModel::instance().na
 
 // This means the *visible* area (sh1106 can address 132, but shows 128 for example)
 #define IDLE_FRAMERATE 1 // in fps
+#ifndef SCREEN_TRANSITION_FRAMERATE
+#define SCREEN_TRANSITION_FRAMERATE 60 // animation/render timebase in fps
+#endif
 
 // DEBUG
 #define NUM_EXTRA_FRAMES 21 // HermesX action pages + text/debug/system frames
@@ -837,8 +868,9 @@ static void logDirectHomeNeonSummary(const char *label)
 static HermesXHomeBatterySource readHermesXHomeBatterySource()
 {
     HermesXHomeBatterySource source;
-    source.available = powerStatus != nullptr;
+    source.available = powerStatus && powerStatus->getHasBattery();
     source.voltageMv = powerStatus ? powerStatus->getBatteryVoltageMv() : 0;
+    source.percent = powerStatus ? powerStatus->getBatteryChargePercent() : 0;
     return source;
 }
 
@@ -1428,7 +1460,7 @@ bool deltaToTimestamp(uint32_t secondsAgo, uint8_t *hours, uint8_t *minutes, int
     return validCached;
 }
 
-static constexpr uint32_t kIncomingTextPopupMs = 3000;
+static constexpr uint32_t kIncomingTextPopupMs = 8000;
 static constexpr const char *kIncomingTextPopupEnabledFile = "/prefs/hermesx_msg_popup_enabled.txt";
 static auto &gRecentTextMessageState = HermesXMessageUiModel::instance().recentState();
 
@@ -1453,6 +1485,247 @@ static auto &gDirectMessageComposer = HermesXDirectMessageComposer::instance();
 static auto &gIncomingTextPopupState = HermesXMessageUiModel::instance().popupState();
 static bool gIncomingTextPopupEnabled = true;
 static bool gIncomingTextPopupEnabledLoaded = false;
+static constexpr uint32_t kNewNodeNotificationMs = 3000U;
+static uint32_t gNewNodeNotificationUntilMs = 0;
+static uint32_t gHermesOneMessageFailureStartedAtMs = 0;
+static constexpr uint32_t kHermesOneMessageFailureMs = 2000;
+
+static __attribute__((noinline)) bool isHermesOneMessageFailureVisible()
+{
+    return gHermesOneMessageFailureStartedAtMs != 0 &&
+           static_cast<uint32_t>(millis() - gHermesOneMessageFailureStartedAtMs) < kHermesOneMessageFailureMs;
+}
+
+void showHermesOneMessageSendFailure()
+{
+#if defined(HERMESX_NRF52840_PROMICRO)
+    gHermesOneMessageFailureStartedAtMs = millis();
+    if (screen) {
+        screen->forceDisplay();
+    }
+#endif
+}
+
+#if defined(HERMESX_NRF52840_PROMICRO)
+enum class HermesOnePetStage : uint8_t {
+    Normal,
+    Hungry,
+    Dead,
+};
+
+static constexpr const char *kHermesOneLastFedEpochFile = "/prefs/hermesone_last_fed_epoch.txt";
+static constexpr uint32_t kHermesOneHungryAfterSec = 12U * 60U * 60U;
+static constexpr uint32_t kHermesOneDeadAfterSec = 24U * 60U * 60U;
+static constexpr uint32_t kHermesOneIdleAfterMs = 5U * 60U * 1000U;
+static bool gHermesOnePetClockLoaded = false;
+static uint32_t gHermesOneLastFedEpoch = 0;
+static uint32_t gHermesOneLastFedUptimeMs = 0;
+static uint32_t gHermesOneLastInteractionMs = 0;
+static bool gHermesOnePetDialogVisible = false;
+static bool gHermesOnePetDialogRevive = false;
+static uint8_t gHermesOnePetDialogSelected = 0;
+
+static size_t hermesOneUtf8SequenceLength(uint8_t firstByte)
+{
+    if ((firstByte & 0x80u) == 0) {
+        return 1;
+    }
+    if ((firstByte & 0xE0u) == 0xC0u) {
+        return 2;
+    }
+    if ((firstByte & 0xF0u) == 0xE0u) {
+        return 3;
+    }
+    if ((firstByte & 0xF8u) == 0xF0u) {
+        return 4;
+    }
+    return 1;
+}
+
+static size_t countHermesOneUtf8Codepoints(const char *text, size_t textBytes)
+{
+    size_t count = 0;
+    size_t byte = 0;
+    while (text && byte < textBytes && text[byte] != '\0') {
+        const size_t sequenceLength = hermesOneUtf8SequenceLength(static_cast<uint8_t>(text[byte]));
+        if (byte + sequenceLength > textBytes) {
+            break;
+        }
+        byte += sequenceLength;
+        ++count;
+    }
+    return count;
+}
+
+static bool appendHermesOneUtf8Codepoint(
+    const char *text, size_t textBytes, size_t wantedCodepoint, char *output, size_t outputSize, size_t &outputBytes)
+{
+    size_t codepoint = 0;
+    size_t byte = 0;
+    while (text && byte < textBytes && text[byte] != '\0') {
+        const size_t sequenceLength = hermesOneUtf8SequenceLength(static_cast<uint8_t>(text[byte]));
+        if (byte + sequenceLength > textBytes) {
+            return false;
+        }
+        if (codepoint == wantedCodepoint) {
+            if (outputBytes + sequenceLength >= outputSize) {
+                return false;
+            }
+            memcpy(output + outputBytes, text + byte, sequenceLength);
+            outputBytes += sequenceLength;
+            output[outputBytes] = '\0';
+            return true;
+        }
+        byte += sequenceLength;
+        ++codepoint;
+    }
+    return false;
+}
+
+static void formatHermesOneLongName(char *output, size_t outputSize, uint32_t nowMs)
+{
+    (void)nowMs;
+    if (!output || outputSize == 0) {
+        return;
+    }
+    output[0] = '\0';
+
+    const char *const longName = owner.long_name[0] ? owner.long_name : "--";
+    const size_t longNameBytes = strnlen(longName, sizeof(owner.long_name));
+    const size_t codepointCount = countHermesOneUtf8Codepoints(longName, longNameBytes);
+    constexpr size_t maximumCodepoints = 20;
+    if (codepointCount <= maximumCodepoints) {
+        const size_t copyBytes = std::min(longNameBytes, outputSize - 1);
+        memcpy(output, longName, copyBytes);
+        output[copyBytes] = '\0';
+        return;
+    }
+
+    size_t outputBytes = 0;
+    for (size_t sourceCodepoint = 0; sourceCodepoint < maximumCodepoints; ++sourceCodepoint) {
+        if (!appendHermesOneUtf8Codepoint(
+                longName, longNameBytes, sourceCodepoint, output, outputSize, outputBytes)) {
+            break;
+        }
+    }
+}
+
+static int16_t measureHermesOneLongName(OLEDDisplay *display, const char *text)
+{
+    if (!display || !text) {
+        return 0;
+    }
+    int16_t width = 0;
+    const char *cursor = text;
+    const char *const end = text + strlen(text);
+    while (cursor < end) {
+        const uint32_t codepoint = HermesX_zh::nextCodepoint(cursor, end);
+        if (codepoint >= 0x20U && codepoint < 0x7FU) {
+            const String glyph(static_cast<char>(codepoint));
+            width += std::max<int16_t>(1, display->getStringWidth(glyph));
+        } else if (codepoint != 0) {
+            width += 12;
+        }
+    }
+    return width;
+}
+
+static void buildHermesOneLongNameMarquee(
+    OLEDDisplay *display, const char *text, int16_t maxWidth, uint32_t nowMs, char *output, size_t outputSize)
+{
+    if (!display || !text || !output || outputSize == 0 || maxWidth <= 0) {
+        return;
+    }
+    output[0] = '\0';
+    const size_t textBytes = strlen(text);
+    const size_t codepointCount = countHermesOneUtf8Codepoints(text, textBytes);
+    if (codepointCount == 0) {
+        return;
+    }
+
+    constexpr size_t gapCodepoints = 3;
+    const size_t marqueeLength = codepointCount + gapCodepoints;
+    const size_t firstCodepoint = (nowMs / 400U) % marqueeLength;
+    size_t outputBytes = 0;
+    int16_t usedWidth = 0;
+    for (size_t position = 0; position < marqueeLength; ++position) {
+        const size_t sourceCodepoint = (firstCodepoint + position) % marqueeLength;
+        if (sourceCodepoint >= codepointCount) {
+            const int16_t glyphWidth = std::max<int16_t>(1, display->getStringWidth(" "));
+            if (usedWidth + glyphWidth > maxWidth || outputBytes + 1 >= outputSize) {
+                break;
+            }
+            output[outputBytes++] = ' ';
+            output[outputBytes] = '\0';
+            usedWidth += glyphWidth;
+            continue;
+        }
+
+        const char *cursor = text;
+        const char *const end = text + textBytes;
+        uint32_t codepoint = 0;
+        for (size_t index = 0; index <= sourceCodepoint && cursor < end; ++index) {
+            codepoint = HermesX_zh::nextCodepoint(cursor, end);
+        }
+        const int16_t glyphWidth =
+            (codepoint >= 0x20U && codepoint < 0x7FU)
+                ? std::max<int16_t>(1, display->getStringWidth(String(static_cast<char>(codepoint))))
+                : 12;
+        if (usedWidth + glyphWidth > maxWidth) {
+            break;
+        }
+        if (!appendHermesOneUtf8Codepoint(
+                text, textBytes, sourceCodepoint, output, outputSize, outputBytes)) {
+            break;
+        }
+        usedWidth += glyphWidth;
+    }
+}
+
+static HermesOnePetStage getHermesOnePetStage()
+{
+    const uint32_t nowEpoch = getValidTime(RTCQuality::RTCQualityNTP, true);
+    if (!gHermesOnePetClockLoaded) {
+        gHermesOnePetClockLoaded = true;
+        gHermesOneLastFedEpoch = HermesXPreferences::loadUInt32(kHermesOneLastFedEpochFile, 0);
+        gHermesOneLastFedUptimeMs = millis();
+        gHermesOneLastInteractionMs = millis();
+    }
+
+    uint32_t elapsedSeconds = (millis() - gHermesOneLastFedUptimeMs) / 1000U;
+    if (nowEpoch != 0) {
+        if (gHermesOneLastFedEpoch == 0 || gHermesOneLastFedEpoch > nowEpoch) {
+            gHermesOneLastFedEpoch = nowEpoch;
+            HermesXPreferences::saveUInt32(kHermesOneLastFedEpochFile, gHermesOneLastFedEpoch);
+        }
+        elapsedSeconds = nowEpoch - gHermesOneLastFedEpoch;
+    }
+
+    if (elapsedSeconds >= kHermesOneDeadAfterSec) {
+        return HermesOnePetStage::Dead;
+    }
+    if (elapsedSeconds >= kHermesOneHungryAfterSec) {
+        return HermesOnePetStage::Hungry;
+    }
+    return HermesOnePetStage::Normal;
+}
+
+static void feedHermesOnePet()
+{
+    const uint32_t nowEpoch = getValidTime(RTCQuality::RTCQualityNTP, true);
+    gHermesOnePetClockLoaded = true;
+    gHermesOneLastFedEpoch = nowEpoch;
+    gHermesOneLastFedUptimeMs = millis();
+    if (nowEpoch != 0) {
+        HermesXPreferences::saveUInt32(kHermesOneLastFedEpochFile, nowEpoch);
+    }
+}
+
+static bool isHermesOnePetDialogVisible()
+{
+    return gHermesOnePetDialogVisible;
+}
+#endif
 
 static auto &gTraceRoutePopupState = HermesXTraceRouteUiModel::instance().popupState();
 static constexpr uint32_t kTraceRoutePopupDismissGuardMs = 250;
@@ -1508,6 +1781,23 @@ static bool isIncomingTextPopupActive()
     return gIncomingTextPopupState.pending || isIncomingTextPopupVisible();
 }
 
+static bool isNewNodeNotificationVisible()
+{
+    return gNewNodeNotificationUntilMs != 0 && static_cast<int32_t>(gNewNodeNotificationUntilMs - millis()) > 0 &&
+           !isIncomingTextPopupActive() && !gDirectMessageComposer.sending();
+}
+
+static void showNewNodeNotification()
+{
+    gNewNodeNotificationUntilMs = millis() + kNewNodeNotificationMs;
+    fastUntilMs = gNewNodeNotificationUntilMs + 50U;
+}
+
+static void dismissNewNodeNotification()
+{
+    gNewNodeNotificationUntilMs = 0;
+}
+
 static void dismissTraceRoutePopup()
 {
     HermesXTraceRouteUiModel::instance().dismissPopup();
@@ -1558,6 +1848,7 @@ static void armIncomingTextPopup(const meshtastic_MeshPacket &packet)
     gIncomingTextPopupState.packet = packet;
     gIncomingTextPopupState.selectedOption = 0;
     if (gIncomingTextPopupState.visible) {
+        gIncomingTextPopupState.startedAtMs = millis();
         gIncomingTextPopupState.untilMs = millis() + kIncomingTextPopupMs;
     } else {
         gIncomingTextPopupState.pending = true;
@@ -2089,6 +2380,13 @@ static void drawDirectMessageComposerFrame(OLEDDisplay *display, int16_t x, int1
     (void)y;
     const int16_t width = display->getWidth();
     const int16_t height = display->getHeight();
+    if (gDirectMessageComposer.sending()) {
+        const uint32_t nowMs = millis();
+        HermesXMessageUiRenderer::drawComposerSending(
+            display, width, height, gDirectMessageComposer.sendAnimationElapsedMs(nowMs),
+            gDirectMessageComposer.sendFailed());
+        return;
+    }
     if (gDirectMessageComposer.candidateMode()) {
         HermesXMessageUiRenderer::drawComposerCandidates(
             display, width, height, gDirectMessageComposer.previewText(), gDirectMessageComposer.candidates(),
@@ -2231,6 +2529,51 @@ static void drawIncomingTextPopupOverlay(OLEDDisplay *display, OLEDDisplayUiStat
     HermesXMessageUiRenderer::drawIncomingPopup(display, state, context);
 }
 
+static void drawHermesOneMessageFailureOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
+{
+    (void)state;
+#if defined(HERMESX_NRF52840_PROMICRO)
+    if (display && isHermesOneMessageFailureVisible()) {
+        HermesXHomeUiRenderer::drawHermesOneParcelNotification(
+            display, display->getWidth(), display->getHeight(), HermesXParcelAnimationMode::Failed,
+            static_cast<uint32_t>(millis() - gHermesOneMessageFailureStartedAtMs));
+    }
+#else
+    (void)display;
+#endif
+}
+
+static void drawNewNodeNotificationOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
+{
+    (void)state;
+#if defined(HERMESX_NRF52840_PROMICRO)
+    // HermesOne shows new-node state as a small '+' thought bubble on Home.
+    // Keep the legacy full-screen notification off this compact UI.
+    (void)display;
+    return;
+#else
+    if (!display || !isNewNodeNotificationVisible()) {
+        return;
+    }
+    HermesXHomeUiRenderer::drawSittingDogNotification(
+        display, display->getWidth(), display->getHeight(), u8"找到新節點！", millis());
+#endif
+}
+
+static void drawHermesOnePetDialogOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
+{
+    (void)state;
+#if defined(HERMESX_NRF52840_PROMICRO)
+    if (!display || !isHermesOnePetDialogVisible()) {
+        return;
+    }
+    HermesXHomeUiRenderer::drawHermesOnePetDialog(
+        display, display->getWidth(), display->getHeight(), gHermesOnePetDialogRevive, gHermesOnePetDialogSelected);
+#else
+    (void)display;
+#endif
+}
+
 static meshtastic_NodeInfoLite *resolveMessageNode(const meshtastic_MeshPacket &packet)
 {
     return nodeDB->getMeshNode(getFrom(&packet));
@@ -2324,7 +2667,7 @@ void Screen::drawOnlineNodeListFrame(OLEDDisplay *display, OLEDDisplayUiState *s
     gNodeBrowserDataSource.refreshOnline();
     const HermesXNodeBrowserRowSource rows(gOnlineNodeState.count, nullptr, getOnlineBrowserRenderRow);
     HermesXNodeBrowserUiRenderer::drawList(
-        display, x, y, "ONLINE", u8"返回", u8"沒有在線節點", gOnlineNodeState.listCursor, rows, 3, false);
+        display, x, y, "ONLINE", u8"返回", u8"沒有在線節點", gOnlineNodeState.listCursor, rows, 4, false);
 }
 
 void Screen::drawFinderNodeListFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
@@ -2340,7 +2683,7 @@ void Screen::drawFinderNodeListFrame(OLEDDisplay *display, OLEDDisplayUiState *s
     gNodeBrowserDataSource.refreshFinder();
     const HermesXNodeBrowserRowSource rows(gFinderNodeState.count, nullptr, getFinderBrowserRenderRow);
     HermesXNodeBrowserUiRenderer::drawList(
-        display, x, y, u8"尋人清單", u8"離開", u8"沒有節點", gFinderNodeState.listCursor, rows, 3, true);
+        display, x, y, u8"尋人清單", u8"離開", u8"沒有節點", gFinderNodeState.listCursor, rows, 4, true);
 }
 
 void Screen::drawOnlineNodeDetailFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
@@ -2546,6 +2889,29 @@ static void drawNodes(OLEDDisplay *display, int16_t x, int16_t y, const NodeStat
     if (config.display.heading_bold)
         display->drawString(x + 11, y - 2, usersString);
 }
+
+static void drawTraceRoutePopupOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
+{
+    (void)state;
+    HermesXTraceRouteUiRenderer::drawPopup(display);
+}
+
+static void drawSetupDetailPopupOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
+{
+    (void)state;
+    if (!display || !isSetupDetailPopupVisible()) {
+        return;
+    }
+    HermesXFastSetupUiRenderer::drawDetailPopup(display, gSetupDetailPopupState.title, gSetupDetailPopupState.body,
+                                                gSetupDetailPopupState.scrollY, gSetupDetailPopupState.maxScrollY);
+}
+
+void Screen::drawLowMemoryReminderOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
+{
+    (void)state;
+    graphics::HermesXLowMemoryUiRenderer::draw(display, gLowMemoryUiState, gLowMemoryProtectionActive);
+}
+
 #if HAS_GPS
 // Draw GPS status summary
 static void drawGPS(OLEDDisplay *display, int16_t x, int16_t y, const GPSStatus *gps)
@@ -2689,32 +3055,46 @@ static void drawGPScoordinates(OLEDDisplay *display, int16_t x, int16_t y, const
     }
 }
 
-static void drawTraceRoutePopupOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
-{
-    (void)state;
-    HermesXTraceRouteUiRenderer::drawPopup(display);
-}
-
-static void drawSetupDetailPopupOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
-{
-    (void)state;
-    if (!display || !isSetupDetailPopupVisible()) {
-        return;
-    }
-    HermesXFastSetupUiRenderer::drawDetailPopup(display, gSetupDetailPopupState.title, gSetupDetailPopupState.body,
-                                                gSetupDetailPopupState.scrollY, gSetupDetailPopupState.maxScrollY);
-}
-void Screen::drawLowMemoryReminderOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
-{
-    (void)state;
-    graphics::HermesXLowMemoryUiRenderer::draw(display, gLowMemoryUiState, gLowMemoryProtectionActive);
-}
-
-
 static void drawHermesGpsHeroFrame(OLEDDisplay *display, int16_t x, int16_t y, const GPSStatus *gps)
 {
     const int16_t width = display->getWidth();
     const int16_t height = display->getHeight();
+
+#if defined(HERMESX_NRF52840_PROMICRO)
+    // HermesOne GPS is intentionally a low-cost text view: coordinates, RTC,
+    // and satellite count only. No poster, lock icon, globe, or decoration.
+    display->setColor(OLEDDISPLAY_COLOR::BLACK);
+    display->fillRect(x, y, width, height);
+    display->setColor(OLEDDISPLAY_COLOR::WHITE);
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+    display->setFont(FONT_SMALL);
+
+    char latitudeLine[24] = "LAT --";
+    char longitudeLine[24] = "LON --";
+    const bool hasCoordinates = gps &&
+                                config.position.gps_mode == meshtastic_Config_PositionConfig_GpsMode_ENABLED &&
+                                (config.position.fixed_position || (gps->getIsConnected() && gps->getHasLock()));
+    if (hasCoordinates) {
+        snprintf(latitudeLine, sizeof(latitudeLine), "LAT %.5f", static_cast<double>(gps->getLatitude()) * 1e-7);
+        snprintf(longitudeLine, sizeof(longitudeLine), "LON %.5f", static_cast<double>(gps->getLongitude()) * 1e-7);
+    }
+
+    char hermesOneTimeLine[16];
+    char unusedDate[24];
+    HermesXHomeStateCollector::formatTimeDate(
+        getValidTime(RTCQuality::RTCQualityDevice, true), hermesOneTimeLine, sizeof(hermesOneTimeLine), unusedDate,
+        sizeof(unusedDate));
+    char satelliteLine[16];
+    const unsigned satelliteCount = (gps && gps->getIsConnected()) ? static_cast<unsigned>(gps->getNumSatellites()) : 0U;
+    snprintf(satelliteLine, sizeof(satelliteLine), "SAT %u", satelliteCount);
+
+    display->drawString(x + 3, y + 2, latitudeLine);
+    display->drawString(x + 3, y + 16, longitudeLine);
+    display->drawString(x + 3, y + 32, hermesOneTimeLine);
+    display->drawString(x + 3, y + 48, satelliteLine);
+    return;
+#endif
+
     const bool posterTftLayout = supportsDirectTftOverlayRendering(display);
 
     if (posterTftLayout) {
@@ -2847,15 +3227,29 @@ constexpr size_t kSetupWifiPasswordMaxLen = 64;
 constexpr uint32_t kSetupNavMinIntervalMs = 80;
 constexpr uint32_t kSetupNavFlipGuardMs = 800;
 constexpr uint8_t kMainActionVisibleSlots = 3;
-constexpr uint8_t kMainActionIdCount = 15;
-constexpr uint8_t kMainActionPrimaryCount = 8;
-constexpr uint8_t kMainActionFeatureCount = 7;
-constexpr uint8_t kMainActionHomeIndex = 5;
-constexpr uint8_t kMainActionFeatureEntryIndex = 3;
-constexpr uint8_t kMainActionFeatureId = 13;
-constexpr uint8_t kMainActionFeatureExitId = 14;
-static const uint8_t kMainActionPrimaryOrder[kMainActionPrimaryCount] = {0, 1, 2, kMainActionFeatureId, 4, 5, 6, 7};
-static const uint8_t kMainActionFeatureOrder[kMainActionFeatureCount] = {3, 8, 9, 10, 11, 12, kMainActionFeatureExitId};
+constexpr uint8_t kMainActionIdCount = 16;
+#if defined(HERMESONE_MINIMAL_UI)
+constexpr uint8_t kMainActionMainCount = 5;
+constexpr uint8_t kMainActionMoreCount = 1;
+constexpr uint8_t kMainActionHomeIndex = 0;
+constexpr uint8_t kMainActionMoreEntryIndex = 0;
+constexpr uint8_t kMainActionMoreId = 13;
+constexpr uint8_t kMainActionBackId = 14;
+constexpr uint8_t kMainActionUpdateId = 15;
+static const uint8_t kMainActionMainOrder[kMainActionMainCount] = {5, 2, 12, 3, 4};
+static const uint8_t kMainActionMoreOrder[kMainActionMoreCount] = {kMainActionBackId};
+#else
+constexpr uint8_t kMainActionMainCount = 9;
+constexpr uint8_t kMainActionMoreCount = 7;
+constexpr uint8_t kMainActionHomeIndex = 1;
+constexpr uint8_t kMainActionMoreEntryIndex = 8;
+constexpr uint8_t kMainActionMoreId = 13;
+constexpr uint8_t kMainActionBackId = 14;
+constexpr uint8_t kMainActionUpdateId = 15;
+static const uint8_t kMainActionMainOrder[kMainActionMainCount] = {2, 5, 8, 9, 10, 11, 12, kMainActionUpdateId,
+                                                                  kMainActionMoreId};
+static const uint8_t kMainActionMoreOrder[kMainActionMoreCount] = {0, 1, 3, 4, 6, 7, kMainActionBackId};
+#endif
 constexpr uint32_t kStealthConfirmArmMs = 3000;
 constexpr uint32_t kStealthWakeMs = 1000;
 constexpr uint32_t kLowMemoryReminderSuppressMs = 5 * 60 * 1000;
@@ -4587,7 +4981,7 @@ static bool enableUpdateLowLoadMode()
     LOG_INFO("[UpdateLowLoad] enter gps=%d bt=%d radio=%d nodeinfo=%d free=%u largest=%u",
              gUpdateLowLoadRuntimeState.gpsWasEnabled ? 1 : 0, gUpdateLowLoadRuntimeState.bluetoothWasEnabled ? 1 : 0,
              gUpdateLowLoadRuntimeState.radioWasEnabled ? 1 : 0, gUpdateLowLoadRuntimeState.nodeInfoWasActive ? 1 : 0,
-             ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+             memGet.getFreeHeap(), memGet.getLargestFreeBlock());
 
 #if !MESHTASTIC_EXCLUDE_GPS
     if (gps) {
@@ -4608,7 +5002,7 @@ static bool enableUpdateLowLoadMode()
     }
 
     LOG_INFO("[UpdateLowLoad] entered serial=%d free=%u largest=%u", config.security.serial_enabled ? 1 : 0,
-             ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+             memGet.getFreeHeap(), memGet.getLargestFreeBlock());
     return true;
 }
 
@@ -4618,7 +5012,7 @@ static bool disableUpdateLowLoadMode()
         return false;
     }
 
-    LOG_INFO("[UpdateLowLoad] exit begin free=%u largest=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    LOG_INFO("[UpdateLowLoad] exit begin free=%u largest=%u", memGet.getFreeHeap(), memGet.getLargestFreeBlock());
 
     if (rIf && gUpdateLowLoadRuntimeState.radioWasEnabled) {
         rIf->enable();
@@ -4637,7 +5031,7 @@ static bool disableUpdateLowLoadMode()
     config.security.serial_enabled = gUpdateLowLoadRuntimeState.serialWasEnabled;
 
     gUpdateLowLoadRuntimeState = UpdateLowLoadRuntimeState{};
-    LOG_INFO("[UpdateLowLoad] exit done free=%u largest=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    LOG_INFO("[UpdateLowLoad] exit done free=%u largest=%u", memGet.getFreeHeap(), memGet.getLargestFreeBlock());
     return true;
 }
 
@@ -4894,7 +5288,12 @@ static bool disableTakMode()
 
 static void startTakModeTransition(bool entering)
 {
+#if defined(HERMESONE_MINIMAL_UI)
+    (void)entering;
+    gTakModeUiModel.showMain();
+#else
     gTakModeUiModel.startTransition(entering, millis());
+#endif
     if (screen) {
         screen->showHermesXMainPage();
         screen->requestImmediateRedraw();
@@ -5445,6 +5844,22 @@ void Screen::drawTakModeFrame(OLEDDisplay *display, OLEDDisplayUiState *state, i
         return;
     }
 
+#if defined(HERMESONE_MINIMAL_UI)
+    if (gTakModeUiState.page == graphics::HermesXTakModePage::Main) {
+        display->setColor(OLEDDISPLAY_COLOR::BLACK);
+        display->fillRect(0, 0, display->getWidth(), display->getHeight());
+        display->setColor(OLEDDISPLAY_COLOR::WHITE);
+        display->setTextAlignment(TEXT_ALIGN_LEFT);
+        display->setFont(FONT_MEDIUM);
+        display->drawString(x + 4, y, "TAK MODE");
+        display->setFont(FONT_SMALL);
+        display->drawString(x + 4, y + 20, isTakExperienceActive() ? "STATUS: ACTIVE" : "STATUS: OFF");
+        display->drawString(x + 4, y + 34, "GPS + FINDER READY");
+        display->drawString(x + 4, y + 48, "PRESS: MENU");
+        return;
+    }
+#endif
+
     loadTakModeProfileIfNeeded();
     graphics::HermesXTakModeRenderView view;
     view.title = getTakExperienceTitle();
@@ -5619,6 +6034,35 @@ static void drawSmartPowerHomeFrame(OLEDDisplay *display, int16_t x, int16_t y)
 
 void Screen::drawHermesXMain(OLEDDisplay *display, OLEDDisplayUiState * /*state*/, int16_t x, int16_t y)
 {
+#if defined(HERMESONE_MINIMAL_UI)
+    {
+    (void)x;
+    (void)y;
+    const HermesXHomeBatteryState battery =
+        HermesXHomeStateCollector::instance().collectBattery(readHermesXHomeBatterySource());
+    const bool gpsConnected = gpsStatus && gpsStatus->getIsConnected();
+    const uint32_t satellites = gpsConnected ? gpsStatus->getNumSatellites() : 0;
+    char batteryLine[24];
+    char gpsLine[24];
+    snprintf(batteryLine, sizeof(batteryLine), battery.available ? "BATTERY: %u%%" : "BATTERY: --",
+             static_cast<unsigned>(battery.percent));
+    snprintf(gpsLine, sizeof(gpsLine), gpsConnected ? "GPS: %lu SAT" : "GPS: SEARCH",
+             static_cast<unsigned long>(satellites));
+
+    display->setColor(OLEDDISPLAY_COLOR::BLACK);
+    display->fillRect(0, 0, display->getWidth(), display->getHeight());
+    display->setColor(OLEDDISPLAY_COLOR::WHITE);
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+    display->setFont(FONT_MEDIUM);
+    display->drawString(5, 3, "HERMESONE");
+    display->setFont(FONT_SMALL);
+    display->drawString(5, 25, isTakExperienceActive() ? "MESH: TAK" : "MESH: READY");
+    display->drawString(5, 37, gpsLine);
+    display->drawString(5, 49, batteryLine);
+    return;
+    }
+#endif
+
     if (gTakModeUiState.page == graphics::HermesXTakModePage::TransitionEnter ||
         gTakModeUiState.page == graphics::HermesXTakModePage::TransitionExit) {
         graphics::HermesXTakModeUiRenderer::drawTransition(
@@ -5682,6 +6126,212 @@ void Screen::drawHermesXMain(OLEDDisplay *display, OLEDDisplayUiState * /*state*
         roleUpper[rp] = c;
     }
     roleUpper[rp] = '\0';
+
+#if defined(HERMESX_NRF52840_PROMICRO)
+    // HermesOne 128x64 Home: monochrome Xiaowei and a live clock.
+    // The hour-stealing animation only changes presentation, never the RTC.
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+    display->setFont(FONT_SMALL);
+    char batteryLabel[12];
+    if (hasBattery) {
+        snprintf(batteryLabel, sizeof(batteryLabel), "%u%%", static_cast<unsigned>(batteryPercent));
+        const int16_t batteryW = display->getStringWidth(batteryLabel);
+        constexpr int16_t batteryIconW = 16;
+        constexpr int16_t batteryGap = 2;
+        const int16_t labelX = std::max<int16_t>(2, width - batteryW - 2);
+        const int16_t iconX = std::max<int16_t>(2, labelX - batteryGap - batteryIconW);
+        drawBattery(display, iconX, 2, imgBattery, powerStatus);
+        display->drawString(labelX, 0, batteryLabel);
+    }
+    display->drawString(2, 0, "HermesOne");
+    display->drawLine(2, 12, width - 3, 12);
+
+    const uint8_t mascotFrame =
+        static_cast<uint8_t>((static_cast<uint64_t>(millis()) * SCREEN_TRANSITION_FRAMERATE / 1000U) % 60U);
+
+    const char *homeTime = hasValidTime ? timeBuf : "--:--:--";
+    const HermesOnePetStage petStage = getHermesOnePetStage();
+    const bool idle = gHermesOneLastInteractionMs != 0 &&
+                      (millis() - gHermesOneLastInteractionMs) >= kHermesOneIdleAfterMs;
+    const bool showThoughtBubble = petStage != HermesOnePetStage::Dead &&
+                                   (petStage == HermesOnePetStage::Hungry || hasUnreadTextMessage ||
+                                    isNewNodeNotificationVisible() || idle);
+
+    constexpr int16_t infoLeft = 36;
+    display->setTextAlignment(TEXT_ALIGN_RIGHT);
+    // A compact clock leaves the head-right bubble area unobstructed while a
+    // pet notification is visible.
+    const uint8_t *clockFont = showThoughtBubble ? FONT_MEDIUM : FONT_LARGE;
+    display->setFont(clockFont);
+    if (display->getStringWidth(homeTime) > (width - infoLeft - 2)) {
+        clockFont = FONT_MEDIUM;
+        display->setFont(clockFont);
+    }
+    // Restart after leaving Home, user input, or a higher-priority pet hint.
+    // Unsigned elapsed times also handle millis() rollover.
+    const uint32_t nowMs = millis();
+    static uint32_t playStartedMs = 0;
+    static uint32_t lastHomeDrawMs = 0;
+    static uint32_t lastInteractionMs = 0;
+    const bool canPlay = hasValidTime && !showThoughtBubble && petStage != HermesOnePetStage::Dead;
+    if (lastHomeDrawMs == 0 || nowMs - lastHomeDrawMs > 1000U || !canPlay ||
+        lastInteractionMs != gHermesOneLastInteractionMs) {
+        playStartedMs = nowMs;
+    }
+    lastHomeDrawMs = nowMs;
+    lastInteractionMs = gHermesOneLastInteractionMs;
+    const uint32_t playMs = (nowMs - playStartedMs) % 50000U;
+    const bool playing = canPlay && playMs >= 15000U && playMs < 26600U;
+    const uint32_t stepMs = playing ? playMs - 15000U : 0U;
+    const int16_t clockLeft = width - 2 - display->getStringWidth(homeTime);
+    constexpr int16_t homeDogX = 1;
+    const int16_t pickupX = std::max<int16_t>(homeDogX, clockLeft - 32);
+    int16_t dogX = homeDogX;
+    bool carrying = false;
+    auto travel = [](int16_t from, int16_t to, uint32_t elapsed) -> int16_t {
+        return from +
+               (static_cast<int32_t>(to - from) * static_cast<int32_t>(elapsed)) / 1500;
+    };
+    // Fetch HH and carry it back to the visible home position. Xiaowei then
+    // eats it in short Minecraft-like bites; the clock restores with a pop.
+    if (playing) {
+        if (stepMs < 1500U) {
+            dogX = travel(homeDogX, pickupX, stepMs);
+        } else if (stepMs < 3000U) {
+            dogX = travel(pickupX, homeDogX, stepMs - 1500U);
+            carrying = true;
+        }
+    }
+    const bool eating = playing && stepMs >= 3000U && stepMs < 5400U;
+    const bool hoursMissing = playing && stepMs >= 1500U && stepMs < 11600U;
+    const bool popping = playing && stepMs >= 10400U && stepMs < 11600U;
+
+    // Right alignment keeps :MM:SS fixed while HH is carried, eaten, absent,
+    // and finally popped back into its original position.
+    display->setFont(clockFont);
+    display->drawString(width - 2, 14, hoursMissing ? homeTime + 2 : homeTime);
+    if (carrying) {
+        const char hours[] = {homeTime[0], homeTime[1], '\0'};
+        display->setTextAlignment(TEXT_ALIGN_LEFT);
+        display->drawString(dogX + 32, 14, hours);
+    } else if (eating) {
+        const uint32_t biteMs = stepMs - 3000U;
+        const uint8_t bite = static_cast<uint8_t>(biteMs / 400U);
+        const uint32_t bitePulseMs = biteMs % 400U;
+        const int16_t nibbleX = homeDogX + 24 - (bitePulseMs < 200U ? 3 : 0);
+        const int16_t nibbleY = 18 + (bitePulseMs < 200U ? 2 : 0);
+        display->setTextAlignment(TEXT_ALIGN_LEFT);
+        if (bite < 2U) {
+            const char hours[] = {homeTime[0], homeTime[1], '\0'};
+            display->setFont(FONT_MEDIUM);
+            display->drawString(nibbleX, nibbleY, hours);
+        } else if (bite < 4U) {
+            const char lastBite[] = {homeTime[1], '\0'};
+            display->setFont(bite == 2U ? FONT_MEDIUM : FONT_SMALL);
+            display->drawString(nibbleX, nibbleY + (bite == 2U ? 0 : 3), lastBite);
+        } else if (bite == 4U) {
+            display->fillRect(nibbleX + 2, nibbleY + 5, 3, 3);
+        }
+    } else if (popping) {
+        const uint32_t popMs = stepMs - 10400U;
+        const char hours[] = {homeTime[0], homeTime[1], '\0'};
+        display->setTextAlignment(TEXT_ALIGN_LEFT);
+        display->setFont(clockFont);
+        const int16_t clockHoursWidth = display->getStringWidth(hours);
+        if (popMs < 250U) {
+            display->setFont(FONT_SMALL);
+            const int16_t smallW = display->getStringWidth(hours);
+            display->drawString(clockLeft + (clockHoursWidth - smallW) / 2, 21, hours);
+        } else {
+            display->setFont(clockFont);
+            const int16_t popY = popMs < 550U ? 8 : (popMs < 800U ? 18 : 14);
+            display->drawString(clockLeft, popY, hours);
+        }
+    }
+    const bool moving = playing && stepMs < 3000U;
+    const int16_t dogY = 17 + (moving && (nowMs / 120U) % 2U ? -2 : 0);
+    HermesXHomeUiRenderer::drawMonochromeSittingDog(display, dogX, dogY, 2, mascotFrame, true);
+    if (eating) {
+        const bool mouthOpen = ((stepMs - 3000U) % 400U) < 200U;
+        display->setColor(OLEDDISPLAY_COLOR::BLACK);
+        display->fillRect(dogX + 14, dogY + 14, 6, 5);
+        display->setColor(OLEDDISPLAY_COLOR::WHITE);
+        if (mouthOpen) {
+            display->drawRect(dogX + 14, dogY + 14, 6, 5);
+        } else {
+            display->drawHorizontalLine(dogX + 14, dogY + 16, 6);
+        }
+    }
+    // Each of the six bites emits a deterministic crumb. The particles fall
+    // for roughly 1.5 seconds, spread sideways, then remain beside Xiaowei's
+    // feet during the five-second empty-clock pause.
+    if (playing && stepMs >= 3000U && stepMs < 10400U) {
+        for (uint8_t crumb = 0; crumb < 6U; ++crumb) {
+            const uint32_t bornMs = 3000U + static_cast<uint32_t>(crumb) * 400U;
+            if (stepMs < bornMs) {
+                continue;
+            }
+            const uint32_t ageMs = stepMs - bornMs;
+            const int16_t fall = static_cast<int16_t>(std::min<uint32_t>(24U, ageMs / 65U));
+            const int16_t drift = static_cast<int16_t>(std::min<uint32_t>(4U, ageMs / 450U));
+            const int16_t spreadX = homeDogX + 23 + static_cast<int16_t>((crumb * 7U) % 18U);
+            const int16_t crumbX = spreadX + ((crumb & 1U) ? drift : -drift);
+            const int16_t crumbY = 26 + fall;
+            const int16_t crumbSize = (crumb % 3U) == 0U ? 2 : 1;
+            display->fillRect(crumbX, crumbY, crumbSize, crumbSize);
+        }
+    }
+    display->setTextAlignment(TEXT_ALIGN_RIGHT);
+    display->setFont(FONT_SMALL);
+    display->drawString(width - 2, 38, hasValidTime ? dateBuf : "WAIT GPS / PHONE");
+
+    if (petStage == HermesOnePetStage::Dead) {
+        // Cover the live mascot with her gravestone after 24 hours without food.
+        display->setColor(OLEDDISPLAY_COLOR::BLACK);
+        display->fillRect(0, 15, 35, 36);
+        display->setColor(OLEDDISPLAY_COLOR::WHITE);
+        HermesXHomeUiRenderer::drawHermesOneTombstone(display, 2, 17);
+    } else {
+        if (petStage == HermesOnePetStage::Hungry) {
+            HermesXHomeUiRenderer::drawHermesOneThoughtBubble(display, 35, 16, nullptr, true);
+        } else if (hasUnreadTextMessage) {
+            HermesXHomeUiRenderer::drawHermesOneThoughtBubble(display, 35, 16, "!");
+        } else if (isNewNodeNotificationVisible()) {
+            HermesXHomeUiRenderer::drawHermesOneThoughtBubble(display, 35, 16, "+");
+        } else if (idle) {
+            HermesXHomeUiRenderer::drawHermesOneThoughtBubble(display, 35, 16, "==");
+        }
+    }
+
+    display->drawLine(2, height - 12, width - 3, height - 12);
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+    display->setFont(FONT_SMALL);
+    char gpsLabel[12];
+    const unsigned hermesOneSatCount = (gpsStatus && gpsStatus->getIsConnected())
+                                           ? static_cast<unsigned>(gpsStatus->getNumSatellites())
+                                           : 0U;
+    snprintf(gpsLabel, sizeof(gpsLabel), "GPS %u", hermesOneSatCount);
+    display->drawString(2, height - 11, gpsLabel);
+    char longNameLabel[sizeof(owner.long_name) + 1];
+    formatHermesOneLongName(longNameLabel, sizeof(longNameLabel), millis());
+    const int16_t longNameWidth = measureHermesOneLongName(display, longNameLabel);
+    const int16_t gpsWidth = display->getStringWidth(gpsLabel);
+    const int16_t longNameAreaX = std::min<int16_t>(width - 2, 2 + gpsWidth + 6);
+    const int16_t longNameAreaWidth = std::max<int16_t>(1, width - longNameAreaX - 2);
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+    if (longNameWidth <= longNameAreaWidth) {
+        const int16_t longNameX = width - longNameWidth - 2;
+        drawMixedSingleLineBounded(display, longNameX, height - 12, longNameAreaWidth, longNameLabel, 12, 12);
+    } else {
+        char marqueeLabel[sizeof(owner.long_name) + 4];
+        buildHermesOneLongNameMarquee(
+            display, longNameLabel, longNameAreaWidth, millis(), marqueeLabel, sizeof(marqueeLabel));
+        drawMixedSingleLineBounded(
+            display, longNameAreaX, height - 12, longNameAreaWidth, marqueeLabel, 12, 12);
+    }
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+    return;
+#endif
 
     display->setTextAlignment(TEXT_ALIGN_LEFT);
 
@@ -5791,25 +6441,71 @@ void Screen::drawRotaryLockOverlay(OLEDDisplay *display, OLEDDisplayUiState *sta
 static void drawFinderPulseConfirmOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
 {
     (void)state;
+#if defined(HERMESONE_MINIMAL_UI)
+    display->setColor(OLEDDISPLAY_COLOR::BLACK);
+    display->fillRect(0, 0, display->getWidth(), display->getHeight());
+    display->setColor(OLEDDISPLAY_COLOR::WHITE);
+    display->setTextAlignment(TEXT_ALIGN_CENTER);
+    display->setFont(FONT_MEDIUM);
+    display->drawString(display->getWidth() / 2, 8, "FINDER");
+    display->setFont(FONT_SMALL);
+    display->drawString(display->getWidth() / 2, 32, "PRESS: SEND");
+    display->drawString(display->getWidth() / 2, 46, "BACK: CANCEL");
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+#else
     HermesXNodeBrowserUiRenderer::drawFinderPulseConfirm(display, millis(), kStealthConfirmArmMs);
+#endif
 }
 
 static void drawFinderPulseSendingOverlay(OLEDDisplay *display, OLEDDisplayUiState *state)
 {
     (void)state;
+#if defined(HERMESONE_MINIMAL_UI)
+    display->setColor(OLEDDISPLAY_COLOR::BLACK);
+    display->fillRect(0, 0, display->getWidth(), display->getHeight());
+    display->setColor(OLEDDISPLAY_COLOR::WHITE);
+    display->setTextAlignment(TEXT_ALIGN_CENTER);
+    display->setFont(FONT_MEDIUM);
+    display->drawString(display->getWidth() / 2, 12, "FINDER");
+    display->setFont(FONT_SMALL);
+    display->drawString(display->getWidth() / 2, 38, "WAITING FOR GPS");
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+#else
     HermesXNodeBrowserUiRenderer::drawFinderPulseSending(display, millis());
+#endif
 }
 void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*state*/, int16_t /*x*/, int16_t /*y*/)
 {
     const int16_t width = display->getWidth();
     const int16_t height = display->getHeight();
 
+#if defined(HERMESONE_MINIMAL_UI)
+    static const char *kMinimalLabels[kMainActionMainCount] = {"HOME", "GPS", "FINDER", "TAK", "SLEEP"};
+    hermesActionMoreMenuActive = false;
+    if (hermesActionSelected < 0 || hermesActionSelected >= static_cast<int8_t>(kMainActionMainCount)) {
+        hermesActionSelected = 0;
+    }
+    display->setColor(OLEDDISPLAY_COLOR::BLACK);
+    display->fillRect(0, 0, width, height);
+    display->setColor(OLEDDISPLAY_COLOR::WHITE);
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+    display->setFont(FONT_SMALL);
+    display->drawString(3, 1, "HERMESONE / LOW POWER");
+    display->drawLine(2, 11, width - 3, 11);
+    for (uint8_t i = 0; i < kMainActionMainCount; ++i) {
+        const int16_t rowY = 13 + static_cast<int16_t>(i) * 10;
+        display->drawString(4, rowY, i == static_cast<uint8_t>(hermesActionSelected) ? ">" : " ");
+        display->drawString(15, rowY, kMinimalLabels[i]);
+    }
+    return;
+#endif
+
     bool lampOn = false;
     if (HermesXInterfaceModule::instance) {
         lampOn = HermesXInterfaceModule::instance->isEmergencyLampEnabled();
     }
-    const uint8_t currentActionCount = hermesActionFeatureMenuActive ? kMainActionFeatureCount : kMainActionPrimaryCount;
-    const uint8_t *currentActionOrder = hermesActionFeatureMenuActive ? kMainActionFeatureOrder : kMainActionPrimaryOrder;
+    const uint8_t currentActionCount = hermesActionMoreMenuActive ? kMainActionMoreCount : kMainActionMainCount;
+    const uint8_t *currentActionOrder = hermesActionMoreMenuActive ? kMainActionMoreOrder : kMainActionMainOrder;
     if (hermesActionSelected < 0 || hermesActionSelected >= static_cast<int8_t>(currentActionCount)) {
         hermesActionSelected = 0;
     }
@@ -5837,15 +6533,15 @@ void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*stat
 
         static const char *kTileLabelExact[kMainActionIdCount] = {
             u8"潛行模式", u8"緊急照明燈", "GPS", u8"TAK MODE", u8"休眠", "Home", u8"頻道", u8"設定", "MSG", "ONLINE",
-            "TRACE", "GROUP", u8"尋人模組", u8"功能", u8"退出",
+            "TRACE", "GROUP", u8"尋人模組", u8"更多", u8"返回", u8"更新模式",
         };
         static const char *kTileLabelCompact[kMainActionIdCount] = {
             u8"潛行", u8"照明", "GPS", "TAK", u8"休眠", "Home", u8"頻道", u8"設定", "MSG", "ON", "TR", "GRP", u8"尋人",
-            u8"功能", u8"退出",
+            u8"更多", u8"返回", u8"更新",
         };
         const bool compactLayout = (width < 180 || height < 100);
-        bool tileHasState[kMainActionIdCount] = {true, true, true, true, false, false, false, false, false, false, false, false, false, false, false};
-        bool tileState[kMainActionIdCount] = {stealthOn, lampOn, gpsOn, takOn, false, false, false, false, false, false, false, false, false, false, false};
+        bool tileHasState[kMainActionIdCount] = {true, true, true, true, false, false, false, false, false, false, false, false, false, false, false, false};
+        bool tileState[kMainActionIdCount] = {stealthOn, lampOn, gpsOn, takOn, false, false, false, false, false, false, false, false, false, false, false, false};
         tileHasState[8] = hasRecentMessages;
         tileState[8] = recentUnread;
         tileHasState[9] = (gOnlineNodeState.count > 0);
@@ -6127,20 +6823,29 @@ void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*stat
                     HermesXNodeBrowserUiRenderer::drawFinderRadarIcon(display, cx, cy + 1, 10, true);
                     break;
                 }
-                case 13: { // 功能（小圖）
+                case 13: { // 更多（小圖）
                     display->drawRect(cx - 10, cy - 9, 7, 7);
                     display->drawRect(cx + 3, cy - 9, 7, 7);
                     display->drawRect(cx - 10, cy + 4, 7, 7);
                     display->drawRect(cx + 3, cy + 4, 7, 7);
                     break;
                 }
-                case 14: { // 退出（小圖）
+                case 14: { // 返回（小圖）
                     display->drawLine(cx - 9, cy, cx + 8, cy);
                     display->drawLine(cx - 9, cy, cx - 2, cy - 7);
                     display->drawLine(cx - 9, cy, cx - 2, cy + 7);
                     display->drawLine(cx + 3, cy - 9, cx + 9, cy - 9);
                     display->drawLine(cx + 9, cy - 9, cx + 9, cy + 9);
                     display->drawLine(cx + 9, cy + 9, cx + 3, cy + 9);
+                    break;
+                }
+                case 15: { // 更新模式（小圖）
+                    display->drawLine(cx, cy - 10, cx, cy + 4);
+                    display->drawLine(cx, cy + 4, cx - 6, cy - 2);
+                    display->drawLine(cx, cy + 4, cx + 6, cy - 2);
+                    display->drawLine(cx - 10, cy + 5, cx - 10, cy + 10);
+                    display->drawLine(cx - 10, cy + 10, cx + 10, cy + 10);
+                    display->drawLine(cx + 10, cy + 10, cx + 10, cy + 5);
                     break;
                 }
                 default:
@@ -6409,7 +7114,7 @@ void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*stat
                 HermesXNodeBrowserUiRenderer::drawFinderRadarIcon(display, cx, iy + ih / 2, radarR, false);
                 break;
             }
-            case 13: { // 功能
+            case 13: { // 更多
                 const int16_t cell = std::max<int16_t>(10, std::min<int16_t>(base / 3 + 6, 20));
                 const int16_t gap = std::max<int16_t>(4, cell / 3);
                 const int16_t gridW = cell * 2 + gap;
@@ -6424,7 +7129,7 @@ void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*stat
                 display->drawLine(gx + cell / 2, gy + cell / 2, gx + cell / 2, gy + cell + gap + cell / 2);
                 break;
             }
-            case 14: { // 退出
+            case 14: { // 返回
                 const int16_t arrowW = std::max<int16_t>(24, base / 2 + 16);
                 const int16_t arrowX = cx - arrowW / 3;
                 const int16_t arrowY = iy + ih / 2;
@@ -6437,6 +7142,21 @@ void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*stat
                 const int16_t doorH = std::max<int16_t>(28, base / 2 + 8);
                 display->drawRect(doorX, doorY, doorW, doorH);
                 display->drawLine(doorX + doorW - 4, arrowY, doorX + doorW - 2, arrowY);
+                break;
+            }
+            case 15: { // 更新模式
+                const int16_t arrowTop = iy + std::max<int16_t>(2, ih / 8);
+                const int16_t arrowBottom = iy + (ih * 3) / 5;
+                const int16_t arrowHalf = std::max<int16_t>(8, base / 5);
+                display->drawLine(cx, arrowTop, cx, arrowBottom);
+                display->drawLine(cx, arrowBottom, cx - arrowHalf, arrowBottom - arrowHalf);
+                display->drawLine(cx, arrowBottom, cx + arrowHalf, arrowBottom - arrowHalf);
+                const int16_t trayHalf = std::max<int16_t>(16, base / 2);
+                const int16_t trayTop = arrowBottom + 4;
+                const int16_t trayBottom = std::min<int16_t>(iy + ih - 2, trayTop + std::max<int16_t>(8, base / 5));
+                display->drawLine(cx - trayHalf, trayTop, cx - trayHalf, trayBottom);
+                display->drawLine(cx - trayHalf, trayBottom, cx + trayHalf, trayBottom);
+                display->drawLine(cx + trayHalf, trayBottom, cx + trayHalf, trayTop);
                 break;
             }
             default:
@@ -6622,6 +7342,18 @@ void Screen::drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState * /*stat
         }
     }
     const bool yesArmed = (remainMs == 0);
+    if (HermesXCompactUi::applies(display)) {
+        HermesXCompactUi::begin(display, u8"潛行模式警告");
+        HermesXCompactUi::line(display, 3, 17, width - 6, u8"將關閉藍牙與LoRa");
+        char status[48];
+        if (yesArmed)
+            snprintf(status, sizeof(status), "%s", u8"旋鈕選擇，按下確認");
+        else
+            snprintf(status, sizeof(status), u8"%lu秒後可確認", static_cast<unsigned long>((remainMs + 999U) / 1000U));
+        HermesXCompactUi::line(display, 3, 31, width - 6, status);
+        HermesXCompactUi::options(display, u8"否", u8"是", yesArmed ? hermesActionStealthConfirmSelected : 0);
+        return;
+    }
 
 #if defined(USE_EINK)
     const auto dialogBg = EINK_WHITE;
@@ -7111,9 +7843,11 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
         auto &updateManager = HermesXUpdateManager::instance();
         const bool wifiFlow = (hermesManualUpdateFlow == Screen::HermesManualUpdateFlow::Wifi);
         const bool usbFlow = (hermesManualUpdateFlow == Screen::HermesManualUpdateFlow::Usb);
+#if HAS_WIFI && !defined(ARCH_PORTDUINO)
         if (wifiFlow && WiFi.isConnected() && !isMiniUpdateUploadServerRunning()) {
             startMiniUpdateUploadServer();
         }
+#endif
         String guideLine;
         if (wifiFlow) {
             if (updateManager.canApply()) {
@@ -7124,10 +7858,16 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
                 guideLine = u8"正在接收韌體";
             } else if (isMiniUpdateUploadServerRunning()) {
                 guideLine = u8"請在電腦開始傳送韌體";
+#if HAS_WIFI && !defined(ARCH_PORTDUINO)
             } else if (WiFi.isConnected()) {
                 guideLine = u8"正在啟動上傳服務";
+#endif
             } else {
+#if HAS_WIFI && !defined(ARCH_PORTDUINO)
                 guideLine = u8"正在連線 WiFi";
+#else
+                guideLine = u8"此硬體不支援 WiFi 更新";
+#endif
             }
         } else if (usbFlow) {
             if (updateManager.canApply()) {
@@ -7142,10 +7882,10 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
         } else {
             guideLine = u8"請先回上一頁按開始更新";
         }
-        String targetLine = updateManager.getCandidateVersion().isEmpty() ? u8"待更新版本: 無"
+        String targetLine = updateManager.getCandidateVersion().length() == 0 ? u8"待更新版本: 無"
                                                                           : String(u8"待更新版本: ") + updateManager.getCandidateVersion();
         String statusLine = String(u8"狀態: ") + updateManager.getSourceStatus();
-        String errorLine = updateManager.getLastError().isEmpty() ? String()
+        String errorLine = updateManager.getLastError().length() == 0 ? String()
                                                                   : String(u8"錯誤: ") + updateManager.getLastError();
         HermesXFastSetupUiRenderer::drawUpdateProgressPage(
             display, width, height, wifiFlow ? u8"WiFi更新" : u8"USB更新", guideLine,
@@ -7397,6 +8137,104 @@ void Screen::drawHermesFastSetup(OLEDDisplay *display, OLEDDisplayUiState * /*st
 SPIClass SPI1(HSPI);
 #endif
 
+#if defined(HERMESX_NRF52840_USE_SSD1309)
+class HermesXSSD1309Wire final : public OLEDDisplay
+{
+  public:
+    HermesXSSD1309Wire(uint8_t address, OLEDDISPLAY_GEOMETRY geometry) : address(address)
+    {
+        setGeometry(geometry);
+    }
+
+    bool connect() override
+    {
+#ifdef HERMESX_NRF52840_DIAGNOSTIC
+        Serial.println("HXDIAG:ssd1309-connect");
+        Serial.flush();
+#endif
+        // The board scanner has already configured and started Wire.
+        return true;
+    }
+
+    void display() override
+    {
+#ifdef HERMESX_NRF52840_DIAGNOSTIC
+        Serial.println("HXDIAG:ssd1309-display-begin");
+        Serial.flush();
+#endif
+        // OLEDDisplay owns a single framebuffer. A UI update from another task
+        // may rewrite it while this comparatively slow, eight-page I2C transfer
+        // is yielding. Transmit an immutable snapshot so one physical OLED frame
+        // can never contain pages from two different UI screens.
+        concurrency::LockGuard flushGuard(&flushLock);
+        memcpy(txBuffer, buffer, sizeof(txBuffer));
+
+        // SSD1309 uses page addressing. Sending 16 data bytes per transaction
+        // stays below the nRF52 Wire buffer limit.
+        for (uint8_t page = 0; page < 8; ++page) {
+            sendCommand(static_cast<uint8_t>(0xB0U + page));
+            sendCommand(0x00);
+            sendCommand(0x10);
+            const uint16_t pageOffset = static_cast<uint16_t>(page) * 128U;
+            for (uint8_t column = 0; column < 128; column += 16) {
+                Wire.beginTransmission(address);
+                Wire.write(0x40);
+                Wire.write(txBuffer + pageOffset + column, 16);
+                Wire.endTransmission();
+            }
+            yield();
+        }
+#ifdef OLEDDISPLAY_DOUBLE_BUFFER
+        memcpy(buffer_back, txBuffer, sizeof(txBuffer));
+#endif
+#ifdef HERMESX_NRF52840_DIAGNOSTIC
+        Serial.println("HXDIAG:ssd1309-display-end");
+        Serial.flush();
+#endif
+    }
+
+  protected:
+    int getBufferOffset() override { return 0; }
+
+    void sendCommand(uint8_t command) override
+    {
+        Wire.beginTransmission(address);
+        Wire.write(0x00);
+        Wire.write(command);
+        Wire.endTransmission();
+    }
+
+    void sendInitCommands() override
+    {
+        // Official MC242GX/SSD1309 power-on sequence. Its onboard RC circuit
+        // supplies reset, so allow it to settle before unlocking the driver.
+        delay(200);
+        static const uint8_t commands[] = {
+            0xAE, 0xFD, 0x12, 0x00, 0x10, 0x40, 0x81, 0xBF, 0xA1, 0xA6, 0xA8, 0x3F,
+            0xC8, 0xD3, 0x00, 0xD5, 0xA0, 0xD9, 0xF1, 0xDA, 0x12, 0xDB, 0x34, 0xA4,
+            0xA6, 0xAF,
+        };
+#ifdef HERMESX_NRF52840_DIAGNOSTIC
+        Serial.println("HXDIAG:ssd1309-init-begin");
+        Serial.flush();
+#endif
+        for (uint8_t command : commands) {
+            sendCommand(command);
+        }
+#ifdef HERMESX_NRF52840_DIAGNOSTIC
+        Serial.println("HXDIAG:ssd1309-init-end");
+        Serial.flush();
+#endif
+    }
+
+  private:
+    static constexpr size_t FrameBytes = 128U * 64U / 8U;
+    uint8_t address;
+    concurrency::Lock flushLock;
+    uint8_t txBuffer[FrameBytes] = {};
+};
+#endif
+
 Screen::Screen(ScanI2C::DeviceAddress address, meshtastic_Config_DisplayConfig_OledType screenType, OLEDDISPLAY_GEOMETRY geometry)
     : concurrency::OSThread("Screen"), address_found(address), model(screenType), geometry(geometry), cmdQueue(32)
 {
@@ -7412,8 +8250,12 @@ Screen::Screen(ScanI2C::DeviceAddress address, meshtastic_Config_DisplayConfig_O
     dispdev = new ST7789Spi(&SPI1, ST7789_RESET, ST7789_RS, ST7789_NSS, GEOMETRY_RAWMODE, TFT_WIDTH, TFT_HEIGHT);
 #endif
 #elif defined(USE_SSD1306)
+#ifdef HERMESX_NRF52840_USE_SSD1309
+    dispdev = new HermesXSSD1309Wire(address.address, geometry);
+#else
     dispdev = new SSD1306Wire(address.address, -1, -1, geometry,
                               (address.port == ScanI2C::I2CPort::WIRE1) ? HW_I2C::I2C_TWO : HW_I2C::I2C_ONE);
+#endif
 #elif defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||    \
     defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
     dispdev = new TFTDisplay(address.address, -1, -1, geometry,
@@ -7438,8 +8280,15 @@ Screen::Screen(ScanI2C::DeviceAddress address, meshtastic_Config_DisplayConfig_O
         isAUTOOled = true;
     }
 #else
+#if defined(HERMESX_NRF52840_PROMICRO)
+    // Keep the fitted OLED at the scanner's 100 kHz. AutoOLEDWire otherwise
+    // selects 400 kHz on nRF52, whose Wire transfers have no timeout.
+    dispdev = new AutoOLEDWire(address.address, -1, -1, geometry,
+                              (address.port == ScanI2C::I2CPort::WIRE1) ? HW_I2C::I2C_TWO : HW_I2C::I2C_ONE, 100000);
+#else
     dispdev = new AutoOLEDWire(address.address, -1, -1, geometry,
                                (address.port == ScanI2C::I2CPort::WIRE1) ? HW_I2C::I2C_TWO : HW_I2C::I2C_ONE);
+#endif
     isAUTOOled = true;
 #endif
 
@@ -7652,6 +8501,10 @@ void Screen::setup()
 
     // Initialising the UI will init the display too.
     ui->init();
+#ifdef HERMESX_NRF52840_DIAGNOSTIC
+    Serial.println("HXDIAG:screen-ui-init-end");
+    Serial.flush();
+#endif
 
     displayWidth = dispdev->width();
     displayHeight = dispdev->height();
@@ -7679,7 +8532,14 @@ void Screen::setup()
     const bool hermesBootHoldPending = false;
     const bool hermesWokeFromSleep = false;
 #endif
+#ifdef HERMESX_NRF52840_SIMPLE_BOOT
+    // The nRF52840 OLED port uses the stock, static Meshtastic boot frame.
+    // Keep the HermesX UI enabled after startup while avoiding the relatively
+    // large animated boot-frame stack allocation on this target.
+    const bool showHermesWelcome = false;
+#else
     const bool showHermesWelcome = hermesGuardEnabled && !hermesBootHoldPending;
+#endif
 
 #ifdef USERPREFS_OEM_TEXT
     logo_timeout *= 2; // Double the time if we have a custom logo
@@ -7708,6 +8568,23 @@ void Screen::setup()
     // Add frames.
     EINK_ADD_FRAMEFLAG(dispdev, DEMAND_FAST);
     bootScreenFrames[0] = [this](OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y) -> void {
+#if defined(HERMESX_NRF52840_PROMICRO)
+        // Static HermesX splash for the 128x64 OLED. The animated boot frame
+        // uses too much per-frame stack on this nRF52840 target.
+        (void)state;
+        (void)x;
+        (void)y;
+        display->setColor(OLEDDISPLAY_COLOR::BLACK);
+        display->fillRect(0, 0, display->width(), display->height());
+        display->setColor(OLEDDISPLAY_COLOR::WHITE);
+        display->setTextAlignment(TEXT_ALIGN_CENTER);
+        display->setFont(FONT_MEDIUM);
+        display->drawString(display->width() / 2, 14, "HermesOne");
+        display->setFont(FONT_SMALL);
+        display->drawString(display->width() / 2, 38, xstr(APP_VERSION_DISPLAY));
+        display->setTextAlignment(TEXT_ALIGN_LEFT);
+        return;
+#endif
 #if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS)
         if (bootScreenShowHermesWelcome) {
             if (!hermesXBootFrameWelcomeLogged) {
@@ -7767,6 +8644,10 @@ void Screen::setup()
 
     // Set up a log buffer with 3 lines, 32 chars each.
     dispdev->setLogBuffer(3, 32);
+#ifdef HERMESX_NRF52840_DIAGNOSTIC
+    Serial.println("HXDIAG:screen-log-buffer-end");
+    Serial.flush();
+#endif
 
 #ifdef SCREEN_MIRROR
     dispdev->mirrorScreen();
@@ -7785,6 +8666,11 @@ void Screen::setup()
     }
 #endif
 
+#ifdef HERMESX_NRF52840_DIAGNOSTIC
+    Serial.println("HXDIAG:screen-flip-end");
+    Serial.flush();
+#endif
+
     // Get our hardware ID
     uint8_t dmac[6];
     getMacAddr(dmac);
@@ -7794,7 +8680,15 @@ void Screen::setup()
 #endif
 
     // Turn on the display.
+#ifdef HERMESX_NRF52840_DIAGNOSTIC
+    Serial.println("HXDIAG:screen-on-begin");
+    Serial.flush();
+#endif
     handleSetOn(true);
+#ifdef HERMESX_NRF52840_DIAGNOSTIC
+    Serial.println("HXDIAG:screen-on-end");
+    Serial.flush();
+#endif
 
 #if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS)
 #if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
@@ -7836,9 +8730,25 @@ void Screen::setup()
     // On some ssd1306 clones, the first draw command is discarded, so draw it
     // twice initially. Skip this for EINK Displays to save a few seconds during boot
     if (!skipInitialUiUpdateForHermesWelcome) {
+#ifdef HERMESX_NRF52840_DIAGNOSTIC
+        Serial.println("HXDIAG:screen-update1-begin");
+        Serial.flush();
+#endif
         ui->update();
-#ifndef USE_EINK
+#ifdef HERMESX_NRF52840_DIAGNOSTIC
+        Serial.println("HXDIAG:screen-update1-end");
+        Serial.flush();
+#endif
+#if !defined(USE_EINK) && !defined(HERMESX_NRF52840_USE_SSD1309)
+#ifdef HERMESX_NRF52840_DIAGNOSTIC
+        Serial.println("HXDIAG:screen-update2-begin");
+        Serial.flush();
+#endif
         ui->update();
+#ifdef HERMESX_NRF52840_DIAGNOSTIC
+        Serial.println("HXDIAG:screen-update2-end");
+        Serial.flush();
+#endif
 #endif
     }
     serialSinceMsec = millis();
@@ -7928,7 +8838,14 @@ void Screen::requestImmediateRedraw()
     if (ui->getUiState()) {
         ui->getUiState()->lastUpdate = 0;
     }
+#if defined(HERMESX_NRF52840_USE_SSD1309)
+    // Rendering belongs to the Screen task. Calling update() synchronously from
+    // config/TAK callbacks can re-enter the shared OLED framebuffer while the
+    // Screen task is still flushing it. runASAP above requests the same redraw
+    // without creating a second renderer.
+#else
     ui->update();
+#endif
 #ifdef USE_EINK
     forceDisplay(true);
 #endif
@@ -8405,6 +9322,36 @@ int32_t Screen::runOnce()
         return RUN_SAME;
     }
 
+    if (gDirectMessageComposer.sending()) {
+        const uint32_t nowMs = millis();
+        if (gDirectMessageComposer.sendAnimationComplete(nowMs)) {
+            const bool wasGroup = gDirectMessageComposer.fromGroupDetail();
+            stopDirectMessageComposer();
+            if (wasGroup) {
+                showGroupNodeDetailPage();
+            } else {
+                showOnlineNodeDetailPage();
+            }
+            requestImmediateRedraw();
+        } else {
+            setFastFramerate();
+        }
+    }
+
+    if (gHermesOneMessageFailureStartedAtMs != 0 && !isHermesOneMessageFailureVisible()) {
+        gHermesOneMessageFailureStartedAtMs = 0;
+        requestImmediateRedraw();
+    }
+
+    if (gNewNodeNotificationUntilMs != 0) {
+        if (static_cast<int32_t>(millis() - gNewNodeNotificationUntilMs) >= 0) {
+            dismissNewNodeNotification();
+            requestImmediateRedraw();
+        } else if (isNewNodeNotificationVisible()) {
+            setFastFramerate();
+        }
+    }
+
     if (displayHeight == 0) {
         displayHeight = dispdev->getHeight();
     }
@@ -8478,7 +9425,7 @@ int32_t Screen::runOnce()
         LOG_INFO("[UpdateCheck] pending action result ok=%d status=%s err=%s", ok ? 1 : 0, updateManager.getSourceStatus().c_str(),
                  updateManager.getLastError().c_str());
         hermesSetupToast = ok ? updateManager.getSourceStatus()
-                              : (updateManager.getLastError().isEmpty() ? updateManager.getSourceStatus()
+                              : (updateManager.getLastError().length() == 0 ? updateManager.getSourceStatus()
                                                                         : updateManager.getLastError());
         hermesSetupToastUntilMs = millis() + 2200;
         setFastFramerate();
@@ -8813,6 +9760,32 @@ int32_t Screen::runOnce()
 #endif
 
     bool skipUiUpdate = false;
+    const bool sittingDogNotificationVisible = gDirectMessageComposer.sending() || isIncomingTextPopupVisible() ||
+                                                isNewNodeNotificationVisible() || isHermesOneMessageFailureVisible();
+    bool hermesOneMascotAnimationActive = false;
+#if defined(HERMESX_NRF52840_PROMICRO)
+    const bool hermesOneHomeActive = showingNormalScreen && ui->getUiState()->frameState == FIXED &&
+                                     framesetInfo.positions.main < framesetInfo.frameCount &&
+                                     ui->getUiState()->currentFrame == framesetInfo.positions.main;
+    const bool hermesOneCannedSendActive =
+        cannedMessageModule && (cannedMessageModule->getRunState() == CANNED_MESSAGE_RUN_STATE_SENDING_ACTIVE ||
+                                cannedMessageModule->getRunState() == CANNED_MESSAGE_RUN_STATE_ACK_NACK_RECEIVED);
+    const bool hermesOneRecentListActive =
+        showingNormalScreen && ui->getUiState()->frameState == FIXED &&
+        framesetInfo.positions.textMessageList < framesetInfo.frameCount &&
+        ui->getUiState()->currentFrame == framesetInfo.positions.textMessageList;
+    hermesOneMascotAnimationActive =
+        hermesOneHomeActive || sittingDogNotificationVisible || hermesOneCannedSendActive || hermesOneRecentListActive;
+    const uint32_t hermesOneAnimationFps =
+        hermesOneRecentListActive && !hermesOneHomeActive && !sittingDogNotificationVisible && !hermesOneCannedSendActive
+            ? 10U
+            : SCREEN_TRANSITION_FRAMERATE;
+    if (hermesOneMascotAnimationActive && targetFramerate != hermesOneAnimationFps) {
+        targetFramerate = hermesOneAnimationFps;
+        ui->setTargetFPS(targetFramerate);
+        ui->getUiState()->lastUpdate = 0;
+    }
+#endif
 
 #if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
     defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
@@ -8827,6 +9800,14 @@ int32_t Screen::runOnce()
     }
 
     auto *tft = static_cast<TFTDisplay *>(dispdev);
+    static bool sittingDogNotificationWasVisible = false;
+    if (!sittingDogNotificationVisible && sittingDogNotificationWasVisible) {
+        // Direct RGB pixels are outside the OLED back-buffer. Force one full repaint when the notification closes.
+        tft->markColorPaletteDirty();
+        if (ui->getUiState()) {
+            ui->getUiState()->lastUpdate = 0;
+        }
+    }
     const uint16_t normalFg = TFTDisplay::rgb565(0xFF, 0xFF, 0xFF);
     const uint16_t normalBg = TFTDisplay::rgb565(0x00, 0x00, 0x00);
     const uint16_t stealthFg = TFTDisplay::rgb565(0xFF, 0x20, 0x20);
@@ -8851,7 +9832,7 @@ int32_t Screen::runOnce()
     directHomeRuntimeInput.onFixedMainFrame = onFixedMainFrame;
     directHomeRuntimeInput.smartPowerHomeActive = smartPowerHomeActive;
     directHomeRuntimeInput.directOverlaySupported = isDirectHomePresentationAvailable(dispdev);
-    directHomeRuntimeInput.incomingTextPopupActive = messageOverlayRuntime.popupActive;
+    directHomeRuntimeInput.incomingTextPopupActive = sittingDogNotificationVisible;
     directHomeRuntimeInput.emergencyConfirmVisible = gEmergencyConfirmUiState.visible;
     directHomeRuntimeInput.emergencyUiActive = emergencyUiActive;
     directHomeRuntimeInput.lowMemoryReminderVisible = gLowMemoryUiState.visible;
@@ -8969,7 +9950,7 @@ int32_t Screen::runOnce()
                                                     gpsState.poster,
                                                     gpsRuntime.layers,
                                                     enteredDirectGpsPoster,
-                                                    messageOverlayRuntime.uiSkipBlocked)) {
+                                                    messageOverlayRuntime.uiSkipBlocked || sittingDogNotificationVisible)) {
             skipUiUpdate = true;
         }
     }
@@ -9046,6 +10027,11 @@ int32_t Screen::runOnce()
     } else {
         gpsUiModel.invalidateBase();
     }
+    if (sittingDogNotificationVisible) {
+        HermesXHomeUiRenderer::renderDirectSittingDogNotification(
+            tft, dispdev->getWidth(), dispdev->getHeight(), millis());
+    }
+    sittingDogNotificationWasVisible = sittingDogNotificationVisible;
     gpsUiModel.commitVisibility(gpsRuntime.visible);
     gpsUiController.commitFrame(currentFrameIndex);
 #endif
@@ -9063,7 +10049,7 @@ int32_t Screen::runOnce()
     // but we should only call setTargetFPS when framestate changes, because
     // otherwise that breaks animations.
     if (targetFramerate != IDLE_FRAMERATE && ui->getUiState()->frameState == FIXED && !hermesXBootHoldActive &&
-        !HermesXHomeUiController::instance().isVisible()) {
+        !HermesXHomeUiController::instance().isVisible() && !hermesOneMascotAnimationActive) {
         if (isHermesFastSetupActive() || (hermesXEmUiModule && hermesXEmUiModule->isActive())) {
             // Keep UI responsive while interacting with HermesX screens.
             fastUntilMs = millis() + 1200;
@@ -9423,6 +10409,11 @@ void Screen::setFrames(FrameFocus focus)
 #endif
 
     moduleFrames = MeshModule::GetMeshModulesWithUIFrames();
+#if defined(HERMESONE_MINIMAL_UI)
+    // Modules remain active for BLE and Mesh traffic; only their optional
+    // carousel frames are suppressed by the HermesOne local UI profile.
+    moduleFrames.clear();
+#endif
     LOG_DEBUG("Show %d module frames", moduleFrames.size());
 #ifdef DEBUG_PORT
     int totalFrameCount = MAX_NUM_NODES + NUM_EXTRA_FRAMES + moduleFrames.size();
@@ -9479,6 +10470,7 @@ void Screen::setFrames(FrameFocus focus)
     fsi.positions.mainAction = numframes;
     normalFrames[numframes++] = &Screen::drawHermesXActionFrame;
 
+#if !defined(HERMESONE_MINIMAL_UI)
     // HermesFastSetup replaces node info frames
     fsi.positions.setup = numframes;
     normalFrames[numframes++] = &Screen::drawHermesFastSetupFrame;
@@ -9487,7 +10479,18 @@ void Screen::setFrames(FrameFocus focus)
     fsi.positions.share = numframes;
     normalFrames[numframes++] = &Screen::drawHermesXShareChannelFrame;
 #endif
+#endif
 
+#if defined(HERMESONE_MINIMAL_UI)
+    fsi.positions.finderList = numframes;
+    normalFrames[numframes++] = &Screen::drawFinderNodeListFrame;
+    fsi.positions.finderDetail = numframes;
+    normalFrames[numframes++] = &Screen::drawFinderNodeDetailFrame;
+    if (shouldShowHermesXGpsFrame()) {
+        fsi.positions.settings = numframes;
+        normalFrames[numframes++] = &Screen::drawDebugInfoSettingsTrampoline;
+    }
+#else
     // then the debug info
     //
     // Since frames are basic function pointers, we have to use a helper to
@@ -9533,6 +10536,7 @@ void Screen::setFrames(FrameFocus focus)
         normalFrames[numframes++] = &Screen::drawDebugInfoWiFiTrampoline;
     }
 #endif
+#endif
 
     fsi.frameCount = numframes; // Total framecount is used to apply FOCUS_PRESERVE
     LOG_DEBUG("Finished build frames. numframes: %d", numframes);
@@ -9542,6 +10546,11 @@ void Screen::setFrames(FrameFocus focus)
 
     // Add function overlay here. This can show when notifications muted, modifier key is active etc
     static OverlayCallback functionOverlay[] = {
+#if defined(HERMESONE_MINIMAL_UI)
+        drawFinderPulseConfirmOverlay,
+        drawFinderPulseSendingOverlay,
+        drawHermesOnePetDialogOverlay,
+#else
 #if !defined(HERMESX_TEST_DISABLE_HERMES_OVERLAYS)
         drawHermesXEmUiOverlay,
         drawHermesXMenuFooterOverlay,
@@ -9551,9 +10560,13 @@ void Screen::setFrames(FrameFocus focus)
         drawRotaryLockOverlay,
         drawFinderPulseConfirmOverlay,
         drawFinderPulseSendingOverlay,
+        drawNewNodeNotificationOverlay,
         drawIncomingTextPopupOverlay,
+        drawHermesOnePetDialogOverlay,
         drawTraceRoutePopupOverlay,
         drawLowMemoryReminderOverlay,
+#endif
+        drawHermesOneMessageFailureOverlay,
     };
     static const int functionOverlayCount = sizeof(functionOverlay) / sizeof(functionOverlay[0]);
     ui->setOverlays(functionOverlay, functionOverlayCount);
@@ -10311,10 +11324,17 @@ int Screen::handleStatusUpdate(const meshtastic::Status *arg)
     // LOG_DEBUG("Screen got status update %d", arg->getStatusType());
     switch (arg->getStatusType()) {
     case STATUS_TYPE_NODE: {
-        const bool nodeCountChanged = nodeStatus->getLastNumTotal() != nodeStatus->getNumTotal();
+        const uint32_t previousNodeCount = nodeStatus->getLastNumTotal();
+        const uint32_t currentNodeCount = nodeStatus->getNumTotal();
+        const bool nodeCountChanged = previousNodeCount != currentNodeCount;
+        const bool foundNewNode = previousNodeCount > 0 && currentNodeCount > previousNodeCount;
 
         if (showingNormalScreen && nodeCountChanged) {
             setFrames(FOCUS_PRESERVE); // Regen the list of screen frames (returning to same frame, if possible)
+        }
+        if (showingNormalScreen && foundNewNode) {
+            showNewNodeNotification();
+            setFastFramerate();
         }
         nodeDB->updateGUI = false;
         break;
@@ -10376,6 +11396,34 @@ int Screen::handleUIFrameEvent(const UIFrameEvent *event)
     }
 
     return 0;
+}
+
+bool Screen::startUpdateModeReboot()
+{
+    if (!saveUpdateBootFlag()) {
+        hermesSetupToast = u8"無法進入更新環境";
+        hermesSetupToastUntilMs = millis() + 1500;
+        setFastFramerate();
+        return false;
+    }
+
+    hermesUpdateModalActive = true;
+    showingNormalScreen = false;
+    LOG_INFO("[UpdateModal] enter showingNormalScreen=%d currentFrame=%u free=%u largest=%u",
+             showingNormalScreen ? 1 : 0, ui && ui->getUiState() ? ui->getUiState()->currentFrame : 0xFF,
+             memGet.getFreeHeap(), memGet.getLargestFreeBlock());
+    static FrameCallback updateModalFrames[] = {&Screen::drawHermesFastSetupFrame};
+    setFrameImmediateDraw(updateModalFrames);
+    stopMiniUpdateUploadServer();
+    HermesXUpdateManager::instance().resetUiSession(true);
+    hermesSetupToast = u8"重開中";
+    hermesSetupToastUntilMs = millis() + kSetupUpdateExitRebootMs;
+    rebootAtMsec = millis() + kSetupUpdateExitRebootMs;
+    HermesXFastSetupUiModel::instance().reset(HermesFastSetupPage::UpdateExitPending);
+    hermesUpdateIntroStartedAtMs = millis();
+    setFastFramerate();
+    requestImmediateRedraw();
+    return true;
 }
 
 bool Screen::handleHermesXActionInput(const InputEvent *event)
@@ -10445,6 +11493,77 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
         return true;
     };
 
+#if defined(HERMESONE_MINIMAL_UI)
+    const uint8_t currentActionCount = kMainActionMainCount;
+    const uint8_t *currentActionOrder = kMainActionMainOrder;
+    if (hermesActionSelected < 0 || hermesActionSelected >= static_cast<int8_t>(currentActionCount)) {
+        hermesActionSelected = 0;
+    }
+
+    if (isCancel) {
+        showHermesXMainPage();
+        setFastFramerate();
+        return true;
+    }
+
+    if (navDir != 0 && allowNav(navDir)) {
+        int selected = hermesActionSelected + navDir;
+        while (selected < 0) {
+            selected += currentActionCount;
+        }
+        hermesActionSelected = selected % currentActionCount;
+        setFastFramerate();
+        return true;
+    }
+
+    if (!isSelect && !isPress) {
+        return false;
+    }
+
+    switch (currentActionOrder[hermesActionSelected]) {
+    case 2: // GPS
+        if (ui && framesetInfo.positions.settings < framesetInfo.frameCount) {
+            HermesXGpsUiModel::instance().invalidate();
+            HermesXGpsUiModel::instance().clearVisibility();
+            ui->switchToFrame(framesetInfo.positions.settings);
+        }
+        break;
+    case 3: // TAK
+        if (isTakExperienceActive()) {
+            if (disableTakMode()) {
+                rebootAtMsec = millis() + 750;
+            }
+        } else if (enableTakMode()) {
+            rebootAtMsec = millis() + 750;
+        }
+        break;
+    case 4: // Sleep
+        runPreDeepSleepHook(SleepPreHookParams{BUTTON_LONGPRESS_MS});
+#if defined(HERMESX_NRF52840_PROMICRO)
+        // This is an explicit power-off action. A configured SDS interval
+        // sends TAK_TRACKER into nRF's timed-delay path, which has no GPIO
+        // wake handling, so HermesOne must use System OFF here.
+        ::doDeepSleep(DELAY_FOREVER, false, false);
+#else
+        ::doDeepSleep(Default::getConfiguredOrDefaultMs(config.power.sds_secs), false, false);
+#endif
+        break;
+    case 5: // Home
+        showHermesXMainPage();
+        break;
+    case 12: // Finder
+        hermesFinderUiMode = HermesFinderUiMode::Menu;
+        hermesFinderMenuSelected = 1;
+        showFinderListPageSafely(true);
+        break;
+    default:
+        break;
+    }
+
+    setFastFramerate();
+    return true;
+#else
+
     auto openHermesFastSetupPage = [&](HermesFastSetupPage page) {
         hermesSetupReturnToGroupMenu = false;
         gHermesFastSetupNavigation.page = page;
@@ -10501,14 +11620,14 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
         HermesXTraceRouteUiModel::instance().resetNavigation();
         return showTraceRouteNodeListPage();
     };
-    auto returnToPrimaryFeatureEntry = [&]() {
-        hermesActionFeatureMenuActive = false;
-        hermesActionSelected = kMainActionFeatureEntryIndex;
+    auto returnToMainMoreEntry = [&]() {
+        hermesActionMoreMenuActive = false;
+        hermesActionSelected = kMainActionMoreEntryIndex;
         hermesActionLastNavAtMs = 0;
         hermesActionLastNavDir = 0;
     };
-    const uint8_t currentActionCount = hermesActionFeatureMenuActive ? kMainActionFeatureCount : kMainActionPrimaryCount;
-    const uint8_t *currentActionOrder = hermesActionFeatureMenuActive ? kMainActionFeatureOrder : kMainActionPrimaryOrder;
+    const uint8_t currentActionCount = hermesActionMoreMenuActive ? kMainActionMoreCount : kMainActionMainCount;
+    const uint8_t *currentActionOrder = hermesActionMoreMenuActive ? kMainActionMoreOrder : kMainActionMainOrder;
     if (hermesActionSelected < 0 || hermesActionSelected >= static_cast<int8_t>(currentActionCount)) {
         hermesActionSelected = 0;
     }
@@ -10556,8 +11675,8 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
     }
 
     if (isCancel) {
-        if (hermesActionFeatureMenuActive) {
-            returnToPrimaryFeatureEntry();
+        if (hermesActionMoreMenuActive) {
+            returnToMainMoreEntry();
             setFastFramerate();
             return true;
         }
@@ -10583,13 +11702,13 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
     }
 
     const uint8_t selectedAction = currentActionOrder[hermesActionSelected];
-    if (selectedAction == kMainActionFeatureId) {
-        hermesActionFeatureMenuActive = true;
+    if (selectedAction == kMainActionMoreId) {
+        hermesActionMoreMenuActive = true;
         hermesActionSelected = 0;
         hermesActionLastNavAtMs = 0;
         hermesActionLastNavDir = 0;
-    } else if (selectedAction == kMainActionFeatureExitId) {
-        returnToPrimaryFeatureEntry();
+    } else if (selectedAction == kMainActionBackId) {
+        returnToMainMoreEntry();
     } else if (selectedAction == 0) {
         bool needsReboot = false;
         if (!isStealthModeActive()) {
@@ -10656,7 +11775,11 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
             screen->print("Sleeping...\n");
         }
         runPreDeepSleepHook(SleepPreHookParams{BUTTON_LONGPRESS_MS});
+#if defined(HERMESX_NRF52840_PROMICRO)
+        ::doDeepSleep(DELAY_FOREVER, false, false);
+#else
         ::doDeepSleep(Default::getConfiguredOrDefaultMs(config.power.sds_secs), false, false);
+#endif
     } else if (selectedAction == 5) {
         openHermesMainFrame();
     } else if (selectedAction == 6) {
@@ -10681,10 +11804,13 @@ bool Screen::handleHermesXActionInput(const InputEvent *event)
         hermesFinderUiMode = HermesFinderUiMode::Menu;
         hermesFinderMenuSelected = 1;
         showFinderListPageSafely(true);
+    } else if (selectedAction == kMainActionUpdateId) {
+        startUpdateModeReboot();
     }
 
     setFastFramerate();
     return true;
+#endif
 }
 
 bool Screen::handleLowMemoryReminderInput(const InputEvent *event)
@@ -10988,9 +12114,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         channels.onConfigChanged();
         saveSetupSegments(SEGMENT_CHANNELS);
         hermesSetupChannelIndex = channel.index;
-        if (mqtt) {
-            mqtt->start();
-        }
+        restartMqttIfAvailable();
     };
 
     auto enterChannelMenu = [&]() {
@@ -11017,21 +12141,12 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
             setFastFramerate();
         }
     };
-    auto enterUpdateModeModal = [&]() {
-        hermesUpdateModalActive = true;
-        showingNormalScreen = false;
-        LOG_INFO("[UpdateModal] enter showingNormalScreen=%d currentFrame=%u free=%u largest=%u",
-                 showingNormalScreen ? 1 : 0, ui && ui->getUiState() ? ui->getUiState()->currentFrame : 0xFF,
-                 ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-        static FrameCallback updateModalFrames[] = {&Screen::drawHermesFastSetupFrame};
-        setFrameImmediateDraw(updateModalFrames);
-    };
     auto exitUpdateModeModal = [&]() {
         if (!hermesUpdateModalActive) {
             return;
         }
         LOG_INFO("[UpdateModal] exit begin showingNormalScreen=%d free=%u largest=%u", showingNormalScreen ? 1 : 0,
-                 ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+                 memGet.getFreeHeap(), memGet.getLargestFreeBlock());
         hermesUpdateModalActive = false;
         showingNormalScreen = true;
         setFrames(FOCUS_DEFAULT);
@@ -11040,26 +12155,8 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
         }
         LOG_INFO("[UpdateModal] exit done showingNormalScreen=%d currentFrame=%u free=%u largest=%u",
                  showingNormalScreen ? 1 : 0, ui && ui->getUiState() ? ui->getUiState()->currentFrame : 0xFF,
-                 ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+                 memGet.getFreeHeap(), memGet.getLargestFreeBlock());
         setFastFramerate();
-    };
-    auto scheduleEnterUpdateModeReboot = [&]() {
-        if (saveUpdateBootFlag()) {
-            enterUpdateModeModal();
-            stopMiniUpdateUploadServer();
-            HermesXUpdateManager::instance().resetUiSession(true);
-            hermesSetupToast = u8"重開中";
-            hermesSetupToastUntilMs = millis() + kSetupUpdateExitRebootMs;
-            rebootAtMsec = millis() + kSetupUpdateExitRebootMs;
-            resetMenu(HermesFastSetupPage::UpdateExitPending);
-            hermesUpdateIntroStartedAtMs = millis();
-            setFastFramerate();
-            requestImmediateRedraw();
-        } else {
-            hermesSetupToast = u8"無法進入更新環境";
-            hermesSetupToastUntilMs = millis() + 1500;
-            setFastFramerate();
-        }
     };
     auto leaveUpdateMode = [&]() -> bool {
         const bool dedicatedUpdateBoot = gUpdateBootRequested;
@@ -11428,7 +12525,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                     rebootAtMsec = millis() + 1500;
                 }
             } else if (action == HermesXFastSetupAction::EnterUpdateModeRequested) {
-                scheduleEnterUpdateModeReboot();
+                startUpdateModeReboot();
             }
             setFastFramerate();
             return true;
@@ -11534,7 +12631,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                     hermesSetupToastUntilMs = millis() + 1500;
                 }
             } else if (action == HermesXFastSetupAction::EnterUpdateModeRequested) {
-                scheduleEnterUpdateModeReboot();
+                startUpdateModeReboot();
             } else if (action == HermesXFastSetupAction::OpenUpdateWifiConfigRequested) {
                 resetMenu(HermesFastSetupPage::UpdateWifiConfigMenu);
             } else if (action == HermesXFastSetupAction::ShowCurrentVersionRequested) {
@@ -11639,14 +12736,14 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                 openSetupDetailPage(u8"目前狀態", updateManager.getSourceStatus(), HermesFastSetupPage::UpdateCheckMenu);
             } else if (action == HermesXFastSetupAction::ShowUpdateCandidateRequested) {
                 openSetupDetailPage(u8"待更新版本",
-                                    updateManager.getCandidateVersion().isEmpty() ? String(u8"無")
+                                    updateManager.getCandidateVersion().length() == 0 ? String(u8"無")
                                                                                   : updateManager.getCandidateVersion(),
                                     HermesFastSetupPage::UpdateCheckMenu);
             } else if (action == HermesXFastSetupAction::ShowUpdateProgressRequested) {
                 openSetupDetailPage(u8"下載進度", String(updateManager.getProgressPercent()) + "%", HermesFastSetupPage::UpdateCheckMenu);
             } else if (action == HermesXFastSetupAction::ShowUpdateErrorRequested) {
                 openSetupDetailPage(u8"最後錯誤",
-                                    updateManager.getLastError().isEmpty() ? String(u8"無") : updateManager.getLastError(),
+                                    updateManager.getLastError().length() == 0 ? String(u8"無") : updateManager.getLastError(),
                                     HermesFastSetupPage::UpdateCheckMenu);
             }
             setFastFramerate();
@@ -11679,7 +12776,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                 if (updateManager.canApply()) {
                     const bool ok = updateManager.applyUpdate();
                     hermesSetupToast = ok ? updateManager.getSourceStatus()
-                                          : (updateManager.getLastError().isEmpty() ? updateManager.getSourceStatus()
+                                          : (updateManager.getLastError().length() == 0 ? updateManager.getSourceStatus()
                                                                                     : updateManager.getLastError());
                     hermesSetupToastUntilMs = millis() + 2200;
                 } else {
@@ -11990,17 +13087,13 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
             if (action == HermesXFastSetupAction::ToggleMqttRequested) {
                 moduleConfig.mqtt.enabled = !moduleConfig.mqtt.enabled;
                 saveSetupSegments(SEGMENT_MODULECONFIG);
-                if (mqtt) {
-                    mqtt->start();
-                }
+                restartMqttIfAvailable();
                 hermesSetupToast = moduleConfig.mqtt.enabled ? u8"MQTT 已啟用" : u8"MQTT 已停用";
                 hermesSetupToastUntilMs = millis() + 1500;
             } else if (action == HermesXFastSetupAction::ToggleMqttProxyRequested) {
                 moduleConfig.mqtt.proxy_to_client_enabled = !moduleConfig.mqtt.proxy_to_client_enabled;
                 saveSetupSegments(SEGMENT_MODULECONFIG);
-                if (mqtt) {
-                    mqtt->start();
-                }
+                restartMqttIfAvailable();
                 hermesSetupToast = moduleConfig.mqtt.proxy_to_client_enabled ? u8"客戶端代理已啟用" : u8"客戶端代理已停用";
                 hermesSetupToastUntilMs = millis() + 1500;
             } else if (action == HermesXFastSetupAction::OpenMqttMapReportRequested) {
@@ -12032,9 +13125,7 @@ bool Screen::handleHermesFastSetupInput(const InputEvent *event)
                 moduleConfig.mqtt.map_reporting_enabled = next;
                 moduleConfig.mqtt.map_report_settings.should_report_location = next;
                 saveSetupSegments(SEGMENT_MODULECONFIG);
-                if (mqtt) {
-                    mqtt->start();
-                }
+                restartMqttIfAvailable();
                 hermesSetupToast = next ? u8"地圖報告已啟用" : u8"地圖報告已停用";
                 hermesSetupToastUntilMs = millis() + 1500;
             } else if (action == HermesXFastSetupAction::OpenMqttMapPrecisionRequested) {
@@ -13178,6 +14269,63 @@ bool Screen::handleTextMessagePopupInput(const InputEvent *event)
     return action != HermesXMessageInputAction::Unhandled;
 }
 
+bool Screen::handleHermesOnePetDialogInput(const InputEvent *event)
+{
+#if !defined(HERMESX_NRF52840_PROMICRO)
+    (void)event;
+    return false;
+#else
+    if (!event || !gHermesOnePetDialogVisible) {
+        return false;
+    }
+
+    const char configuredPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
+    const char configuredCw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_cw);
+    const char configuredCcw = static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw);
+    const bool select = event->inputEvent ==
+                        static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
+    const bool confirm = select || (configuredPress != 0 && event->inputEvent == configuredPress);
+    const bool cancel = event->inputEvent ==
+                            static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_CANCEL) ||
+                        event->inputEvent ==
+                            static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_BACK);
+    const bool previous = event->inputEvent ==
+                              static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP) ||
+                          event->inputEvent ==
+                              static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_LEFT) ||
+                          (configuredCcw != 0 && event->inputEvent == configuredCcw);
+    const bool next = event->inputEvent ==
+                          static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN) ||
+                      event->inputEvent ==
+                          static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_RIGHT) ||
+                      (configuredCw != 0 && event->inputEvent == configuredCw);
+
+    if (!gHermesOnePetDialogRevive && (previous || next)) {
+        gHermesOnePetDialogSelected = previous ? 0 : 1;
+        setFastFramerate();
+        return true;
+    }
+    if (cancel) {
+        gHermesOnePetDialogVisible = false;
+        setFastFramerate();
+        requestImmediateRedraw();
+        return true;
+    }
+    if (confirm) {
+        if (gHermesOnePetDialogRevive || gHermesOnePetDialogSelected == 0) {
+            feedHermesOnePet();
+        }
+        gHermesOnePetDialogVisible = false;
+        gHermesOnePetDialogSelected = 0;
+        setFastFramerate();
+        requestImmediateRedraw();
+        return true;
+    }
+
+    return true;
+#endif
+}
+
 bool Screen::handleTraceRoutePopupInput(const InputEvent *event)
 {
     if (!event || !isTraceRoutePopupVisible()) {
@@ -13313,7 +14461,11 @@ bool Screen::handleRecentTextMessageDetailInput(const InputEvent *event)
         static_cast<char>(moduleConfig.canned_message.inputbroker_event_ccw),
     };
     const uint16_t scrollStep =
+#if defined(HERMESX_NRF52840_PROMICRO)
+        FONT_HEIGHT_SMALL + 1;
+#else
         std::max<int>(FONT_HEIGHT_MEDIUM, HermesXMessageUiRenderer::bodyHanziPixelSize()) + 2;
+#endif
     const HermesXMessageInputAction action =
         HermesXMessageUiController::instance().handleRecentDetail({event->source, event->inputEvent}, bindings, scrollStep);
     if (action == HermesXMessageInputAction::BackToList) {
@@ -13747,6 +14899,15 @@ bool Screen::handleDirectMessageComposerInput(const InputEvent *event)
     }
 
     if (action == HermesXComposerAction::SendRequested) {
+        const uint32_t sendStartedAtMs = millis();
+        gDirectMessageComposer.beginSendAnimation(sendStartedAtMs);
+        setFastFramerate();
+        requestImmediateRedraw();
+        // Give the Screen task enough time to flush the first immutable OLED
+        // frame before the Mesh send and feedback path perform any blocking work.
+#if defined(HERMESX_NRF52840_USE_SSD1309)
+        delay(40);
+#endif
         const bool sent = sendDirectTextMessage(gDirectMessageComposer.destination(), gDirectMessageComposer.draft());
         if (HermesXInterfaceModule::instance) {
             if (sent) {
@@ -13755,19 +14916,11 @@ bool Screen::handleDirectMessageComposerInput(const InputEvent *event)
                 HermesXInterfaceModule::instance->playNackFail();
             }
         }
-        if (sent) {
-            const bool wasGroup = gDirectMessageComposer.fromGroupDetail();
-            stopDirectMessageComposer();
-            if (wasGroup) {
-                showGroupNodeDetailPage();
-            } else {
-                showOnlineNodeDetailPage();
-            }
-            requestImmediateRedraw();
-        } else {
+        if (!sent) {
+            gDirectMessageComposer.cancelSendAnimation();
             gDirectMessageComposer.showSendFailure(millis());
+            requestImmediateRedraw();
         }
-        setFastFramerate();
         return true;
     }
 
@@ -14185,6 +15338,10 @@ int Screen::handleInputEvent(const InputEvent *event)
         return 0;
     }
 
+#if defined(HERMESX_NRF52840_PROMICRO)
+    gHermesOneLastInteractionMs = millis();
+#endif
+
     if (wakeInputGuardUntilMs != 0) {
         const uint32_t now = millis();
         if (now < wakeInputGuardUntilMs) {
@@ -14192,6 +15349,50 @@ int Screen::handleInputEvent(const InputEvent *event)
         }
         wakeInputGuardUntilMs = 0;
     }
+
+    if (isHermesOneMessageFailureVisible()) {
+        return 0;
+    }
+
+#if defined(HERMESONE_MINIMAL_UI)
+    if (!showingNormalScreen || !ui || !ui->getUiState()) {
+        return 0;
+    }
+
+    if (gFinderPulseState.confirmVisible) {
+        handleFinderPulseConfirmInput(event);
+        return 0;
+    }
+    if (gFinderPulseState.sendingVisible) {
+        handleFinderPulseSendingInput(event);
+        return 0;
+    }
+#if defined(HERMESX_NRF52840_PROMICRO)
+    if (isHermesOnePetDialogVisible()) {
+        handleHermesOnePetDialogInput(event);
+        return 0;
+    }
+#endif
+
+    const uint8_t currentFrame = ui->getUiState()->currentFrame;
+    if (currentFrame == framesetInfo.positions.mainAction) {
+        handleHermesXActionInput(event);
+        return 0;
+    }
+    if (isFinderNodeListPageActive()) {
+        handleFinderNodeListInput(event);
+        return 0;
+    }
+    if (isFinderNodeDetailPageActive()) {
+        handleFinderNodeDetailInput(event);
+        return 0;
+    }
+
+    // Informational pages do not enter legacy interaction flows. Any deliberate
+    // input returns to HermesOne's five-item action page.
+    showHermesXActionPage();
+    return 0;
+#else
 
     if (isStealthModeActive() && screenOn) {
         armStealthWakeWindow();
@@ -14242,7 +15443,15 @@ int Screen::handleInputEvent(const InputEvent *event)
         inputState.finderPulseSending = gFinderPulseState.sendingVisible;
         inputState.traceRoutePopup = isTraceRoutePopupVisible();
         inputState.setupDetailPopup = isSetupDetailPopupVisible();
+#if defined(HERMESX_NRF52840_PROMICRO)
+        inputState.petCareDialog = isHermesOnePetDialogVisible();
+#endif
         inputState.incomingTextPopup = isIncomingTextPopupActive();
+#if defined(HERMESX_NRF52840_PROMICRO)
+        inputState.newNodeNotification = false;
+#else
+        inputState.newNodeNotification = isNewNodeNotificationVisible();
+#endif
         inputState.takMode = isTakModePageActive();
         inputState.actionPage = currentFrame == framesetInfo.positions.mainAction;
         inputState.fastSetup = currentFrame == framesetInfo.positions.setup;
@@ -14280,8 +15489,16 @@ int Screen::handleInputEvent(const InputEvent *event)
         case HermesXUiInputTarget::SetupDetailPopup:
             handleSetupDetailPopupInput(event);
             return 0;
+        case HermesXUiInputTarget::PetCareDialog:
+            handleHermesOnePetDialogInput(event);
+            return 0;
         case HermesXUiInputTarget::IncomingTextPopup:
             handleTextMessagePopupInput(event);
+            return 0;
+        case HermesXUiInputTarget::NewNodeNotification:
+            dismissNewNodeNotification();
+            setFastFramerate();
+            requestImmediateRedraw();
             return 0;
         case HermesXUiInputTarget::TakMode:
             LOG_INFO("[Screen] handleInputEvent route -> TAK mode ui frame=%u", currentFrame);
@@ -14387,7 +15604,9 @@ int Screen::handleInputEvent(const InputEvent *event)
         const char eventPress = static_cast<char>(moduleConfig.canned_message.inputbroker_event_press);
         const bool isSelect = event->inputEvent == static_cast<char>(meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT);
         const bool isConfiguredPress = (eventPress != 0) && (event->inputEvent == eventPress);
-        const bool isFooterShortcutPress = isConfiguredPress || (eventPress == 0 && isSelect);
+        // A five-way center switch reports the canonical SELECT event even when
+        // an older Canned Message configuration still contains another press code.
+        const bool isFooterShortcutPress = isConfiguredPress || isSelect;
 
         // Ask any MeshModules if they're handling keyboard input right now.
         bool inputIntercepted = false;
@@ -14396,7 +15615,26 @@ int Screen::handleInputEvent(const InputEvent *event)
                 inputIntercepted = true;
         }
 
-        if (!inputIntercepted && isFooterShortcutPress && hasMenuFooter) {
+        const bool isHomeFrame = framesetInfo.positions.main < framesetInfo.frameCount &&
+                                 currentFrame == framesetInfo.positions.main;
+        // Home deliberately hides the footer so its battery/status header is not
+        // covered.  The footer is only a visual hint, though: hiding it must not
+        // disable the center-button shortcut that opens the Action page.  This is
+        // especially visible after viewing a new-message popup and returning Home.
+        if (!inputIntercepted && isFooterShortcutPress && (hasMenuFooter || isHomeFrame)) {
+#if defined(HERMESX_NRF52840_PROMICRO)
+            if (isHomeFrame) {
+                const HermesOnePetStage petStage = getHermesOnePetStage();
+                if (petStage == HermesOnePetStage::Hungry || petStage == HermesOnePetStage::Dead) {
+                    gHermesOnePetDialogVisible = true;
+                    gHermesOnePetDialogRevive = petStage == HermesOnePetStage::Dead;
+                    gHermesOnePetDialogSelected = 0;
+                    setFastFramerate();
+                    requestImmediateRedraw();
+                    return 0;
+                }
+            }
+#endif
             if (showHermesXActionPage()) {
                 return 0;
             }
@@ -14412,6 +15650,7 @@ int Screen::handleInputEvent(const InputEvent *event)
     }
 
     return 0;
+#endif
 }
 
 bool Screen::isStealthModeConstrained() const
@@ -14600,7 +15839,12 @@ bool Screen::isHermesInputOverlayActive() const
     return hermesUpdateModalActive || gLowMemoryUiState.visible || gEmergencyConfirmUiState.visible ||
            gRotaryLockUiState.visible ||
            gFinderPulseState.confirmVisible || gFinderPulseState.sendingVisible || isIncomingTextPopupActive() ||
-           isTraceRoutePopupVisible() || isSetupDetailPopupVisible();
+           isNewNodeNotificationVisible() || isHermesOneMessageFailureVisible() || isTraceRoutePopupVisible() ||
+           isSetupDetailPopupVisible()
+#if defined(HERMESX_NRF52840_PROMICRO)
+           || isHermesOnePetDialogVisible()
+#endif
+        ;
 }
 
 bool Screen::shouldAllowRotaryLockLongPress() const
@@ -14696,8 +15940,7 @@ bool Screen::shouldShowHermesXMenuFooter(uint8_t frameIndex) const
     if (frameIndex == framesetInfo.positions.setup) { // FastSetup already has its own navigation model.
         return false;
     }
-    if (frameIndex == framesetInfo.positions.main &&
-        (isTakExperienceActive() || gTakModeUiState.page != graphics::HermesXTakModePage::Main)) {
+    if (frameIndex == framesetInfo.positions.main) { // Home is already the destination; never cover its status header.
         return false;
     }
     if (frameIndex == framesetInfo.positions.onlineList || frameIndex == framesetInfo.positions.onlineDetail) {
@@ -14733,7 +15976,7 @@ bool Screen::showHermesXActionPage()
     if (framesetInfo.positions.mainAction >= framesetInfo.frameCount) {
         return false;
     }
-    hermesActionFeatureMenuActive = false;
+    hermesActionMoreMenuActive = false;
     hermesActionSelected = kMainActionHomeIndex;
     hermesActionLastNavAtMs = 0;
     hermesActionLastNavDir = 0;

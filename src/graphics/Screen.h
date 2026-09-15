@@ -10,6 +10,8 @@
 #include "power.h"
 namespace graphics
 {
+inline void showHermesOneMessageSendFailure() {}
+
 // Noop class for boards without screen.
 class Screen
 {
@@ -146,6 +148,8 @@ class Point
 
 namespace graphics
 {
+
+void showHermesOneMessageSendFailure();
 
 // Forward declarations
 class Screen;
@@ -752,6 +756,7 @@ class Screen : public concurrency::OSThread
     static void drawHermesXActionFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     void drawHermesXAction(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
     bool handleHermesXActionInput(const InputEvent *event);
+    bool startUpdateModeReboot();
     static void drawLowMemoryReminderOverlay(OLEDDisplay *display, OLEDDisplayUiState *state);
     bool handleLowMemoryReminderInput(const InputEvent *event);
     bool handleRotaryLockInput(const InputEvent *event);
@@ -783,6 +788,7 @@ class Screen : public concurrency::OSThread
     bool handleTakModeInput(const InputEvent *event);
     bool handleDirectMessageComposerInput(const InputEvent *event);
     bool handleTextMessagePopupInput(const InputEvent *event);
+    bool handleHermesOnePetDialogInput(const InputEvent *event);
     bool handleSetupDetailPopupInput(const InputEvent *event);
     bool handleTraceRoutePopupInput(const InputEvent *event);
     void syncTextMessageNotification();
@@ -848,7 +854,7 @@ class Screen : public concurrency::OSThread
     };
     uint32_t hermesUpdateIntroStartedAtMs = 0;
     int8_t hermesActionSelected = 0;
-    bool hermesActionFeatureMenuActive = false;
+    bool hermesActionMoreMenuActive = false;
     uint32_t hermesActionLastNavAtMs = 0;
     int8_t hermesActionLastNavDir = 0;
     bool hermesSetupReturnToGroupMenu = false;

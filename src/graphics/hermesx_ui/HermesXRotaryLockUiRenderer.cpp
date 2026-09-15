@@ -1,4 +1,5 @@
 #include "HermesXRotaryLockUiRenderer.h"
+#include "HermesXCompactUi.h"
 
 #include "graphics/ScreenFonts.h"
 #include "graphics/fonts/HermesX_zh/HermesX_CN12.h"
@@ -13,6 +14,13 @@ void HermesXRotaryLockUiRenderer::draw(OLEDDisplay *display, const HermesXRotary
         return;
     }
 
+    if (HermesXCompactUi::applies(display)) {
+        HermesXCompactUi::begin(display, u8"旋鈕鎖定");
+        HermesXCompactUi::line(display, 3, 17, display->getWidth() - 6, u8"旋鈕選擇");
+        HermesXCompactUi::line(display, 3, 31, display->getWidth() - 6, u8"按下確認");
+        HermesXCompactUi::options(display, u8"解鎖", u8"鎖定", state.selectedLocked ? 1 : 0);
+        return;
+    }
     const int16_t width = display->getWidth();
     const int16_t height = display->getHeight();
     display->setFont(FONT_SMALL);

@@ -1,4 +1,6 @@
 ﻿變更紀錄
+本檔為 HermesX／Heltec 歷史開發日誌，不適用於判斷 HermesOne 0.1.0 功能。
+
 2025/09/29
 src/modules/HermesXInterfaceModule.cpp: 為 registerRawButtonPress() 加入詳細 Debug 訊息；調整 setEmergencyActive() 成功與失敗時的 log；移除不必要的 toUs 變數，同步過濾 routing loopback；強化 handleExternalNotification() 與 routing 過濾流程。
 src/modules/HermesXInterfaceModule.h: 將 HermesButtonSource 與 instance 等成員改為 public；新增 SOS/SAFE 按鍵時使用的列舉與狀態欄位。
@@ -15,4 +17,3 @@ src/modules/HermesEmergencyUi.cpp,h: 提供 EM UI 動畫管理（setup/onSend/on
 
 
 那
-

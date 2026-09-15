@@ -5,6 +5,8 @@ title: EMINFO
 
 # EMINFO
 
+> **HermesOne 0.1.0：Lighthouse、GROUP presence 與相關封包程式已編入，待實機驗證。** 獨立 Hermes EM UI 執行緒未編入本目標。
+
 `EMINFO` 是 HermesX 在緊急狀態下用來同步同組裝置狀態的擴充機制。
 
 它的目標不是取代 SOS 或五線回報，而是讓同一組 GROUP 裝置可以持續知道彼此目前是什麼狀態、最後一次 Heartbeat 是多久以前、是否還在線，以及有沒有附帶電量與位置資訊。

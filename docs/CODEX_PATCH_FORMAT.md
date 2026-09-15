@@ -1,15 +1,8 @@
-# Patch 輸出規範
+# HermesOne 修改與交付格式
 
-- 使用 unified diff，可被 `git apply` 或 `git am` 直接套用。
-- Header 範例：
-  ```
-  --- a/HermesX/src/modules/HermesXInterfaceModule.cpp
-  +++ b/HermesX/src/modules/HermesXInterfaceModule.cpp
-  @@ -12,6 +12,10 @@
-  ```
-- 新增檔案：`--- a/dev/null` → `+++ b/path/to/file`.
-- 若無變更：輸出空白（不要任何文字）。
-
-**禁止**
-- 不得輸出說明文字、Markdown、或第二個 code block。
-- 不得覆蓋整個檔案內容（應呈現差異）。
+- 修改前確認目前分支是 `HermesOne`。
+- 保留使用者工作樹中既有修改，不回復無關檔案。
+- 程式修改後至少執行 `git diff --check`。
+- 韌體修改應使用 `platformio run -e nrf52_promicro_diy_tcxo_hermesx -j 4` 驗證。
+- 回覆需提供實際 `APP_HERMES_VERSION`、RAM/Flash、產物路徑與未完成實機項目。
+- HermesOne 交付物是 UF2/HEX/ZIP，不是 ESP32 OTA/Factory BIN。

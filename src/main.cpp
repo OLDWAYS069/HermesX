@@ -118,7 +118,11 @@ NRF52Bluetooth *nrf52Bluetooth = nullptr;
 #include "PowerFSMThread.h"
 
 #if !defined(ARCH_STM32WL) && !MESHTASTIC_EXCLUDE_I2C
+#if MESHTASTIC_EXCLUDE_ACCELEROMETER
+class AccelerometerThread;
+#else
 #include "motion/AccelerometerThread.h"
+#endif
 AccelerometerThread *accelerometerThread = nullptr;
 #endif
 
@@ -424,14 +428,42 @@ static void hermesXEnforceBootHoldGate()
     activeLow = BUTTON_ACTIVE_LOW;
 #endif
     const int pressedLevel = activeLow ? LOW : HIGH;
+    // nRF52 wakes immediately on the first low level. Explicitly restore the
+    // pull-up before sampling because the bootloader may have touched P1.00.
+    if (buttonPin >= 0) {
+        pinMode(buttonPin, activeLow ? INPUT_PULLUP : INPUT_PULLDOWN);
+        delay(2);
+    }
     int baselineLevel = (buttonPin >= 0) ? digitalRead(buttonPin) : HIGH;
+    // Time spent in the bootloader and early hardware discovery is already
+    // part of the user's continuous hold but cannot be measured after the
+    // System OFF reset. If the wake button is still held when this gate starts,
+    // only require a short continuity confirmation. A released/second press
+    // still requires the full five seconds.
+    uint32_t requiredHoldMs = longPressMs;
+#if defined(HERMESX_NRF52840_PROMICRO)
+    if (HermesXPowerGuard::wokeFromSleep() && baselineLevel == pressedLevel) {
+        requiredHoldMs = 750;
+    }
+#endif
     int lastLevel = baselineLevel;
     int stableLevel = baselineLevel;
     uint32_t lastChangeMs = windowStartMs;
     const uint32_t debounceMs = 30;
     bool gateTimedOut = false;
     LOG_INFO("BootHold gate: pin=%d baseline=%d activeLow=%d window=%" PRIu32 " long=%" PRIu32, buttonPin, baselineLevel,
-             activeLow ? 1 : 0, waitWindowMs, longPressMs);
+             activeLow ? 1 : 0, waitWindowMs, requiredHoldMs);
+#if defined(HERMESX_NRF52840_DIAGNOSTIC)
+    Serial.print("HXDIAG:gate pin=");
+    Serial.print(buttonPin);
+    Serial.print(" baseline=");
+    Serial.print(baselineLevel);
+    Serial.print(" pressedLevel=");
+    Serial.print(pressedLevel);
+    Serial.print(" required=");
+    Serial.println(requiredHoldMs);
+    Serial.flush();
+#endif
 
     while (HermesXPowerGuard::guardEnabled() && HermesXPowerGuard::bootHoldPending()) {
         const uint32_t now = millis();
@@ -456,15 +488,20 @@ static void hermesXEnforceBootHoldGate()
                 pressStartMs = now;
                 LOG_INFO("BootHold gate: press start");
                 if (screen && screenSetupDone) {
-                    screen->setBootHoldProgress(0, longPressMs);
+                    screen->setBootHoldProgress(0, requiredHoldMs);
                 }
             }
             const uint32_t heldMs = now - pressStartMs;
             if (screen && screenSetupDone) {
-                screen->setBootHoldProgress(heldMs, longPressMs);
+                screen->setBootHoldProgress(heldMs, requiredHoldMs);
             }
-            if (heldMs >= longPressMs) {
+            if (heldMs >= requiredHoldMs) {
                 LOG_INFO("BootHold gate: long press committed (%" PRIu32 " ms)", heldMs);
+#if defined(HERMESX_NRF52840_DIAGNOSTIC)
+                Serial.print("HXDIAG:gate committed held=");
+                Serial.println(heldMs);
+                Serial.flush();
+#endif
                 HermesXPowerGuard::markBootHoldCommitted();
                 if (screen && screenSetupDone) {
                     screen->finishBootHoldToBootLogo();
@@ -478,6 +515,7 @@ static void hermesXEnforceBootHoldGate()
                 longPressActive = false;
                 pressStartMs = 0;
                 windowStartMs = now;
+                requiredHoldMs = longPressMs;
                 if (screen && screenSetupDone) {
                     screen->resetBootHoldProgress();
                 }
@@ -499,12 +537,29 @@ static void hermesXEnforceBootHoldGate()
 
     if (HermesXPowerGuard::bootHoldPending()) {
         LOG_INFO("BootHold gate: sleep (timeout=%d)", gateTimedOut ? 1 : 0);
+#if defined(HERMESX_NRF52840_DIAGNOSTIC)
+        Serial.print("HXDIAG:gate sleep timeout=");
+        Serial.println(gateTimedOut ? 1 : 0);
+        Serial.flush();
+#endif
         HermesXPowerGuard::enterGateDeepSleep(true);
     }
 }
 #endif
 
 #ifndef PIO_UNIT_TESTING
+#if defined(HERMESX_NRF52840_DIAGNOSTIC)
+#define HX_NRF_DIAG_MARK(message)                                                                                       \
+    do {                                                                                                                \
+        Serial.println("HXDIAG:" message);                                                                             \
+        Serial.flush();                                                                                                 \
+    } while (0)
+#else
+#define HX_NRF_DIAG_MARK(message)                                                                                       \
+    do {                                                                                                                \
+    } while (0)
+#endif
+
 void setup()
 {
 
@@ -579,6 +634,7 @@ void setup()
 #ifdef DEBUG_PORT
     consoleInit(); // Set serial baud rate and init our mesh console
 #endif
+    HX_NRF_DIAG_MARK("console");
 
 #ifdef UNPHONE
     unphone.printStore();
@@ -662,6 +718,7 @@ void setup()
 #endif
 
     fsInit();
+    HX_NRF_DIAG_MARK("fs");
     gEarlyDedicatedUpdateBoot = loadEarlyDedicatedUpdateBootFlag();
     if (gEarlyDedicatedUpdateBoot) {
         LOG_INFO("[UpdateBootEarly] dedicated update boot flag detected");
@@ -695,6 +752,7 @@ void setup()
     Wire.begin();
 #endif
 #endif
+    HX_NRF_DIAG_MARK("wire");
 
 #ifdef PIN_LCD_RESET
     // FIXME - move this someplace better, LCD is at address 0x3F
@@ -721,6 +779,7 @@ void setup()
     power->setStatusHandler(powerStatus);
     powerStatus->observe(&power->newStatus);
     power->setup(); // Must be after status handler is installed, so that handler gets notified of the initial configuration
+    HX_NRF_DIAG_MARK("power");
 #if !MESHTASTIC_EXCLUDE_HERMESX && defined(HERMESX_GUARD_POWER_ANIMATIONS)
     power->readPowerStatus();
     bool usbPresent = powerStatus && powerStatus->knowsUSB() ? powerStatus->getHasUSB() : false;
@@ -729,6 +788,25 @@ void setup()
 #ifdef ARCH_ESP32
     wokeFromTimer = (wakeCause == ESP_SLEEP_WAKEUP_TIMER);
     wokeFromExt = (wakeCause == ESP_SLEEP_WAKEUP_EXT0 || wakeCause == ESP_SLEEP_WAKEUP_EXT1);
+#elif defined(ARCH_NRF52) && defined(HERMESX_NRF52840_PROMICRO)
+    // RESETREAS.OFF is set when GPIO SENSE wakes the nRF52840 from System OFF.
+    // The UF2 bootloader can consume RESETREAS before this application runs,
+    // so GPREGRET2 bit 7 is an independent marker written before System OFF.
+    const uint32_t nrfResetReason = NRF_POWER->RESETREAS;
+    uint32_t hermesWakeMarker = 0;
+    sd_power_gpregret_get(1, &hermesWakeMarker);
+    wokeFromExt = ((nrfResetReason & POWER_RESETREAS_OFF_Msk) != 0) || ((hermesWakeMarker & 0x80) != 0);
+    NRF_POWER->RESETREAS = nrfResetReason;
+    sd_power_gpregret_clr(1, 0x80);
+#if defined(HERMESX_NRF52840_DIAGNOSTIC)
+    Serial.print("HXDIAG:wake resetreas=0x");
+    Serial.print(nrfResetReason, HEX);
+    Serial.print(" gpregret2=0x");
+    Serial.print(hermesWakeMarker, HEX);
+    Serial.print(" ext=");
+    Serial.println(wokeFromExt ? 1 : 0);
+    Serial.flush();
+#endif
 #endif
     HermesXPowerGuard::initialize(usbPresent, wokeFromTimer, wokeFromExt);
 #endif
@@ -918,6 +996,7 @@ void setup()
     scannerToSensorsMap(i2cScanner, ScanI2C::DeviceType::PCT2075, meshtastic_TelemetrySensorType_PCT2075);
 
     i2cScanner.reset();
+    HX_NRF_DIAG_MARK("i2c-scan");
 #endif
 
 #ifdef HAS_SDCARD
@@ -964,13 +1043,23 @@ void setup()
     }
 #endif
     if (hermesXGatePending) {
+#if defined(HERMESX_NRF52840_DIAGNOSTIC)
+        // Keep the field-diagnostic image awake even when the normal boot
+        // guard is pending. This gives the host enough time to attach CDC and
+        // observe the physical wake/button GPIO without another sleep cycle.
+        Serial.println("HXDIAG:boot gate bypassed for pin test");
+        Serial.flush();
+        HermesXPowerGuard::markBootHoldCommitted();
+#else
         hermesXEnforceBootHoldGate();
+#endif
     }
 #endif
 
     // We do this as early as possible because this loads preferences from flash
     // but we need to do this after main cpu init (esp32setup), because we need the random seed set
     nodeDB = new NodeDB;
+    HX_NRF_DIAG_MARK("nodedb");
     logHeapSnapshot("main after NodeDB");
 
     // If we're taking on the repeater role, use NextHopRouter and turn off 3V3_S rail because peripherals are not needed
@@ -988,6 +1077,10 @@ void setup()
 #endif
 
     // only play start melody when role is not tracker or sensor
+#if defined(HERMESX_NRF52840_SKIP_START_MELODY)
+    // Keep notification/button tones available, but avoid extending the
+    // nRF52840 pre-scheduler boot path with the blocking startup melody.
+#else
     if (config.power.is_power_saving == true &&
         IS_ONE_OF(config.device.role, meshtastic_Config_DeviceConfig_Role_TRACKER,
                   meshtastic_Config_DeviceConfig_Role_TAK_TRACKER, meshtastic_Config_DeviceConfig_Role_SENSOR))
@@ -1000,6 +1093,8 @@ void setup()
 #else
         playStartMelody();
 #endif
+#endif
+    HX_NRF_DIAG_MARK("main-melody");
 
 #if !HAS_TFT
     // fixed screen override?
@@ -1017,7 +1112,7 @@ void setup()
 #endif
 
 #if !MESHTASTIC_EXCLUDE_I2C
-#if !defined(ARCH_STM32WL)
+#if !defined(ARCH_STM32WL) && !MESHTASTIC_EXCLUDE_ACCELEROMETER
     if (acc_info.type != ScanI2C::DeviceType::NONE) {
         accelerometerThread = new AccelerometerThread(acc_info.type);
     }
@@ -1074,16 +1169,19 @@ void setup()
 #endif
 
     // Initialize the screen first so we can show the logo while we start up everything else.
+    HX_NRF_DIAG_MARK("screen-ctor-begin");
 #if HAS_SCREEN
     if (!screen) {
         screen = new graphics::Screen(screen_found, screen_model, screen_geometry);
         logHeapSnapshot("main after Screen ctor");
     }
 #endif
+    HX_NRF_DIAG_MARK("screen-ctor-end");
 
 #if !MESHTASTIC_EXCLUDE_I2C
     // Don't call screen setup until after nodedb is setup (because we need
     // the current region name)
+    HX_NRF_DIAG_MARK("screen-setup-begin");
     if (screen && !screenSetupDone) {
 #if defined(ST7701_CS) || defined(ST7735_CS) || defined(USE_EINK) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) ||       \
     defined(ST7789_CS) || defined(HX8357_CS) || defined(USE_ST7789) || defined(ILI9488_CS)
@@ -1101,7 +1199,9 @@ void setup()
         }
 #endif
     }
+    HX_NRF_DIAG_MARK("screen-setup-end");
 #endif
+    HX_NRF_DIAG_MARK("screen");
 
     // setup TZ prior to time actions.
 #if !MESHTASTIC_EXCLUDE_TZ
@@ -1180,10 +1280,12 @@ void setup()
         logHeapSnapshot("main after MeshService ctor");
     }
     service->init();
+    HX_NRF_DIAG_MARK("service");
     logHeapSnapshot("main after MeshService init");
 
     // Now that the mesh service is created, create any modules
     setupModules();
+    HX_NRF_DIAG_MARK("modules");
 
 #ifdef MESHTASTIC_INCLUDE_NICHE_GRAPHICS
     // After modules are setup, so we can observe modules
@@ -1284,6 +1386,7 @@ void setup()
     LockingArduinoHal *RadioLibHAL = new LockingArduinoHal(SPI, spiSettings);
 #endif
 
+    HX_NRF_DIAG_MARK("radio-begin");
     // radio init MUST BE AFTER service.init, so we have our radio config settings (from nodedb init)
 #if defined(USE_STM32WLx)
     if (!rIf) {
@@ -1487,6 +1590,7 @@ void setup()
         }
     }
 
+    HX_NRF_DIAG_MARK("radio-end");
     lateInitVariant(); // Do board specific init (see extra_variants/README.md for documentation)
 
 #if !MESHTASTIC_EXCLUDE_MQTT
@@ -1546,6 +1650,7 @@ void setup()
     // This must be _after_ service.init because we need our preferences loaded from flash to have proper timeout values
     PowerFSM_setup(); // we will transition to ON in a couple of seconds, FIXME, only do this for cold boots, not waking from SDS
     powerFSMthread = new PowerFSMThread();
+    HX_NRF_DIAG_MARK("setup-complete");
     logHeapSnapshot("main after PowerFSMThread");
 
 #if !HAS_TFT
@@ -1645,6 +1750,32 @@ void scannerToSensorsMap(const std::unique_ptr<ScanI2CTwoWire> &i2cScanner, Scan
 void loop()
 {
     runASAP = false;
+
+#if defined(ARCH_NRF52) && defined(HERMESX_NRF52840_DIAGNOSTIC)
+    // Read the hardware port registers without reconfiguring unrelated radio,
+    // display or GPS pins. Report every transition and spell out P1.00, the
+    // expected rotary push switch / System OFF wake source.
+    static uint32_t lastDiagSampleMs = 0;
+    static uint32_t lastDiagP0 = UINT32_MAX;
+    static uint32_t lastDiagP1 = UINT32_MAX;
+    const uint32_t diagNow = millis();
+    if ((diagNow - lastDiagSampleMs) >= 50) {
+        lastDiagSampleMs = diagNow;
+        const uint32_t diagP0 = NRF_P0->IN;
+        const uint32_t diagP1 = NRF_P1->IN;
+        if (diagP0 != lastDiagP0 || diagP1 != lastDiagP1) {
+            Serial.print("HXDIAG:gpio p0=0x");
+            Serial.print(diagP0, HEX);
+            Serial.print(" p1=0x");
+            Serial.print(diagP1, HEX);
+            Serial.print(" P1.00=");
+            Serial.println((diagP1 & 1U) ? 1 : 0);
+            Serial.flush();
+            lastDiagP0 = diagP0;
+            lastDiagP1 = diagP1;
+        }
+    }
+#endif
 
 #ifdef ARCH_ESP32
     esp32Loop();

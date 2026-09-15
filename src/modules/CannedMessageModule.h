@@ -99,6 +99,10 @@ class CannedMessageModule : public SinglePortModule, public Observable<const UIF
     }
 
     cannedMessageModuleRunState getRunState() const { return runState; }
+    uint32_t getFeedbackElapsedMs(uint32_t nowMs) const
+    {
+        return static_cast<uint32_t>(nowMs - feedbackStartedAtMs);
+    }
 
     /*
       -Override the wantPacket method. We need the Routing Messages to look for ACKs.
@@ -186,6 +190,7 @@ class CannedMessageModule : public SinglePortModule, public Observable<const UIF
     NodeNum incoming = NODENUM_BROADCAST;
     bool ack = false;           // True means ACK, false means NAK (error_reason != NONE)
     bool waitingForAck = false; // Are currently interested in routing packets?
+    uint32_t feedbackStartedAtMs = 0;
     float lastRxSnr = 0;
     int32_t lastRxRssi = 0;
 

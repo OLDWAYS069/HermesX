@@ -1,11 +1,11 @@
 #pragma once
 
 #include "configuration.h"
+#include "FSCommon.h"
 #include <Arduino.h>
 #include <functional>
 
 #if defined(ARCH_ESP32)
-#include "FSCommon.h"
 #include <FS.h>
 #include <esp_partition.h>
 #include <esp_ota_ops.h>
@@ -72,7 +72,9 @@ class HermesXUpdateManager
     bool fail(const String &message, bool setFailedState = true);
     bool readImageDescriptor(File &file, size_t &imageSize, String &versionOut, String &projectNameOut,
                              String &errorOut);
+#if defined(ARCH_ESP32)
     bool beginHttpClientForUrl(class HTTPClient &client, class WiFiClientSecure &secureClient, const char *url);
+#endif
     void resetCandidate();
     void finishWritingSuccess();
     void abortWriting(const String &reason, bool keepCandidate);

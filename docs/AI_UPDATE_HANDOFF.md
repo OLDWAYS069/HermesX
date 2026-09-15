@@ -1,66 +1,50 @@
-# HermesX Update Build Handoff
+# HermesOne nRF52840 Build Handoff
 
-這份文件給後續協作 AI 使用。
+本文件適用 `HermesOne` 分支。舊 HermesX 的 Heltec Tracker Wi-Fi OTA、URL OTA、`firmware.bin` 與 `firmware.factory.bin` 流程不適用本分支。
 
-每次你修改 HermesX 更新功能，並且已經成功編譯 `heltec-wireless-tracker` 後，回覆使用者前必須做以下收尾。
+## 1. 建置正式 environment
 
-## 1. 確認 build 版本
+```bash
+platformio run -e nrf52_promicro_diy_tcxo_hermesx -j 4
+```
 
-從編譯輸出找到：
+必須從當次 build log 讀取實際版本，例如：
 
 ```text
--DAPP_HERMES_VERSION=HXB_C0.4.0_YYYYMMDD_HHMM
+-DAPP_HERMES_VERSION=HermesOne_0.1.0_YYYYMMDD_HHMM
 ```
 
-後續檔名必須使用這個版本碼。
+不得用舊 log 或自行猜測時間戳。
 
-如果你沒有完整編譯，只做語法檢查或局部確認，不要假裝有新韌體產物。
+## 2. 驗證產物
 
-## 2. 搬移韌體產物
-
-成功編譯後，把產物搬到桌面資料夾：
-
-```bash
-mkdir -p '/Users/oldways/Desktop/HermesX韌體'
-cp '/Users/oldways/HermesX/.pio/build/heltec-wireless-tracker/firmware.bin' '/Users/oldways/Desktop/HermesX韌體/<APP_HERMES_VERSION>.bin'
-cp '/Users/oldways/HermesX/.pio/build/heltec-wireless-tracker/firmware.factory.bin' '/Users/oldways/Desktop/HermesX韌體/<APP_HERMES_VERSION>.factory.bin'
-```
-
-範例：
-
-```bash
-cp '/Users/oldways/HermesX/.pio/build/heltec-wireless-tracker/firmware.bin' '/Users/oldways/Desktop/HermesX韌體/HXB_C0.4.0_20260430_0428.bin'
-```
-
-## 3. 回覆 WiFi 更新指令
-
-使用者目前常用的裝置 IP：
+必須確認以下檔案存在：
 
 ```text
-192.168.43.21
+.pio/build/nrf52_promicro_diy_tcxo_hermesx/firmware.uf2
+.pio/build/nrf52_promicro_diy_tcxo_hermesx/firmware.hex
+.pio/build/nrf52_promicro_diy_tcxo_hermesx/firmware.zip
 ```
 
-回覆時提供這條格式：
+交付前對三個檔案執行 SHA-256，並在 Changelog 或回覆中記錄當次結果。
 
-```bash
-curl -# -H 'Expect:' -H 'X-Hermes-Filename: <APP_HERMES_VERSION>.bin' -T /Users/oldways/Desktop/HermesX韌體/<APP_HERMES_VERSION>.bin http://192.168.43.21/upload-update-bin
-```
+## 3. 燒錄方式
 
-範例：
+1. 快速短接兩次 Reset 進入 UF2 bootloader。
+2. 等待 bootloader 磁碟掛載。
+3. 將 `firmware.uf2` 複製到該磁碟。
+4. 磁碟退出、裝置重新啟動後，確認 OLED 顯示新版本。
 
-```bash
-curl -# -H 'Expect:' -H 'X-Hermes-Filename: HXB_C0.4.0_20260430_0428.bin' -T /Users/oldways/Desktop/HermesX韌體/HXB_C0.4.0_20260430_0428.bin http://192.168.43.21/upload-update-bin
-```
+Finder 回報 `-36` 時可改用終端機 `cp`；複製目標必須使用當下實際掛載路徑。
 
-## 4. 回覆格式
+## 4. 回覆內容
 
-最終回覆要短，包含：
+交付時應包含：
 
-- 修改重點
-- 編譯是否成功
-- 產物位置
-- WiFi 更新指令
+- 實際 `APP_HERMES_VERSION`
+- 正式 environment 是否成功
+- RAM / Flash 使用量
+- UF2、HEX、ZIP 的絕對路徑與 SHA-256
+- 尚未完成的實機驗證項目
 
-不要只說「已編譯成功」而不搬檔。
-不要只給 `/path/to/...` 這種 placeholder。
-不要漏掉 `X-Hermes-Filename`，裝置會用它顯示待更新版本。
+不得提供 HermesX ESP32 的 Wi-Fi upload 指令，因為 HermesOne 0.1.0 沒有該更新路徑。

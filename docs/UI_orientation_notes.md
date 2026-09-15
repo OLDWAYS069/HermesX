@@ -1,5 +1,7 @@
 # HermesX UI 垂直化切入筆記
 
+> **不適用 HermesOne。** 本文只記錄 Heltec Wireless Tracker 的 160x80 TFT；HermesOne 使用固定 128x64 SSD1309 OLED。
+
 ## 目標
 - 將 Heltec Wireless Tracker (160×80 TFT) 的 UI 從橫式改為直式，同時保持現有畫面功能。
 

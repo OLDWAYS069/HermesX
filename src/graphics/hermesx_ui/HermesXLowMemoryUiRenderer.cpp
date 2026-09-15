@@ -1,4 +1,5 @@
 #include "HermesXLowMemoryUiRenderer.h"
+#include "HermesXCompactUi.h"
 
 #include "graphics/ScreenFonts.h"
 #include "graphics/fonts/HermesX_zh/HermesX_CN12.h"
@@ -52,6 +53,21 @@ void drawOption(OLEDDisplay *display, int16_t x, int16_t y, int16_t width, const
 void HermesXLowMemoryUiRenderer::draw(OLEDDisplay *display, const HermesXLowMemoryUiState &state, bool protectionActive)
 {
     if (!display || !state.visible) {
+        return;
+    }
+    if (HermesXCompactUi::applies(display)) {
+        HermesXCompactUi::begin(display, protectionActive ? u8"HEAP 保護模式" : u8"Heap 已恢復");
+        char heap[48];
+        snprintf(heap, sizeof(heap), "%lu / %lu", static_cast<unsigned long>(state.triggerFree),
+                 static_cast<unsigned long>(state.triggerLargest));
+        HermesXCompactUi::line(display, 3, 17, display->getWidth() - 6, heap);
+        // Status may wrap: show each complete line in turn without covering
+        // the measurements or the two actions.
+        const auto lines = HermesXTextLayout::buildMixedWrappedLines(
+            display, state.status[0] ? state.status : u8"清除節點可釋放空間", display->getWidth() - 6);
+        if (!lines.empty())
+            HermesXCompactUi::line(display, 3, 31, display->getWidth() - 6, lines[(millis() / 2500U) % lines.size()].c_str());
+        HermesXCompactUi::options(display, u8"退出", u8"清除節點", state.selected);
         return;
     }
     const int16_t width = display->getWidth();

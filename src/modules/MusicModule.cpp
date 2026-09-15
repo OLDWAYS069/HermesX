@@ -25,17 +25,29 @@ MusicModule::MusicModule(uint8_t buzzerPin)
     : pin(buzzerPin) {}
 
 void MusicModule::begin() {
+#if defined(ARCH_ESP32)
     ledcSetup(3, 2000, 8);
     ledcAttachPin(pin, 3);
+#else
+    pinMode(pin, OUTPUT);
+#endif
 }
 
 void MusicModule::stopTone() {
+#if defined(ARCH_ESP32)
     ledcWriteTone(3, 0);
+#else
+    noTone(pin);
+#endif
 }
 
 void MusicModule::playTone(float freq, uint32_t duration) {
     if (freq > 0) {
+#if defined(ARCH_ESP32)
         ledcWriteTone(3, freq);
+#else
+        tone(pin, static_cast<unsigned int>(freq));
+#endif
         // 注意：由外部控制何時呼叫 stopTone()，由 HermesXInterfaceModule 控制延遲時間
     }
 }

@@ -1,4 +1,5 @@
 #include "HermesXEmergencyConfirmUiRenderer.h"
+#include "HermesXCompactUi.h"
 
 #include "graphics/ScreenFonts.h"
 #include "graphics/fonts/HermesX_zh/HermesX_CN12.h"
@@ -11,6 +12,15 @@ namespace graphics
 void HermesXEmergencyConfirmUiRenderer::draw(OLEDDisplay *display, const HermesXEmergencyConfirmUiState &state)
 {
     if (!display || !state.visible) {
+        return;
+    }
+    if (HermesXCompactUi::applies(display)) {
+        HermesXCompactUi::begin(display, u8"緊急模式警告");
+        HermesXCompactUi::line(display, 3, 17, display->getWidth() - 6, u8"即將進入EM模式");
+        char countdown[48];
+        snprintf(countdown, sizeof(countdown), u8"%lu秒後自動進入", static_cast<unsigned long>(state.remainingSeconds));
+        HermesXCompactUi::line(display, 3, 31, display->getWidth() - 6, countdown);
+        HermesXCompactUi::options(display, u8"按下取消", nullptr, 0);
         return;
     }
     const int16_t width = display->getWidth();

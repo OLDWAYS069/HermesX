@@ -1,6 +1,7 @@
 #include "HermesXTakModeUiRenderer.h"
 
 #include "HermesXFastSetupUiRenderer.h"
+#include "HermesXTextLayout.h"
 #include "graphics/ScreenFonts.h"
 #include "graphics/fonts/HermesX_zh/HermesX_CN12.h"
 #include <algorithm>
@@ -62,7 +63,7 @@ void drawShield(OLEDDisplay *display, int16_t centerX, int16_t topY, int16_t wid
 
 uint8_t visibleRowCount(int16_t boxY, int16_t boxHeight, int16_t listTop, int16_t rowHeight, uint8_t rowCount)
 {
-    uint8_t visible = static_cast<uint8_t>((boxY + boxHeight - listTop - 2) / rowHeight);
+    uint8_t visible = static_cast<uint8_t>((boxY + boxHeight - listTop - 1) / rowHeight);
     visible = std::max<uint8_t>(1, std::min<uint8_t>(5, visible));
     return std::min<uint8_t>(visible, rowCount);
 }
@@ -108,7 +109,8 @@ void drawRows(OLEDDisplay *display,
         if (index == selected) {
             display->drawRect(boxX + 3, rowY - 1, boxWidth - 6, rowHeight);
         }
-        drawMixed(display, boxX + 6, rowY, boxWidth - 12, line.c_str(), rowHeight);
+        HermesXTextLayout::drawMixedSingleLineBounded(
+            display, boxX + 6, rowY, boxWidth - 12, line.c_str(), rowHeight, HermesX_zh::GLYPH_WIDTH);
     }
 }
 
@@ -147,6 +149,7 @@ void HermesXTakModeUiRenderer::draw(OLEDDisplay *display,
     const bool popupView = state.page == HermesXTakModePage::Popup;
     const bool settingsView = state.page == HermesXTakModePage::Settings;
     const bool channelView = state.page == HermesXTakModePage::ChannelSelect;
+    const bool compact64 = width <= 128 && height <= 64;
 
     if (!overlayOnly) {
         setBackgroundColor(display);
@@ -156,7 +159,7 @@ void HermesXTakModeUiRenderer::draw(OLEDDisplay *display,
     display->setFont(FONT_SMALL);
     display->setTextAlignment(TEXT_ALIGN_LEFT);
 
-    if (!overlayOnly) {
+    if (!overlayOnly && !compact64) {
         const int16_t titleWidth = HermesX_zh::stringAdvance(view.title, HermesX_zh::GLYPH_WIDTH, display);
         const int16_t titleX = std::max<int16_t>(x + 2, x + (width - titleWidth) / 2);
         drawMixed(display, titleX, y + 2, width - 4, view.title, FONT_HEIGHT_SMALL);
@@ -170,14 +173,31 @@ void HermesXTakModeUiRenderer::draw(OLEDDisplay *display,
                   FONT_HEIGHT_SMALL);
     }
 
-    if (!overlayOnly && !popupView && !settingsView && !channelView) {
+    if (!overlayOnly && !popupView && !settingsView && !channelView && compact64) {
+        HermesXTextLayout::drawMixedSingleLineBounded(
+            display, x + 2, y, width - 4, view.title, 13, HermesX_zh::GLYPH_WIDTH);
+        HermesXTextLayout::drawMixedSingleLineBounded(
+            display, x + 2, y + 13, width - 4, view.slotLine ? view.slotLine->c_str() : "Slot --", 13,
+            HermesX_zh::GLYPH_WIDTH);
+        HermesXTextLayout::drawMixedSingleLineBounded(
+            display, x + 2, y + 26, width - 4,
+            view.utilizationLine ? view.utilizationLine->c_str() : "ChUtil --", 13, HermesX_zh::GLYPH_WIDTH);
+        const char *suggestionLine = view.suggestionLine && view.suggestionLine->length() != 0
+                                         ? view.suggestionLine->c_str()
+                                         : u8"建議 --";
+        HermesXTextLayout::drawMixedSingleLineBounded(
+            display, x + 2, y + 39, width - 4, suggestionLine, 13, HermesX_zh::GLYPH_WIDTH);
+        HermesXTextLayout::drawMixedSingleLineBounded(
+            display, x + 2, y + 51, width - 4, view.active ? "STATUS: ON" : "STATUS: OFF", 13,
+            HermesX_zh::GLYPH_WIDTH);
+    } else if (!overlayOnly && !popupView && !settingsView && !channelView) {
         if (view.slotLine) {
             drawMixed(display, x + 4, y + 15, width - 8, view.slotLine->c_str(), FONT_HEIGHT_SMALL);
         }
         if (view.utilizationLine) {
             drawMixed(display, x + 4, y + height - 27, width - 8, view.utilizationLine->c_str(), FONT_HEIGHT_SMALL);
         }
-        if (view.suggestionLine && !view.suggestionLine->isEmpty()) {
+        if (view.suggestionLine && view.suggestionLine->length() != 0) {
             drawMixed(display, x + 4, y + height - 16, width - 8, view.suggestionLine->c_str(), FONT_HEIGHT_SMALL);
         }
     }
@@ -186,10 +206,10 @@ void HermesXTakModeUiRenderer::draw(OLEDDisplay *display,
         return;
     }
 
-    const int16_t boxX = x + 8;
-    const int16_t boxY = y + 10;
-    const int16_t boxWidth = width - 16;
-    const int16_t boxHeight = height - 18;
+    const int16_t boxX = compact64 ? x : x + 8;
+    const int16_t boxY = compact64 ? y : y + 10;
+    const int16_t boxWidth = compact64 ? width : width - 16;
+    const int16_t boxHeight = compact64 ? height : height - 18;
     setBackgroundColor(display);
     display->fillRect(boxX, boxY, boxWidth, boxHeight);
     setForegroundColor(display);
@@ -200,8 +220,8 @@ void HermesXTakModeUiRenderer::draw(OLEDDisplay *display,
     drawMixed(display, boxX + std::max<int16_t>(2, (boxWidth - modalTitleWidth) / 2), boxY + 2, boxWidth - 4,
               modalTitle, FONT_HEIGHT_SMALL);
 
-    const int16_t rowHeight = FONT_HEIGHT_SMALL + 1;
-    const int16_t listTop = boxY + FONT_HEIGHT_SMALL + 6;
+    const int16_t rowHeight = compact64 ? HermesX_zh::GLYPH_HEIGHT : FONT_HEIGHT_SMALL + 1;
+    const int16_t listTop = boxY + FONT_HEIGHT_SMALL + (compact64 ? 2 : 6);
     if (popupView) {
         constexpr uint8_t PopupRowCount = 7;
         const uint8_t visibleRows = visibleRowCount(boxY, boxHeight, listTop, rowHeight, PopupRowCount);
@@ -217,7 +237,8 @@ void HermesXTakModeUiRenderer::draw(OLEDDisplay *display,
             if (index == selected) {
                 display->drawRect(boxX + 3, rowY - 1, boxWidth - 6, rowHeight);
             }
-            drawMixed(display, boxX + 6, rowY, boxWidth - 12, line.c_str(), rowHeight);
+            HermesXTextLayout::drawMixedSingleLineBounded(
+                display, boxX + 6, rowY, boxWidth - 12, line.c_str(), rowHeight, HermesX_zh::GLYPH_WIDTH);
         }
         return;
     }

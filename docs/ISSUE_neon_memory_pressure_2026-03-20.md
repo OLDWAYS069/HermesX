@@ -1,5 +1,7 @@
 # Neon Memory Pressure Investigation
 
+> 不適用 HermesOne 顯示路徑。本文分析 Heltec 彩色 TFT／neon buffer；HermesOne 使用 128x64 SSD1309 OLED。
+
 日期：2026-03-20
 
 ## 背景

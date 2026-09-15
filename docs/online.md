@@ -5,6 +5,8 @@ title: ONLINE
 
 # ONLINE
 
+> **HermesOne 0.1.0：保留、待實機驗證。** NodeDB、ONLINE、GROUP DETAIL 與 GPS 程式路徑均在正式 build；MQTT 專屬判斷不適用 HermesOne。
+
 `ONLINE` 是 HermesX 裝置端的在線節點瀏覽頁。
 
 它不是另外維護一份獨立名單，而是直接讀取目前裝置裡的 NodeDB，整理出最近仍有活動的節點，讓使用者不用打開手機也能快速確認附近有哪些裝置在線。

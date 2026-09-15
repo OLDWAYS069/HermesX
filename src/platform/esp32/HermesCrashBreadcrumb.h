@@ -37,16 +37,17 @@ enum class HermesCrashBreadcrumbId : uint16_t {
     BleDisconnect,
 };
 
+#ifdef ARCH_ESP32
 const char *hermesCrashBreadcrumbName(HermesCrashBreadcrumbId id);
 void hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId id, uint16_t arg = 0);
 void hermesCrashBreadcrumbClear();
-
-#ifdef ARCH_ESP32
 void hermesCrashBreadcrumbReportBoot(esp_reset_reason_t resetReason);
 size_t hermesCrashBreadcrumbPendingBootReportCount();
 bool hermesCrashBreadcrumbFormatPendingBootReportLine(size_t index, char *buf, size_t len);
 void hermesCrashBreadcrumbClearPendingBootReport();
 #else
+inline void hermesCrashBreadcrumbRecord(HermesCrashBreadcrumbId, uint16_t = 0) {}
+inline void hermesCrashBreadcrumbClear() {}
 inline void hermesCrashBreadcrumbReportBoot(int) {}
 inline size_t hermesCrashBreadcrumbPendingBootReportCount() { return 0; }
 inline bool hermesCrashBreadcrumbFormatPendingBootReportLine(size_t, char *, size_t) { return false; }

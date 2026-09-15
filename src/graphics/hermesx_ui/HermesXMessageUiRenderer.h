@@ -47,6 +47,8 @@ class HermesXMessageUiRenderer
                                        const String &preview,
                                        const std::vector<std::string> &candidates,
                                        uint8_t candidateCursor);
+    static void drawComposerSending(
+        OLEDDisplay *display, int16_t width, int16_t height, uint32_t elapsedMs, bool failed);
 };
 
 } // namespace graphics

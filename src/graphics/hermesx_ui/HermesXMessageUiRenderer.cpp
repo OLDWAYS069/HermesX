@@ -2,6 +2,7 @@
 
 #include "HermesXMessageUiModel.h"
 #include "HermesXFastSetupUiRenderer.h"
+#include "HermesXHomeUiRenderer.h"
 #include "HermesXTextLayout.h"
 #include "graphics/ScreenFonts.h"
 #include "graphics/fonts/HermesX_zh/HermesX_CN12.h"
@@ -16,6 +17,92 @@
 
 namespace graphics
 {
+namespace
+{
+
+size_t messageUtf8SequenceLength(uint8_t firstByte)
+{
+    if ((firstByte & 0x80u) == 0)
+        return 1;
+    if ((firstByte & 0xE0u) == 0xC0u)
+        return 2;
+    if ((firstByte & 0xF0u) == 0xE0u)
+        return 3;
+    if ((firstByte & 0xF8u) == 0xF0u)
+        return 4;
+    return 1;
+}
+
+size_t countMessageCodepoints(const char *text, size_t bytes)
+{
+    size_t count = 0;
+    for (size_t offset = 0; text && offset < bytes && text[offset] != '\0'; ++count) {
+        const size_t sequenceLength = messageUtf8SequenceLength(static_cast<uint8_t>(text[offset]));
+        if (offset + sequenceLength > bytes)
+            break;
+        offset += sequenceLength;
+    }
+    return count;
+}
+
+void buildMessageMarqueeWindow(const char *text, uint32_t nowMs, char *output, size_t outputSize)
+{
+    if (!text || !output || outputSize == 0) {
+        return;
+    }
+    output[0] = '\0';
+    const size_t textBytes = strlen(text);
+    const size_t codepointCount = countMessageCodepoints(text, textBytes);
+    if (codepointCount == 0) {
+        return;
+    }
+    constexpr size_t gapCodepoints = 3;
+    const size_t marqueeLength = codepointCount + gapCodepoints;
+    size_t sourceIndex = (nowMs / 400U) % marqueeLength;
+    size_t sourceOffset = 0;
+    for (size_t index = 0; index < sourceIndex && index < codepointCount; ++index) {
+        sourceOffset += messageUtf8SequenceLength(static_cast<uint8_t>(text[sourceOffset]));
+    }
+    size_t outputBytes = 0;
+    for (size_t position = 0; position < marqueeLength; ++position) {
+        if (sourceIndex >= codepointCount) {
+            if (outputBytes + 1 >= outputSize)
+                break;
+            output[outputBytes++] = ' ';
+            output[outputBytes] = '\0';
+        } else {
+            const size_t sequenceLength = messageUtf8SequenceLength(static_cast<uint8_t>(text[sourceOffset]));
+            if (sourceOffset + sequenceLength > textBytes)
+                break;
+            if (outputBytes + sequenceLength >= outputSize)
+                break;
+            memcpy(output + outputBytes, text + sourceOffset, sequenceLength);
+            outputBytes += sequenceLength;
+            output[outputBytes] = '\0';
+            sourceOffset += sequenceLength;
+        }
+        if (++sourceIndex == marqueeLength) {
+            sourceIndex = 0;
+            sourceOffset = 0;
+        }
+    }
+}
+
+} // namespace
+
+void HermesXMessageUiRenderer::drawComposerSending(
+    OLEDDisplay *display, int16_t width, int16_t height, uint32_t elapsedMs, bool failed)
+{
+#if defined(HERMESX_NRF52840_PROMICRO)
+    HermesXHomeUiRenderer::drawHermesOneParcelNotification(
+        display, width, height,
+        failed ? HermesXParcelAnimationMode::Failed : HermesXParcelAnimationMode::Outgoing, elapsedMs);
+#else
+    (void)elapsedMs;
+    (void)failed;
+    HermesXHomeUiRenderer::drawSittingDogNotification(display, width, height, u8"送出啦", millis());
+#endif
+}
 
 uint8_t HermesXMessageUiRenderer::bodyHanziPixelSize()
 {
@@ -46,10 +133,11 @@ void HermesXMessageUiRenderer::drawRecentList(OLEDDisplay *display,
 
     model.clampRecentIndices();
     const int16_t width = display->getWidth();
-    const int16_t rowH = FONT_HEIGHT_SMALL + 3;
-    const int16_t listTop = y + FONT_HEIGHT_SMALL + 2;
-    int8_t visibleRows = (display->getHeight() - listTop - 1) / rowH;
-    visibleRows = std::max<int8_t>(1, std::min<int8_t>(visibleRows, 3));
+    const bool compact64 = width <= 128 && display->getHeight() <= 64;
+    const int16_t rowH = compact64 ? HermesX_zh::GLYPH_HEIGHT : FONT_HEIGHT_SMALL + 3;
+    const int16_t listTop = y + FONT_HEIGHT_SMALL + (compact64 ? 1 : 2);
+    int8_t visibleRows = (display->getHeight() - listTop) / rowH;
+    visibleRows = std::max<int8_t>(1, std::min<int8_t>(visibleRows, 4));
 
     const uint8_t totalRows = model.recentListEntryCount();
     uint8_t startCursor = 0;
@@ -86,21 +174,27 @@ void HermesXMessageUiRenderer::drawRecentList(OLEDDisplay *display,
             std::snprintf(senderBuf, sizeof(senderBuf), "???");
         }
 
-        char preview[40];
-        HermesXTextLayout::copyUtf8Snippet(reinterpret_cast<const char *>(packet->decoded.payload.bytes),
-                                           packet->decoded.payload.size, preview, sizeof(preview), 14);
         const char *channelName = context.channelName ? context.channelName(packet->channel) : "";
-        char channelBuf[20];
-        std::snprintf(channelBuf, sizeof(channelBuf), "#%s", channelName ? channelName : "");
-        const int16_t channelW = display->getStringWidth(channelBuf);
-        const int16_t channelX = x + width - channelW - 2;
-        display->drawString(channelX, rowY, channelBuf);
+        String line(senderBuf);
+        line.reserve(line.length() + packet->decoded.payload.size + (channelName ? strlen(channelName) : 0) + 8);
+        line += " : ";
+        for (size_t byte = 0; byte < packet->decoded.payload.size; ++byte) {
+            const char value = static_cast<char>(packet->decoded.payload.bytes[byte]);
+            line += (value == '\r' || value == '\n' || value == '\t') ? ' ' : value;
+        }
+        line += " -";
+        line += (channelName && channelName[0]) ? channelName : "?";
 
-        char lineBuf[96];
-        std::snprintf(lineBuf, sizeof(lineBuf), "%s: %s", senderBuf, preview);
-        const int16_t textWidth = channelX - x - 4;
-        HermesX_zh::drawMixedBounded(*display, x + 2, rowY, textWidth > 0 ? textWidth : width - 4, lineBuf,
-                                     HermesX_zh::GLYPH_WIDTH, rowH, nullptr);
+        const int16_t lineX = x + 3;
+        const int16_t lineWidth = std::max<int16_t>(1, width - 7);
+        char marquee[320];
+        const char *visibleLine = line.c_str();
+        if (HermesX_zh::stringAdvance(visibleLine, HermesX_zh::GLYPH_WIDTH, display) > lineWidth) {
+            buildMessageMarqueeWindow(visibleLine, millis(), marquee, sizeof(marquee));
+            visibleLine = marquee;
+        }
+        HermesXTextLayout::drawMixedSingleLineBounded(
+            display, lineX, rowY, lineWidth, visibleLine, rowH, HermesX_zh::GLYPH_WIDTH);
     }
 
     if (!model.hasRecentMessages() && visibleRows > 1) {
@@ -121,6 +215,36 @@ void HermesXMessageUiRenderer::drawIncomingPopup(OLEDDisplay *display,
     if (packet.from == 0) {
         return;
     }
+
+#if defined(HERMESX_NRF52840_PROMICRO)
+    const uint32_t elapsedMs = popup.startedAtMs == 0 ? 0U : static_cast<uint32_t>(millis() - popup.startedAtMs);
+    char snippet[88] = {0};
+    char marquee[88] = {0};
+    const char *message = nullptr;
+    if (elapsedMs >= 1800U) {
+        const char *payload = reinterpret_cast<const char *>(packet.decoded.payload.bytes);
+        const size_t payloadBytes = packet.decoded.payload.size;
+        HermesXTextLayout::copyUtf8Snippet(payload, payloadBytes, snippet, sizeof(snippet), 20);
+        if (countMessageCodepoints(payload, payloadBytes) > 20U) {
+            const size_t used = strlen(snippet);
+            if (used + 3U < sizeof(snippet)) {
+                memcpy(snippet + used, "...", 4);
+            }
+        }
+        message = snippet;
+        if (HermesX_zh::stringAdvance(snippet, HermesX_zh::GLYPH_WIDTH, display) > 70) {
+            buildMessageMarqueeWindow(snippet, elapsedMs - 1800U, marquee, sizeof(marquee));
+            message = marquee;
+        }
+    }
+    HermesXHomeUiRenderer::drawHermesOneParcelNotification(
+        display, display->getWidth(), display->getHeight(), HermesXParcelAnimationMode::Incoming,
+        elapsedMs, true, popup.selectedOption, message);
+#else
+    HermesXHomeUiRenderer::drawSittingDogNotification(
+        display, display->getWidth(), display->getHeight(), u8"你有新訊息！", millis(), true, popup.selectedOption);
+#endif
+    return;
 
     const int16_t width = display->getWidth();
     const int16_t height = display->getHeight();
@@ -247,14 +371,15 @@ void HermesXMessageUiRenderer::drawDetail(OLEDDisplay *display,
     display->setFont(FONT_SMALL);
     const int16_t width = display->getWidth();
     const int16_t height = display->getHeight();
+    const bool compact64 = width <= 128 && height <= 64;
     const int16_t headerLineHeight = FONT_HEIGHT_SMALL;
-    const int16_t dividerY = y + headerLineHeight * 2 + 2;
+    const int16_t dividerY = compact64 ? y + headerLineHeight + 1 : y + headerLineHeight * 2 + 2;
     const int16_t bodyTop = dividerY + 2;
     const int16_t scrollbarW = 4;
     const int16_t bodyW = std::max<int16_t>(width - scrollbarW - 3, 12);
     const int16_t bodyH = std::max<int16_t>(height - bodyTop - 1, headerLineHeight);
-    const uint8_t hanziSize = bodyHanziPixelSize();
-    const int lineHeight = std::max<int>(FONT_HEIGHT_MEDIUM, hanziSize) + 2;
+    const uint8_t hanziSize = compact64 ? HermesX_zh::GLYPH_HEIGHT : bodyHanziPixelSize();
+    const int lineHeight = compact64 ? FONT_HEIGHT_SMALL + 1 : std::max<int>(FONT_HEIGHT_MEDIUM, hanziSize) + 2;
 
     if (context.inverted) {
         display->fillRect(x, y, width, dividerY - y);
@@ -271,9 +396,20 @@ void HermesXMessageUiRenderer::drawDetail(OLEDDisplay *display,
         std::snprintf(senderBuf, sizeof(senderBuf), "???");
     }
 
-    HermesX_zh::drawMixedBounded(*display, x, y, width - 1, senderBuf, HermesX_zh::GLYPH_WIDTH, headerLineHeight, nullptr);
-    HermesX_zh::drawMixedBounded(*display, x, y + headerLineHeight, width - 1, timeLabel ? timeLabel : "",
-                                 HermesX_zh::GLYPH_WIDTH, headerLineHeight, nullptr);
+    if (compact64) {
+        const char *timestamp = timeLabel ? timeLabel : "";
+        const int16_t timeW = display->getStringWidth(timestamp);
+        const int16_t timeX = std::max<int16_t>(x, x + width - timeW - 1);
+        const int16_t senderW = std::max<int16_t>(12, timeX - x - 3);
+        HermesX_zh::drawMixedBounded(*display, x, y, senderW, senderBuf, HermesX_zh::GLYPH_WIDTH,
+                                     headerLineHeight, nullptr);
+        display->drawString(timeX, y, timestamp);
+    } else {
+        HermesX_zh::drawMixedBounded(*display, x, y, width - 1, senderBuf, HermesX_zh::GLYPH_WIDTH,
+                                     headerLineHeight, nullptr);
+        HermesX_zh::drawMixedBounded(*display, x, y + headerLineHeight, width - 1, timeLabel ? timeLabel : "",
+                                     HermesX_zh::GLYPH_WIDTH, headerLineHeight, nullptr);
+    }
     display->drawLine(x, dividerY, x + width - 1, dividerY);
     display->setColor(WHITE);
 
@@ -281,7 +417,7 @@ void HermesXMessageUiRenderer::drawDetail(OLEDDisplay *display,
     const size_t payloadLen = std::min<size_t>(packet->decoded.payload.size, sizeof(payload) - 1);
     std::memcpy(payload, packet->decoded.payload.bytes, payloadLen);
     payload[payloadLen] = 0;
-    display->setFont(FONT_MEDIUM);
+    display->setFont(compact64 ? FONT_SMALL : FONT_MEDIUM);
     const std::vector<String> bodyLines = HermesXTextLayout::buildMixedWrappedLines(display, payload, bodyW, hanziSize);
     const uint16_t contentHeight = static_cast<uint16_t>(std::max<size_t>(1, bodyLines.size()) * lineHeight);
     const uint16_t visibleLineCount = static_cast<uint16_t>(std::max<int>(1, bodyH / lineHeight));
@@ -339,8 +475,7 @@ void HermesXMessageUiRenderer::drawComposerCandidates(OLEDDisplay *display,
 #endif
     display->setFont(FONT_SMALL);
 
-    graphics::HermesX_zh::drawMixedBounded(*display, 2, 14 + 1, width - 4, preview.c_str(),
-                                           graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
+    HermesXTextLayout::drawMixedSingleLineBounded(display, 2, 14 + 1, width - 4, preview.c_str(), FONT_HEIGHT_SMALL);
 
     const uint8_t totalRows = static_cast<uint8_t>(std::min<size_t>(candidates.size() + 1, 255));
     const int16_t listTop = 14 + FONT_HEIGHT_SMALL + 3;
@@ -373,8 +508,7 @@ void HermesXMessageUiRenderer::drawComposerCandidates(OLEDDisplay *display,
         } else {
             label = String(item) + ". " + candidates[item - 1].c_str();
         }
-        graphics::HermesX_zh::drawMixedBounded(*display, 3, rowY + 1, width - 6, label.c_str(),
-                                               graphics::HermesX_zh::GLYPH_WIDTH, rowHeight, nullptr);
+        HermesXTextLayout::drawMixedSingleLineBounded(display, 3, rowY + 1, width - 6, label.c_str(), rowHeight);
         if (selected) {
 #if defined(USE_EINK)
             display->setColor(EINK_BLACK);

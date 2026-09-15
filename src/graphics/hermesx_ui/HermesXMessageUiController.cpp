@@ -124,6 +124,7 @@ bool HermesXMessageUiController::dismissPopup()
     popup.pending = false;
     popup.visible = false;
     popup.selectedOption = 0;
+    popup.startedAtMs = 0;
     popup.untilMs = 0;
     if (wasActive) {
         paletteRecoveryPending_ = true;
@@ -142,6 +143,7 @@ HermesXMessagePopupLifecycleDecision HermesXMessageUiController::updatePopupLife
     if (popup.pending && screenOn && mainPageActive) {
         popup.pending = false;
         popup.visible = true;
+        popup.startedAtMs = nowMs;
         popup.untilMs = nowMs + visibleDurationMs;
         decision.activated = true;
         decision.fastUntilMs = popup.untilMs + 50;

@@ -21,8 +21,12 @@ HermesXUiInputTarget HermesXUiInputRouter::selectTarget(const HermesXUiInputStat
         return HermesXUiInputTarget::TraceRoutePopup;
     if (state.setupDetailPopup)
         return HermesXUiInputTarget::SetupDetailPopup;
+    if (state.petCareDialog)
+        return HermesXUiInputTarget::PetCareDialog;
     if (state.incomingTextPopup)
         return HermesXUiInputTarget::IncomingTextPopup;
+    if (state.newNodeNotification)
+        return HermesXUiInputTarget::NewNodeNotification;
     if (state.takMode)
         return HermesXUiInputTarget::TakMode;
     if (state.actionPage)

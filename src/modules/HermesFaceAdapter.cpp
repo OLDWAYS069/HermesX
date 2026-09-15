@@ -134,6 +134,51 @@ void HermesX_DrawFace(OLEDDisplay *display, int16_t x, int16_t y, HermesFaceMode
         return;
     }
 
+#if defined(HERMESX_NRF52840_PROMICRO)
+    // HermesOne uses Xiaowei as its only character. Preserve useful status
+    // feedback, but remove the legacy ASCII emoticon animations (^_^, >_<,
+    // o_o, and friends) from this compact UI.
+    const char *statusText = "STATUS";
+    uint16_t statusColor = kColorWhite;
+    switch (mode) {
+    case HermesFaceMode::Sending:
+        statusText = "SENDING";
+        break;
+    case HermesFaceMode::Receiving:
+        statusText = "RECEIVED";
+        break;
+    case HermesFaceMode::AckSuccess:
+        statusText = "OK";
+        statusColor = kColorGreen;
+        break;
+    case HermesFaceMode::AckFailed:
+        statusText = "FAILED";
+        statusColor = kColorRed;
+        break;
+    case HermesFaceMode::Disabled:
+        statusText = "DISABLED";
+        statusColor = kColorGray;
+        break;
+    case HermesFaceMode::Thinking:
+        statusText = "...";
+        statusColor = kColorYellow;
+        break;
+    case HermesFaceMode::Neutral:
+    default:
+        statusText = "READY";
+        break;
+    }
+
+    g_faceContext.display = display;
+    g_faceContext.originX = x;
+    g_faceContext.originY = y;
+    g_faceContext.mode = mode;
+    g_faceContext.valid = true;
+    HermesXInterfaceModule::instance->drawFace(statusText, statusColor);
+    g_faceContext.valid = false;
+    return;
+#endif
+
     const FaceAnimation &animation = selectAnimation(mode);
     if (animation.frameCount == 0 || animation.frames == nullptr) {
         return;

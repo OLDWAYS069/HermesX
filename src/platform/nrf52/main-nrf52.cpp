@@ -276,6 +276,61 @@ void nrf52Setup()
 
 void cpuDeepSleep(uint32_t msecToWake)
 {
+#if defined(HERMESX_NRF52840_DIAGNOSTIC)
+    Serial.print("HXDIAG:deep-sleep msec=");
+    Serial.println(msecToWake);
+    Serial.flush();
+#endif
+#if defined(HERMESX_NRF52840_PROMICRO) && defined(BUTTON_PIN)
+    // The rotary SELECT event can request sleep while its switch is still
+    // grounding the wake pin. Entering System OFF with SENSE Low already
+    // asserted leaves DETECT latched, so a later press cannot create a new
+    // wake condition. Wait for the selecting press to be released first.
+    const uint32_t hermesWakePin = config.device.button_gpio ? config.device.button_gpio : BUTTON_PIN;
+    // P1.00 is normally owned by attachInterrupt(..., CHANGE) for both the
+    // rotary input and the user-button path. System OFF wake uses the GPIO
+    // SENSE/DETECT path instead, so release the dedicated GPIOTE channel before
+    // programming PIN_CNF.SENSE. Reset-on-wake will initialize it again.
+    detachInterrupt(hermesWakePin);
+    pinMode(hermesWakePin, INPUT_PULLUP);
+    const uint32_t releaseWaitStarted = millis();
+    while (digitalRead(hermesWakePin) == LOW && (millis() - releaseWaitStarted) < 5000U) {
+        delay(10);
+    }
+#if defined(HERMESX_NRF52840_DIAGNOSTIC)
+    Serial.print("HXDIAG:sleep release level=");
+    Serial.print(digitalRead(hermesWakePin));
+    Serial.print(" waited=");
+    Serial.println(millis() - releaseWaitStarted);
+    Serial.flush();
+#endif
+
+    if (msecToWake == portMAX_DELAY) {
+#if defined(HERMESX_NRF52840_DIAGNOSTIC)
+        Serial.print("HXDIAG:official-systemoff pin=");
+        Serial.println(hermesWakePin);
+        Serial.flush();
+#endif
+        // This is intentionally the same sequence as the independently
+        // verified P1.00 wake test. System OFF powers down the peripherals, so
+        // pre-emptively stopping USB, buses, UART or BLE is unnecessary and
+        // can alter the working SoftDevice/GPIO state before entry.
+        pinMode(hermesWakePin, INPUT_PULLUP_SENSE);
+        delay(20);
+        const uint32_t ok = sd_power_system_off();
+#if defined(HERMESX_NRF52840_DIAGNOSTIC)
+        // A successful call never returns.
+        Serial.print("HXDIAG:systemoff returned rc=");
+        Serial.println(ok);
+        Serial.flush();
+#else
+        (void)ok;
+#endif
+        while (true) {
+            delay(1000);
+        }
+    }
+#endif
     // FIXME, configure RTC or button press to wake us
     // FIXME, power down SPI, I2C, RAMs
 #if HAS_WIRE
@@ -286,7 +341,9 @@ void cpuDeepSleep(uint32_t msecToWake)
     SPI1.end();
 #endif
     // This may cause crashes as debug messages continue to flow.
+#if !defined(HERMESX_NRF52840_PROMICRO)
     Serial.end();
+#endif
 #ifdef PIN_SERIAL1_RX
     Serial1.end();
 #endif
@@ -361,8 +418,10 @@ void cpuDeepSleep(uint32_t msecToWake)
     } else {
         // Resume on user button press
         // https://github.com/lyusupov/SoftRF/blob/81c519ca75693b696752235d559e881f2e0511ee/software/firmware/source/SoftRF/src/platform/nRF52.cpp#L1738
+#if !defined(HERMESX_NRF52840_PROMICRO)
         constexpr uint32_t DFU_MAGIC_SKIP = 0x6d;
         sd_power_gpregret_set(0, DFU_MAGIC_SKIP); // Equivalent NRF_POWER->GPREGRET = DFU_MAGIC_SKIP
+#endif
 
         // FIXME, use system off mode with ram retention for key state?
         // FIXME, use non-init RAM per
@@ -378,11 +437,37 @@ void cpuDeepSleep(uint32_t msecToWake)
         nrf_gpio_cfg_sense_set(PIN_BUTTON2, sense1);
 #endif
 
+#if defined(HERMESX_NRF52840_PROMICRO) && defined(BUTTON_PIN)
+        // Match the verified Adafruit nRF52 System OFF sequence exactly:
+        // leave the SoftDevice enabled, arm GPIO SENSE through the Arduino
+        // core, then ask the SoftDevice to enter System OFF. A GPIO wake resets
+        // the MCU and the normal boot path restores the rotary interrupt.
+        const uint32_t wakePin = hermesWakePin;
+        pinMode(wakePin, INPUT_PULLUP_SENSE);
+        delay(20);
+        // Keep an independent retained marker because some UF2 bootloaders
+        // consume RESETREAS.OFF before the application reads it.
+        (void)sd_power_gpregret_set(1, 0x80);
+        const uint32_t ok = sd_power_system_off();
+#if defined(HERMESX_NRF52840_DIAGNOSTIC)
+        // A successful call never returns. If this line appears, preserve the
+        // live USB serial connection so the actual SoftDevice error is visible.
+        Serial.print("HXDIAG:systemoff returned rc=");
+        Serial.println(ok);
+        Serial.flush();
+#else
+        (void)ok;
+#endif
+#else
         auto ok = sd_power_system_off();
         if (ok != NRF_SUCCESS) {
-            LOG_ERROR("FIXME: Ignoring soft device (EasyDMA pending?) and forcing system-off!");
+            // Direct SYSTEMOFF writes are not valid while SoftDevice owns the
+            // POWER peripheral. Disable it first instead of falling into the
+            // old fake-sleep infinite loop with the display and Serial off.
+            (void)sd_softdevice_disable();
             NRF_POWER->SYSTEMOFF = 1;
         }
+#endif
     }
 
     // The following code should not be run, because we are off

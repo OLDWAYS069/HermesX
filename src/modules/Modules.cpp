@@ -30,7 +30,7 @@
 #ifndef HERMESX_CIV_DISABLE_EMAC
 #define HERMESX_CIV_DISABLE_EMAC 0
 #endif
-#if HAS_SCREEN
+#if HAS_SCREEN && !defined(HERMESX_NRF52840_PROMICRO)
 #include "modules/HermesEmUiModule.h"
 #endif
 #include "modules/HermesXInterfaceModule.h"
@@ -174,7 +174,7 @@ void setupModules()
             HermesXInterfaceModule::deferStartupVisuals();
         }
 #endif
-#if HAS_SCREEN
+#if HAS_SCREEN && !defined(HERMESX_NRF52840_PROMICRO)
         if (!hermesXEmUiModule) {
             hermesXEmUiModule = new HermesXEmUiModule();
         }
@@ -197,6 +197,7 @@ void setupModules()
             delete rotaryEncoderInterruptImpl1;
             rotaryEncoderInterruptImpl1 = nullptr;
         }
+#if !defined(HERMESONE_ROTARY_ONLY_INPUT)
         if (!moduleConfig.canned_message.rotary1_enabled) {
             upDownInterruptImpl1 = new UpDownInterruptImpl1();
             if (!upDownInterruptImpl1->init()) {
@@ -204,6 +205,7 @@ void setupModules()
                 upDownInterruptImpl1 = nullptr;
             }
         }
+#endif
 
 #if HAS_SCREEN
         // In order to have the user button dismiss the canned message frame, this class lightly interacts with the Screen class
@@ -214,8 +216,10 @@ void setupModules()
         }
 #endif
 
+#if !defined(HERMESONE_ROTARY_ONLY_INPUT)
         cardKbI2cImpl = new CardKbI2cImpl();
         cardKbI2cImpl->init();
+#endif
 #ifdef INPUTBROKER_MATRIX_TYPE
         kbMatrixImpl = new KbMatrixImpl();
         kbMatrixImpl->init();

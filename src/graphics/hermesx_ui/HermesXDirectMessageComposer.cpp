@@ -10,6 +10,7 @@ namespace
 {
 
 using InputChar = meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar;
+constexpr uint32_t kSendAnimationDurationMs = 2000U;
 
 const char *kKeyRowsUpper[][10] = {
     {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"},
@@ -62,6 +63,9 @@ HermesXDirectMessageComposer &HermesXDirectMessageComposer::instance()
 
 void HermesXDirectMessageComposer::resetState()
 {
+    sending_ = false;
+    sendFailed_ = false;
+    sendAnimationStartedAtMs_ = 0;
     draft_ = "";
     toast_ = "";
     toastUntilMs_ = 0;
@@ -72,6 +76,28 @@ void HermesXDirectMessageComposer::resetState()
     candidateMode_ = false;
     candidateCursor_ = 0;
     bpmf_ = hermesx_bpmf::HermesXBpmfEngine();
+}
+
+void HermesXDirectMessageComposer::beginSendAnimation(uint32_t nowMs)
+{
+    sending_ = true;
+    sendFailed_ = false;
+    sendAnimationStartedAtMs_ = nowMs;
+    candidateMode_ = false;
+    toast_ = "";
+    toastUntilMs_ = 0;
+}
+
+void HermesXDirectMessageComposer::cancelSendAnimation()
+{
+    sending_ = false;
+    sendFailed_ = false;
+    sendAnimationStartedAtMs_ = 0;
+}
+
+bool HermesXDirectMessageComposer::sendAnimationComplete(uint32_t nowMs) const
+{
+    return sending_ && static_cast<uint32_t>(nowMs - sendAnimationStartedAtMs_) >= kSendAnimationDurationMs;
 }
 
 void HermesXDirectMessageComposer::start(uint32_t destination, bool fromGroupDetail)
@@ -165,8 +191,11 @@ HermesXComposerAction HermesXDirectMessageComposer::requestSend(uint32_t nowMs)
 
 void HermesXDirectMessageComposer::showSendFailure(uint32_t nowMs)
 {
-    toast_ = "SEND FAIL";
-    toastUntilMs_ = nowMs + 1200;
+    sending_ = true;
+    sendFailed_ = true;
+    sendAnimationStartedAtMs_ = nowMs;
+    toast_ = "";
+    toastUntilMs_ = 0;
 }
 
 int8_t HermesXDirectMessageComposer::navigationDirection(const HermesXComposerInput &event,
@@ -210,6 +239,9 @@ HermesXComposerAction HermesXDirectMessageComposer::handleInput(const HermesXCom
                                                                  size_t payloadLimit)
 {
     if (!active_) {
+        return HermesXComposerAction::Consumed;
+    }
+    if (sending_) {
         return HermesXComposerAction::Consumed;
     }
 

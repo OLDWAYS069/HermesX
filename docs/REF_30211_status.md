@@ -1,5 +1,7 @@
 # HermesX 302.1.1 Status Matrix
 
+> **HermesOne 0.1.0 部分適用。** Lighthouse/Finder 已包含在 nRF52840 build；獨立 Hermes EM UI 執行緒未包含，EM Tx lock 仍需以最終 ELF 與實機測試另行確認。
+
 > 此文件用於追蹤 `302.1 Core` 與 `HermesX Extension` 的實作狀態。  
 > 狀態分類：
 > - `已實作`

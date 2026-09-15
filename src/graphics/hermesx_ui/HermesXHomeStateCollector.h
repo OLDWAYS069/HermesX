@@ -11,6 +11,7 @@ namespace graphics
 struct HermesXHomeBatterySource {
     bool available = false;
     int voltageMv = 0;
+    uint8_t percent = 0;
 };
 
 struct HermesXHomeBatteryState {

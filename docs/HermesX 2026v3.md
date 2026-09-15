@@ -5,6 +5,8 @@ title: HermesX 2026v3
 
 # HermesX 2026v4s
 
+> **HermesOne 注意：** 本文描述 HermesX C0.4.0／Heltec Tracker 的舊功能全集，不是 HermesOne 0.1.0 使用手冊。HermesOne 已排除 GPS、TAK、GROUP/Lighthouse、尋人、EMAC、MQTT 與 Wi-Fi 更新；現行狀態請見 `HermesOne_FEATURE_MATRIX.md`。
+
 ![HermesX](https://hackmd.io/_uploads/HkuLGCQrWl.jpg)
 
 <div align="center">
@@ -51,28 +53,30 @@ HermesX 的目標不是取代 Meshtastic App，而是把現場最常用的操作
 ### ==HermesX 主頁與主選單==
 
 HermesX 的首頁以裝置端可讀性為主，顯示時間、日期、Role、電池與基本狀態。  
-主選單則是圖示化 action page，目前包含：
+從 Home 短按會直接進入圖示化的主功能頁，目前包含：
 
-- `潛行模式`
-- `緊急照明燈`
 - `GPS`
-- `功能`
-- `休眠`
 - `Home`
-- `頻道`
-- `設定`
-
-`功能` 子頁面包含：
-
-- `TAK MODE`
 - `MSG`
 - `ONLINE`
 - `TraceRoute`
 - `GROUP`
 - `尋人模組`
-- `退出`
+- `更新模式`
+- `更多`
 
-從 Home 短按進入主選單時，焦點會停在 `Home`，避免誤觸第一個高風險功能。
+`更多` 頁面集中較偏模式、裝置與設定性質的入口：
+
+- `潛行模式`
+- `緊急照明燈`
+- `TAK MODE`
+- `休眠`
+- `頻道`
+- `設定`
+- `返回`
+
+從 Home 短按進入主功能頁時，焦點會停在 `Home`，避免誤觸其他功能。
+`更新模式` 會沿用 `設定 > 裝置管理 > 更新模式` 的同一條轉場與專用更新環境進入流程。
 
 ### ==Fast Setup 設定頁==
 

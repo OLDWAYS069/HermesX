@@ -59,7 +59,11 @@ extern UdpMulticastHandler *udpHandler;
 extern graphics::Screen *screen;
 
 #if !defined(ARCH_STM32WL) && !MESHTASTIC_EXCLUDE_I2C
+#if MESHTASTIC_EXCLUDE_ACCELEROMETER
+class AccelerometerThread;
+#else
 #include "motion/AccelerometerThread.h"
+#endif
 extern AccelerometerThread *accelerometerThread;
 #endif
 

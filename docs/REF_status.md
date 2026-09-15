@@ -1,5 +1,7 @@
 # HermesX 專案狀態 (REF_status.md)
 
+> **歷史狀態。** 本文記錄 BETA 0.2.1 與 Heltec Wireless Tracker，不代表 HermesOne 0.1.0 的完成度。
+
 ## 專案總覽
 - 版本：BETA 0.2.1
 - 硬體：Heltec Wireless Tracker (ESP32-S3)

@@ -1,28 +1,34 @@
-ㄋ# HermesX Documentation Index
+# HermesOne Documentation Index
 
-> 文件目前以 `HermesX_C0.4.0` 分支的 `HXB_C0.4.0` CIV 版為主，閱讀時請以目前 build flags 為準。
+> 現行產品為 `HermesOne 0.1.0`，分支 `HermesOne`，主要硬體為 ProMicro nRF52840。文件中的 HermesX C0.x、Heltec Tracker、ESP32、TFT、GOV/CIV 與 Wi-Fi OTA 內容均視為歷史參考，除非文件明確標示適用 HermesOne。
 
-| 類型 | 檔名 | 說明 |
-|------|------|------|
-| 📌 版本 | HXB_C0.4.0 (`CIV`) | 架構重整版；關閉 EMAC，保留 GROUP/尋人 |
-| 🚀 發布 | RELEASE_HXB_C0.4.0_20260901_0049.md | C0.4.0 正式發布說明、驗證結果與韌體雜湊 |
-| 🔀 版本切換 | VERSION_BRANCHES.md | `GOV` / `CIV` 分支、版號與 build flags 對照 |
-| 📘 規格 | REF_prd.md | 需求規格與驗收條件 |
-| 📗 狀態 | REF_status.md | 開發進度與議題 |
-| 🧭 協議狀態 | REF_30211_status.md | 302.1.1 Core / Extension 實作矩陣 |
-| ⚙️ 技術 | REF_techspec.md | 命名、模組、硬體規範 |
-| 🏗️ 架構 | HermesX_新版專案架構.md | 新版 UI 分層、統一輸入路由、服務邊界與擴充規則 |
-| 📍 路由 | TraceRoute.md | TraceRoute 綁定節點、快速 TR 與解除綁定操作 |
-| 🧠 議題 | ISSUE_neon_memory_pressure_2026-03-20.md | HermesX TFT/neon 記憶體壓力調查、量測結果與優化紀錄 |
-| 🆘 緊急模式 | REF_EmergencyMode.md | Emergency Mode 規格（302.1 架構） |
-| 🎨 介面 | HermesX_EM_UI_v2.1.md | 最新 EM UI 設計 |
-| 📶 功率 | SMART_POWER.md | TAK / TAK Tracker 智慧功率自動調整說明 |
-| 🛡️ TAK | TAK_MODE.md | TAK MODE 主頁、選單、頻道選擇、GROUP 配對入口與 CIV 限制 |
-| 💬 訊息 | 罐頭模組.md | 罐頭訊息使用、APP 自訂格式、目標頻道、Cancel/長按退出與 MSG 邊界 |
-| ㄅ 注音 | 注音輸入.md | MSG 注音鍵盤、候選字、`Aa` 與 `中/EN` 操作方式 |
-| 📡 尋人 | 尋人模組.md | 尋人模組、GROUP 授權與尋人清單使用說明 |
-| 🗺️ 計劃 | PLAN_upstream_2.7.15_migration.md | 升級到 upstream 2.7.15 並完整搬移 HermesX UI/功能的計劃 |
-| 🧩 任務 | task_emui_rotary3021.md | Codex 專用任務指令 |
-| 🕒 變更 | REF_changelog.md | Commit 記錄範本與分支脈絡註記 |
-| 🧾 摘要 | CHANGELOG_MINI.md | 包含 `CIV` 歷史更新與 `GOV` 整合後續紀錄 |
-| 🤖 交接 | AI_UPDATE_HANDOFF.md | 給後續 AI 的更新功能編譯、搬檔與 WiFi 指令收尾規則 |俠上不
+## 現行 HermesOne 文件
+
+| 文件 | 用途 |
+|------|------|
+| [HermesOne.md](HermesOne.md) | 產品定位、硬體基線、建置與 0.1.0 功能邊界 |
+| [HermesOne_FEATURE_MATRIX.md](HermesOne_FEATURE_MATRIX.md) | 唯一現行功能狀態表；區分保留、排除、實驗與待驗證 |
+| [HermesX_nRF52840_ProMicro_port.md](HermesX_nRF52840_ProMicro_port.md) | GPIO、UF2 燒錄、容量與實機驗證 |
+| [從零開始了解HermesX.md](從零開始了解HermesX.md) | HermesOne 初次燒錄、開機、BLE 與操作 |
+| [AI_UPDATE_HANDOFF.md](AI_UPDATE_HANDOFF.md) | HermesOne UF2/HEX/ZIP 建置交接 |
+| [VERSION_BRANCHES.md](VERSION_BRANCHES.md) | 分支、產品版號與相容版本規則 |
+| [CHANGELOG_MINI.md](CHANGELOG_MINI.md) | 近期變更摘要 |
+
+## HermesOne 保留功能文件
+
+下列功能文件仍適用於 HermesOne 的保留功能；其中彩色 TFT 截圖或 ESP32 專屬操作不代表 nRF52840 實作完全相同：
+
+- `主頁.md`、`設定.md`、`online.md`、`TraceRoute.md`、`罐頭模組.md`、`注音輸入.md`
+- `GROUP設定.md`、`Lighthouse_portable.md`、`TAK_MODE.md`、`SMART_POWER.md`
+
+## HermesX 舊版／其他硬體參考
+
+下列文件保留設計與歷史價值，但不直接定義 HermesOne 0.1.0：
+
+- `eminfo.md`
+- `EM模組簡介.md`、`HermesX_EM_UI*.md`、`REF_3021.md`、`REF_30211_status.md`、`REF_EMACT_lite.md`、`REF_EmergencyMode.md`
+- `TFT_portrait_attempts.md`、`UI_orientation_notes.md`、`ISSUE_neon_memory_pressure_2026-03-20.md`
+- 所有 `RELEASE_HXB_*.md` 與 `RELEASE_HermesX_*.md`
+- `HermesX 2026v3.md` 與 `HermesX_新版專案架構.md`
+
+`尋人模組.md` 是 Finder 封包與操作概念參考。功能是否已編譯與實機驗證，請回到 [HermesOne_FEATURE_MATRIX.md](HermesOne_FEATURE_MATRIX.md)。

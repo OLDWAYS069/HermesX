@@ -77,7 +77,11 @@ struct HermesXFastSetupNavigationState {
 class HermesXFastSetupUiModel
 {
   public:
+#if defined(HERMESX_NRF52840_PROMICRO)
     static constexpr uint8_t VisibleRows = 4;
+#else
+    static constexpr uint8_t VisibleRows = 4;
+#endif
 
     static HermesXFastSetupUiModel &instance();
 

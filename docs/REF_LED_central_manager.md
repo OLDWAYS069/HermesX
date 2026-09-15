@@ -1,5 +1,7 @@
 # HermesX LED 動畫集中管理說明
 
+> **HermesOne 0.1.0 狀態：實驗、未通過實燈驗證。** WS2812B DATA=P0.06，程式自測已執行但目前沒有可見輸出；本文動畫表不能視為本版已完成能力。
+
 ## 架構概覽
 - 管理模組：`src/modules/HermesXInterfaceModule.*`
 - 集中列舉：`LEDAnimation`（PowerHoldProgress/Fade/LatchedRed、StartupEffect、ShutdownEffect、AckFlash、NackFlash、SendL2R、ReceiveR2L、InfoR2L、IdleBreath、IdleRunner）

@@ -35,6 +35,21 @@
 
 using namespace concurrency;
 
+static bool inputBrokerOwnsButtonPin(uint32_t pin)
+{
+    if (!moduleConfig.canned_message.enabled) {
+        return false;
+    }
+
+    bool owned =
+        (moduleConfig.canned_message.updown1_enabled || moduleConfig.canned_message.rotary1_enabled) &&
+        moduleConfig.canned_message.inputbroker_pin_press == pin;
+#if HAS_TRACKBALL
+    owned = owned || TB_PRESS == pin;
+#endif
+    return owned;
+}
+
 // 長按／關機動畫協調（集中式 LED 管理）
 #if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT) ||                \
     defined(BUTTON_PIN_TOUCH)
@@ -69,6 +84,8 @@ static bool s_emergencyShortcutTriggered = false;
 static bool s_emergencyShortcutPending = false;
 static uint32_t s_emergencyShortcutDeadlineMs = 0;
 static uint32_t s_emergencyShortcutNextBeepMs = 0;
+static uint32_t s_emergencyShortcutStartedMs = 0;
+static bool s_emergencyShortcutBlockedUntilRelease = false;
 static int32_t s_emergencyShortcutShownSec = -1;
 static constexpr float kEmergencyPendingToneFreq = 1760.0f;
 static constexpr uint32_t kEmergencyPendingToneMs = 120;
@@ -91,6 +108,7 @@ static void cancelEmergencyShortcutPending()
     s_emergencyShortcutTriggered = false;
     s_emergencyShortcutDeadlineMs = 0;
     s_emergencyShortcutNextBeepMs = 0;
+    s_emergencyShortcutStartedMs = 0;
     s_emergencyShortcutShownSec = -1;
     if (screen) {
         screen->hideEmergencyConfirmPopup();
@@ -99,7 +117,7 @@ static void cancelEmergencyShortcutPending()
 
 static void triggerEmergencyShortcutNow()
 {
-    if (s_emergencyShortcutTriggered || s_emergencyShortcutPending)
+    if (s_emergencyShortcutTriggered || s_emergencyShortcutPending || s_emergencyShortcutBlockedUntilRelease)
         return;
 
     auto *interfaceModule = HermesXInterfaceModule::instance;
@@ -109,12 +127,23 @@ static void triggerEmergencyShortcutNow()
     interfaceModule->forceStopPowerHoldAnimation();
     ButtonThread::clearHoldAnimationState();
     s_emergencyShortcutPending = true;
+#if defined(HERMESX_NRF52840_PROMICRO)
+    // HermesOne shares the rotary push switch with the hold path.  Do not arm
+    // the EM countdown until a real release is observed; a stuck-low contact
+    // must never enter emergency mode on its own.
+    s_emergencyShortcutStartedMs = millis();
+    s_emergencyShortcutDeadlineMs = 0;
+    s_emergencyShortcutNextBeepMs = 0;
+#else
     s_emergencyShortcutDeadlineMs = millis() + kEmergencyPendingMs;
     s_emergencyShortcutNextBeepMs = millis();
+#endif
     s_emergencyShortcutShownSec = -1;
+#if !defined(HERMESX_NRF52840_PROMICRO)
     if (screen) {
         screen->showEmergencyConfirmPopup((kEmergencyPendingMs + 999) / 1000);
     }
+#endif
 }
 
 static void tickEmergencyShortcutPending()
@@ -123,6 +152,25 @@ static void tickEmergencyShortcutPending()
         return;
 
     const uint32_t now = millis();
+#if defined(HERMESX_NRF52840_PROMICRO)
+    if (ButtonThread::isHoldButtonPressed()) {
+        if (s_emergencyShortcutStartedMs != 0 && (now - s_emergencyShortcutStartedMs) >= 2000) {
+            LOG_WARN("EM shortcut canceled: rotary press remained LOW after long hold");
+            cancelEmergencyShortcutPending();
+            s_emergencyShortcutBlockedUntilRelease = true;
+            ButtonThread::requireReleaseBeforeLongPress();
+        }
+        return;
+    }
+    if (s_emergencyShortcutDeadlineMs == 0) {
+        s_emergencyShortcutStartedMs = 0;
+        s_emergencyShortcutDeadlineMs = now + kEmergencyPendingMs;
+        s_emergencyShortcutNextBeepMs = now;
+        if (screen) {
+            screen->showEmergencyConfirmPopup((kEmergencyPendingMs + 999) / 1000);
+        }
+    }
+#endif
     const int32_t remainingMs = static_cast<int32_t>(s_emergencyShortcutDeadlineMs - now);
     int32_t remainingSec = (remainingMs > 0) ? ((remainingMs + 999) / 1000) : 0;
     if (remainingSec < 0)
@@ -147,6 +195,7 @@ static void tickEmergencyShortcutPending()
     s_emergencyShortcutTriggered = true;
     s_emergencyShortcutDeadlineMs = 0;
     s_emergencyShortcutNextBeepMs = 0;
+    s_emergencyShortcutStartedMs = 0;
     s_emergencyShortcutShownSec = -1;
 
     if (screen) {
@@ -284,10 +333,7 @@ void ButtonThread::switchPage()
     const bool allowStealthWake = (screen && screen->isStealthModeConstrained());
 #ifdef BUTTON_PIN
 #if !defined(USERPREFS_BUTTON_PIN)
-    if (((config.device.button_gpio ? config.device.button_gpio : BUTTON_PIN) !=
-         moduleConfig.canned_message.inputbroker_pin_press) ||
-        !(moduleConfig.canned_message.updown1_enabled || moduleConfig.canned_message.rotary1_enabled) ||
-        !moduleConfig.canned_message.enabled || allowStealthWake) {
+    if (!inputBrokerOwnsButtonPin(config.device.button_gpio ? config.device.button_gpio : BUTTON_PIN) || allowStealthWake) {
         if (screen) {
             screen->armStealthWakeWindow();
         }
@@ -295,10 +341,8 @@ void ButtonThread::switchPage()
     }
 #endif
 #if defined(USERPREFS_BUTTON_PIN)
-    if (((config.device.button_gpio ? config.device.button_gpio : USERPREFS_BUTTON_PIN) !=
-         moduleConfig.canned_message.inputbroker_pin_press) ||
-        !(moduleConfig.canned_message.updown1_enabled || moduleConfig.canned_message.rotary1_enabled) ||
-        !moduleConfig.canned_message.enabled || allowStealthWake) {
+    if (!inputBrokerOwnsButtonPin(config.device.button_gpio ? config.device.button_gpio : USERPREFS_BUTTON_PIN) ||
+        allowStealthWake) {
         if (screen) {
             screen->armStealthWakeWindow();
         }
@@ -378,6 +422,10 @@ int32_t ButtonThread::runOnce()
     processWakeHoldGate();
 #endif
 #if !MESHTASTIC_EXCLUDE_HERMESX
+    if (s_emergencyShortcutBlockedUntilRelease && !isHoldButtonPressed()) {
+        s_emergencyShortcutBlockedUntilRelease = false;
+        LOG_INFO("EM shortcut re-armed after rotary press release");
+    }
     updatePowerHoldAnimation();
     if (screen && screen->consumeEmergencyConfirmCancelRequest()) {
         cancelEmergencyShortcutPending();
@@ -516,7 +564,7 @@ int32_t ButtonThread::runOnce()
                 digitalWrite(PIN_EINK_EN, digitalRead(PIN_EINK_EN) == LOW);
                 break;
 #endif
-#if !MESHTASTIC_EXCLUDE_SCREEN && HAS_SCREEN
+#if !MESHTASTIC_EXCLUDE_SCREEN && HAS_SCREEN && !MESHTASTIC_EXCLUDE_ACCELEROMETER
             // 5 clicks: start accelerometer/magenetometer calibration for 30 seconds
             case 5:
                 if (accelerometerThread) {
@@ -789,6 +837,12 @@ void ButtonThread::resetLongPressState()
     s_holdPressStartMs = 0;
 #if !MESHTASTIC_EXCLUDE_HERMESX
     s_emergencyShortcutTriggered = false;
+    s_emergencyShortcutPending = false;
+    s_emergencyShortcutDeadlineMs = 0;
+    s_emergencyShortcutNextBeepMs = 0;
+    s_emergencyShortcutStartedMs = 0;
+    s_emergencyShortcutBlockedUntilRelease = false;
+    s_emergencyShortcutShownSec = -1;
 #endif
 #if defined(BUTTON_PIN) || defined(ARCH_PORTDUINO) || defined(USERPREFS_BUTTON_PIN) || defined(BUTTON_PIN_ALT) ||                \
     defined(BUTTON_PIN_TOUCH)
@@ -987,7 +1041,7 @@ void ButtonThread::updatePowerHoldAnimation()
         return;
     }
 
-    if (s_emergencyShortcutTriggered || s_emergencyShortcutPending) {
+    if (s_emergencyShortcutTriggered || s_emergencyShortcutPending || s_emergencyShortcutBlockedUntilRelease) {
         return;
     }
 
@@ -1035,11 +1089,9 @@ void ButtonThread::updatePowerHoldAnimation()
     }
 
 #if !MESHTASTIC_EXCLUDE_HERMESX
-    bool rotaryPressSharesHoldButton =
-        moduleConfig.canned_message.enabled && moduleConfig.canned_message.rotary1_enabled &&
-        moduleConfig.canned_message.inputbroker_pin_press != 0;
-    bool rotaryHoldPressed = false;
-    if (rotaryPressSharesHoldButton) {
+    bool inputPressSharesHoldButton = false;
+    bool inputHoldPressed = false;
+    {
         bool matchesHoldButton = false;
 #if defined(BUTTON_PIN) || defined(USERPREFS_BUTTON_PIN)
         const uint32_t primaryButtonPin =
@@ -1048,23 +1100,23 @@ void ButtonThread::updatePowerHoldAnimation()
 #else
             config.device.button_gpio ? config.device.button_gpio : BUTTON_PIN;
 #endif
-        if (moduleConfig.canned_message.inputbroker_pin_press == primaryButtonPin) {
+        if (inputBrokerOwnsButtonPin(primaryButtonPin)) {
             matchesHoldButton = true;
-            rotaryHoldPressed = userButton.pin() >= 0 && userButton.debouncedValue();
+            inputHoldPressed = userButton.pin() >= 0 && userButton.debouncedValue();
         }
 #endif
 #if defined(BUTTON_PIN_ALT)
-        if (moduleConfig.canned_message.inputbroker_pin_press == BUTTON_PIN_ALT) {
+        if (inputBrokerOwnsButtonPin(BUTTON_PIN_ALT)) {
             matchesHoldButton = true;
             const bool altHoldPressed = userButtonAlt.pin() >= 0 && userButtonAlt.debouncedValue();
             if (altHoldPressed) {
-                rotaryHoldPressed = true;
+                inputHoldPressed = true;
             }
         }
 #endif
-        rotaryPressSharesHoldButton = matchesHoldButton;
+        inputPressSharesHoldButton = matchesHoldButton;
     }
-    if (screen && screen->shouldBlockPowerHoldForTraceRouteInput() && rotaryPressSharesHoldButton && rotaryHoldPressed) {
+    if (screen && screen->shouldBlockPowerHoldForTraceRouteInput() && inputPressSharesHoldButton && inputHoldPressed) {
         if (holdAnimationActive || holdAnimationStarted) {
             holdAnimationActive = false;
             holdAnimationStarted = false;
@@ -1082,7 +1134,7 @@ void ButtonThread::updatePowerHoldAnimation()
     // 旋鈕鎖定由 RotaryEncoderInterruptBase 的實際 GPIO hold 計時負責。
     // shared OneButton 在旋鈕放開後可能短暫維持 pressed，這裡只負責停止
     // 已啟動的 power-hold 動畫，不再依 OneButton 狀態切換鎖定或執行頁面動作。
-    if (screen && screen->isRotaryLockPopupVisible() && rotaryPressSharesHoldButton) {
+    if (screen && screen->isRotaryLockPopupVisible() && inputPressSharesHoldButton) {
         if (holdAnimationActive || holdAnimationStarted) {
             holdAnimationActive = false;
             holdAnimationStarted = false;
@@ -1640,6 +1692,8 @@ void ButtonThread::clearHoldAnimationState()
     s_emergencyShortcutPending = false;
     s_emergencyShortcutDeadlineMs = 0;
     s_emergencyShortcutNextBeepMs = 0;
+    s_emergencyShortcutStartedMs = 0;
+    s_emergencyShortcutBlockedUntilRelease = false;
     s_emergencyShortcutShownSec = -1;
 #endif
 }

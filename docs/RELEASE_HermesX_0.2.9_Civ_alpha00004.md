@@ -1,5 +1,7 @@
 # HermesX Firmware `HermesX_0.2.9_Civ_alpha00004`
 
+> 歷史 HermesX／Heltec Tracker Release，不適用 HermesOne 0.1.0。
+
 預先發佈版
 
 `HermesX_0.2.9_Civ_alpha00004` 是 HermesX `0.2.9 Civ` 系列的 Alpha 釋出，基於 Meshtastic 韌體架構，主目標板為 `heltec-wireless-tracker`。

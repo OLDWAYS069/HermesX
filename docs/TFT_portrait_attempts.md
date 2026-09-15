@@ -1,5 +1,7 @@
 ﻿# Heltec 無線追蹤器 TFT 直式顯示調整紀錄
 
+> **不適用 HermesOne。** HermesOne 使用 128x64 SSD1309 單色 OLED，不使用 ST7735S TFT、旋轉 offset 或 Direct TFT 路徑。
+
 實際測試確認這片板子仍採用 ST7735S 160×80 彩色 TFT。以下紀錄我們把 UI 改成直向 (80×160) 時做過的調整與結論。
 
 ---

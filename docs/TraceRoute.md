@@ -4,6 +4,8 @@ title: TraceRoute
 
 # TraceRoute
 
+> **HermesOne 0.1.0：保留、待端到端驗證。** GROUP DETAIL 與 Lighthouse 亦保留；只有 MQTT 來源相關段落不適用。
+
 `TraceRoute` 是 HermesX 裝置端用來測試 LoRa 路由的功能。
 
 它可以從 `ONLINE DETAIL` 或 `GROUP DETAIL` 直接對目前節點發起，也可以從主選單的獨立 `TraceRoute` 頁面操作。獨立頁面目前以「先綁定常用節點，再快速 TR」為主，適合現場反覆測試固定幾台裝置的路由狀態。

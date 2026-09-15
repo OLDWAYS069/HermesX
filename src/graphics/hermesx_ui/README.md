@@ -27,8 +27,8 @@ use it instead of opening `/prefs` files directly from renderer functions.
    post-dismiss palette-recovery request shared by direct Home/GPS UI-skip
    policy.
    `HermesXDirectMessageComposer` owns the direct-message draft, keyboard cursor,
-   Bopomofo candidates, and input transitions. The message renderer draws the
-   candidate page, while the shared FastSetup renderer draws its keyboard.
+   Bopomofo candidates, send-animation lifetime, and input transitions. The message renderer draws the
+   candidate page and the shared sitting-Xiaowei notification animation, while the shared FastSetup renderer draws its keyboard.
    `Screen` retains Mesh send and page-navigation side effects.
 2. TraceRoute list, detail, binding, search, and popup UI.
    `HermesXTraceRouteUiModel` now owns popup and pending-request identity;
@@ -105,7 +105,8 @@ use it instead of opening `/prefs` files directly from renderer functions.
    `HermesXHomeUiModel` owns the direct-TFT base-state snapshot, telemetry
    refresh timing, dog animation cache, dirty decisions, invalidation, and
    commit behavior. Shared Neon layout constants and layer-color mapping live
-   in `HermesXHomeUiRenderer`. `HermesXNeonWorkspace` owns the GPS text scratch
+   in `HermesXHomeUiRenderer`; the same renderer also owns the shared sitting-Xiaowei
+   notification used by message sending, incoming messages, and newly discovered nodes. `HermesXNeonWorkspace` owns the GPS text scratch
    buffer, glyph-cache storage, allocation, release, lazy glyph mask/glow
    composition, text measurement/layout/layer assembly, and paint-run planning.
    `HermesXNeonRenderer` owns TFT background clearing, layer-color mapping,

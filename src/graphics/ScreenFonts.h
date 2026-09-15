@@ -74,7 +74,14 @@
 #else
 #define FONT_SMALL FONT_SMALL_LOCAL   // Height: 13
 #define FONT_MEDIUM FONT_MEDIUM_LOCAL // Height: 19
+#if defined(HERMESX_NRF52840_PROMICRO)
+// The ProMicro SoftDevice layout leaves 796 KiB for the application. Reuse the
+// medium face for large labels so HermesX can retain its Chinese and Bopomofo
+// data without linking the otherwise separate 24 px ASCII face.
+#define FONT_LARGE FONT_MEDIUM_LOCAL // Height: 19
+#else
 #define FONT_LARGE FONT_LARGE_LOCAL   // Height: 28
+#endif
 #endif
 
 #if defined(CROWPANEL_ESP32S3_5_EPAPER)

@@ -5,6 +5,8 @@ title: GROUP設定
 
 # GROUP設定
 
+> **HermesOne 0.1.0：GROUP 與 Lighthouse/Finder 保留、待實機驗證。** 獨立 Hermes EM UI 執行緒未編入 nRF52840；本文涉及 EMAC/EMINFO 的部分須依功能矩陣判讀。
+
 `GROUP` 是 HermesX 用來把尋人模式、EMAC 與 EMINFO/Heartbeat 收斂在一起的配對機制。
 
 簡單說，同一組裝置要使用同一組 `GROUP PIN`，才會互相接受尋人請求、緊急啟動、EMAC 解除與狀態同步。  

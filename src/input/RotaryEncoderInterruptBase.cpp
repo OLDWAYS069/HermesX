@@ -10,12 +10,23 @@ constexpr uint32_t kRotaryDispatchMinMs = 40;
 constexpr uint32_t kRotaryPressDebounceMs = 200;
 constexpr uint32_t kTraceRouteLongHoldMs = 1000;
 constexpr uint32_t kRotaryLockHoldMs = 3000;
+#if defined(HERMESX_NRF52840_PROMICRO)
+// P1.00 is shared by the rotary push switch and the power/EM hold path on
+// HermesOne.  A stuck-low switch must not permanently suppress A/B rotation.
+constexpr uint32_t kHermesOneStuckPressMs = 750;
+#endif
 constexpr int8_t kRotaryStepsPerDetent = 4;
 const int8_t kRotaryTransitionTable[16] = {0, -1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0};
 
 bool isHermesRotaryLocked()
 {
+#if defined(HERMESX_NRF52840_PROMICRO)
+    // HermesOne uses the same switch for rotary press and power/EM hold.  The
+    // separate rotary-lock gesture conflicts with that shared ownership.
+    return false;
+#else
     return screen && screen->isRotaryLocked();
+#endif
 }
 
 bool isHermesRotaryLockPopupVisible()
@@ -102,6 +113,7 @@ void RotaryEncoderInterruptBase::init(
     this->rotaryLevelB = digitalRead(this->_pinB);
     this->lastRotaryState = ((this->rotaryLevelA == HIGH) ? 1 : 0) << 1 | ((this->rotaryLevelB == HIGH) ? 1 : 0);
     this->rotaryStep = 0;
+    this->pressFaultLatched = false;
     LOG_INFO("Rotary initialized (%d, %d, %d) swapped=%d", this->_pinA, this->_pinB, pinPress,
              this->_directionSwapped ? 1 : 0);
 }
@@ -150,7 +162,27 @@ int32_t RotaryEncoderInterruptBase::runOnce()
     const uint32_t now = millis();
     const bool pressLow = this->_pinPress != 0 && digitalRead(this->_pinPress) == LOW;
 
-    if (this->action == ROTARY_ACTION_PRESSED || this->pressTracking) {
+#if defined(HERMESX_NRF52840_PROMICRO)
+    if (this->pressFaultLatched) {
+        if (pressLow) {
+            // Ignore the failed push switch, but continue below so A/B events
+            // can still be dispatched while the line is stuck at ground.
+            if (this->action == ROTARY_ACTION_PRESSED) {
+                this->action = ROTARY_ACTION_NONE;
+            }
+        } else {
+            LOG_WARN("Rotary press recovered after stuck-low fault");
+            this->pressFaultLatched = false;
+            this->pressTracking = false;
+            this->pressLongFired = false;
+            this->pressDownSinceMs = 0;
+            this->action = ROTARY_ACTION_NONE;
+            return INT32_MAX;
+        }
+    }
+#endif
+
+    if (!this->pressFaultLatched && (this->action == ROTARY_ACTION_PRESSED || this->pressTracking)) {
         if (pressLow) {
             if (!this->pressTracking) {
                 this->pressTracking = true;
@@ -164,6 +196,7 @@ int32_t RotaryEncoderInterruptBase::runOnce()
                 this->pressLongFired = true;
                 this->action = ROTARY_ACTION_NONE;
             }
+#if !defined(HERMESX_NRF52840_PROMICRO)
             if (!this->pressLongFired && (now - this->pressDownSinceMs) >= kRotaryLockHoldMs) {
                 this->pressLongFired = true;
                 if (!isHermesRotaryLockPopupVisible() && shouldAllowHermesRotaryLockLongPress()) {
@@ -171,6 +204,19 @@ int32_t RotaryEncoderInterruptBase::runOnce()
                 }
                 this->action = ROTARY_ACTION_NONE;
             }
+#else
+            if ((now - this->pressDownSinceMs) >= kHermesOneStuckPressMs) {
+                LOG_WARN("Rotary press stuck LOW; restoring A/B rotation until release");
+                this->pressFaultLatched = true;
+                this->pressTracking = false;
+                this->pressLongFired = false;
+                this->traceRouteBindHoldArmed = false;
+                this->traceRouteBoundHoldArmed = false;
+                this->pressDownSinceMs = 0;
+                this->action = ROTARY_ACTION_NONE;
+                return INT32_MAX;
+            }
+#endif
             // runOnce() 的非負回傳值會在 OSThread::run() 裡重新設定 interval。
             // 直接回傳 50 才能在按住期間持續輪詢；先 setIntervalFromNow(50)
             // 再回傳 INT32_MAX 會被覆蓋成永久等待，只剩放開中斷能喚醒。

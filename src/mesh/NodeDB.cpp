@@ -203,8 +203,31 @@ NodeDB::NodeDB()
     uint32_t nodeDatabaseCRC = crc32Buffer(&nodeDatabase, sizeof(nodeDatabase));
     uint32_t configCRC = crc32Buffer(&config, sizeof(config));
     uint32_t channelFileCRC = crc32Buffer(&channelFile, sizeof(channelFile));
+#ifdef HERMESX_NRF52840_PROMICRO
+    uint32_t moduleConfigCRC = crc32Buffer(&moduleConfig, sizeof(moduleConfig));
+#endif
 
     int saveWhat = 0;
+#if defined(HERMESX_NRF52840_PROMICRO) && defined(PIN_BUZZER) && defined(HERMESX_ROTARY_PIN_A) &&                 \
+    defined(HERMESX_ROTARY_PIN_B) && defined(HERMESX_ROTARY_PIN_PRESS)
+    // These pins describe soldered hardware, so repair stale saved Meshtastic
+    // settings on every boot without disturbing identity, channels or keys.
+    config.device.buzzer_gpio = PIN_BUZZER;
+    moduleConfig.has_canned_message = true;
+    moduleConfig.canned_message.enabled = true;
+    moduleConfig.canned_message.rotary1_enabled = true;
+    moduleConfig.canned_message.updown1_enabled = false;
+    moduleConfig.canned_message.inputbroker_pin_a = HERMESX_ROTARY_PIN_A;
+    moduleConfig.canned_message.inputbroker_pin_b = HERMESX_ROTARY_PIN_B;
+    moduleConfig.canned_message.inputbroker_pin_press = HERMESX_ROTARY_PIN_PRESS;
+    moduleConfig.canned_message.inputbroker_event_cw =
+        meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN;
+    moduleConfig.canned_message.inputbroker_event_ccw =
+        meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP;
+    moduleConfig.canned_message.inputbroker_event_press =
+        meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT;
+    strcpy(moduleConfig.canned_message.allow_input_source, "rotEnc1");
+#endif
     // Get device unique id
 #if defined(CONFIG_IDF_TARGET_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32S3)
     uint32_t unique_id[4];
@@ -358,6 +381,10 @@ NodeDB::NodeDB()
         saveWhat |= SEGMENT_CONFIG;
     if (channelFileCRC != crc32Buffer(&channelFile, sizeof(channelFile)))
         saveWhat |= SEGMENT_CHANNELS;
+#ifdef HERMESX_NRF52840_PROMICRO
+    if (moduleConfigCRC != crc32Buffer(&moduleConfig, sizeof(moduleConfig)))
+        saveWhat |= SEGMENT_MODULECONFIG;
+#endif
 
     if (config.position.gps_enabled) {
         config.position.gps_mode = meshtastic_Config_PositionConfig_GpsMode_ENABLED;
@@ -790,6 +817,22 @@ void NodeDB::installDefaultModuleConfig()
     moduleConfig.canned_message.enabled = true;
     moduleConfig.canned_message.inputbroker_pin_press = BUTTON_PIN_SECONDARY;
     strcpy(moduleConfig.canned_message.allow_input_source, "scanAndSelect");
+#endif
+
+#if defined(HERMESX_NRF52840_PROMICRO) && defined(HERMESX_ROTARY_PIN_A) && defined(HERMESX_ROTARY_PIN_B) &&       \
+    defined(HERMESX_ROTARY_PIN_PRESS)
+    moduleConfig.canned_message.enabled = true;
+    moduleConfig.canned_message.rotary1_enabled = true;
+    moduleConfig.canned_message.inputbroker_pin_a = HERMESX_ROTARY_PIN_A;
+    moduleConfig.canned_message.inputbroker_pin_b = HERMESX_ROTARY_PIN_B;
+    moduleConfig.canned_message.inputbroker_pin_press = HERMESX_ROTARY_PIN_PRESS;
+    moduleConfig.canned_message.inputbroker_event_cw =
+        meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_DOWN;
+    moduleConfig.canned_message.inputbroker_event_ccw =
+        meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_UP;
+    moduleConfig.canned_message.inputbroker_event_press =
+        meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar_SELECT;
+    strcpy(moduleConfig.canned_message.allow_input_source, "rotEnc1");
 #endif
 
     moduleConfig.has_canned_message = true;

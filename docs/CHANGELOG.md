@@ -2,6 +2,107 @@
 
 本文件為可對外發布版本的更新紀錄，整理 HermesX 韌體的重要功能更新、體驗調整與修正項目。
 
+## 2026-09-15
+
+- 修正 MSG Recent Send 跑馬燈跨到下一列、覆蓋其他訊息的問題；每筆內容現在以單行裁切 renderer 繪製，限制在自己的 12 px 列內。
+- 收訊搬箱動畫結束後，訊息改顯示於右側細框內容卡，使文字看起來像箱子送達的內容；框線不占用下方的「查看／略過」操作區。
+- HermesOne 收訊提示改為鏡像的小威由右往左搬箱；動畫結束後，右側顯示該 popup 封包的訊息內容。
+- 長訊息以 node longname 相同的 400 ms 節奏跑馬燈播放，最多播放前 20 個 UTF-8 字元；原文超過 20 字時補上 `...`，8 秒顯示期間會讓第 20 字進入可視範圍。短訊息保持靜止。
+- 訊息框版本 `HermesOne_0.1.0_20260915_0801` 已完成建置與 UF2 實機刷入；應用程式 USB 回復，裝置回報 `pioEnv=nrf52_promicro_diy_tcxo_hermesx`、firmware `2.6.11.01087390e`。
+
+## 2026-09-09
+
+- HermesOne 128×64 鍵盤改為每頁 20 個字元：上、下兩排各 10 個；旋鈕在頁內移動，從上排最左往前切上一頁，從下排最右往後切下一頁。英文、數字、符號、注音及操作鍵均沿用原輸入邏輯，注音使用完整 12×12 字形。
+- `HermesOne_0.1.0_20260909_0947` 正式版建置成功（RAM 17.4%、Flash 98.2%）；host 預覽通過 137 個鍵盤游標與換頁邊界，UF2 已刷入 nice!nano 實機並確認裝置重新回到應用程式 USB。
+
+### HermesOne 首頁與小威狀態
+
+- 首頁時間加入秒數，時間與日期各自整行靠右；日期移除星期縮寫，只顯示 `YYYY/MM/DD`。
+- 電池 ADC 依實機 3.91 V／韌體 3.13 V 的量測結果，把 fakeTec v4 專用倍率由 2.00 校正為 2.50；實機首頁電量由 0–1% 恢復為 78%。
+- 修正 Home 隱藏 Footer 後連帶停用中央短按的問題；Footer 仍不覆蓋電池狀態，但 Home 短按仍可進入 Action 頁。
+- 小威新增像素風思考氣泡：未讀 Meshtastic 訊息顯示 `!`，新節點顯示 `+`，五分鐘未操作顯示 `==`；狀態按飢餓、未讀訊息、新節點、閒置的優先序顯示。
+- 新增虛擬寵物餵食週期：最後餵食 12 小時後顯示 Q 版胃圖示，Home 短按開啟「餵她吃飯？」的是／否彈窗；24 小時未餵則將小威改畫為墓碑，短按可開啟「是否將她復活？」確認。
+- 最後餵食時間保存至裝置偏好資料，重新開機後仍會延續 12／24 小時計時；無有效 RTC 時暫以本次開機時間計算，取得 GPS／手機授時後再保存絕對時間。
+- 餵食／復活彈窗加入獨立輸入 ownership，避免 Home、Recent Message 或 Canned Message 同時消耗相同按鍵。
+
+### 建置驗證
+
+- `nrf52_promicro_diy_tcxo_hermesx_diag` 完整建置成功；build 版本為 `HermesOne_0.1.0_20260909_0140`。
+- RAM 43,372 / 248,832 bytes（17.4%）；Flash 801,484 / 815,104 bytes（98.3%）。
+
+## 2026-09-08
+
+### HermesOne WS2812B 接線與 HermesX 聲光還原
+
+- WS2812B DATA 依既有實機接線恢復到 P0.06（板上 `006`）；GPS UART 改為 MCU RX=P1.06/D10、MCU TX=P0.08。
+- 移除 HermesOne 的整數呼吸、整排啟動脈衝及中央狀態機專用分支，恢復 HermesX C0.4.0 的呼吸曲線、runner、逐顆啟動、收發、ACK/NACK 與關機淡出實作。
+- 啟動、收發、成功、失敗、Node Info 與關機音序均以 HermesX C0.4.0 為基準；nRF52840 只使用等效 `tone()/noTone()` 輸出，不另行改寫旋律。
+- 移除診斷版曾加入的紅／綠／藍開機硬體自測；開機只執行 HermesX 原始的中央向外逐顆亮滅動畫與原始啟動音序。
+- `HermesOne_0.1.0_20260908_1753` 正式版與診斷版均完成全量建置；正式版 RAM 43,332 / 248,832 bytes（17.4%）、Flash 800,316 / 815,104 bytes（98.2%），診斷版 RAM 43,348 bytes、Flash 799,428 bytes（98.1%）。
+
+## 2026-09-06
+
+### HermesOne nRF52840 System OFF 喚醒調查
+
+- 依實機 GPIO 紀錄確認旋鈕按鍵為 P1.00、閒置高電位、按下低電位；進入休眠前按鍵已確實放開，因此排除「帶著低電位進入 System OFF」的原先假設。
+- 查核 nRF52840 GPIO SENSE／System OFF 行為及 Adafruit nRF52 Arduino 核心實作，確認 P1.00 支援低電位喚醒，System OFF 喚醒會以 reset 形式重新開機。
+- 建立獨立於 HermesOne 的最小 P1.00 喚醒測試韌體：`Bluefruit.begin()` 後使用 `INPUT_PULLUP_SENSE` 與 `sd_power_system_off()`；每次開機閃六下板載 LED。實機已確認短按旋鈕可再次閃六下，證明 nRF52840、P1.00、旋鈕配線及 UF2 bootloader 均可正常完成 System OFF 喚醒。
+- 排除先前多組未成功方案，包括睡前 detach TinyUSB、停用 SoftDevice、直接寫入 `NRF_POWER->SYSTEMOFF`、手動設定 `PIN_CNF.SENSE`，以及移除 P1.00 GPIOTE 後再直接進入 System OFF；2026-09-05 所記的 TinyUSB／直接 SYSTEMOFF 方案並未通過實機喚醒驗證。
+- HermesOne 永久休眠改為先等待 P1.00 放開並移除旋鈕中斷，隨即以 `INPUT_PULLUP_SENSE` 設定喚醒腳，再由仍啟用的 SoftDevice 呼叫 `sd_power_system_off()`；不再手動停用 SoftDevice 或直接寫入 POWER 暫存器。
+- 新增決定性隔離路徑：永久休眠在關閉 Wire、SPI、GPS UART、USB Serial 或 BLE 廣播之前直接進入 System OFF。實機已確認長按旋鈕可從休眠狀態喚醒，將問題範圍收斂到原本的睡前周邊清理／電源切換流程，而非硬體不支援。
+- 加入 `HERMESX_NRF52840_DIAGNOSTIC` 診斷輸出，記錄 P0/P1 輸入、P1.00 電位、休眠參數、按鍵放開等待、System OFF 入口與回傳錯誤；診斷版暫時略過正式開機長按閘門，便於反覆實機測試。
+
+### 驗證狀態
+
+- 最小測試：System OFF 後短按 P1.00 喚醒成功，板載 LED 再次閃六下。
+- HermesOne 診斷版：由選單進入「休眠」後，長按旋鈕喚醒成功。
+- 最新診斷 build：`HermesOne_0.1.0_20260906_0150`；RAM 43,300 / 248,832 bytes（17.4%），Flash 794,756 / 815,104 bytes（97.5%）。
+- UF2 SHA-256：`51437b82ca9e4d2de8ec400f2ad87ce1a2a151f2e17099ea8679f77dd458041b`。
+- 尚待完成：確認最新 HermesOne 路徑的短按行為、恢復並驗證正式五秒開機閘門、移除診斷碼與重複的舊休眠分支，以及量測正式版 System OFF 電流。
+
+## 2026-09-05
+
+### HermesOne 0.1.0 開發基線
+
+- 修正 TAK Tracker 省電角色從選單進入「休眠」時誤走定時延遲路徑；HermesOne 現在會進入可由旋鈕按鍵 P1.00 喚醒的 System OFF。
+- 休眠提示音改為功能性回饋：TAK 關閉裝飾性聲光時仍播放短促關機音，LED 維持關閉。
+- System OFF 前以 nRF Arduino 核心的 `INPUT_PULLUP_SENSE` 設定實際按鍵腳位，兼容 `button_gpio` 設定。
+- 修正 System OFF 喚醒後才重新計算完整五秒、導致使用者放開即再次休眠：若 P1.00 從喚醒到開機門檻仍持續按住，只需再確認 0.75 秒；若中途放開，第二次按壓仍需完整五秒。
+- nRF52840 進入 System OFF 前以 `GPREGRET2` bit 7 保存 HermesOne 喚醒門檻標記，避免 UF2 bootloader 清除 `RESETREAS.OFF` 後把睡眠喚醒誤判成普通開機。
+- 修正 USB 連線時 TinyUSB/EasyDMA 使 SoftDevice 拒絕 System OFF、裝置卻落入黑畫面無限迴圈的假休眠：睡前先 detach TinyUSB；SoftDevice 若仍回傳錯誤，先安全停用 SoftDevice 再寫入 `SYSTEMOFF`。
+- 建立 `HermesOne` 分支，作為 HermesX 的 nRF52840 ProMicro 產品線。
+- 產品版本設為 `0.1.0`；畫面識別為 `HermesOne_0.1.0`，唯一 build 版號格式為 `HermesOne_0.1.0_YYYYMMDD_HHMM`。
+- 主要目標固定為 `nrf52_promicro_diy_tcxo_hermesx`，硬體基線為 ProMicro nRF52840、HT-RA62、2.42 吋 SSD1309 OLED、旋鈕、無源蜂鳴器與 WS2812B。
+- 保留 Meshtastic `2.6.11` 相容版本回報；HermesOne 產品版本獨立顯示。
+- 實機已可透過 UF2 寫入並開機顯示；OLED 與基本旋鈕/按鍵操作已確認。LoRa、完整訊息流程、睡眠電流及 WS2812B 仍待驗證。
+- 更新 HermesOne 文件入口、初次使用、首頁、設定與建置交接；GPS、TAK、GROUP/Lighthouse、尋人及其本機 UI 均保留，EMAC 獨立 UI、MQTT、Wi-Fi OTA 與彩色 TFT 路徑不適用。
+- nRF52840 專用首頁與開機頁的產品標題由 `HermesX` 改為 `HermesOne`。
+
+### 建置驗證
+
+- `pio run -e nrf52_promicro_diy_tcxo_hermesx` 完整建置成功。
+- 韌體內嵌 `APP_HERMES_VERSION`：`HermesOne_0.1.0_20260905_0650`。
+- RAM 17.4%（43,292 / 248,832 bytes）；Flash 97.4%（793,692 / 815,104 bytes）。
+- UF2 SHA-256：`ddf0c658316d6e781c243c45c7da14a41a774d616b6a983628bdd545736614d2`。
+- HEX SHA-256：`5ee808f4550fb7fb14a7b67b548fa5ffeff8dc93e0cc1f11786a1eb3d3befc8a`。
+- ZIP SHA-256：`6b0654040b1d559467430e406ca341fef4d054c2c80800b070adc5fbf9dc55d6`。
+
+## 2026-09-02
+
+### 調整
+
+- Home 短按現在直接進入主功能頁，焦點保留在 `Home`。
+- 主功能頁整理為 `GPS / Home / MSG / ONLINE / TRACE / GROUP / 尋人 / 更新模式 / 更多`。
+- 新增有獨立下載 icon 的 `更新模式` 上層入口，點選後與 `設定 > 裝置管理 > 更新模式` 共用 boot flag、轉場、重開與錯誤提示流程。
+- `更多` 集中 `潛行 / 照明 / TAK / 休眠 / 頻道 / 設定 / 返回`；取消或選擇 `返回` 都會回到主功能頁的 `更多` 入口。
+- Home 小威隨機語錄新增 `一切都會好起來的，對吧`、`明天會更好的，是吧？`、`不要放棄！`、`美好的明天快來臨了`與 `別氣餒`；保留每次進入 Home 隨機抽選一句、最多繪製兩行的現行策略。
+- 共用鍵盤的英數字與操作鍵改用真正適合按鍵高度的 5x7 字形，依每格寬高置中；不再受 TFT 頁面字體放大影響而偏向左下或壓到格線。
+- 注音鍵位由 12x12 字形縮繪為格內 8x8，聲調符號使用同尺寸專用筆畫，四周保留安全邊距，避免與分隔線重疊。
+- ONLINE／GROUP 詳情頁的直接 `MSG` 送出成功後，現在會進入 2 秒發送狀態並暫時攔截輸入，完成後才回到原詳情頁；送出失敗仍留在鍵盤顯示 `SEND FAIL`。
+- 訊息與節點事件提示統一改為坐姿小威尾巴動畫：直接 MSG／罐頭訊息送出顯示 `送出啦`，收到新訊息顯示 `你有新訊息！` 並保留 `查看／略過`，節點總數真正增加時顯示 `找到新節點！`。
+- 修正 TFT 上坐姿小威被 1-bit UI buffer 壓成白色剪影；小威改於 UI 更新後以原始 RGB565 分層色彩重繪，提示關閉時強制清除 direct overlay 殘影。
+- 新節點動畫不會因既有節點更新 NodeInfo 重複出現；提示顯示 3 秒，任意輸入可關閉，並與新訊息 popup、MSG 發送畫面維持一致的視覺與輸入優先權。
+
 ## 2026-09-01
 
 ### 發布：HXB_C0.4.0_20260901_0049

@@ -1,5 +1,7 @@
 # EM MODE 架構（現行實作）
 
+> **HermesOne 0.1.0 不包含此功能。** 旋鈕長按不得依本文解讀為會進入 EM UI。
+
 > 此文件為快速摘要；完整細節請見 `docs/REF_EmergencyMode.md`。
 
 ## 入口

@@ -1,5 +1,7 @@
 # HermesX 變更紀錄 (REF_changelog.md)
 
+> **歷史工程紀錄。** 本文混合多個 HermesX GOV/CIV 與 Heltec Tracker 時期，不能作為 HermesOne 0.1.0 功能清單；現行狀態請見 `HermesOne_FEATURE_MATRIX.md`。
+
 > 註：本檔包含 `CIV` 分支歷史註記；目前工作分支為 `HermesX_0.2.9` 的 `GOV` 整合版，請勿將所有 `CIV` 註記視為現行預設配置。
 
 ## 補記（先前已完成但漏記）

@@ -1,5 +1,7 @@
 # Boot Screen Node ID Alignment
 
+> 歷史 HermesX 顯示議題；是否適用 HermesOne 必須以 128x64 SSD1309 實機重新驗證。
+
 ## Summary
 On the boot screen, the top-right text block (version + Node ID/short name)
 showed a left shift on the second line. The issue was caused by combining

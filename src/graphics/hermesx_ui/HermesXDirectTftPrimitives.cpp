@@ -26,9 +26,9 @@ void directDrawLine565Clipped(TFTDisplay *display, int16_t displayWidth, int16_t
     }
     int16_t x = x0;
     int16_t y = y0;
-    const int16_t dx = std::abs(x1 - x0);
+    const int16_t dx = x1 >= x0 ? x1 - x0 : x0 - x1;
     const int16_t sx = x0 < x1 ? 1 : -1;
-    const int16_t dy = -std::abs(y1 - y0);
+    const int16_t dy = -(y1 >= y0 ? y1 - y0 : y0 - y1);
     const int16_t sy = y0 < y1 ? 1 : -1;
     int16_t error = dx + dy;
     while (true) {
@@ -63,7 +63,9 @@ void directDrawThickLine565Clipped(TFTDisplay *display, int16_t displayWidth, in
     }
     const int16_t dx = x1 - x0;
     const int16_t dy = y1 - y0;
-    const int16_t steps = std::max<int16_t>(std::abs(dx), std::abs(dy));
+    const int16_t absDx = dx >= 0 ? dx : -dx;
+    const int16_t absDy = dy >= 0 ? dy : -dy;
+    const int16_t steps = std::max<int16_t>(absDx, absDy);
     const int16_t dotRadius = std::max<int16_t>(1, thickness / 2);
     if (steps <= 0) {
         directFillCircle565Clipped(display, displayWidth, displayHeight, x0, y0, dotRadius, color, clip);

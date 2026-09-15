@@ -1,5 +1,7 @@
 # HXB_C0.4.0_20260901_0049
 
+> 歷史 HermesX C0.4.0／Heltec Tracker Release，不適用 HermesOne 0.1.0。
+
 HermesX CIV C0.4.0 是一次 UI 架構重整版本。原本集中於 `Screen.cpp` 的功能狀態、輸入判斷與繪圖，已按功能拆分為 Model、Controller、Renderer、Presenter 與 StateCollector；`Screen` 保留上游畫面生命週期、硬體取樣、頁面協調及副作用 dispatch。
 
 ## 主要變更

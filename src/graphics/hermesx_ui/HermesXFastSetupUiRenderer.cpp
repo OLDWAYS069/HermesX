@@ -1,4 +1,5 @@
 #include "HermesXFastSetupUiRenderer.h"
+#include "HermesXCompactUi.h"
 
 #include "HermesXTextLayout.h"
 
@@ -18,7 +19,163 @@ namespace
 constexpr int16_t HeaderHeight = 14;
 constexpr int16_t RowHeight = 12;
 constexpr uint8_t VisibleRows = 4;
+constexpr int16_t HermesOneRowHeight = 12;
+constexpr uint8_t HermesOneVisibleRows = 4;
 constexpr uint32_t UpdateTransitionMs = 900U;
+constexpr int16_t KeyboardTextHeight = 7;
+
+struct TinyKeyboardGlyph {
+    char character;
+    uint8_t columns[5];
+};
+
+// Five columns, seven rows. Keyboard cells need a font that actually fits the
+// 80 px Tracker display; FONT_SMALL becomes a 19 px font on TFT targets.
+const TinyKeyboardGlyph kTinyKeyboardGlyphs[] PROGMEM = {
+    {'!', {0x00, 0x00, 0x5f, 0x00, 0x00}}, {'-', {0x08, 0x08, 0x08, 0x08, 0x08}},
+    {'.', {0x00, 0x60, 0x60, 0x00, 0x00}}, {'/', {0x20, 0x10, 0x08, 0x04, 0x02}},
+    {'0', {0x3e, 0x51, 0x49, 0x45, 0x3e}}, {'1', {0x00, 0x42, 0x7f, 0x40, 0x00}},
+    {'2', {0x42, 0x61, 0x51, 0x49, 0x46}}, {'3', {0x21, 0x41, 0x45, 0x4b, 0x31}},
+    {'4', {0x18, 0x14, 0x12, 0x7f, 0x10}}, {'5', {0x27, 0x45, 0x45, 0x45, 0x39}},
+    {'6', {0x3c, 0x4a, 0x49, 0x49, 0x30}}, {'7', {0x01, 0x71, 0x09, 0x05, 0x03}},
+    {'8', {0x36, 0x49, 0x49, 0x49, 0x36}}, {'9', {0x06, 0x49, 0x49, 0x29, 0x1e}},
+    {'?', {0x02, 0x01, 0x51, 0x09, 0x06}}, {'@', {0x32, 0x49, 0x79, 0x41, 0x3e}},
+    {'A', {0x7e, 0x11, 0x11, 0x11, 0x7e}}, {'B', {0x7f, 0x49, 0x49, 0x49, 0x36}},
+    {'C', {0x3e, 0x41, 0x41, 0x41, 0x22}}, {'D', {0x7f, 0x41, 0x41, 0x22, 0x1c}},
+    {'E', {0x7f, 0x49, 0x49, 0x49, 0x41}}, {'F', {0x7f, 0x09, 0x09, 0x09, 0x01}},
+    {'G', {0x3e, 0x41, 0x49, 0x51, 0x7a}}, {'H', {0x7f, 0x08, 0x08, 0x08, 0x7f}},
+    {'I', {0x00, 0x41, 0x7f, 0x41, 0x00}}, {'J', {0x20, 0x40, 0x41, 0x3f, 0x01}},
+    {'K', {0x7f, 0x08, 0x14, 0x22, 0x41}}, {'L', {0x7f, 0x40, 0x40, 0x40, 0x40}},
+    {'M', {0x7f, 0x02, 0x0c, 0x02, 0x7f}}, {'N', {0x7f, 0x04, 0x08, 0x10, 0x7f}},
+    {'O', {0x3e, 0x41, 0x41, 0x41, 0x3e}}, {'P', {0x7f, 0x09, 0x09, 0x09, 0x06}},
+    {'Q', {0x3e, 0x41, 0x51, 0x21, 0x5e}}, {'R', {0x7f, 0x09, 0x19, 0x29, 0x46}},
+    {'S', {0x46, 0x49, 0x49, 0x49, 0x31}}, {'T', {0x01, 0x01, 0x7f, 0x01, 0x01}},
+    {'U', {0x3f, 0x40, 0x40, 0x40, 0x3f}}, {'V', {0x1f, 0x20, 0x40, 0x20, 0x1f}},
+    {'W', {0x3f, 0x40, 0x38, 0x40, 0x3f}}, {'X', {0x63, 0x14, 0x08, 0x14, 0x63}},
+    {'Y', {0x07, 0x08, 0x70, 0x08, 0x07}}, {'Z', {0x61, 0x51, 0x49, 0x45, 0x43}},
+    {'_', {0x40, 0x40, 0x40, 0x40, 0x40}}, {'a', {0x20, 0x54, 0x54, 0x54, 0x78}},
+    {'b', {0x7f, 0x48, 0x44, 0x44, 0x38}}, {'c', {0x38, 0x44, 0x44, 0x44, 0x20}},
+    {'d', {0x38, 0x44, 0x44, 0x48, 0x7f}}, {'e', {0x38, 0x54, 0x54, 0x54, 0x18}},
+    {'f', {0x08, 0x7e, 0x09, 0x01, 0x02}}, {'g', {0x0c, 0x52, 0x52, 0x52, 0x3e}},
+    {'h', {0x7f, 0x08, 0x04, 0x04, 0x78}}, {'i', {0x00, 0x44, 0x7d, 0x40, 0x00}},
+    {'j', {0x20, 0x40, 0x44, 0x3d, 0x00}}, {'k', {0x7f, 0x10, 0x28, 0x44, 0x00}},
+    {'l', {0x00, 0x41, 0x7f, 0x40, 0x00}}, {'m', {0x7c, 0x04, 0x18, 0x04, 0x78}},
+    {'n', {0x7c, 0x08, 0x04, 0x04, 0x78}}, {'o', {0x38, 0x44, 0x44, 0x44, 0x38}},
+    {'p', {0x7c, 0x14, 0x14, 0x14, 0x08}}, {'q', {0x08, 0x14, 0x14, 0x18, 0x7c}},
+    {'r', {0x7c, 0x08, 0x04, 0x04, 0x08}}, {'s', {0x48, 0x54, 0x54, 0x54, 0x20}},
+    {'t', {0x04, 0x3f, 0x44, 0x40, 0x20}}, {'u', {0x3c, 0x40, 0x40, 0x20, 0x7c}},
+    {'v', {0x1c, 0x20, 0x40, 0x20, 0x1c}}, {'w', {0x3c, 0x40, 0x30, 0x40, 0x3c}},
+    {'x', {0x44, 0x28, 0x10, 0x28, 0x44}}, {'y', {0x0c, 0x50, 0x50, 0x50, 0x3c}},
+    {'z', {0x44, 0x64, 0x54, 0x4c, 0x44}},
+};
+
+const TinyKeyboardGlyph *findTinyKeyboardGlyph(char character)
+{
+    for (size_t index = 0; index < sizeof(kTinyKeyboardGlyphs) / sizeof(kTinyKeyboardGlyphs[0]); ++index) {
+        if (static_cast<char>(pgm_read_byte(&kTinyKeyboardGlyphs[index].character)) == character) {
+            return &kTinyKeyboardGlyphs[index];
+        }
+    }
+    return nullptr;
+}
+
+void drawTinyKeyboardText(OLEDDisplay &display, int16_t cellX, int16_t rowY, int16_t cellWidth, int16_t rowHeight,
+                          const char *text)
+{
+    const size_t length = strlen(text);
+    const int16_t spacing = (length > 3) ? 0 : 1;
+    const int16_t textWidth = length == 0 ? 0 : static_cast<int16_t>(length * 5 + (length - 1) * spacing);
+    const int16_t startX = cellX + (cellWidth - textWidth) / 2;
+    const int16_t startY = rowY + (rowHeight - KeyboardTextHeight) / 2;
+    for (size_t characterIndex = 0; characterIndex < length; ++characterIndex) {
+        const TinyKeyboardGlyph *glyph = findTinyKeyboardGlyph(text[characterIndex]);
+        if (!glyph) {
+            continue;
+        }
+        const int16_t glyphX = startX + static_cast<int16_t>(characterIndex) * (5 + spacing);
+        for (uint8_t column = 0; column < 5; ++column) {
+            const uint8_t bits = pgm_read_byte(&glyph->columns[column]);
+            for (uint8_t bit = 0; bit < KeyboardTextHeight; ++bit) {
+                if ((bits & (1u << bit)) != 0u) {
+                    display.setPixel(glyphX + column, startY + bit);
+                }
+            }
+        }
+    }
+}
+
+bool glyphPixelIsSet(const uint8_t *glyph, int16_t x, int16_t y)
+{
+    const int bitIndex = y * HermesX_zh::GLYPH_STRIDE_BITS + x;
+    return (pgm_read_byte(glyph + (bitIndex / 8)) & (0x80u >> (bitIndex % 8))) != 0u;
+}
+
+void drawKeyboardToneMark(OLEDDisplay &display, int16_t x, int16_t y, int16_t size, uint32_t codepoint)
+{
+    const int16_t left = x + 1;
+    const int16_t right = x + size - 2;
+    const int16_t top = y + 1;
+    const int16_t bottom = y + size - 2;
+    if (codepoint == 0x02c7u) {
+        display.drawLine(left, top + 1, x + size / 2, bottom);
+        display.drawLine(x + size / 2, bottom, right, top + 1);
+    } else if (codepoint == 0x02cau) {
+        display.drawLine(left, bottom, right, top);
+    } else if (codepoint == 0x02cbu) {
+        display.drawLine(left, top, right, bottom);
+    } else {
+        display.fillRect(x + (size - 2) / 2, top, 2, 2);
+    }
+}
+
+bool drawCompactKeyboardGlyph(OLEDDisplay &display, int16_t cellX, int16_t rowY, int16_t cellWidth, int16_t rowHeight,
+                              const char *text)
+{
+    const char *cursor = text;
+    const char *end = text + strlen(text);
+    const uint32_t codepoint = HermesX_zh::nextCodepoint(cursor, end);
+    if (cursor != end) {
+        return false;
+    }
+
+    const int16_t availableWidth = static_cast<int16_t>(cellWidth - 4);
+    const int16_t availableHeight = static_cast<int16_t>(rowHeight - 2);
+    const int16_t targetSize =
+        std::max<int16_t>(1, std::min<int16_t>(8, std::min<int16_t>(availableWidth, availableHeight)));
+    const int16_t targetX = cellX + (cellWidth - targetSize) / 2;
+    const int16_t targetY = rowY + (rowHeight - targetSize) / 2;
+    if (codepoint == 0x02c7u || codepoint == 0x02cau || codepoint == 0x02cbu || codepoint == 0x02d9u) {
+        drawKeyboardToneMark(display, targetX, targetY, targetSize, codepoint);
+        return true;
+    }
+
+    int glyphIndex = HermesX_zh::locateCodepoint(codepoint);
+    if (glyphIndex < 0) {
+        glyphIndex = HermesX_zh::fallbackIndex();
+    }
+    const uint8_t *glyph = HermesX_zh::glyphData(glyphIndex);
+    for (int16_t destinationY = 0; destinationY < targetSize; ++destinationY) {
+        const int16_t sourceTop = destinationY * HermesX_zh::GLYPH_HEIGHT / targetSize;
+        const int16_t sourceBottom = (destinationY + 1) * HermesX_zh::GLYPH_HEIGHT / targetSize;
+        for (int16_t destinationX = 0; destinationX < targetSize; ++destinationX) {
+            const int16_t sourceLeft = destinationX * HermesX_zh::GLYPH_WIDTH / targetSize;
+            const int16_t sourceRight = (destinationX + 1) * HermesX_zh::GLYPH_WIDTH / targetSize;
+            bool set = false;
+            for (int16_t sourceY = sourceTop; sourceY < sourceBottom && !set; ++sourceY) {
+                for (int16_t sourceX = sourceLeft; sourceX < sourceRight; ++sourceX) {
+                    if (glyphPixelIsSet(glyph, sourceX, sourceY)) {
+                        set = true;
+                        break;
+                    }
+                }
+            }
+            if (set) {
+                display.setPixel(targetX + destinationX, targetY + destinationY);
+            }
+        }
+    }
+    return true;
+}
 
 #if defined(ST7735_CS) || defined(ILI9341_DRIVER) || defined(ILI9342_DRIVER) || defined(ST7701_CS) || defined(ST7789_CS) ||       \
     defined(RAK14014) || defined(HX8357_CS) || defined(ILI9488_CS)
@@ -59,28 +216,31 @@ void drawListItems(OLEDDisplay *display,
     display->setColor(OLEDDISPLAY_COLOR::WHITE);
 #endif
 
+    const bool compact64 = width <= 128 && height <= 64;
+    const int16_t rowHeight = compact64 ? HermesOneRowHeight : RowHeight;
+    const uint8_t visibleRows = compact64 ? HermesOneVisibleRows : VisibleRows;
     const int16_t listTop = HeaderHeight + 2;
-    for (int row = 0; row < VisibleRows; ++row) {
+    for (int row = 0; row < visibleRows; ++row) {
         const int entryIndex = listOffset + row;
         if (entryIndex >= itemCount) {
             break;
         }
-        const int16_t rowY = listTop + row * RowHeight;
-        if (rowY + RowHeight > height) {
+        const int16_t rowY = listTop + row * rowHeight;
+        if (rowY + rowHeight > height) {
             break;
         }
         if (entryIndex == selectedIndex) {
 #if defined(USE_EINK)
-            display->fillRect(0, rowY - 1, width, RowHeight);
+            display->fillRect(0, rowY - 1, width, rowHeight + 1);
             display->setColor(EINK_WHITE);
 #else
             display->setColor(OLEDDISPLAY_COLOR::WHITE);
-            display->fillRect(0, rowY - 1, width, RowHeight);
+            display->fillRect(0, rowY - 1, width, rowHeight + 1);
             display->setColor(OLEDDISPLAY_COLOR::BLACK);
 #endif
         }
         HermesX_zh::drawMixedBounded(
-            *display, 4, rowY, width - 4, labelAt(entryIndex), HermesX_zh::GLYPH_WIDTH, RowHeight, nullptr);
+            *display, 4, rowY, width - 4, labelAt(entryIndex), HermesX_zh::GLYPH_WIDTH, rowHeight, nullptr);
         if (entryIndex == selectedIndex) {
 #if defined(USE_EINK)
             display->setColor(EINK_BLACK);
@@ -163,8 +323,9 @@ void HermesXFastSetupUiRenderer::drawHeader(OLEDDisplay *display, int16_t width,
 #else
     display->setColor(OLEDDISPLAY_COLOR::BLACK);
 #endif
-    display->setFont(FONT_SMALL);
-    HermesX_zh::drawMixed(*display, 2, 1, title, HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
+    display->setFont(FONT_SMALL_LOCAL);
+    HermesX_zh::drawMixed(
+        *display, 2, 1, title, HermesX_zh::GLYPH_WIDTH, _fontHeight(FONT_SMALL_LOCAL), nullptr);
 }
 
 void HermesXFastSetupUiRenderer::drawNutIcon(OLEDDisplay *display, int16_t centerX, int16_t centerY, int16_t radius)
@@ -237,6 +398,18 @@ void HermesXFastSetupUiRenderer::drawToast(OLEDDisplay *display,
         return;
     }
     if (toast.length() > 0) {
+        if (HermesXCompactUi::applies(display)) {
+            display->setFont(FONT_SMALL_LOCAL);
+            display->setTextAlignment(TEXT_ALIGN_LEFT);
+            display->setColor(BLACK);
+            display->fillRect(0, 15, width, 33);
+            display->setColor(WHITE);
+            display->drawRect(0, 15, width, 33);
+            const auto lines = HermesXTextLayout::buildMixedWrappedLines(display, toast.c_str(), width - 6);
+            for (size_t row = 0; row < std::min<size_t>(2, lines.size()); ++row)
+                HermesXCompactUi::line(display, 3, 17 + row * 14, width - 6, lines[row].c_str());
+            return;
+        }
         HermesX_zh::drawMixedBounded(*display, 2, height - FONT_HEIGHT_SMALL, width - 4, toast.c_str(),
                                      HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
     }
@@ -732,6 +905,16 @@ void HermesXFastSetupUiRenderer::drawUpdateProgressPage(OLEDDisplay *display,
         return;
     }
 
+    if (HermesXCompactUi::applies(display)) {
+        HermesXCompactUi::begin(display, title);
+        String detail = instruction + " " + String(std::max(0, std::min(100, progressPercent))) + "%\n";
+        detail += errorLine.length() ? errorLine : (canApply ? targetVersion : statusLine);
+        HermesXCompactUi::body(display, detail.c_str(), millis());
+        HermesXCompactUi::options(display, primaryLabel, actionCount > 1 ? secondaryLabel : nullptr, selectedIndex);
+        drawToast(display, width, height, toast, toastUntilMs);
+        return;
+    }
+
     display->setTextAlignment(TEXT_ALIGN_LEFT);
 #if defined(USE_EINK)
     display->setColor(EINK_WHITE);
@@ -767,7 +950,7 @@ void HermesXFastSetupUiRenderer::drawUpdateProgressPage(OLEDDisplay *display,
     int16_t metaBottom = footerY - 2;
 
     auto drawWrappedCapped = [&](const String &text, int16_t x, int16_t y, int16_t maxWidth, int maxLines) -> int16_t {
-        if (text.isEmpty() || maxWidth <= 0 || maxLines <= 0) {
+        if (text.length() == 0 || maxWidth <= 0 || maxLines <= 0) {
             return 0;
         }
         const std::vector<String> wrappedLines =
@@ -781,7 +964,7 @@ void HermesXFastSetupUiRenderer::drawUpdateProgressPage(OLEDDisplay *display,
     };
 
     auto drawSingleLine = [&](const String &text, int16_t x, int16_t y, int16_t maxWidth) {
-        if (text.isEmpty() || maxWidth <= 0) {
+        if (text.length() == 0 || maxWidth <= 0) {
             return;
         }
         const std::vector<String> wrappedLines =
@@ -795,7 +978,7 @@ void HermesXFastSetupUiRenderer::drawUpdateProgressPage(OLEDDisplay *display,
     const int boundedPercent = std::max(0, std::min(100, progressPercent));
 
     if (compactLayout) {
-        const String statusText = instruction.isEmpty() ? String(u8"待命中") : instruction;
+        const String statusText = instruction.length() == 0 ? String(u8"待命中") : instruction;
         String infoText;
         if (errorLine.length() > 0) {
             infoText = errorLine;
@@ -889,7 +1072,7 @@ void HermesXFastSetupUiRenderer::drawUpdateProgressPage(OLEDDisplay *display,
                                       ? targetVersion
                                       : String()};
     for (int16_t i = 0; i < 3 && drawnMetaLines < maxMetaLines; ++i) {
-        if (metaValues[i].isEmpty()) {
+        if (metaValues[i].length() == 0) {
             continue;
         }
         const int16_t remainingMetaLines = maxMetaLines - drawnMetaLines;
@@ -1026,6 +1209,16 @@ void HermesXFastSetupUiRenderer::drawUrlUpdateFlowPage(OLEDDisplay *display,
         return;
     }
 
+    if (HermesXCompactUi::applies(display)) {
+        HermesXCompactUi::begin(display, u8"URL更新");
+        String detail = statusValue + " " + String(std::max(0, std::min(100, progressPercent))) + "%\n";
+        detail += errorValue.length() ? errorValue : candidateVersion;
+        HermesXCompactUi::body(display, detail.c_str(), millis());
+        HermesXCompactUi::options(display, u8"返回", actionLabel, selectedIndex);
+        drawToast(display, width, height, toast, toastUntilMs);
+        return;
+    }
+
     display->setTextAlignment(TEXT_ALIGN_LEFT);
 #if defined(USE_EINK)
     display->setColor(EINK_WHITE);
@@ -1061,7 +1254,7 @@ void HermesXFastSetupUiRenderer::drawUrlUpdateFlowPage(OLEDDisplay *display,
     const int16_t contentW = width - 8;
 
     auto drawWrappedCapped = [&](const String &text, int16_t x, int16_t y, int16_t maxWidth, int maxLines) -> int16_t {
-        if (text.isEmpty() || maxWidth <= 0 || maxLines <= 0) {
+        if (text.length() == 0 || maxWidth <= 0 || maxLines <= 0) {
             return 0;
         }
         const std::vector<String> wrappedLines =
@@ -1075,7 +1268,7 @@ void HermesXFastSetupUiRenderer::drawUrlUpdateFlowPage(OLEDDisplay *display,
     };
 
     auto drawSingleLine = [&](const String &text, int16_t x, int16_t y, int16_t maxWidth) {
-        if (text.isEmpty() || maxWidth <= 0) {
+        if (text.length() == 0 || maxWidth <= 0) {
             return;
         }
         const std::vector<String> wrappedLines =
@@ -1087,11 +1280,11 @@ void HermesXFastSetupUiRenderer::drawUrlUpdateFlowPage(OLEDDisplay *display,
     };
 
     if (compactLayout) {
-        const String statusText = statusValue.isEmpty() ? String(u8"待命中") : statusValue;
+        const String statusText = statusValue.length() == 0 ? String(u8"待命中") : statusValue;
         String infoText;
-        if (!errorValue.isEmpty()) {
+        if (errorValue.length() != 0) {
             infoText = String(u8"錯誤: ") + errorValue;
-        } else if (!candidateVersion.isEmpty()) {
+        } else if (candidateVersion.length() != 0) {
             infoText = String(u8"版本: ") + candidateVersion;
         } else {
             infoText = u8"版本: 無";
@@ -1152,7 +1345,8 @@ void HermesXFastSetupUiRenderer::drawUrlUpdateFlowPage(OLEDDisplay *display,
     y += lineH;
     const int maxStatusLines = compactLayout ? 2 : 3;
     const int16_t statusLines =
-        std::max<int16_t>(1, drawWrappedCapped(statusValue.isEmpty() ? String(u8"待命中") : statusValue, 4, y, contentW, maxStatusLines));
+        std::max<int16_t>(1, drawWrappedCapped(statusValue.length() == 0 ? String(u8"待命中") : statusValue, 4, y, contentW,
+                                               maxStatusLines));
     y += statusLines * lineH + 2;
 
     const int16_t barY = y;
@@ -1171,9 +1365,9 @@ void HermesXFastSetupUiRenderer::drawUrlUpdateFlowPage(OLEDDisplay *display,
     y += lineH;
 
     String bottomInfo;
-    if (!errorValue.isEmpty()) {
+    if (errorValue.length() != 0) {
         bottomInfo = String(u8"最後錯誤: ") + errorValue;
-    } else if (!candidateVersion.isEmpty()) {
+    } else if (candidateVersion.length() != 0) {
         bottomInfo = String(u8"待更新版本: ") + candidateVersion;
     } else {
         bottomInfo = u8"待更新版本: 無";
@@ -1236,6 +1430,72 @@ void HermesXFastSetupUiRenderer::drawKeyboardPage(OLEDDisplay *display,
         return;
     }
 
+    if (HermesXCompactUi::applies(display) && rowCount > 0) {
+        // Fixed pages contain two complete rows (20 character keys). Only
+        // crossing the first/last key changes the page; never pan or zoom a row.
+        constexpr uint8_t visibleRows = 2;
+        constexpr int16_t keyTop = 31;
+        constexpr int16_t keyHeight = 16;
+        HermesXCompactUi::begin(display, "");
+        HermesXCompactUi::line(display, 2, 0, width - 44, header);
+        char position[16];
+        snprintf(position, sizeof(position), "%u/%u", selectedRow / visibleRows + 1, (rowCount + visibleRows - 1) / visibleRows);
+        drawTinyKeyboardText(*display, width - 40, 1, 38, 12, position);
+
+        // Keep the composition/caret end visible when the draft exceeds a line.
+        const char *tail = draft.c_str();
+        const char *end = tail + draft.length();
+        while (tail < end && HermesX_zh::stringAdvance(tail, HermesX_zh::GLYPH_WIDTH, display) > width - 4)
+            HermesX_zh::nextCodepoint(tail, end);
+        HermesXCompactUi::line(display, 2, 16, width - 4, tail);
+
+        const uint8_t firstRow = (selectedRow / visibleRows) * visibleRows;
+        for (uint8_t row = firstRow; row < rowCount && row < firstRow + visibleRows; ++row) {
+            const uint8_t count = rowLengths[row];
+            if (!count)
+                continue;
+            // Character rows use all ten columns. The shorter action row
+            // reserves enough width for full EXIT/DEL labels instead of
+            // squeezing those words into a single-character cell.
+            int16_t labelWidths[10] = {};
+            int16_t requiredWidth = 0;
+            for (uint8_t col = 0; col < count; ++col) {
+                const char *label = rows[row][col];
+                if (!label)
+                    continue;
+                const size_t length = strlen(label);
+                const bool utf8 = static_cast<uint8_t>(label[0]) >= 0x80u;
+                labelWidths[col] = utf8 ? 12 : length * 5 + (length > 0 ? length - 1 : 0) * (length > 3 ? 0 : 1);
+                requiredWidth += labelWidths[col] + 2;
+            }
+            int16_t x = 0;
+            for (uint8_t col = 0; col < count; ++col) {
+                const char *label = rows[row][col];
+                const int16_t cellWidth = count < 10 && requiredWidth <= width
+                    ? labelWidths[col] + 2 + (width - requiredWidth) * (col + 1) / count - (width - requiredWidth) * col / count
+                    : (col + 1) * width / count - col * width / count;
+                const int16_t y = keyTop + (row - firstRow) * keyHeight;
+                display->setColor(WHITE);
+                if (row == selectedRow && col == selectedCol) {
+                    display->fillRect(x, y, cellWidth, keyHeight);
+                    display->setColor(BLACK);
+                }
+                if (label && static_cast<uint8_t>(label[0]) >= 0x80u) {
+                    // No grid borders: a 12 px cell must retain all 12 glyph
+                    // columns. The inverse selection block identifies the key.
+                    HermesX_zh::drawMixedBounded(*display, x + (cellWidth - 12) / 2, y + 2,
+                                                 12, label, 12, 14, nullptr);
+                } else if (label) {
+                    drawTinyKeyboardText(*display, x, y, cellWidth, keyHeight, label);
+                }
+                x += cellWidth;
+            }
+        }
+        display->setColor(WHITE);
+        drawToast(display, width, height, toast, toastUntilMs);
+        return;
+    }
+
     display->setTextAlignment(TEXT_ALIGN_LEFT);
 #if defined(USE_EINK)
     display->setColor(EINK_WHITE);
@@ -1249,7 +1509,7 @@ void HermesXFastSetupUiRenderer::drawKeyboardPage(OLEDDisplay *display,
     display->setColor(OLEDDISPLAY_COLOR::WHITE);
 #endif
     drawHeader(display, width, header);
-    display->setFont(FONT_SMALL);
+    display->setFont(FONT_SMALL_LOCAL);
     display->setTextAlignment(TEXT_ALIGN_LEFT);
 #if defined(USE_EINK)
     display->setColor(EINK_BLACK);
@@ -1257,12 +1517,12 @@ void HermesXFastSetupUiRenderer::drawKeyboardPage(OLEDDisplay *display,
     display->setColor(OLEDDISPLAY_COLOR::WHITE);
 #endif
     graphics::HermesX_zh::drawMixedBounded(*display, 2, HeaderHeight + 2, width - 4, draft.c_str(),
-                                           graphics::HermesX_zh::GLYPH_WIDTH, FONT_HEIGHT_SMALL, nullptr);
+                                           graphics::HermesX_zh::GLYPH_WIDTH, _fontHeight(FONT_SMALL_LOCAL), nullptr);
 
-    const int16_t keyTop = (FONT_HEIGHT_SMALL * 2) + 6;
+    const int16_t keyTop = HeaderHeight + _fontHeight(FONT_SMALL_LOCAL) + 2;
     const int16_t keyAreaHeight = height - keyTop;
     const int16_t rowHeight = (rowCount > 0) ? keyAreaHeight / rowCount : 0;
-    display->setTextAlignment(TEXT_ALIGN_CENTER);
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
 
     for (uint8_t row = 0; row < rowCount; ++row) {
         const int rowLen = rowLengths[row];
@@ -1298,14 +1558,12 @@ void HermesXFastSetupUiRenderer::drawKeyboardPage(OLEDDisplay *display,
 #endif
             }
             display->drawRect(cellX, rowY, cellWidth, rowHeight);
-            const int16_t labelWidth = graphics::HermesX_zh::stringAdvance(
-                label, graphics::HermesX_zh::GLYPH_WIDTH, display);
             const bool hasUtf8 = strlen(label) > 0 && static_cast<uint8_t>(label[0]) >= 0x80u;
-            const int16_t labelHeight = hasUtf8 ? graphics::HermesX_zh::GLYPH_HEIGHT : FONT_HEIGHT_SMALL;
-            const int16_t labelX = cellX + std::max<int16_t>(0, (cellWidth - labelWidth) / 2);
-            const int16_t labelY = rowY + std::max<int16_t>(0, (rowHeight - labelHeight) / 2);
-            graphics::HermesX_zh::drawMixed(*display, labelX, labelY, label,
-                                            graphics::HermesX_zh::GLYPH_WIDTH, rowHeight, nullptr);
+            if (hasUtf8) {
+                drawCompactKeyboardGlyph(*display, cellX, rowY, cellWidth, rowHeight, label);
+            } else {
+                drawTinyKeyboardText(*display, cellX, rowY, cellWidth, rowHeight, label);
+            }
         }
     }
 
@@ -1328,6 +1586,10 @@ void HermesXFastSetupUiRenderer::drawDetailPopup(OLEDDisplay *display,
         return;
     }
 
+    if (HermesXCompactUi::applies(display)) {
+        HermesXCompactUi::scrollable(display, title.c_str(), body.c_str(), scrollY, maxScrollY);
+        return;
+    }
     const int16_t width = display->getWidth();
     const int16_t height = display->getHeight();
     const bool compactLayout = (width < 200 || height < 120);
@@ -1336,17 +1598,18 @@ void HermesXFastSetupUiRenderer::drawDetailPopup(OLEDDisplay *display,
     const int16_t boxW = width;
     const int16_t boxH = height;
     const int16_t titlePadX = compactLayout ? 4 : 6;
-    const int16_t titlePadY = compactLayout ? 3 : 4;
-    const int16_t titleH = compactLayout ? 16 : 18;
-    const int16_t footerH = compactLayout ? 14 : 18;
+    const bool compact64 = width <= 128 && height <= 64;
+    const int16_t titlePadY = compact64 ? 1 : (compactLayout ? 3 : 4);
+    const int16_t titleH = compact64 ? FONT_HEIGHT_SMALL : (compactLayout ? 16 : 18);
+    const int16_t footerH = compact64 ? FONT_HEIGHT_SMALL + 1 : (compactLayout ? 14 : 18);
     const int16_t dividerY = boxY + titleH + titlePadY * 2;
     const int16_t footerY = boxY + boxH - footerH;
     const int16_t bodyX = boxX + titlePadX;
-    const int16_t bodyY = dividerY + 3;
+    const int16_t bodyY = dividerY + (compact64 ? 2 : 3);
     const int16_t scrollbarW = 4;
     const int16_t bodyW = std::max<int16_t>(boxW - titlePadX * 2 - scrollbarW - 2, 20);
     const int16_t bodyH = std::max<int16_t>(footerY - bodyY - 2, titleH);
-    const int16_t lineHeight = compactLayout ? 12 : 14;
+    const int16_t lineHeight = compactLayout ? FONT_HEIGHT_SMALL + 1 : 14;
 
 #if defined(USE_EINK)
     display->setColor(EINK_WHITE);

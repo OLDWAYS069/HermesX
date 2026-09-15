@@ -20,6 +20,7 @@
 #include "main.h"                               // for cardkb_found
 #include "modules/ExternalNotificationModule.h" // for buzzer control
 #include "graphics/fonts/HermesX_zh/HermesX_CN12.h"
+#include "graphics/hermesx_ui/HermesXHomeUiRenderer.h"
 #if !MESHTASTIC_EXCLUDE_GPS
 #include "GPS.h"
 #endif
@@ -955,6 +956,9 @@ int32_t CannedMessageModule::runOnce()
             }
         }
         // Sending/feedback popup is transient; keep current page and update in background.
+        if (this->runState == CANNED_MESSAGE_RUN_STATE_SENDING_ACTIVE) {
+            this->feedbackStartedAtMs = millis();
+        }
         LOG_INFO("[CannedMessage] send feedback popup update (background)");
         e.action = UIFrameEvent::Action::REGENERATE_FRAMESET_BACKGROUND;
         this->currentMessageIndex = -1;
@@ -1578,8 +1582,16 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
         // 不強制 requestFocus，避免打斷使用者正在看的畫面
         EINK_ADD_FRAMEFLAG(display, COSMETIC); // Clean after this popup. Layout makes ghosting particularly obvious
 #if !MESHTASTIC_EXCLUDE_HERMESX
-        const HermesFaceMode faceMode = this->ack ? HermesFaceMode::AckSuccess : HermesFaceMode::AckFailed;
-        HermesX_DrawFace(display, x, y, faceMode);
+#if defined(HERMESX_NRF52840_PROMICRO)
+        graphics::HermesXHomeUiRenderer::drawHermesOneParcelNotification(
+            display, display->getWidth(), display->getHeight(),
+            this->ack ? graphics::HermesXParcelAnimationMode::Outgoing
+                      : graphics::HermesXParcelAnimationMode::Failed,
+            this->getFeedbackElapsedMs(millis()));
+#else
+        graphics::HermesXHomeUiRenderer::drawSittingDogNotification(
+            display, display->getWidth(), display->getHeight(), this->ack ? u8"送出成功" : u8"送出失敗", millis());
+#endif
 #else
 #ifdef USE_EINK
         display->setFont(FONT_SMALL); // No chunky text
@@ -1629,7 +1641,14 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
         EINK_ADD_FRAMEFLAG(display, COSMETIC);
 
 #if !MESHTASTIC_EXCLUDE_HERMESX
-        HermesX_DrawFace(display, x, y, HermesFaceMode::Sending);
+#if defined(HERMESX_NRF52840_PROMICRO)
+        graphics::HermesXHomeUiRenderer::drawHermesOneParcelNotification(
+            display, display->getWidth(), display->getHeight(), graphics::HermesXParcelAnimationMode::Outgoing,
+            this->getFeedbackElapsedMs(millis()));
+#else
+        graphics::HermesXHomeUiRenderer::drawSittingDogNotification(
+            display, display->getWidth(), display->getHeight(), u8"送出啦", millis());
+#endif
 #else
 #ifdef USE_EINK
         display->setFont(FONT_SMALL); // No chunky text
@@ -1762,6 +1781,7 @@ ProcessMessage CannedMessageModule::handleReceived(const meshtastic_MeshPacket &
             // ACK/NACK face should be shown only as background notification (no forced page switch).
             e.action = UIFrameEvent::Action::REGENERATE_FRAMESET_BACKGROUND;
             this->runState = CANNED_MESSAGE_RUN_STATE_ACK_NACK_RECEIVED;
+            this->feedbackStartedAtMs = millis();
             this->incoming = service->getNodenumFromRequestId(mp.decoded.request_id);
             meshtastic_Routing decoded = meshtastic_Routing_init_default;
             pb_decode_from_bytes(mp.decoded.payload.bytes, mp.decoded.payload.size, meshtastic_Routing_fields, &decoded);

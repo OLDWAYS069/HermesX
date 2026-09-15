@@ -46,6 +46,8 @@ class HermesXDirectMessageComposer
 
     void start(uint32_t destination, bool fromGroupDetail);
     void stop();
+    void beginSendAnimation(uint32_t nowMs);
+    void cancelSendAnimation();
     HermesXComposerAction handleInput(const HermesXComposerInput &event,
                                       const HermesXComposerInputBindings &bindings,
                                       uint32_t nowMs,
@@ -53,6 +55,13 @@ class HermesXDirectMessageComposer
     void showSendFailure(uint32_t nowMs);
 
     bool active() const { return active_; }
+    bool sending() const { return sending_; }
+    bool sendFailed() const { return sendFailed_; }
+    uint32_t sendAnimationElapsedMs(uint32_t nowMs) const
+    {
+        return sending_ ? static_cast<uint32_t>(nowMs - sendAnimationStartedAtMs_) : 0U;
+    }
+    bool sendAnimationComplete(uint32_t nowMs) const;
     bool fromGroupDetail() const { return fromGroupDetail_; }
     uint32_t destination() const { return destination_; }
     const String &draft() const { return draft_; }
@@ -83,6 +92,9 @@ class HermesXDirectMessageComposer
     HermesXComposerAction requestSend(uint32_t nowMs);
 
     bool active_ = false;
+    bool sending_ = false;
+    bool sendFailed_ = false;
+    uint32_t sendAnimationStartedAtMs_ = 0;
     bool fromGroupDetail_ = false;
     uint32_t destination_ = 0;
     String draft_;

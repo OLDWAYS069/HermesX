@@ -209,6 +209,12 @@ class HermesXEmUiModule : public SinglePortModule, public Observable<const UIFra
     void tickScream(uint32_t now);
 };
 
+#if defined(HERMESX_NRF52840_PROMICRO)
+// The ProMicro profile omits the emergency/group service to fit the 1 MB MCU.
+// A compile-time null keeps shared UI call sites harmless and optimizable.
+static HermesXEmUiModule *const hermesXEmUiModule = nullptr;
+#else
 extern HermesXEmUiModule *hermesXEmUiModule;
+#endif
 
 #endif

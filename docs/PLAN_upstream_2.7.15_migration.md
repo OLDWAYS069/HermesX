@@ -1,5 +1,7 @@
 # HermesX 升級與完整搬移計劃
 
+> **歷史計畫，不是 HermesOne 0.1.0 基線。** HermesOne 目前仍以 Meshtastic 2.6.11 相容版本建置；GPS 與 ATAK 已保留，MQTT 仍排除。
+
 本文件規劃 HermesX 從既有分支升級到上游 `2.7.15` 的完整搬移方式，目標是在保留 HermesX 原本整套 UI 設計與功能的前提下，避免把舊分支裡已知或潛在的 heap / BLE / queue / allocator 問題重新帶回來。
 
 ## 目標

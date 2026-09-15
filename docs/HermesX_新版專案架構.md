@@ -1,5 +1,7 @@
 # HermesX 新版專案架構
 
+> **適用範圍：** 本文是 HermesX C0.4.0／Heltec Tracker 的架構歷史。HermesOne 繼承部分 UI 元件與輸入路由，但已由 nRF52840 build 排除多個功能模組；不能用本文的元件清單判斷 HermesOne 功能是否可用。
+
 > 文件基準：`HXB_C0.4.0` CIV 架構重整版，工作分支 `HermesX_C0.4.0`，2026-09-01
 > 主要硬體目標：Heltec Wireless Tracker
 > 驗證韌體：`HXB_C0.4.0_20260901_0049`

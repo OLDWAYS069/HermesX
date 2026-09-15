@@ -282,7 +282,11 @@ ErrorCode Router::send(meshtastic_MeshPacket *p)
     // If the packet is not yet encrypted, do so now
     if (p->which_payload_variant == meshtastic_MeshPacket_decoded_tag) {
         ChannelIndex chIndex = p->channel; // keep as a local because we are about to change it
+#if !MESHTASTIC_EXCLUDE_MQTT
         const bool needDecodedCopyForMqtt = moduleConfig.mqtt.enabled && isFromUs(p) && mqtt;
+#else
+        const bool needDecodedCopyForMqtt = false;
+#endif
         meshtastic_MeshPacket *p_decoded = nullptr;
         if (p->via_mqtt || !isFromUs(p) || needDecodedCopyForMqtt)
             logHeapSnapshot("Router::send before decoded allocCopy");

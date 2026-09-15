@@ -1,5 +1,7 @@
 # MSG Popup / Recent Send 已知問題
 
+> HermesOne 僅繼承其中的 UI ownership 原則；本文的 TFT 畫面與 C0.4.0 實機結果不等於 HermesOne 0.1.0 已驗證。
+
 日期：2026-06-03  
 狀態：程式碼已修正並完成編譯，尚未實機驗證  
 範圍：`src/graphics/Screen.cpp`、`src/modules/CannedMessageModule.cpp`、TFT 色彩區域與 HermesX 中文字型

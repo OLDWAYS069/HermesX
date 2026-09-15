@@ -1,5 +1,7 @@
 # HermesX Technical Specification (REF_techspec.md)
 
+> **Heltec HermesX 歷史規格。** GPIO43、ESP32 電源鍵、EM UI 與 TFT 規則不適用 HermesOne。HermesOne 腳位請見 `HermesX_nRF52840_ProMicro_port.md`。
+
 ## Naming & Structure
 - Prefix all HermesX classes, helpers, and logs with HermesX
 - Public API for HermesX Interface: startPowerHoldAnimation, updatePowerHoldAnimation, stopPowerHoldAnimation, egisterRawButtonPress

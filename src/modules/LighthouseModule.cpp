@@ -1,7 +1,7 @@
 #include "LighthouseModule.h"
+#include "main.h"
 #if HAS_SCREEN
 #include "graphics/Screen.h"
-#include "main.h"
 #include "modules/HermesEmUiModule.h"
 #endif
 #include "MeshService.h"
@@ -96,8 +96,7 @@ void LighthouseModule::resetEmergencyState(bool restartDevice)
 
     HERMESX_LOG_INFO("CLOSE LIGHTHOUSE,RESTARING");
     if (restartDevice) {
-        delay(15000);
-        ESP.restart();
+        rebootAtMsec = millis() + 15000;
     }
 }
 
@@ -1259,8 +1258,7 @@ ProcessMessage LighthouseModule::handleReceived(const meshtastic_MeshPacket &mp)
         nodeDB->saveToDisk(SEGMENT_CONFIG);
         saveState();
 
-        delay(15000); // 確保 log 有時間送出
-        ESP.restart();
+        rebootAtMsec = millis() + 15000; // 確保 log 有時間送出
 
         return ProcessMessage::CONTINUE;
     }

@@ -1,5 +1,7 @@
 # 智慧功率
 
+> **HermesOne 0.1.0：TAK/ATAK 與智慧功率程式路徑保留、待實機驗證。** OLED 畫面與功耗結果須以 nRF52840 實機為準。
+
 智慧功率是 HermesX 在 `TAK` / `TAK Tracker` 模式下自動啟用的 LoRa 發射功率調整功能。它的目標是在維持通訊可靠度的前提下，避免裝置長時間使用不必要的高功率發射。
 
 進入 TAK 類角色後，HermesX 會先以設定的最高功率發送，確保初始通訊穩定；接著會持續觀察實際 mesh 收訊狀態，包含 ACK、RSSI/SNR、逾時，以及 TAK / EMHB 常見的 `WantAck=0` broadcast 封包，依現場訊號強弱保守調整 LoRa `tx_power`。
@@ -96,4 +98,3 @@ Module 'hermesx' wantsPacket=1
 這表示智慧功率已經依照 remote RX 強訊號，從原本功率逐步降低。
 
 如果後續訊號仍然穩定，功率會繼續在 `智慧功率低` 與 `智慧功率高` 的範圍內保守調整。
-

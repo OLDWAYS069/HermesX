@@ -15,7 +15,9 @@ enum class HermesXUiInputTarget : uint8_t {
     FinderPulseSending,
     TraceRoutePopup,
     SetupDetailPopup,
+    PetCareDialog,
     IncomingTextPopup,
+    NewNodeNotification,
     TakMode,
     ActionPage,
     FastSetup,
@@ -40,7 +42,9 @@ struct HermesXUiInputState {
     bool finderPulseSending = false;
     bool traceRoutePopup = false;
     bool setupDetailPopup = false;
+    bool petCareDialog = false;
     bool incomingTextPopup = false;
+    bool newNodeNotification = false;
     bool takMode = false;
     bool actionPage = false;
     bool fastSetup = false;

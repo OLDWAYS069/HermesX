@@ -5,6 +5,8 @@ title: EM模組簡介
 
 # EM模組簡介
 
+> **HermesOne 0.1.0 不包含此功能。** 本文描述 GOV 版 EMAC/EM UI；HermesOne 的 CIV flag 關閉 EMAC，且 nRF build 不建立 `HermesEmUiModule.cpp`。
+
 `EM` 是 HermesX 的緊急模式。
 
 它是給隊伍在現場發生失聯、受困、醫療需求或物資需求時使用的裝置端流程。  

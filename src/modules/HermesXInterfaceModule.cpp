@@ -26,8 +26,7 @@
 #ifdef ARCH_ESP32
 #include <driver/rtc_io.h>
 #endif
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include "freertosinc.h"
 #include <Arduino.h>
 #include <cstring>
 #include <inttypes.h>
@@ -60,8 +59,19 @@
 #include "mesh/mesh-pb-constants.h"
 #include "mesh/generated/meshtastic/module_config.pb.h"
 
-#define PIN_LED 6
-#define NUM_LEDS 8
+#ifndef HERMESX_LED_PIN
+#define HERMESX_LED_PIN 6
+#endif
+#ifndef HERMESX_LED_COUNT
+#define HERMESX_LED_COUNT 8
+#endif
+#if defined(HERMESONE_DISABLE_LED)
+// Keep accidental NeoPixel writes away from the fitted P0.06 data line.
+#define PIN_LED (32 + 7)
+#else
+#define PIN_LED HERMESX_LED_PIN
+#endif
+#define NUM_LEDS HERMESX_LED_COUNT
 
 #ifndef BUZZER_PIN
 #ifdef PIN_BUZZER
@@ -89,7 +99,10 @@ void drawMixedCentered(OLEDDisplay &display, int16_t centerX, int16_t y, const S
     while (true) {
         const char *newline = std::strchr(lineStart, '\n');
         const size_t length = newline ? static_cast<size_t>(newline - lineStart) : std::strlen(lineStart);
-        String lineString(lineStart, length);
+        String lineString(lineStart);
+        if (lineString.length() > length) {
+            lineString.remove(length);
+        }
         const int width =
             graphics::HermesX_zh::stringAdvance(lineString.c_str(), graphics::HermesX_zh::GLYPH_WIDTH, &display);
         const int drawX = centerX - (width / 2);
@@ -800,8 +813,10 @@ void HermesXInterfaceModule::forceAllLedsOff()
     shutdownEffectActive = false;
     gLedState.activeAnimation = LEDAnimation::None;
     gLedState.isRunning = false;
+#if !defined(HERMESONE_DISABLE_LED)
     rgb.clear();
     rgb.show();
+#endif
 }
 
 LEDAnimation HermesXInterfaceModule::getCurrentAnimation() const
@@ -1022,6 +1037,7 @@ HermesXInterfaceModule::HermesXInterfaceModule()
     startupEffectActive = false;
 
     HERMESX_LOG_DEBUG("constroct");
+#if !defined(HERMESONE_DISABLE_COSMETIC_FEEDBACK)
 #if defined(HERMESX_GUARD_POWER_ANIMATIONS)
     if (!userOutputsMuted && HermesXPowerGuard::startupVisualsAllowed()) {
         startupEffectActive = true;
@@ -1032,6 +1048,7 @@ HermesXInterfaceModule::HermesXInterfaceModule()
         startupEffectActive = true;
         startLEDAnimation(LEDAnimation::StartupEffect);
     }
+#endif
 #endif
 }
 
@@ -1057,7 +1074,11 @@ void HermesXInterfaceModule::applyRoleOutputPolicy()
 {
     const auto role = config.device.role;
     const bool shouldDisable =
+#if defined(HERMESONE_DISABLE_COSMETIC_FEEDBACK)
+        true;
+#else
         role == meshtastic_Config_DeviceConfig_Role_TAK || role == meshtastic_Config_DeviceConfig_Role_TAK_TRACKER;
+#endif
     outputsDisabled = shouldDisable;
     // Allow emergency lamp to remain visible even when TAK roles mute normal UI outputs.
     if (outputsDisabled && !emergencyLampEnabled) {
@@ -1322,11 +1343,19 @@ void HermesXInterfaceModule::handleButtonPress()
 #if !MESHTASTIC_EXCLUDE_INPUTBROKER
 bool HermesXInterfaceModule::isRotaryPressHeld() const
 {
+#if defined(HERMESX_NRF52840_PROMICRO)
+    // HermesOne's P1.00 is also the power/EM hold input.  Treating a LOW level
+    // as a press+rotate brightness chord consumes every A/B event when the
+    // shared switch or wiring is stuck.  Keep rotation dedicated to UI input;
+    // long-hold behavior remains owned by ButtonThread.
+    return false;
+#else
     if (!moduleConfig.canned_message.rotary1_enabled) {
         return false;
     }
     const uint8_t pinPress = moduleConfig.canned_message.inputbroker_pin_press;
     return digitalRead(pinPress) == LOW;
+#endif
 }
 
 int HermesXInterfaceModule::handleInputEvent(const InputEvent *event)
@@ -1504,10 +1533,21 @@ void HermesXInterfaceModule::drawFace(const char* face, uint16_t color) {
 }
 
 void HermesXInterfaceModule::initLED() {
+#if defined(HERMESONE_DISABLE_LED)
+    return;
+#else
     rgb.begin();
+#if defined(ARCH_NRF52)
+    // WS2812 data is timing-sensitive.  The Adafruit nRF core defaults GPIO
+    // outputs to standard drive (S0S1); use the nRF high-drive mode so the
+    // 800 kHz waveform on the external strip has cleaner edges.  This changes
+    // only the electrical drive strength, not the HermesX animation logic.
+    pinMode(PIN_LED, OUTPUT_H0H1);
+#endif
     applyUserLedBrightness();
     rgb.clear();   // 上電先關燈，等動畫/邏輯接管再亮
     rgb.show();
+#endif
     HERMESX_LOG_INFO("LED setup\n");
 }
 
@@ -1631,6 +1671,9 @@ bool HermesXInterfaceModule::audioAllowed() const
 
 
 void HermesXInterfaceModule::updateLED() {
+#if defined(HERMESONE_DISABLE_LED)
+    return;
+#endif
     const bool anyEmergencyLampVisible = emergencyLampEnabled || emergencyModeLampActive;
     if (outputsDisabled && !anyEmergencyLampVisible) {
         forceAllLedsOff();
@@ -2042,7 +2085,7 @@ int32_t HermesXInterfaceModule::runOnce() {
         };
     }
 
-    // === 測試?��?（�?一次�?===
+    // Preserve the original HermesX one-shot send cue after startup.
     if (!testPlayed && outputsAllowed) {
         testPlayed = true;
         music.playSendSound();
@@ -2197,6 +2240,9 @@ void HermesXInterfaceModule::playNodeInfoFeedback() {
 }
 
 void HermesXInterfaceModule::playSendFailedFeedback() {
+#if defined(HERMESX_NRF52840_PROMICRO)
+    graphics::showHermesOneMessageSendFailure();
+#endif
     if (outputsDisabled)
         return;
     if (audioAllowed()) {
@@ -2515,7 +2561,6 @@ void HermesXInterfaceModule::playStartupLEDAnimation(uint32_t color) {
         startLEDAnimation(LEDAnimation::StartupEffect);
         return;
     }
-
     legacyStartupAnimation(color);
 }
 
@@ -2529,19 +2574,21 @@ void HermesXInterfaceModule::legacyStartupAnimation(uint32_t color)
     delay(100);
 
     int center = NUM_LEDS / 2;
-
     for (int i = 0; i <= center; ++i) {
-        if (center - i >= 0) rgb.setPixelColor(center - i, color);
-        if (center + i < NUM_LEDS) rgb.setPixelColor(center + i, color);
+        if (center - i >= 0)
+            rgb.setPixelColor(center - i, color);
+        if (center + i < NUM_LEDS)
+            rgb.setPixelColor(center + i, color);
         rgb.show();
         delay(80);
     }
 
     delay(300);
-
     for (int i = 0; i <= center; ++i) {
-        if (center - i >= 0) rgb.setPixelColor(center - i, 0);
-        if (center + i < NUM_LEDS) rgb.setPixelColor(center + i, 0);
+        if (center - i >= 0)
+            rgb.setPixelColor(center - i, 0);
+        if (center + i < NUM_LEDS)
+            rgb.setPixelColor(center + i, 0);
         rgb.show();
         delay(60);
     }
@@ -2553,6 +2600,12 @@ void HermesXInterfaceModule::playShutdownEffect(uint32_t durationMs)
         forceAllLedsOff();
         music.stopTone();
         stopTone();
+#if defined(HERMESX_NRF52840_PROMICRO)
+        // TAK suppresses cosmetic feedback, but this sound confirms that the
+        // display and USB are about to disappear. Keep LEDs dark and retain
+        // only the short, blocking HermesOne sleep cue.
+        playShutdownMelody();
+#endif
         return;
     }
 
@@ -2561,7 +2614,6 @@ void HermesXInterfaceModule::playShutdownEffect(uint32_t durationMs)
         startLEDAnimation(LEDAnimation::ShutdownEffect);
         return;
     }
-
     legacyShutdownAnimation(durationMs);
 }
 
@@ -2571,6 +2623,11 @@ void HermesXInterfaceModule::playBlockingShutdownEffect(uint32_t durationMs)
         forceAllLedsOff();
         music.stopTone();
         stopTone();
+#if defined(HERMESX_NRF52840_PROMICRO)
+        // The explicit Sleep action reaches this blocking pre-sleep hook.
+        // Preserve its functional confirmation even in TAK quiet mode.
+        playShutdownMelody();
+#endif
         return;
     }
 

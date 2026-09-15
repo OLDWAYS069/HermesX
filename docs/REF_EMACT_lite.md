@@ -1,5 +1,7 @@
 # HermesX EMACT lite（現行實作：EM Tx lock）
 
+> **HermesOne 0.1.0 不包含此功能。** 本文只適用具備 EMAC/Lighthouse 的 HermesX 舊分支。
+
 > 目標：在 EM 模式下避免一般文字封包佔用網路，保留 Emergency 封包可通行。
 
 ## 入口與觸發

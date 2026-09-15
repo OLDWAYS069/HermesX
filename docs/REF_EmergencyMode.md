@@ -1,5 +1,7 @@
 # HermesX Emergency Mode Reference（現行實作）
 
+> **HermesOne 0.1.0 部分適用。** Lighthouse/Finder 與相關自動流程已編入；獨立 Emergency UI 未編入，EM Tx lock 仍待最終路徑與實機驗證。
+
 ## 入口 / 觸發
 - 收到 `@EmergencyActive`（TEXT_MESSAGE_APP）且通過白名單或 `GROUP PIN`。
 - 旋鈕長按（本地觸發）：顯示 3 秒倒數確認；倒數未取消後進入 EM UI，並對外廣播 `@EmergencyActive`。

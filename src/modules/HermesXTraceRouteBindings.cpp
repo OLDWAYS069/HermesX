@@ -89,7 +89,7 @@ void HermesXTraceRouteBindings::ensureLoaded()
     while (file.available() && count_ < Capacity) {
         String raw = file.readStringUntil('\n');
         raw.trim();
-        if (raw.isEmpty()) {
+        if (raw.length() == 0) {
             continue;
         }
         const uint32_t nodeNum = static_cast<uint32_t>(strtoul(raw.c_str(), nullptr, 16));

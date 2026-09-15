@@ -1,4 +1,5 @@
 #include "HermesXTraceRouteUiRenderer.h"
+#include "HermesXCompactUi.h"
 
 #include "HermesXTextLayout.h"
 #include "HermesXTraceRouteUiModel.h"
@@ -48,27 +49,32 @@ void HermesXTraceRouteUiRenderer::drawPopup(OLEDDisplay *display)
         return;
     }
 
+    if (HermesXCompactUi::applies(display)) {
+        HermesXCompactUi::scrollable(display, popup.title.c_str(), popup.body.c_str(), popup.scrollY, popup.maxScrollY);
+        return;
+    }
     const int16_t width = display->getWidth();
     const int16_t height = display->getHeight();
     const bool compactLayout = width < 200 || height < 120;
-    const int16_t marginX = compactLayout ? 5 : 12;
-    const int16_t marginY = compactLayout ? 6 : 12;
+    const bool compact64 = width <= 128 && height <= 64;
+    const int16_t marginX = compact64 ? 0 : (compactLayout ? 5 : 12);
+    const int16_t marginY = compact64 ? 0 : (compactLayout ? 6 : 12);
     const int16_t boxX = marginX;
     const int16_t boxY = marginY;
     const int16_t boxW = std::max<int16_t>(width - marginX * 2, 40);
     const int16_t boxH = std::max<int16_t>(height - marginY * 2, 40);
     const int16_t titlePadX = compactLayout ? 4 : 6;
-    const int16_t titlePadY = compactLayout ? 2 : 4;
-    const int16_t titleH = compactLayout ? 16 : 18;
-    const int16_t footerH = compactLayout ? 14 : 18;
+    const int16_t titlePadY = compact64 ? 1 : (compactLayout ? 2 : 4);
+    const int16_t titleH = compact64 ? FONT_HEIGHT_SMALL : (compactLayout ? 16 : 18);
+    const int16_t footerH = compact64 ? FONT_HEIGHT_SMALL + 1 : (compactLayout ? 14 : 18);
     const int16_t dividerY = boxY + titleH + titlePadY * 2;
     const int16_t footerY = boxY + boxH - footerH;
     const int16_t bodyX = boxX + titlePadX;
-    const int16_t bodyY = dividerY + 3;
+    const int16_t bodyY = dividerY + (compact64 ? 2 : 3);
     const int16_t scrollbarW = 4;
     const int16_t bodyW = std::max<int16_t>(boxW - titlePadX * 2 - scrollbarW - 2, 20);
     const int16_t bodyH = std::max<int16_t>(footerY - bodyY - 2, titleH);
-    const int16_t lineHeight = compactLayout ? 12 : 14;
+    const int16_t lineHeight = compactLayout ? FONT_HEIGHT_SMALL : 14;
 
     display->setColor(BLACK);
     display->fillRect(boxX, boxY, boxW, boxH);
@@ -194,8 +200,9 @@ void HermesXTraceRouteUiRenderer::drawMenu(OLEDDisplay *display, int16_t x, int1
 
     const auto &navigation = HermesXTraceRouteUiModel::instance().navigationState();
     const char *items[] = {u8"返回", u8"綁定節點", "TraceRoute"};
-    const int16_t rowH = FONT_HEIGHT_SMALL + 4;
-    const int16_t listTop = y + FONT_HEIGHT_SMALL + 6;
+    const bool compact64 = width <= 128 && display->getHeight() <= 64;
+    const int16_t rowH = compact64 ? HermesX_zh::GLYPH_HEIGHT : FONT_HEIGHT_SMALL + 4;
+    const int16_t listTop = compact64 ? y + FONT_HEIGHT_SMALL + 1 : y + FONT_HEIGHT_SMALL + 6;
     for (uint8_t index = 0; index < 3; ++index) {
         const int16_t rowY = listTop + index * rowH;
         if (navigation.menuCursor == index) {
@@ -219,10 +226,11 @@ void HermesXTraceRouteUiRenderer::drawBindList(OLEDDisplay *display,
     drawTitle(display, x, y, width);
 
     const auto &navigation = HermesXTraceRouteUiModel::instance().navigationState();
-    const int16_t rowH = FONT_HEIGHT_SMALL + 3;
-    const int16_t listTop = y + FONT_HEIGHT_SMALL + 2;
-    int8_t visibleRows = (display->getHeight() - listTop - 1) / rowH;
-    visibleRows = std::max<int8_t>(1, std::min<int8_t>(visibleRows, 3));
+    const bool compact64 = width <= 128 && display->getHeight() <= 64;
+    const int16_t rowH = compact64 ? HermesX_zh::GLYPH_HEIGHT : FONT_HEIGHT_SMALL + 3;
+    const int16_t listTop = y + FONT_HEIGHT_SMALL + (compact64 ? 1 : 2);
+    int8_t visibleRows = (display->getHeight() - listTop) / rowH;
+    visibleRows = std::max<int8_t>(1, std::min<int8_t>(visibleRows, 4));
     const uint8_t totalRows = rows.count + 2;
     const uint8_t startCursor = navigation.bindCursor >= static_cast<uint8_t>(visibleRows)
                                     ? navigation.bindCursor - static_cast<uint8_t>(visibleRows) + 1
@@ -297,9 +305,10 @@ void HermesXTraceRouteUiRenderer::drawBoundList(OLEDDisplay *display,
     drawTitle(display, x, y, width);
 
     const auto &navigation = HermesXTraceRouteUiModel::instance().navigationState();
-    const int16_t rowH = FONT_HEIGHT_SMALL + 3;
-    const int16_t listTop = y + FONT_HEIGHT_SMALL + 2;
-    int8_t visibleRows = (display->getHeight() - listTop - 1) / rowH;
+    const bool compact64 = width <= 128 && display->getHeight() <= 64;
+    const int16_t rowH = compact64 ? HermesX_zh::GLYPH_HEIGHT : FONT_HEIGHT_SMALL + 3;
+    const int16_t listTop = y + FONT_HEIGHT_SMALL + (compact64 ? 1 : 2);
+    int8_t visibleRows = (display->getHeight() - listTop) / rowH;
     visibleRows = std::max<int8_t>(1, std::min<int8_t>(visibleRows, 4));
     const uint8_t totalRows = rows.count + 1;
     const uint8_t startCursor = navigation.boundCursor >= static_cast<uint8_t>(visibleRows)

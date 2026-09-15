@@ -26,6 +26,7 @@ class HermesXMessageUiModel
         bool pending = false;
         bool visible = false;
         uint8_t selectedOption = 0;
+        uint32_t startedAtMs = 0;
         uint32_t untilMs = 0;
     };
 

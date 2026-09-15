@@ -1,3 +1,95 @@
+## 2026-09-14
+
+- 2026-09-15：修正 MSG Recent Send 跑馬燈仍使用可換行 renderer，長訊息因而跨列覆蓋其他項目的問題；每筆跑馬燈現在先切成單行再繪製，固定留在自己的 12 px 列內。四列中英混合長字串 host raster 驗證無越界；`HermesOne_0.1.0_20260915_0814` 完整建置成功（Flash 802,788 / 802,816 bytes、RAM 43,372 / 248,832 bytes），UF2 範圍為 `0x26000`～`0xEA000`，SHA-256 為 `1195b399c3ec0099d4aca0e4de3e4c706d535ee71911997d1ee6067df5b60990`。已刷入實機，應用程式 USB 與 `nrf52_promicro_diy_tcxo_hermesx` metadata 均已回復。
+- 2026-09-15：HermesOne 收訊搬箱動畫完成後，訊息改顯示於右側細框內容卡，讓文字與送達的箱子形成同一組視覺語意；框線與文字均位於按鈕列上方。host OLED 的 18 個動畫畫格與邊界檢查通過；`HermesOne_0.1.0_20260915_0801` 完整建置成功（Flash 802,788 / 802,816 bytes、RAM 43,372 / 248,832 bytes），UF2 範圍為 `0x26000`～`0xEA000`，SHA-256 為 `f4d5e4aa9ecff335a0fc0db31b3cb27d9d6d3c7f98c5e7f0f483d35fa8768110`。已刷入實機，DFU 磁碟正常卸載、應用程式 USB 回復，metadata 確認 `pioEnv=nrf52_promicro_diy_tcxo_hermesx`、firmware `2.6.11.01087390e`。
+- HermesOne 收訊動畫將小威水平鏡像後由右往左搬箱；搬運結束後，右側顯示該 popup 綁定封包的訊息內容。超出 70 px 時以 node longname 相同的 400 ms 節奏跑馬燈播放；只保留前 20 個 UTF-8 字元，原文超過 20 字時補上 `...`，popup 延長至 8 秒，確保第 20 字會進入可視範圍。短訊息維持靜止顯示。
+- host OLED 驗證通過 18 個包裹動畫關鍵畫格、137 個鍵盤游標位置與 128×64 邊界檢查；`HermesOne_0.1.0_20260914_0348` 完整建置成功（Flash 802,772 / 802,816 bytes、RAM 43,372 / 248,832 bytes），UF2 範圍為 `0x26000`～`0xEA000`，SHA-256 為 `b4f31639ce143fd8a1c866822b6aa11f2a9c4b7f72a408580234d725c63cca06`。已刷入實機，`NICENANO` 正常退出、應用程式 USB 回復，metadata 確認 `pioEnv` 為 `nrf52_promicro_diy_tcxo_hermesx`、firmware 為 `2.6.11.01087390e`。
+- HermesOne 128×64 功能清單改為標題下顯示四列，`返回` 之外可同時看到三筆內容；ONLINE、MSG Recent Send、GROUP、Finder、TraceRoute 綁定清單、TAK 設定／頻道與所有 Fast Setup 選單共用 12 px 列高及對應的四列捲動視窗。詳細資料清單也可同時顯示四列。
+- 鍵盤維持每頁 10+10 字元，確認／警示彈窗維持兩行正文，避免把非清單畫面錯誤壓縮。
+- host OLED 驗證以實際 Arial/CN12 renderer 確認第四列位於 y=52～63、沒有像素越界；既有 137 個鍵盤游標位置、整行捲動、彈窗與 15 個訊息箱動畫畫格亦通過。`HermesOne_0.1.0_20260914_0020` 完整建置成功（Flash 802,788 / 802,816 bytes、RAM 43,372 / 248,832 bytes），UF2 範圍為 `0x26000`～`0xEA000`，SHA-256 為 `abb948d38ea9ee44faa4a320fe61d59893c741144a3f5dec5ded3c28cdb6fb6c`；已刷入實機，`NICENANO` 正常退出，應用程式 USB 回復，metadata 確認 `pioEnv` 為 `nrf52_promicro_diy_tcxo_hermesx`、firmware 為 `2.6.11.01087390e`。
+
+## 2026-09-13
+
+- HermesOne 訊息提示改為小威搬箱子：送出訊息時由左往右搬，收到訊息時由右往左搬；收到訊息仍保留 `查看／略過` 操作。
+- 送出失敗改為分段事故動畫：箱子翻倒並灑出八顆內容物，小威接著跌倒在旁。直接訊息的 routing NACK、本機送出失敗與 Canned Message 的 NACK 都會使用此動畫。
+- host OLED 預覽已檢查送出、接收、失敗共 15 個關鍵畫格及 128×64 座標邊界。
+- 修正首次 UF2 超過 nice!nano 實際應用程式邊界、導致裝置持續停在 bootloader：HermesOne environment 的容量上限由錯誤的 815,104 bytes 改為對應 `0xEA000` 的 802,816 bytes，讓越界映像檔在建置階段直接失敗。
+- 修正實機 routing NACK 只播放失敗聲光、沒有顯示事故動畫：`HermesXInterfaceModule` 現在會直接啟動最高繪製優先權的兩秒失敗 overlay，動畫期間阻擋底層輸入，結束後重畫原頁。`HermesOne_0.1.0_20260913_1956` 完整建置成功（Flash 802,772 / 802,816 bytes、RAM 43,372 / 248,832 bytes），UF2 止於 `0xEA000`，SHA-256 為 `a786190decc750cbf3c1aa16185ce9954fbf158c738ebb99929f70a592180b82`；已刷入實機並確認應用程式 USB 與 `nrf52_promicro_diy_tcxo_hermesx` metadata。
+- 去重並精簡動畫後，`HermesOne_0.1.0_20260913_1916` 全量建置成功：Flash 802,756 / 802,816 bytes、RAM 43,364 / 248,832 bytes；UF2 範圍為 `0x26000`～`0xEA000`，SHA-256 為 `073e6a8256744b28be7848dd22f0f7e5ccf83a3fd9654a68cdf3405677e11451`。UF2 已完成恢復燒錄，`NICENANO` 正常退出，裝置重新枚舉為 `ProMicro compatible nRF52840`；metadata 確認 environment 為 `nrf52_promicro_diy_tcxo_hermesx`、firmware 為 `2.6.11.01087390e`。
+- 小威吃 `HH` 的動畫由三口延長為六口，每口以 400 ms 開／閉嘴節奏推進；數字分階段縮小，最後一口只剩 3×3 像素。
+- 六口各產生一顆碎屑；碎屑向左右散開、落到 y=50 後停在腳邊，五秒空窗結束、`HH` 蹦回時一起清除。
+- 581 個時間點驗證六口索引、六顆碎屑落地、128×64 座標邊界及 5000 ms 空窗。`HermesOne_0.1.0_20260913_1427` 編譯成功：Flash 802,100 / 815,104 bytes（98.4%），RAM 43,364 / 248,832 bytes（17.4%）；UF2 已刷入，裝置重新連回 USB 並可讀取 metadata。
+- 首頁小威改為把 `HH` 帶回左側後分三口吃掉：數字反覆靠近嘴邊、逐步縮小並產生方塊碎屑；消失 5 秒後，`HH` 由小放大、上下彈跳回到時鐘位置。
+- 恢復首頁左上角 `HermesOne` Logo，頂部分隔線恢復為 x=2 至螢幕右側的完整線段。
+- 425 個動畫時間點驗證小威 X 座標維持在 1～24，`HH` 完整消失區間為 5000 ms。`HermesOne_0.1.0_20260913_1413` 正式 environment 編譯成功；Flash 801,844 / 815,104 bytes（98.4%），RAM 43,364 / 248,832 bytes（17.4%）。UF2 已刷入實機，裝置重新連回 USB 並可讀取 Meshtastic metadata；OLED 動畫觀察待確認。
+- 修正小威拿到 `HH` 後消失：回程插值改為有號運算，攜帶數字沿原路走回左側站位，全程保持在畫面內，停留後再送回時鐘。
+- 81 個動畫時間點的座標檢查通過，小威 X 座標維持在 1～24；`git diff --check` 通過。
+- `HermesOne_0.1.0_20260913_1354` 正式 environment 編譯成功；Flash 801,204 / 815,104 bytes（98.3%），RAM 43,364 / 248,832 bytes（17.4%）。UF2 已刷入實機，裝置重新連回 USB 並可讀取 Meshtastic metadata；OLED 動畫觀察待確認。
+
+## 2026-09-11
+
+- HermesOne 首頁新增小威搬走 `HH` 再送回的小動畫：停留 15 秒後開始，約 8 秒完成，每 45 秒一輪；分鐘、秒數持續更新。未同步、寵物提示或操作時停止／重新計時。已用實際字型與吉祥物點陣檢查關鍵畫格，實機流暢度待驗證。
+
+- `HermesOne_0.1.0_20260911_2046` 正式 environment 編譯通過；Flash 98.3%、RAM 17.4%，UF2／HEX／ZIP 已產生，尚未刷入實機。
+
+## 2026-09-09
+
+- HermesOne 128×64 中英文／注音鍵盤改為每頁 20 個字元：上下兩排各 10 個；同頁旋鈕移動游標，上排最左與下排最右負責切換前後頁，注音保留完整 12×12 字形。
+- 統一修正 EM、潛行、鎖定、低記憶體、設定詳情、TraceRoute 與更新警示排版；短提示清除背景，詳情按整行捲動。
+- `HermesOne_0.1.0_20260909_0947` 編譯成功；137 個鍵盤游標位置及換頁邊界通過預覽驗證，UF2 已刷入實機並重新連回 USB。
+- 詳見 `ISSUE_HermesOne_compact_UI_2026-09-09.md`。
+
+## 2026-09-08
+
+- 依實機既有接線將 WS2812B DATA 恢復為 P0.06（板上 `006`），GPS 模組 TX 改接 P1.06/D10，GPS 模組 RX 維持 P0.08。
+- 移除 HermesOne 自行簡化的 `HERMESONE_CENTRAL_LED_ONLY` 聲光路徑；呼吸曲線、runner、逐顆啟動、收發、ACK/NACK、關機淡出與全部音序重新直接對齊 HermesX C0.4.0。
+- nRF52840 僅保留必要的蜂鳴器底層相容層，以 `tone()/noTone()` 取代 ESP32 LEDC，不改動 HermesX 樂句、音高與時值。
+- 移除診斷版的紅／綠／藍開機自測，避免在 HermesX 原始啟動聲光之前插入額外效果。
+- `HermesOne_0.1.0_20260908_1753` 正式版與診斷版全量建置成功；診斷 UF2 已寫入實機，等待 P0.06 WS2812B 紅綠藍自測確認。
+
+## 2026-09-06
+
+- 以獨立最小韌體驗證 nRF52840 P1.00 System OFF 喚醒：`INPUT_PULLUP_SENSE` + `sd_power_system_off()` 可在短按旋鈕後重新開機並閃六下 LED，排除硬體、配線與 bootloader 問題。
+- 實機 GPIO 紀錄確認 P1.00 閒置為高、按下為低，且進入 System OFF 前已放開；原先「按住進休眠造成 DETECT 鎖住」的假設不成立。
+- 排除 detach TinyUSB、停用 SoftDevice、直接寫 `SYSTEMOFF`、手動 PIN_CNF 與 GPIOTE detach 後直寫等未成功方案；09-05 記錄的 TinyUSB／直接 SYSTEMOFF 修正並未通過實機喚醒。
+- HermesOne 永久休眠改為在任何 Wire、SPI、GPS UART、USB Serial 或 BLE 清理之前，直接以仍啟用的 SoftDevice 執行官方 System OFF 序列；實機已確認長按旋鈕可以喚醒。
+- 新增 nRF 診斷輸出與獨立診斷 environment；最新 `HermesOne_0.1.0_20260906_0150` 建置成功，RAM 17.4%、Flash 97.5%，UF2 SHA-256：`51437b82ca9e4d2de8ec400f2ad87ce1a2a151f2e17099ea8679f77dd458041b`。
+- 尚待確認最新 HermesOne 路徑的短按、正式五秒開機閘門、診斷碼清理及 System OFF 電流，現階段不宣稱正式修正完成。
+
+## 2026-09-05
+
+- TAK 首頁改為五行：標題、Slot、ChUtil、建議、狀態；即使沒有頻道建議也固定顯示 `建議 --`。
+- 修正 HermesOne 關機後無法按鍵喚醒：進入 nRF52840 System OFF 前，將旋鈕按鍵 P1.00 設為 pull-up／低電位 SENSE，並以 RESETREAS.OFF 啟動長按開機閘門。
+- 重排 HermesOne 128x64 尋人確認與發送彈窗：移除互相覆蓋的倒數列，確認窗使用兩行說明加 15px 按鈕，發送畫面改為左雷達右三行狀態。
+- TAK 首頁四行全部改為單行裁切並固定於 y=0/15/30/45，避免任何長字串換行覆蓋下一列。
+- 修正 HermesOne minimal TAK 首頁仍使用 80px 高度座標的問題，四行資訊現在完整落在 128x64 可視範圍內。
+- TAK 清單列改為單行裁切，避免過長文字自動換行後與下一列重疊；TAK 設定頁亦不再被 minimal 首頁提前攔截。
+- 壓縮 128x64 Fast Setup／TraceRoute 詳細彈窗的標題與頁尾，正文行距統一為實際小字型高度加 1px。
+- 修正 HermesOne 128x64 OLED 排版：Fast Setup 改為 3 列、15 px 列高；ONLINE、GROUP、Finder 與 TraceRoute 三列選單重新計算標題間距。
+- 訊息詳情將寄件者與時間合併為單行標頭，內容改用 13 px 小字與 14 px 行距，可同時顯示 3 行。
+- TAK 主頁移除 128x64 模式下會與文字重疊的裝飾盾牌；TAK 設定與頻道選擇改為全螢幕三列清單。
+- 將 HermesOne 定義為低耗能、輕功能節點；輕量化改由排除未接硬體、背景模組與重複程式路徑達成，不刪除指定本機功能。
+- 保留 HOME、時鐘、TAK 設定、Setup、訊息編輯、ONLINE、TraceRoute、GROUP、Fast Setup、更新 UI，以及 Meshtastic Text Message、Canned Message、NodeDB/NodeInfo 與 TraceRoute。
+- 當時方案曾將 GPS 設為 P0.06/P0.08、WS2812B 搬到 P1.06/D10；此配置已由 2026-09-08 的接線方案取代。
+- 當時方案曾使用整數呼吸／淡出與 250 ms 整排啟動脈衝；此精簡聲光路徑已於 2026-09-08 移除並恢復 HermesX C0.4.0 原始效果。
+- `MESHTASTIC_EXCLUDE_ACCELEROMETER` 現在確實阻止加速度計執行緒及感測器實作連結；HermesOne 另排除未接的 CardKB 與額外 Up/Down 輸入驅動，旋鈕操作保留。
+- `HermesOne_0.1.0_20260905_0650` 完整建置成功；Flash 793,692 / 815,104 bytes（97.4%），RAM 43,292 / 248,832 bytes（17.4%），UF2 SHA-256：`ddf0c658316d6e781c243c45c7da14a41a774d616b6a983628bdd545736614d2`。
+- 建立 nRF52840 專用產品分支 `HermesOne`，首版產品版本為 `0.1.0`。
+- 顯示識別改為 `HermesOne_0.1.0`，build 版號格式為 `HermesOne_0.1.0_YYYYMMDD_HHMM`；Meshtastic 相容版本仍維持 `2.6.11`。
+- 主要目標為 ProMicro nRF52840 + HT-RA62 + SSD1309 OLED；UF2 寫入、實機開機、OLED 與基本輸入已確認，LoRa、睡眠電流與 WS2812B 尚待完成驗證。
+- 完成文件功能稽核：現行文件改以 HermesOne 功能矩陣為準，舊 HermesX 排除功能與 Heltec/TFT 文件均標為歷史參考；nRF 首頁與開機標題同步改為 HermesOne。
+- `HermesOne_0.1.0_20260905_0229` 完整建置成功；RAM 17.2%、Flash 95.0%，UF2 SHA-256：`418245bd5d26a15a46972841b6473731db30e4cabb3cd0afd19dd9a84a3a58a3`。
+
+## 2026-09-02
+- Home 短按改為直接進入 `GPS / Home / MSG / ONLINE / TRACE / GROUP / 尋人 / 更新模式 / 更多` 主功能頁，預設焦點保留在 `Home`。
+- `更新模式` 新增獨立下載 icon，並與設定裡的更新入口共用同一條專用更新環境重開流程。
+- `潛行 / 照明 / TAK / 休眠 / 頻道 / 設定` 收進 `更多`，並提供可見的 `返回` 項目。
+- Home 小威隨機語錄新增 5 句鼓勵文案，保留進入 Home 時抽選與最多兩行顯示方式。
+- 共用鍵盤英數字與操作鍵改為格內置中的 5x7 字形；注音與聲調縮至 8x8 並保留格線邊距，不再偏向左下或與隔線重疊。
+- 直接 `MSG` 送出成功後新增 2 秒發訊息狀態，動畫結束才返回 ONLINE／GROUP 詳情；失敗仍停留鍵盤提示。
+- 發送、收新訊息與找到新節點的提示統一為坐姿小威動畫，分別顯示 `送出啦`、`你有新訊息！`、`找到新節點！`；新訊息仍可選 `查看／略過`。
+- 修正 TFT 通知動畫的小威只剩白色剪影，恢復棕色、米色、白胸等原始分層色彩。
+
 ## 2026-09-01
 - HermesX CIV 產品版號升為 `HXB_C0.4.0`，本次架構重整將 UI 狀態、輸入判斷與繪圖由 `Screen` 拆分為 Model／Controller／Renderer，並加入統一的 `HermesXUiInputRouter`。
 - Message、TraceRoute、Node Browser、FastSetup、Home、GPS、TAK Mode、Low Memory、Emergency Confirm 與 Rotary Lock 均已建立獨立責任邊界；偏好與 TraceRoute 綁定另移入 service。

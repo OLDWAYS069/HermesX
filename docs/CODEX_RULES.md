@@ -1,20 +1,29 @@
-# CODEX 工作硬規則
+# HermesOne 工作規則
 
-## 命名與結構
-- 新增類別/模組一律以 `HermesX` 為前綴。
-- 不更動檔名大小寫與路徑（避免 Windows/Unix 造成 delete+add）。
-- 模組註冊：新增模組時更新 `HermesX/src/modules/Modules.cpp` 的註冊序列。
+## 基線
 
-## 行為與協議
-- 302.1 微協議：型別/SOS/SAFE/NEED/RESOURCE/STATUS/HEARTBEAT 文串構成不得更動。
-- 可靠傳輸：沿用 ReliableRouter 機制；若需擴充，走 hook 而非硬改核心。
-- UI/LED：HermesXInterfaceModule 的公開 API 不得破壞（詳見 AGENTS.md）。
+- 分支：`HermesOne`
+- 產品版本：`0.1.0`
+- 主要 environment：`nrf52_promicro_diy_tcxo_hermesx`
+- 硬體：ProMicro nRF52840、HT-RA62、SSD1309 OLED
 
-## 禁區（除非 PR 說明且標註 @owner）
-- `src/mesh/`、`src/sleep*`、`meshtastic/` 第三方核心
-- `emergency.proto` 與其生成檔
-- `docs/REF_*.md`（只能追加，不得移除關鍵章節）
+## 功能邊界
 
-## 產出
-- **永遠輸出 unified diff（patch）**，格式與範例見 `CODEX_PATCH_FORMAT.md`。
-- 單一 PR/patch 僅解決單一議題；避免 > 200 行大改（可拆 patch）。
+- 以 `HermesOne_FEATURE_MATRIX.md` 為唯一現行功能狀態表。
+- 不得將 GPS、TAK/ATAK、GROUP/Lighthouse、尋人、EMAC、MQTT、Wi-Fi OTA、Waypoint 或感測器描述為 HermesOne 0.1.0 功能。
+- 舊 UI 原始碼或殘留選單文字不等於底層功能可用。
+- WS2812B 目前為實驗且未通過實燈驗證；蜂鳴器僅確認能發聲。
+
+## 修改原則
+
+- 新增 HermesOne 專用條件時使用明確的 nRF52840 scope，避免改壞其他上游板型。
+- 不任意改動 LoRa 核心、SoftDevice、bootloader 與第三方庫。
+- UI、輸入與模組註冊要一起檢查，避免只留下可見但無底層功能的入口。
+- 文件必須區分 Designed、Compiled、Tested 與 Field Validated。
+
+## 驗證
+
+- `git diff --check`
+- `platformio run -e nrf52_promicro_diy_tcxo_hermesx -j 4`
+- 從 build log 讀取真正的 `APP_HERMES_VERSION`
+- 確認 UF2/HEX/ZIP 產物與 SHA-256

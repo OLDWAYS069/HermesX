@@ -28,7 +28,7 @@ constexpr size_t kRemoteDownloadChunkSize = 4096;
 
 bool isAsciiDigits(const String &value)
 {
-    if (value.isEmpty()) {
+    if (value.length() == 0) {
         return false;
     }
     for (size_t i = 0; i < value.length(); ++i) {
@@ -240,7 +240,7 @@ bool HermesXUpdateManager::parseHermesVersionFromFilename(const String &filename
 String HermesXUpdateManager::extractFilenameFromContentDisposition(const String &headerValue)
 {
     String header = headerValue;
-    if (header.isEmpty()) {
+    if (header.length() == 0) {
         return "";
     }
 
@@ -257,7 +257,7 @@ String HermesXUpdateManager::extractFilenameFromContentDisposition(const String 
             token = token.substring(tick + 2);
         }
         token = decodePercentEscapes(token);
-        if (!token.isEmpty()) {
+        if (token.length() != 0) {
             return token;
         }
     }
@@ -270,7 +270,7 @@ String HermesXUpdateManager::extractFilenameFromContentDisposition(const String 
             token = token.substring(0, semi);
         }
         token = trimFilenameToken(token);
-        if (!token.isEmpty()) {
+        if (token.length() != 0) {
             return token;
         }
     }
@@ -469,6 +469,7 @@ bool HermesXUpdateManager::beginStreamUpdate(size_t imageSize, const String &ver
 #endif
 }
 
+#if defined(ARCH_ESP32)
 bool HermesXUpdateManager::beginHttpClientForUrl(HTTPClient &client, WiFiClientSecure &secureClient, const char *url)
 {
     if (!url || !url[0]) {
@@ -484,6 +485,7 @@ bool HermesXUpdateManager::beginHttpClientForUrl(HTTPClient &client, WiFiClientS
     }
     return client.begin(url);
 }
+#endif
 
 bool HermesXUpdateManager::checkRemoteImage(const std::function<void()> &pump)
 {

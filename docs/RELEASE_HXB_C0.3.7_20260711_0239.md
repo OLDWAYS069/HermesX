@@ -1,5 +1,7 @@
 # HXB_C0.3.7_20260711_0239 Release Notes
 
+> 歷史 HermesX／Heltec Tracker Release，不適用 HermesOne 0.1.0。
+
 Release date: 2026-07-11
 Branch: `HermesX_C0.3.7`
 Target: `heltec-wireless-tracker`
